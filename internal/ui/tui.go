@@ -2,7 +2,7 @@ package ui
 
 import (
 	"fmt"
-	"mping/internal/stats"
+	"github.com/nagayon-935/mping/internal/stats"
 	"net"
 	"strings"
 	"time"

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mping/internal/stats"
+	"github.com/nagayon-935/mping/internal/stats"
 	"net"
 	"os"
 	"strings"

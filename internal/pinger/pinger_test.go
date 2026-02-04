@@ -8,7 +8,7 @@ import (
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 
-	"mping/internal/stats"
+	"github.com/nagayon-935/mping/internal/stats"
 )
 
 type fakePacketConn struct {

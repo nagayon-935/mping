@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"mping/internal/stats"
+	"github.com/nagayon-935/mping/internal/stats"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"

@@ -1,4 +1,4 @@
-module mping
+module github.com/nagayon-935/mping
 
 go 1.24.0
 
