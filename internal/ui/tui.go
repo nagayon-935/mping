@@ -33,7 +33,7 @@ const (
 	lossRedThreshold      = 80.0
 )
 
-var graphGridValues = []int{25, 50, 75}
+var graphGridValues = []int{25, 50, 75, 100}
 
 // Known short error texts that can be displayed in the table Error column.
 var tableErrorCandidates = []string{
@@ -558,29 +558,67 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 			data, hasData := projectDurationsToGraph(view.History, timeBasedWidth, graphWidth)
 
 			// Y-Axis fixed to 0-100ms
-
 			const yMax = 100 * time.Millisecond
-
 			const yMin = 0
+			const yMaxMs = 100.0
+
+			desiredStep := 4
+			desiredHeight := (desiredStep * 4) + 1 // 0-25-50-75-100ms with 4 rows each
+			plotHeight := graphHeight
+			plotY := graphY
+			if graphHeight >= desiredHeight {
+				plotHeight = desiredHeight
+				plotY = graphY + (graphHeight - plotHeight)
+			}
 
 			rangeVal := float64(yMax - yMin)
 
 			// Draw Grid Lines (25, 50, 75 ms)
 			gridYPos := make(map[int]bool)
 
+			totalSteps := plotHeight - 1
+			if totalSteps < 1 {
+				totalSteps = 1
+			}
+			gy25, gy50, gy75, gy100 := 0, 0, 0, totalSteps
+			if plotHeight == desiredHeight {
+				gy25 = desiredStep - 1
+				gy50 = gy25 + desiredStep
+				gy75 = gy50 + desiredStep
+				gy100 = gy75 + desiredStep
+			} else {
+				baseStep := totalSteps / 4
+				rem := totalSteps % 4
+				seg := [4]int{baseStep, baseStep, baseStep, baseStep}
+				for i := 0; i < rem; i++ {
+					seg[i]++
+				}
+				gy25 = seg[0]
+				gy50 = seg[0] + seg[1]
+				gy75 = seg[0] + seg[1] + seg[2]
+				gy100 = totalSteps
+			}
+
 			for _, val := range graphGridValues {
-				ratio := float64(val) / 100.0
-				// Calculate gy from bottom
-				gy := int(ratio * float64(graphHeight))
-				if gy >= graphHeight {
-					gy = graphHeight - 1
+				gy := 0
+				switch val {
+				case 25:
+					gy = gy25
+				case 50:
+					gy = gy50
+				case 75:
+					gy = gy75
+				case 100:
+					gy = gy100
+				default:
+					gy = int(float64(val) / 100.0 * float64(totalSteps))
 				}
 
 				// Calculate screen Y (py)
 				// gy=0 is bottom. py = graphY + height - 1 - gy
-				py := graphY + (graphHeight - 1 - gy)
+				py := plotY + (plotHeight - 1 - gy)
 
-				if py >= graphY && py < graphY+graphHeight {
+				if py >= plotY && py < plotY+plotHeight {
 					gridYPos[gy] = true
 
 					// Draw grid line
@@ -593,11 +631,10 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 			}
 
 			// Label for 0ms (Bottom)
-			bottomY := graphY + graphHeight - 1
+			bottomY := plotY + plotHeight - 1
 			tview.Print(screen, "0ms", graphX+graphWidth+1, bottomY, labelWidth, tview.AlignLeft, tcell.ColorDarkGray)
 
-			// Label for 100ms (Top)
-			tview.Print(screen, "100ms", graphX+graphWidth+1, graphY, labelWidth, tview.AlignLeft, tcell.ColorDarkGray)
+			// Label for 100ms (Top) is drawn via grid line to avoid duplicate text.
 
 			if len(data) > 0 {
 				// Plot columns
@@ -618,13 +655,13 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 						ratio = 0.05
 					}
 
-					totalLevels := int(ratio * float64(graphHeight*8))
+					totalLevels := int(ratio * float64(plotHeight*8))
 					if v > 0 && totalLevels == 0 {
 						totalLevels = 1
 					}
 
-					for gy := 0; gy < graphHeight; gy++ {
-						py := graphY + (graphHeight - 1 - gy) // Draw from bottom up
+					for gy := 0; gy < plotHeight; gy++ {
+						py := plotY + (plotHeight - 1 - gy) // Draw from bottom up
 						level := totalLevels - (gy * 8)
 
 						var r rune
