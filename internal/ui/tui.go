@@ -35,6 +35,8 @@ const (
 
 var graphGridValues = []int{25, 50, 75, 100}
 
+var newApplication = tview.NewApplication
+
 // Known short error texts that can be displayed in the table Error column.
 var tableErrorCandidates = []string{
 	"DNS Error",
@@ -110,6 +112,84 @@ func formatLossAgo(lastLossTime time.Time) string {
 	}
 	ago := time.Since(lastLossTime).Round(time.Second)
 	return fmt.Sprintf("%s ago", ago)
+}
+
+func ttlString(ttl int) string {
+	if ttl <= 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%d", ttl)
+}
+
+func mtuString(mtu int) string {
+	if mtu <= 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%d", mtu)
+}
+
+func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, packetSize int) ([]string, string, float64) {
+	lossRate := calcLossRate(view)
+	lossStr := formatLossAgo(view.LastLossTime)
+	rttStr := formatRTT(view.LastRTT)
+	avgStr := formatRTT(view.AvgRTT)
+	jitterStr := formatRTT(view.Jitter)
+
+	rowSourceIP := displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
+
+	cols := []string{
+		view.Host,
+		rowSourceIP,
+		view.IP, // Dst IP
+		fmt.Sprintf("%d", view.Recv),
+		fmt.Sprintf("%d", view.Loss),
+		fmt.Sprintf("%.1f%%", lossRate),
+		rttStr,
+		avgStr,
+		jitterStr,
+		fmt.Sprintf("%d", packetSize),
+		mtuString(view.IfaceMTU),
+		ttlString(view.LastTTL),
+		formatTableError(view.LastError),
+		lossStr,
+	}
+	return cols, rowSourceIP, lossRate
+}
+
+func lossColorForRate(lossRate float64, vividRed tcell.Color) tcell.Color {
+	if lossRate > lossRedThreshold {
+		return vividRed
+	}
+	if lossRate > 20 {
+		return tcell.ColorOrange
+	}
+	return tcell.ColorGreen
+}
+
+func rttColorForRTT(rtt time.Duration, vividRed tcell.Color) tcell.Color {
+	if rtt > rttRedThreshold {
+		return vividRed
+	}
+	if rtt > rttOrangeThreshold {
+		return tcell.ColorOrange
+	}
+	if rtt > 0 {
+		return tcell.ColorGreen
+	}
+	return tcell.ColorWhite
+}
+
+func jitterColorForJitter(jitter time.Duration, vividRed tcell.Color) tcell.Color {
+	if jitter > jitterRedThreshold {
+		return vividRed
+	}
+	if jitter > jitterOrangeThreshold {
+		return tcell.ColorOrange
+	}
+	if jitter > 0 {
+		return tcell.ColorGreen
+	}
+	return tcell.ColorWhite
 }
 
 func formatTableError(err string) string {
@@ -255,6 +335,95 @@ func fitWidthsToAvailable(desired, minWidths, maxWidths []int, availableColumnsW
 	return widths, true
 }
 
+type compactRow struct {
+	hostL string
+	pathL string
+	statL string
+	errL  string
+	hostR string
+	pathR string
+	statR string
+	errR  string
+}
+
+type compactLayout struct {
+	rows    []compactRow
+	desired []int
+	headers []string
+	aligns  []int
+	min     []int
+	max     []int
+}
+
+type alertFlags struct {
+	lossRed   bool
+	rttRed    bool
+	jitterRed bool
+}
+
+func buildCompactLayout(targets []*stats.TargetStats, packetSize int, sourceIPv4, sourceIPv6 string, errorMaxWidth int) compactLayout {
+	headers := []string{"Host", "Path", "Stats", "Error"}
+	aligns := []int{tview.AlignLeft, tview.AlignLeft, tview.AlignLeft, tview.AlignLeft}
+	desired := []int{
+		runewidth.StringWidth(headers[0]),
+		runewidth.StringWidth(headers[1]),
+		runewidth.StringWidth(headers[2]),
+		runewidth.StringWidth(headers[3]),
+	}
+	min := []int{8, 16, 18, 8}
+	max := []int{40, 80, 80, errorMaxWidth}
+
+	rows := make([]compactRow, 0, len(targets)*2)
+	for _, t := range targets {
+		view := t.GetView()
+		lossRate := calcLossRate(view)
+		lossStr := formatLossAgo(view.LastLossTime)
+		rttStr := formatRTT(view.LastRTT)
+		avgStr := formatRTT(view.AvgRTT)
+		jitterStr := formatRTT(view.Jitter)
+		mtuStr := "-"
+		if view.IfaceMTU > 0 {
+			mtuStr = fmt.Sprintf("%d", view.IfaceMTU)
+		}
+		ttlStr := "-"
+		if view.LastTTL > 0 {
+			ttlStr = fmt.Sprintf("%d", view.LastTTL)
+		}
+		rowSourceIP := displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
+		errText := formatTableError(view.LastError)
+
+		r1 := compactRow{
+			hostL: view.Host,
+			pathL: fmt.Sprintf("%s -> %s", rowSourceIP, view.IP),
+			statL: fmt.Sprintf("S:%d L:%d Loss:%0.1f%% RTT:%s", view.Recv, view.Loss, lossRate, rttStr),
+			errL:  errText,
+		}
+		r2 := compactRow{
+			hostR: "Avg/Jit",
+			pathR: "",
+			statR: fmt.Sprintf("Avg:%s Jit:%s TTL:%s Sz:%d MTU:%s Last:%s", avgStr, jitterStr, ttlStr, packetSize, mtuStr, lossStr),
+			errR:  "",
+		}
+		rows = append(rows, r1, r2)
+
+		for i, v := range []string{r1.hostL, r1.pathL, r1.statL, r1.errL, r2.hostR, r2.pathR, r2.statR, r2.errR} {
+			col := i % 4
+			if w := runewidth.StringWidth(v); w > desired[col] {
+				desired[col] = w
+			}
+		}
+	}
+
+	return compactLayout{
+		rows:    rows,
+		desired: desired,
+		headers: headers,
+		aligns:  aligns,
+		min:     min,
+		max:     max,
+	}
+}
+
 func displaySourceIPForDst(dstIP, sourceIPv4, sourceIPv6 string) string {
 	dst := dstIP
 	if i := strings.Index(dst, "%"); i >= 0 {
@@ -282,6 +451,99 @@ func displaySourceIPForDst(dstIP, sourceIPv4, sourceIPv6 string) string {
 		return sourceIPv4
 	}
 	return "Auto"
+}
+
+func normalizeWriteIP(errMsg, sourceIP string) string {
+	if sourceIP == "" || sourceIP == "Auto" {
+		return errMsg
+	}
+	if strings.Contains(errMsg, "write ip 0.0.0.0->") {
+		return strings.Replace(errMsg, "write ip 0.0.0.0->", "write ip "+sourceIP+"->", 1)
+	}
+	return errMsg
+}
+
+func buildErrorLogMessage(view stats.TargetView, sourceIP string, errMsg string, ts time.Time) string {
+	msg := normalizeWriteIP(errMsg, sourceIP)
+	return fmt.Sprintf("[red][%s] %s (%s): %s[-]", ts.Format("15:04:05"), view.Host, sourceIP, msg)
+}
+
+func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, now time.Time, state alertFlags) (alertFlags, []string) {
+	var msgs []string
+	if lossRate > lossRedThreshold {
+		if !state.lossRed {
+			msgs = append(msgs, fmt.Sprintf("[red][%s] %s (%s): Loss Ratio %.1f%%[-]", now.Format("15:04:05"), view.Host, sourceIP, lossRate))
+		}
+		state.lossRed = true
+	} else {
+		state.lossRed = false
+	}
+
+	if view.LastRTT > rttRedThreshold {
+		if !state.rttRed {
+			msgs = append(msgs, fmt.Sprintf("[red][%s] %s (%s): RTT %v[-]", now.Format("15:04:05"), view.Host, sourceIP, view.LastRTT.Round(time.Microsecond)))
+		}
+		state.rttRed = true
+	} else {
+		state.rttRed = false
+	}
+
+	if view.Jitter > jitterRedThreshold {
+		if !state.jitterRed {
+			msgs = append(msgs, fmt.Sprintf("[red][%s] %s (%s): Jitter %v[-]", now.Format("15:04:05"), view.Host, sourceIP, view.Jitter.Round(time.Microsecond)))
+		}
+		state.jitterRed = true
+	} else {
+		state.jitterRed = false
+	}
+
+	return state, msgs
+}
+
+func buildFullRowCells(cols []string, widths []int, aligns []int, lossRate float64, rtt time.Duration, jitter time.Duration, vividRed tcell.Color, rowColor tcell.Color) []*tview.TableCell {
+	cells := make([]*tview.TableCell, len(cols))
+	lossColor := lossColorForRate(lossRate, vividRed)
+	rttColor := rttColorForRTT(rtt, vividRed)
+	jitterColor := jitterColorForJitter(jitter, vividRed)
+
+	for c, col := range cols {
+		text := formatCellText(col, widths[c], aligns[c])
+		cell := tview.NewTableCell(text).
+			SetBackgroundColor(tcell.ColorBlack).
+			SetTextColor(rowColor).
+			SetAlign(aligns[c])
+
+		switch c {
+		case 5: // Loss Ratio column index
+			cell.SetTextColor(lossColor).SetAttributes(tcell.AttrBold)
+		case 6: // RTT column index
+			cell.SetTextColor(rttColor)
+		case 8: // Jitter column index
+			cell.SetTextColor(jitterColor)
+		case 12: // Error column
+			if text != "" {
+				cell.SetTextColor(vividRed)
+			}
+		}
+
+		cells[c] = cell
+	}
+	return cells
+}
+
+func buildCompactRowCells(values []string, widths []int, aligns []int, vividRed tcell.Color, rowColor tcell.Color) []*tview.TableCell {
+	cells := make([]*tview.TableCell, len(values))
+	for c, v := range values {
+		cell := tview.NewTableCell(formatCellText(v, widths[c], aligns[c])).
+			SetBackgroundColor(tcell.ColorBlack).
+			SetTextColor(rowColor).
+			SetAlign(aligns[c])
+		if c == 3 && strings.TrimSpace(v) != "" {
+			cell.SetTextColor(vividRed)
+		}
+		cells[c] = cell
+	}
+	return cells
 }
 
 func appendErrorLog(errorLogs *[]string, errorView *tview.TextView, msg string) {
@@ -423,6 +685,98 @@ func (g *GraphView) clampScroll(numRowsTotal, visibleRows int) {
 	}
 }
 
+func adjustPlotArea(graphY, graphHeight int) (plotY, plotHeight int) {
+	plotHeight = graphHeight
+	plotY = graphY
+	if plotHeight > 1 {
+		// Ensure equal spacing by making (plotHeight-1) divisible by 4.
+		desiredSteps := ((plotHeight - 1) / 4) * 4
+		if desiredSteps < 1 {
+			desiredSteps = 1
+		}
+		plotHeight = desiredSteps + 1
+		plotY = graphY + (graphHeight - plotHeight)
+	}
+	if plotHeight > 1 {
+		// Shift the plot up by one line when possible.
+		plotY--
+		if plotY < graphY {
+			plotY = graphY
+		}
+		if plotY+plotHeight > graphY+graphHeight {
+			plotHeight = (graphY + graphHeight) - plotY
+		}
+	}
+	return plotY, plotHeight
+}
+
+func gridStepsForHeight(plotHeight int) (totalSteps, gy25, gy50, gy75, gy100 int) {
+	totalSteps = plotHeight - 1
+	if totalSteps < 1 {
+		totalSteps = 1
+	}
+	baseStep := totalSteps / 4
+	rem := totalSteps % 4
+	seg := [4]int{baseStep, baseStep, baseStep, baseStep}
+	for i := 0; i < rem; i++ {
+		seg[i]++
+	}
+	gy25 = seg[0]
+	gy50 = seg[0] + seg[1]
+	gy75 = seg[0] + seg[1] + seg[2]
+	gy100 = totalSteps
+	return totalSteps, gy25, gy50, gy75, gy100
+}
+
+func (g *GraphView) layout(width, height int) (numCols, numRowsTotal, visibleRows, colWidth, rowHeight int) {
+	numTargets := len(g.targets)
+	if numTargets == 0 || width <= 0 || height <= 0 {
+		return 1, 0, 0, 0, 0
+	}
+
+	numCols = 1
+	if numTargets > 1 {
+		numCols = 2
+	}
+	minCellWidth := graphMinWidth + graphLabelWidth + 2
+	if numCols == 2 && width < minCellWidth*2 {
+		numCols = 1
+	}
+
+	numRowsTotal = (numTargets + numCols - 1) / numCols
+
+	visibleRows = numRowsTotal
+	if visibleRows > graphMaxVisibleRows {
+		visibleRows = graphMaxVisibleRows
+	}
+	if visibleRows < 1 {
+		visibleRows = 1
+	}
+
+	colWidth = width / numCols
+	rowHeight = height / visibleRows
+	if rowHeight < 2 {
+		rowHeight = 2
+	}
+	for visibleRows > 1 {
+		graphHeight := rowHeight - 2
+		if graphHeight >= 5 {
+			break
+		}
+		visibleRows--
+		if visibleRows < 1 {
+			visibleRows = 1
+			break
+		}
+		rowHeight = height / visibleRows
+		if rowHeight < 2 {
+			rowHeight = 2
+		}
+	}
+
+	return numCols, numRowsTotal, visibleRows, colWidth, rowHeight
+}
+
 // InputHandler enables vertical scrolling when focused.
 func (g *GraphView) InputHandler() func(event *tcell.EventKey, setFocus func(p tview.Primitive)) {
 	return func(event *tcell.EventKey, setFocus func(p tview.Primitive)) {
@@ -439,27 +793,16 @@ func (g *GraphView) InputHandler() func(event *tcell.EventKey, setFocus func(p t
 			return
 		}
 
-		_, _, _, height := g.GetInnerRect()
-		if height <= 0 {
+		_, _, width, height := g.GetInnerRect()
+		if width <= 0 || height <= 0 {
 			return
 		}
 
-		numTargets := len(g.targets)
-		if numTargets == 0 {
+		_, numRowsTotal, visibleRows, _, _ := g.layout(width, height)
+		if visibleRows == 0 {
 			g.scrollRow = 0
 			return
 		}
-
-		numCols := 1
-		if numTargets > 1 {
-			numCols = 2
-		}
-		numRowsTotal := (numTargets + numCols - 1) / numCols
-		visibleRows := numRowsTotal
-		if visibleRows > graphMaxVisibleRows {
-			visibleRows = graphMaxVisibleRows
-		}
-
 		g.clampScroll(numRowsTotal, visibleRows)
 	}
 }
@@ -477,25 +820,11 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 		return
 	}
 
-	// Determine layout (1 col or 2 cols)
-	numCols := 1
-	if numTargets > 1 {
-		numCols = 2
-	}
-
-	numRowsTotal := (numTargets + numCols - 1) / numCols
-	visibleRows := numRowsTotal
-	if visibleRows > graphMaxVisibleRows {
-		visibleRows = graphMaxVisibleRows
+	numCols, numRowsTotal, visibleRows, colWidth, rowHeight := g.layout(width, height)
+	if visibleRows == 0 {
+		return
 	}
 	g.clampScroll(numRowsTotal, visibleRows)
-
-	rowHeight := height / visibleRows
-	if rowHeight < 2 {
-		rowHeight = 2 // Minimum height per target block
-	}
-
-	colWidth := width / numCols
 
 	// Draw loop
 	for r := 0; r < visibleRows; r++ {
@@ -562,42 +891,14 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 			const yMin = 0
 			const yMaxMs = 100.0
 
-			desiredStep := 4
-			desiredHeight := (desiredStep * 4) + 1 // 0-25-50-75-100ms with 4 rows each
-			plotHeight := graphHeight
-			plotY := graphY
-			if graphHeight >= desiredHeight {
-				plotHeight = desiredHeight
-				plotY = graphY + (graphHeight - plotHeight)
-			}
+			plotY, plotHeight := adjustPlotArea(graphY, graphHeight)
 
 			rangeVal := float64(yMax - yMin)
 
-			// Draw Grid Lines (25, 50, 75 ms)
+			// Draw Grid Lines (25, 50, 75, 100 ms) with equal spacing for any height.
 			gridYPos := make(map[int]bool)
 
-			totalSteps := plotHeight - 1
-			if totalSteps < 1 {
-				totalSteps = 1
-			}
-			gy25, gy50, gy75, gy100 := 0, 0, 0, totalSteps
-			if plotHeight == desiredHeight {
-				gy25 = desiredStep - 1
-				gy50 = gy25 + desiredStep
-				gy75 = gy50 + desiredStep
-				gy100 = gy75 + desiredStep
-			} else {
-				baseStep := totalSteps / 4
-				rem := totalSteps % 4
-				seg := [4]int{baseStep, baseStep, baseStep, baseStep}
-				for i := 0; i < rem; i++ {
-					seg[i]++
-				}
-				gy25 = seg[0]
-				gy50 = seg[0] + seg[1]
-				gy75 = seg[0] + seg[1] + seg[2]
-				gy100 = totalSteps
-			}
+			totalSteps, gy25, gy50, gy75, gy100 := gridStepsForHeight(plotHeight)
 
 			for _, val := range graphGridValues {
 				gy := 0
@@ -707,7 +1008,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 	vividRed := tcell.NewRGBColor(255, 0, 0)
 	vividCyan := tcell.NewRGBColor(0, 255, 255)
 
-	app := tview.NewApplication()
+	app := newApplication()
 	table := tview.NewTable().
 		SetBorders(true).
 		SetSelectable(false, false).
@@ -833,11 +1134,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 	// Error log state
 	errorLogs := []string{}
 	lastLossTimes := make(map[string]time.Time)
-	alertState := make(map[string]struct {
-		lossRed   bool
-		rttRed    bool
-		jitterRed bool
-	})
+	alertState := make(map[string]alertFlags)
 
 	for _, line := range initialLogs {
 		appendErrorLog(&errorLogs, errorView, line)
@@ -859,70 +1156,21 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		}
 
 		updatedWidths := calcColumnWidths()
-		fitted, ok := fitWidthsToAvailable(updatedWidths, minWidths, maxWidths, availableColumnsWidth)
-
-		type compactRow struct {
-			hostL string
-			pathL string
-			statL string
-			errL  string
-			hostR string
-			pathR string
-			statR string
-			errR  string
-		}
-		compactHeaders := []string{"Host", "Path", "Stats", "Error"}
-		compactAligns := []int{tview.AlignLeft, tview.AlignLeft, tview.AlignLeft, tview.AlignLeft}
-		compactRows := make([]compactRow, 0, len(targets)*2)
-		compactDesired := []int{
-			runewidth.StringWidth(compactHeaders[0]),
-			runewidth.StringWidth(compactHeaders[1]),
-			runewidth.StringWidth(compactHeaders[2]),
-			runewidth.StringWidth(compactHeaders[3]),
-		}
-		compactMin := []int{8, 16, 18, 8}
-		compactMax := []int{40, 80, 80, baseWidths[12]}
-
-		for _, t := range targets {
-			view := t.GetView()
-			lossRate := calcLossRate(view)
-			lossStr := formatLossAgo(view.LastLossTime)
-			rttStr := formatRTT(view.LastRTT)
-			avgStr := formatRTT(view.AvgRTT)
-			jitterStr := formatRTT(view.Jitter)
-			mtuStr := "-"
-			if view.IfaceMTU > 0 {
-				mtuStr = fmt.Sprintf("%d", view.IfaceMTU)
-			}
-			ttlStr := "-"
-			if view.LastTTL > 0 {
-				ttlStr = fmt.Sprintf("%d", view.LastTTL)
-			}
-			rowSourceIP := displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
-			errText := formatTableError(view.LastError)
-
-			r1 := compactRow{
-				hostL: view.Host,
-				pathL: fmt.Sprintf("%s -> %s", rowSourceIP, view.IP),
-				statL: fmt.Sprintf("S:%d L:%d Loss:%0.1f%% RTT:%s", view.Recv, view.Loss, lossRate, rttStr),
-				errL:  errText,
-			}
-			r2 := compactRow{
-				hostR: "Avg/Jit",
-				pathR: "",
-				statR: fmt.Sprintf("Avg:%s Jit:%s TTL:%s Sz:%d MTU:%s Last:%s", avgStr, jitterStr, ttlStr, packetSize, mtuStr, lossStr),
-				errR:  "",
-			}
-			compactRows = append(compactRows, r1, r2)
-
-			for i, v := range []string{r1.hostL, r1.pathL, r1.statL, r1.errL, r2.hostR, r2.pathR, r2.statR, r2.errR} {
-				col := i % 4
-				if w := runewidth.StringWidth(v); w > compactDesired[col] {
-					compactDesired[col] = w
-				}
+		dynamicMaxWidths := append([]int(nil), maxWidths...)
+		for _, c := range []int{0, 1, 2} {
+			if updatedWidths[c] > dynamicMaxWidths[c] {
+				dynamicMaxWidths[c] = updatedWidths[c]
 			}
 		}
+		fitted, ok := fitWidthsToAvailable(updatedWidths, minWidths, dynamicMaxWidths, availableColumnsWidth)
 
+		compact := buildCompactLayout(targets, packetSize, sourceIPv4, sourceIPv6, baseWidths[12])
+		compactRows := compact.rows
+		compactDesired := compact.desired
+		compactHeaders := compact.headers
+		compactAligns := compact.aligns
+		compactMin := compact.min
+		compactMax := compact.max
 		compactAvailableColumnsWidth := availableTableWidth - (len(compactHeaders) + 1)
 		if compactAvailableColumnsWidth < 0 {
 			compactAvailableColumnsWidth = 0
@@ -991,14 +1239,8 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 				} else {
 					values[3] = r.errL
 				}
-				for c, v := range values {
-					cell := tview.NewTableCell(formatCellText(v, widths[c], activeAligns[c])).
-						SetBackgroundColor(tcell.ColorBlack).
-						SetTextColor(rowColor).
-						SetAlign(activeAligns[c])
-					if c == 3 && strings.TrimSpace(v) != "" {
-						cell.SetTextColor(vividRed)
-					}
+				cells := buildCompactRowCells(values, widths, activeAligns, vividRed, rowColor)
+				for c, cell := range cells {
 					table.SetCell(row, c, cell)
 				}
 			}
@@ -1014,13 +1256,8 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 				if !exists || view.LastLossTime.After(lastTime) {
 					// New error detected
 					lastLossTimes[view.Host] = view.LastLossTime
-					timestamp := view.LastLossTime.Format("15:04:05")
-					errMsg := view.LastError
 					rowSourceIP := displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
-					if rowSourceIP != "" && rowSourceIP != "Auto" && strings.Contains(errMsg, "write ip 0.0.0.0->") {
-						errMsg = strings.Replace(errMsg, "write ip 0.0.0.0->", "write ip "+rowSourceIP+"->", 1)
-					}
-					msg := fmt.Sprintf("[red][%s] %s (%s): %s[-]", timestamp, view.Host, rowSourceIP, errMsg)
+					msg := buildErrorLogMessage(view, rowSourceIP, view.LastError, view.LastLossTime)
 					appendErrorLog(&errorLogs, errorView, msg)
 				}
 			}
@@ -1030,126 +1267,19 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			}
 
 			row := i + 1
-			lossRate := calcLossRate(view)
-			lossStr := formatLossAgo(view.LastLossTime)
-
-			rttStr := formatRTT(view.LastRTT)
-			avgStr := formatRTT(view.AvgRTT)
-			jitterStr := formatRTT(view.Jitter)
-
-			ttlStr := "-"
-			if view.LastTTL > 0 {
-				ttlStr = fmt.Sprintf("%d", view.LastTTL)
-			}
-
-			lossColor := tcell.ColorGreen
-			if lossRate > 20 {
-				lossColor = tcell.ColorOrange
-			}
-			if lossRate > lossRedThreshold {
-				lossColor = vividRed
-			}
-
-			mtuStr := "-"
-			if view.IfaceMTU > 0 {
-				mtuStr = fmt.Sprintf("%d", view.IfaceMTU)
-			}
-
-			rowSourceIP := displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
-
-			cols := []string{
-				view.Host,
-				rowSourceIP,
-				view.IP, // Dst IP
-				fmt.Sprintf("%d", view.Recv),
-				fmt.Sprintf("%d", view.Loss),
-				fmt.Sprintf("%.1f%%", lossRate),
-				rttStr,
-				avgStr,
-				jitterStr,
-				fmt.Sprintf("%d", packetSize),
-				mtuStr,
-				ttlStr,
-				formatTableError(view.LastError),
-				lossStr,
-			}
-
-			rttColor := rowColor
-			if view.LastRTT > 0 {
-				if view.LastRTT > rttRedThreshold {
-					rttColor = vividRed
-				} else if view.LastRTT > rttOrangeThreshold {
-					rttColor = tcell.ColorOrange
-				} else {
-					rttColor = tcell.ColorGreen
-				}
-			}
-
-			jitterColor := rowColor
-			if view.Jitter > 0 {
-				if view.Jitter > jitterRedThreshold {
-					jitterColor = vividRed
-				} else if view.Jitter > jitterOrangeThreshold {
-					jitterColor = tcell.ColorOrange
-				} else {
-					jitterColor = tcell.ColorGreen
-				}
-			}
+			cols, rowSourceIP, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize)
 
 			// Alert logs on red thresholds
 			state := alertState[view.Host]
 			now := time.Now()
-			if lossRate > lossRedThreshold {
-				if !state.lossRed {
-					msg := fmt.Sprintf("[red][%s] %s (%s): Loss Ratio %.1f%%[-]", now.Format("15:04:05"), view.Host, rowSourceIP, lossRate)
-					appendErrorLog(&errorLogs, errorView, msg)
-				}
-				state.lossRed = true
-			} else {
-				state.lossRed = false
-			}
-
-			if view.LastRTT > rttRedThreshold {
-				if !state.rttRed {
-					msg := fmt.Sprintf("[red][%s] %s (%s): RTT %v[-]", now.Format("15:04:05"), view.Host, rowSourceIP, view.LastRTT.Round(time.Microsecond))
-					appendErrorLog(&errorLogs, errorView, msg)
-				}
-				state.rttRed = true
-			} else {
-				state.rttRed = false
-			}
-
-			if view.Jitter > jitterRedThreshold {
-				if !state.jitterRed {
-					msg := fmt.Sprintf("[red][%s] %s (%s): Jitter %v[-]", now.Format("15:04:05"), view.Host, rowSourceIP, view.Jitter.Round(time.Microsecond))
-					appendErrorLog(&errorLogs, errorView, msg)
-				}
-				state.jitterRed = true
-			} else {
-				state.jitterRed = false
+			state, msgs := updateAlertState(view, rowSourceIP, lossRate, now, state)
+			for _, msg := range msgs {
+				appendErrorLog(&errorLogs, errorView, msg)
 			}
 			alertState[view.Host] = state
 
-			for c, col := range cols {
-				text := formatCellText(col, widths[c], fullAligns[c])
-				cell := tview.NewTableCell(text).
-					SetBackgroundColor(tcell.ColorBlack).
-					SetTextColor(rowColor).
-					SetAlign(fullAligns[c])
-
-				if c == 5 { // Loss Ratio column index
-					cell.SetTextColor(lossColor).SetAttributes(tcell.AttrBold)
-				}
-				if c == 6 { // RTT column index
-					cell.SetTextColor(rttColor)
-				}
-				if c == 8 { // Jitter column index
-					cell.SetTextColor(jitterColor)
-				}
-				if c == 12 && text != "" { // Error column
-					cell.SetTextColor(vividRed)
-				}
-
+			cells := buildFullRowCells(cols, widths, fullAligns, lossRate, view.LastRTT, view.Jitter, vividRed, rowColor)
+			for c, cell := range cells {
 				table.SetCell(row, c, cell)
 			}
 
@@ -1351,11 +1481,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			errorLogs = []string{}
 			errorView.SetText("")
 			lastLossTimes = make(map[string]time.Time)
-			alertState = make(map[string]struct {
-				lossRed   bool
-				rttRed    bool
-				jitterRed bool
-			})
+			alertState = make(map[string]alertFlags)
 		}
 		return event
 	})

@@ -251,17 +251,21 @@ func (t *TargetStats) OnSuccess(rtt time.Duration, ttl int) {
 		t.MaxRTT = rtt
 	}
 
+	t.appendHistory(rtt)
+
+	t.LastError = ""
+}
+
+func (t *TargetStats) appendHistory(rtt time.Duration) {
 	// Update history ring buffer style (append until full, then shift? or ring?)
 	// Simple append and shift is easier for slice
 	if len(t.rttHistory) < historySize {
 		t.rttHistory = append(t.rttHistory, rtt)
-	} else {
-		// Shift
-		copy(t.rttHistory, t.rttHistory[1:])
-		t.rttHistory[historySize-1] = rtt
+		return
 	}
-
-	t.LastError = ""
+	// Shift
+	copy(t.rttHistory, t.rttHistory[1:])
+	t.rttHistory[historySize-1] = rtt
 }
 
 func (t *TargetStats) OnFailure(reason string) {

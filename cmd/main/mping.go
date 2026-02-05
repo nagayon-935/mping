@@ -4,17 +4,60 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"github.com/nagayon-935/mping/internal/pinger"
-	"github.com/nagayon-935/mping/internal/stats"
-	"github.com/nagayon-935/mping/internal/ui"
 	"net"
 	"os"
 	"sync"
 	"time"
 
+	"github.com/nagayon-935/mping/internal/pinger"
+	"github.com/nagayon-935/mping/internal/stats"
+	"github.com/nagayon-935/mping/internal/ui"
 	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
 )
+
+type pingerController interface {
+	Start(privileged bool, interval, timeout time.Duration) error
+	Close()
+	Wait()
+	DiscoverMaxPayload(dest string, start int, min int, privileged bool, logf func(string)) (int, error)
+	TraceRoute(dest string, maxHops int, timeout time.Duration) ([]string, error)
+	SetSource(ip string)
+	SetSize(size int)
+	SetCount(count int)
+	SetResolveInterval(interval time.Duration)
+	SetLogWriter(w io.Writer)
+}
+
+type pingerAdapter struct {
+	*pinger.Pinger
+}
+
+func (p *pingerAdapter) SetSource(ip string) {
+	p.Source = ip
+}
+
+func (p *pingerAdapter) SetSize(size int) {
+	p.Size = size
+}
+
+func (p *pingerAdapter) SetCount(count int) {
+	p.Count = count
+}
+
+func (p *pingerAdapter) SetResolveInterval(interval time.Duration) {
+	p.ResolveInterval = interval
+}
+
+func (p *pingerAdapter) SetLogWriter(w io.Writer) {
+	p.LogWriter = w
+}
+
+var newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+	return &pingerAdapter{Pinger: pinger.NewPingerWithOptions(targets, opts)}
+}
+
+var uiRun = ui.Run
 
 func getInterfaceIP(ifaceName string, wantIPv6 bool) (string, error) {
 	iface, err := net.InterfaceByName(ifaceName)
@@ -141,6 +184,80 @@ type hostsFileYAML struct {
 	Hosts []string `yaml:"hosts"`
 }
 
+func resolveNetwork(cfg config) string {
+	if cfg.ipv4Only {
+		return "ip4"
+	}
+	if cfg.ipv6Only {
+		return "ip6"
+	}
+	return "ip"
+}
+
+func mergeHosts(cfg config, hosts []string) ([]string, error) {
+	if cfg.hostsFile == "" {
+		return hosts, nil
+	}
+	fileHosts, err := parseHostsFile(cfg.hostsFile)
+	if err != nil {
+		return nil, err
+	}
+	return append(fileHosts, hosts...), nil
+}
+
+func determineSourceIPs(cfg config, hosts []string) (string, string, string, error) {
+	bindIP := ""
+	displaySourceIPv4 := ""
+	displaySourceIPv6 := ""
+
+	if cfg.sourceAddr != "" {
+		bindIP = cfg.sourceAddr
+		if ip := net.ParseIP(bindIP); ip != nil && ip.To4() == nil {
+			displaySourceIPv6 = bindIP
+		} else {
+			displaySourceIPv4 = bindIP
+		}
+		return bindIP, displaySourceIPv4, displaySourceIPv6, nil
+	}
+	if cfg.ifaceName != "" {
+		ip, err := getInterfaceIP(cfg.ifaceName, cfg.ipv6Only)
+		if err != nil {
+			return "", "", "", err
+		}
+		bindIP = ip
+		if parsed := net.ParseIP(bindIP); parsed != nil && parsed.To4() == nil {
+			displaySourceIPv6 = bindIP
+		} else {
+			displaySourceIPv4 = bindIP
+		}
+		return bindIP, displaySourceIPv4, displaySourceIPv6, nil
+	}
+
+	displaySourceIPv4, displaySourceIPv6 = detectAutoSourceIPs(hosts)
+	return bindIP, displaySourceIPv4, displaySourceIPv6, nil
+}
+
+func initTargets(hosts []string) []*stats.TargetStats {
+	targets := make([]*stats.TargetStats, 0, len(hosts))
+	for _, host := range hosts {
+		targets = append(targets, stats.NewTargetStats(host))
+	}
+	return targets
+}
+
+func setupLogger(path string) (*os.File, error) {
+	if path == "" {
+		return nil, nil
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, err
+	}
+	// Write CSV header
+	f.Write([]byte("Timestamp,Host,IP,Seq,Status,RTT(ms),TTL,Error\n"))
+	return f, nil
+}
+
 func parseArgs(args []string) (config, []string, string, error) {
 	var cfg config
 	var usageBuf bytes.Buffer
@@ -220,13 +337,10 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		return 1
 	}
 
-	if cfg.hostsFile != "" {
-		fileHosts, err := parseHostsFile(cfg.hostsFile)
-		if err != nil {
-			fmt.Fprintf(errOut, "Error reading hosts file: %v\n", err)
-			return 1
-		}
-		hosts = append(fileHosts, hosts...)
+	hosts, err = mergeHosts(cfg, hosts)
+	if err != nil {
+		fmt.Fprintf(errOut, "Error reading hosts file: %v\n", err)
+		return 1
 	}
 	if len(hosts) == 0 {
 		fmt.Fprint(errOut, usage)
@@ -237,48 +351,20 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	timeout := time.Duration(cfg.timeoutMs) * time.Millisecond
 
 	// Determine resolution network
-	resNetwork := "ip"
-	if cfg.ipv4Only {
-		resNetwork = "ip4"
-	} else if cfg.ipv6Only {
-		resNetwork = "ip6"
-	}
+	resNetwork := resolveNetwork(cfg)
 
 	// Determine source IP for binding and display
-	bindIP := ""
-	displaySourceIPv4 := ""
-	displaySourceIPv6 := ""
-
-	if cfg.sourceAddr != "" {
-		bindIP = cfg.sourceAddr
-		if ip := net.ParseIP(bindIP); ip != nil && ip.To4() == nil {
-			displaySourceIPv6 = bindIP
-		} else {
-			displaySourceIPv4 = bindIP
-		}
-	} else if cfg.ifaceName != "" {
-		ip, err := getInterfaceIP(cfg.ifaceName, cfg.ipv6Only)
-		if err != nil {
-			fmt.Fprintf(errOut, "Error resolving interface %s: %v\n", cfg.ifaceName, err)
-			return 1
-		}
-		bindIP = ip
-		if parsed := net.ParseIP(bindIP); parsed != nil && parsed.To4() == nil {
-			displaySourceIPv6 = bindIP
-		} else {
-			displaySourceIPv4 = bindIP
-		}
+	bindIP, displaySourceIPv4, displaySourceIPv6, err := determineSourceIPs(cfg, hosts)
+	if err != nil {
+		fmt.Fprintf(errOut, "Error resolving interface %s: %v\n", cfg.ifaceName, err)
+		return 1
+	}
+	if cfg.ifaceName != "" && bindIP != "" {
 		fmt.Fprintf(out, "Binding to interface %s (%s)\n", cfg.ifaceName, bindIP)
-	} else {
-		// Auto-detect source IP for display purposes (IPv4/IPv6 separately).
-		displaySourceIPv4, displaySourceIPv6 = detectAutoSourceIPs(hosts)
 	}
 
 	// Initialize targets
-	var targets []*stats.TargetStats
-	for _, host := range hosts {
-		targets = append(targets, stats.NewTargetStats(host))
-	}
+	targets := initTargets(hosts)
 
 	// Resolve settings used by all pinger instances (initial start / restart).
 	opts := pinger.Options{
@@ -296,26 +382,23 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	}
 
 	// Setup logger if requested
-	var logFile *os.File
-	if cfg.outputFile != "" {
-		f, err := os.OpenFile(cfg.outputFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			fmt.Fprintf(errOut, "Error opening log file: %v\n", err)
-			return 1
-		}
-		logFile = f
+	logFile, err := setupLogger(cfg.outputFile)
+	if err != nil {
+		fmt.Fprintf(errOut, "Error opening log file: %v\n", err)
+		return 1
+	}
+	if logFile != nil {
 		defer logFile.Close()
-		logFile.Write([]byte("Timestamp,Host,IP,Seq,Status,RTT(ms),TTL,Error\n"))
 	}
 
-	makePinger := func(size int) *pinger.Pinger {
-		p := pinger.NewPingerWithOptions(targets, opts)
-		p.Source = bindIP
-		p.Size = size
-		p.Count = cfg.count
-		p.ResolveInterval = 60 * time.Second
+	makePinger := func(size int) pingerController {
+		p := newPinger(targets, opts)
+		p.SetSource(bindIP)
+		p.SetSize(size)
+		p.SetCount(cfg.count)
+		p.SetResolveInterval(60 * time.Second)
 		if logFile != nil {
-			p.LogWriter = logFile
+			p.SetLogWriter(logFile)
 		}
 		return p
 	}
@@ -340,7 +423,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 
 	var (
 		pMu sync.Mutex
-		p   *pinger.Pinger
+		p   pingerController
 	)
 
 	startPinger := func() error {
@@ -377,7 +460,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	}
 
 	// Start TUI
-	if err := ui.Run(
+	if err := uiRun(
 		targets,
 		interval,
 		nil,
@@ -419,7 +502,11 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	return 0
 }
 
-func runTraceroutes(p *pinger.Pinger, targets []*stats.TargetStats) {
+type tracer interface {
+	TraceRoute(dest string, maxHops int, timeout time.Duration) ([]string, error)
+}
+
+func runTraceroutes(p tracer, targets []*stats.TargetStats) {
 	var wg sync.WaitGroup
 	for _, t := range targets {
 		wg.Add(1)

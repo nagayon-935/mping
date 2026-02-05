@@ -78,6 +78,17 @@ func TestProjectDurationsToGraph(t *testing.T) {
 	}
 }
 
+func TestProjectDurationsToGraphSinglePoint(t *testing.T) {
+	data := []time.Duration{5 * time.Millisecond}
+	values, has := projectDurationsToGraph(data, 1, 3)
+	if len(values) != 3 || len(has) != 3 {
+		t.Fatalf("size mismatch")
+	}
+	if !has[2] || values[2] != data[0] {
+		t.Fatalf("expected right-aligned value")
+	}
+}
+
 func TestDisplaySourceIPForDst(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -128,6 +139,11 @@ func TestFormatCellText(t *testing.T) {
 	if got != "   42" {
 		t.Fatalf("right pad: got %q, want %q", got, "   42")
 	}
+
+	got = formatCellText("abcd", 3, tview.AlignLeft)
+	if got != "..." {
+		t.Fatalf("small width: got %q, want %q", got, "...")
+	}
 }
 
 func TestFitWidthsToAvailable(t *testing.T) {
@@ -153,6 +169,350 @@ func TestFitWidthsToAvailable(t *testing.T) {
 	_, ok = fitWidthsToAvailable(desired, min, max, 10)
 	if ok {
 		t.Fatalf("fitWidthsToAvailable should fail when available < sum(min)")
+	}
+
+	widths, ok = fitWidthsToAvailable(desired, min, max, 80)
+	if !ok {
+		t.Fatalf("fitWidthsToAvailable should succeed")
+	}
+	total = 0
+	for _, w := range widths {
+		total += w
+	}
+	if total != 80 {
+		t.Fatalf("total width: got %d, want %d", total, 80)
+	}
+}
+
+func TestTruncateToDisplayWidth(t *testing.T) {
+	got := truncateToDisplayWidth("abcdef", 4)
+	if got != "a..." {
+		t.Fatalf("truncate: got %q, want %q", got, "a...")
+	}
+	got = truncateToDisplayWidth("ab", 2)
+	if got != "ab" {
+		t.Fatalf("short string: got %q", got)
+	}
+}
+
+func TestCalcLossRate(t *testing.T) {
+	view := stats.TargetView{Recv: 80, Loss: 20}
+	if got := calcLossRate(view); got < 19.9 || got > 20.1 {
+		t.Fatalf("loss rate: got %v", got)
+	}
+}
+
+func TestFormatLossAgo(t *testing.T) {
+	if got := formatLossAgo(time.Time{}); got != "-" {
+		t.Fatalf("zero time: got %q", got)
+	}
+	now := time.Now().Add(-2 * time.Second)
+	got := formatLossAgo(now)
+	if !strings.Contains(got, "ago") {
+		t.Fatalf("expected ago suffix: got %q", got)
+	}
+}
+
+func TestBuildCompactLayout(t *testing.T) {
+	target := stats.NewTargetStats("example.com")
+	target.OnSuccess(12*time.Millisecond, 64)
+	target.SetIfaceMTU(1500)
+	layout := buildCompactLayout([]*stats.TargetStats{target}, 56, "10.0.0.2", "", 20)
+	if len(layout.rows) != 2 {
+		t.Fatalf("rows: got %d", len(layout.rows))
+	}
+	if len(layout.headers) != 4 || len(layout.aligns) != 4 {
+		t.Fatalf("headers/aligns size mismatch")
+	}
+	if layout.max[3] != 20 {
+		t.Fatalf("error max width: got %d", layout.max[3])
+	}
+}
+
+func TestBuildFullColumns(t *testing.T) {
+	view := stats.TargetView{
+		Host:   "example.com",
+		IP:     "1.1.1.1",
+		Recv:   10,
+		Loss:   2,
+		LastRTT: 12 * time.Millisecond,
+		AvgRTT:  10 * time.Millisecond,
+		Jitter:  2 * time.Millisecond,
+		IfaceMTU: 1500,
+		LastTTL:  64,
+	}
+	cols, src, rate := buildFullColumns(view, "10.0.0.2", "", 56)
+	if src != "10.0.0.2" {
+		t.Fatalf("src: got %q", src)
+	}
+	if rate <= 0 {
+		t.Fatalf("loss rate: got %v", rate)
+	}
+	if len(cols) != 14 {
+		t.Fatalf("cols len: got %d", len(cols))
+	}
+}
+
+func TestColorHelpers(t *testing.T) {
+	if lossColorForRate(10, tcell.ColorRed) != tcell.ColorGreen {
+		t.Fatal("expected green for low loss")
+	}
+	if lossColorForRate(50, tcell.ColorRed) != tcell.ColorOrange {
+		t.Fatal("expected orange for mid loss")
+	}
+	if lossColorForRate(90, tcell.ColorRed) != tcell.ColorRed {
+		t.Fatal("expected red for high loss")
+	}
+
+	if rttColorForRTT(0, tcell.ColorRed) != tcell.ColorWhite {
+		t.Fatal("expected white for zero rtt")
+	}
+	if rttColorForRTT(10*time.Millisecond, tcell.ColorRed) != tcell.ColorGreen {
+		t.Fatal("expected green for low rtt")
+	}
+	if jitterColorForJitter(0, tcell.ColorRed) != tcell.ColorWhite {
+		t.Fatal("expected white for zero jitter")
+	}
+	if jitterColorForJitter(20*time.Millisecond, tcell.ColorRed) != tcell.ColorOrange {
+		t.Fatal("expected orange for mid jitter")
+	}
+}
+
+func TestBuildFullRowCells(t *testing.T) {
+	cols := []string{"h", "s", "d", "1", "2", "10.0%", "1ms", "1ms", "1ms", "56", "1500", "64", "err", "1s ago"}
+	widths := make([]int, len(cols))
+	for i := range widths {
+		widths[i] = 5
+	}
+	aligns := make([]int, len(cols))
+	cells := buildFullRowCells(cols, widths, aligns, 90.0, 300*time.Millisecond, 60*time.Millisecond, tcell.ColorRed, tcell.ColorWhite)
+	if len(cells) != len(cols) {
+		t.Fatalf("cells len mismatch")
+	}
+	if cells[12].Color == tcell.ColorWhite {
+		t.Fatalf("expected error cell colored")
+	}
+}
+
+func TestBuildCompactRowCells(t *testing.T) {
+	values := []string{"host", "path", "stat", "err"}
+	widths := []int{4, 4, 4, 4}
+	aligns := []int{tview.AlignLeft, tview.AlignLeft, tview.AlignLeft, tview.AlignLeft}
+	cells := buildCompactRowCells(values, widths, aligns, tcell.ColorRed, tcell.ColorWhite)
+	if len(cells) != 4 {
+		t.Fatalf("cells len mismatch")
+	}
+	if cells[3].Text == "" {
+		t.Fatalf("expected error cell text")
+	}
+}
+
+func TestAppendErrorLog(t *testing.T) {
+	view := tview.NewTextView()
+	logs := []string{}
+	appendErrorLog(&logs, view, "one")
+	appendErrorLog(&logs, view, "two")
+	if len(logs) != 2 {
+		t.Fatalf("logs len: got %d", len(logs))
+	}
+	if !strings.Contains(view.GetText(false), "two") {
+		t.Fatalf("expected latest log in text")
+	}
+}
+
+func TestTTLAndMTUString(t *testing.T) {
+	if ttlString(0) != "-" {
+		t.Fatal("expected '-' for ttl 0")
+	}
+	if ttlString(64) != "64" {
+		t.Fatal("expected ttl string")
+	}
+	if mtuString(0) != "-" {
+		t.Fatal("expected '-' for mtu 0")
+	}
+	if mtuString(1500) != "1500" {
+		t.Fatal("expected mtu string")
+	}
+}
+
+func TestNormalizeWriteIP(t *testing.T) {
+	msg := normalizeWriteIP("write ip 0.0.0.0->1.1.1.1: x", "10.0.0.2")
+	if !strings.Contains(msg, "10.0.0.2") {
+		t.Fatalf("expected replaced source ip, got %q", msg)
+	}
+	msg = normalizeWriteIP("write ip 0.0.0.0->1.1.1.1: x", "Auto")
+	if strings.Contains(msg, "10.0.0.2") {
+		t.Fatalf("unexpected replacement: %q", msg)
+	}
+	msg = normalizeWriteIP("other error", "10.0.0.2")
+	if msg != "other error" {
+		t.Fatalf("unexpected change: %q", msg)
+	}
+}
+
+func TestBuildErrorLogMessage(t *testing.T) {
+	view := stats.TargetView{Host: "example.com"}
+	ts := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	msg := buildErrorLogMessage(view, "10.0.0.2", "write ip 0.0.0.0->1.1.1.1: x", ts)
+	if !strings.Contains(msg, "example.com") || !strings.Contains(msg, "10.0.0.2") {
+		t.Fatalf("unexpected msg: %q", msg)
+	}
+}
+
+func TestUpdateAlertState(t *testing.T) {
+	view := stats.TargetView{
+		Host:    "example.com",
+		LastRTT: 300 * time.Millisecond,
+		Jitter:  60 * time.Millisecond,
+	}
+	state, msgs := updateAlertState(view, "10.0.0.2", 90.0, time.Now(), alertFlags{})
+	if !state.lossRed || !state.rttRed || !state.jitterRed {
+		t.Fatalf("expected alert flags set: %+v", state)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+
+	clearView := stats.TargetView{Host: "example.com"}
+	state2, msgs2 := updateAlertState(clearView, "10.0.0.2", 0.0, time.Now(), state)
+	if state2.lossRed || state2.rttRed || state2.jitterRed {
+		t.Fatalf("expected flags cleared: %+v", state2)
+	}
+	if len(msgs2) != 0 {
+		t.Fatalf("expected no messages, got %d", len(msgs2))
+	}
+}
+
+func TestWrapRoute(t *testing.T) {
+	if got := wrapRoute(nil, 10); got != "-" {
+		t.Fatalf("empty hops: got %q", got)
+	}
+	hops := []string{"a", "b", "c"}
+	if got := wrapRoute(hops, 20); !strings.Contains(got, "a -> b -> c") {
+		t.Fatalf("wrapRoute: got %q", got)
+	}
+}
+
+func TestWrapRouteLines(t *testing.T) {
+	lines := wrapRouteLines([]string{"a", "b", "c"}, 4)
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped lines, got %v", lines)
+	}
+}
+
+func TestFormatRTT(t *testing.T) {
+	if got := formatRTT(0); got != "-" {
+		t.Fatalf("expected '-', got %q", got)
+	}
+	if got := formatRTT(10 * time.Millisecond); !strings.Contains(got, "ms") {
+		t.Fatalf("expected ms, got %q", got)
+	}
+}
+
+func TestGraphViewInputHandlerScroll(t *testing.T) {
+	targets := []*stats.TargetStats{
+		stats.NewTargetStats("a"),
+		stats.NewTargetStats("b"),
+		stats.NewTargetStats("c"),
+		stats.NewTargetStats("d"),
+		stats.NewTargetStats("e"),
+		stats.NewTargetStats("f"),
+		stats.NewTargetStats("g"),
+	}
+	g := NewGraphView(targets, 1*time.Second)
+	g.SetRect(0, 0, 80, 10)
+
+	handler := g.InputHandler()
+	handler(tcell.NewEventKey(tcell.KeyDown, 0, 0), func(p tview.Primitive) {})
+	if g.scrollRow == 0 {
+		t.Fatalf("expected scrollRow to change")
+	}
+	handler(tcell.NewEventKey(tcell.KeyUp, 0, 0), func(p tview.Primitive) {})
+	if g.scrollRow < 0 {
+		t.Fatalf("scrollRow should not be negative")
+	}
+}
+
+func TestGraphViewClampScroll(t *testing.T) {
+	g := NewGraphView(nil, 1*time.Second)
+	g.scrollRow = 10
+	g.clampScroll(2, 2)
+	if g.scrollRow != 0 {
+		t.Fatalf("expected scrollRow clamped to 0, got %d", g.scrollRow)
+	}
+	g.scrollRow = -1
+	g.clampScroll(5, 2)
+	if g.scrollRow != 0 {
+		t.Fatalf("expected scrollRow >=0, got %d", g.scrollRow)
+	}
+}
+
+func TestAdjustPlotArea(t *testing.T) {
+	plotY, plotHeight := adjustPlotArea(5, 10)
+	if plotHeight != 9 {
+		t.Fatalf("plotHeight: got %d, want 9", plotHeight)
+	}
+	if plotY != 5 {
+		t.Fatalf("plotY: got %d, want 5", plotY)
+	}
+}
+
+func TestGridStepsForHeight(t *testing.T) {
+	totalSteps, gy25, gy50, gy75, gy100 := gridStepsForHeight(9)
+	if totalSteps != 8 || gy25 != 2 || gy50 != 4 || gy75 != 6 || gy100 != 8 {
+		t.Fatalf("unexpected steps: total=%d 25=%d 50=%d 75=%d 100=%d",
+			totalSteps, gy25, gy50, gy75, gy100)
+	}
+}
+
+func TestGraphViewLayoutMinHeight(t *testing.T) {
+	targets := []*stats.TargetStats{
+		stats.NewTargetStats("a"),
+		stats.NewTargetStats("b"),
+		stats.NewTargetStats("c"),
+		stats.NewTargetStats("d"),
+		stats.NewTargetStats("e"),
+		stats.NewTargetStats("f"),
+	}
+	g := NewGraphView(targets, 1*time.Second)
+	numCols, numRowsTotal, visibleRows, _, rowHeight := g.layout(80, 9)
+	if numCols != 2 || numRowsTotal != 3 {
+		t.Fatalf("layout cols/rows: got cols=%d rows=%d", numCols, numRowsTotal)
+	}
+	if visibleRows != 1 {
+		t.Fatalf("visibleRows: got %d, want 1", visibleRows)
+	}
+	if rowHeight < 7 {
+		t.Fatalf("rowHeight: got %d, want >=7", rowHeight)
+	}
+}
+
+func TestRunWithSimulationScreen(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	newApplication = func() *tview.Application {
+		app := tview.NewApplication()
+		screen := tcell.NewSimulationScreen("UTF-8")
+		app.SetScreen(screen)
+		screen.SetSize(80, 24)
+		go func() {
+			time.Sleep(30 * time.Millisecond)
+			app.Stop()
+		}()
+		return app
+	}
+
+	target := stats.NewTargetStats("example.com")
+	done := make(chan struct{})
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		close(done)
+	}()
+
+	err := Run([]*stats.TargetStats{target}, 50*time.Millisecond, done, "", "", 56, nil, false, nil, nil)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
 	}
 }
 
@@ -196,6 +556,43 @@ func TestGraphViewDraw_SingleTarget(t *testing.T) {
 			t.Fatalf("Draw panicked: %v", r)
 		}
 	}()
+	g.Draw(screen)
+}
+
+func TestGraphViewDraw_MultiTargets(t *testing.T) {
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatalf("screen init: %v", err)
+	}
+	defer screen.Fini()
+	screen.SetSize(80, 12)
+
+	targets := []*stats.TargetStats{
+		stats.NewTargetStats("a"),
+		stats.NewTargetStats("b"),
+		stats.NewTargetStats("c"),
+		stats.NewTargetStats("d"),
+	}
+	targets[0].OnSuccess(10*time.Millisecond, 64)
+
+	g := NewGraphView(targets, 500*time.Millisecond)
+	g.SetRect(0, 0, 80, 12)
+
+	g.Draw(screen)
+}
+
+func TestGraphViewDraw_NarrowWidth(t *testing.T) {
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatalf("screen init: %v", err)
+	}
+	defer screen.Fini()
+	screen.SetSize(20, 8)
+
+	target := stats.NewTargetStats("example.com")
+	target.OnSuccess(10*time.Millisecond, 64)
+	g := NewGraphView([]*stats.TargetStats{target}, 1*time.Second)
+	g.SetRect(0, 0, 20, 8)
 	g.Draw(screen)
 }
 

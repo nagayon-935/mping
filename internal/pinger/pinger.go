@@ -82,6 +82,8 @@ type Options struct {
 	ListenPacket  listenPacketFunc
 }
 
+var canSendPayloadFn = (*Pinger).canSendPayload
+
 func NewPinger(targets []*stats.TargetStats) *Pinger {
 	return NewPingerWithOptions(targets, Options{})
 }
@@ -180,7 +182,7 @@ func (p *Pinger) DiscoverMaxPayload(dest string, start int, min int, privileged 
 	high := start
 	for low < high {
 		mid := (low + high + 1) / 2
-		ok, err := p.canSendPayload(dstAddr, mid)
+		ok, err := canSendPayloadFn(p, dstAddr, mid)
 		if err != nil {
 			return 0, err
 		}
@@ -204,10 +206,7 @@ func (p *Pinger) canSendPayload(dstAddr *net.IPAddr, payloadLen int) (bool, erro
 		payloadLen = 0
 	}
 
-	payload := make([]byte, payloadLen)
-	if len(payload) >= 5 {
-		copy(payload, "MPING")
-	}
+	payload := buildPayload(payloadLen)
 	msg := icmp.Message{
 		Type: ipv4.ICMPTypeEcho,
 		Code: 0,
@@ -871,14 +870,7 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 	p.mapMu.RUnlock()
 
 	// Prepare payload
-	payload := make([]byte, p.Size)
-	for i := range payload {
-		payload[i] = 'A' // Fill with pattern
-	}
-	// Embed "MPING" signature at the beginning if size permits
-	if len(payload) >= 5 {
-		copy(payload, "MPING")
-	}
+	payload := buildPayload(p.Size)
 
 	for {
 		// Check count limit
@@ -1036,4 +1028,19 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 			// Next loop
 		}
 	}
+}
+
+func buildPayload(size int) []byte {
+	if size < 0 {
+		size = 0
+	}
+	payload := make([]byte, size)
+	for i := range payload {
+		payload[i] = 'A' // Fill with pattern
+	}
+	// Embed "MPING" signature at the beginning if size permits
+	if len(payload) >= 5 {
+		copy(payload, "MPING")
+	}
+	return payload
 }
