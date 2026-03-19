@@ -565,7 +565,7 @@ func wrapRouteLines(hops []string, maxWidth int) []string {
 			current = next
 			continue
 		}
-		lines = append(lines, current)
+		lines = append(lines, current+" ->")
 		current = hop
 	}
 	if current != "" {
@@ -1108,6 +1108,9 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 
 	updateTable := func() {
 		table.Clear()
+		if traceTable != nil {
+			traceTable.Clear()
+		}
 
 		_, _, availableTableWidth, _ := tablePane.GetInnerRect()
 		if availableTableWidth <= 0 {

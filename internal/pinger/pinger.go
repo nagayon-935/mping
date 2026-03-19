@@ -58,6 +58,7 @@ type Pinger struct {
 	targetChans map[int]chan Reply
 	mapMu       sync.RWMutex
 	baseID      int
+	Privileged  bool
 
 	LogWriter io.Writer // Optional logger
 
@@ -290,22 +291,30 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 	var packetConn net.PacketConn
 
 	if isV4 {
+		network := "ip4:icmp"
+		if !p.Privileged {
+			network = "udp4"
+		}
 		bindAddr := "0.0.0.0"
 		if p.Source != "" {
 			bindAddr = p.Source
 		}
-		c, err := p.listenPacket("ip4:icmp", bindAddr)
+		c, err := p.listenPacket(network, bindAddr)
 		if err != nil {
 			return nil, err
 		}
 		packetConn = c
 		connV4 = ipv4.NewPacketConn(c)
 	} else {
+		network := "ip6:ipv6-icmp"
+		if !p.Privileged {
+			network = "udp6"
+		}
 		bindAddr := "::"
 		if p.Source != "" {
 			bindAddr = p.Source
 		}
-		c, err := p.listenPacket("ip6:ipv6-icmp", bindAddr)
+		c, err := p.listenPacket(network, bindAddr)
 		if err != nil {
 			return nil, err
 		}
@@ -344,8 +353,13 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 
 		// Send
 		if isV4 {
-			cm := &ipv4.ControlMessage{TTL: ttl}
-			if _, err := connV4.WriteTo(b, cm, dstAddr); err != nil {
+			// ipv4.ControlMessage.Marshal() does not serialize the TTL field,
+			// so per-packet TTL must be set via SetTTL before each write.
+			if err := connV4.SetTTL(ttl); err != nil {
+				hops = append(hops, "*")
+				continue
+			}
+			if _, err := connV4.WriteTo(b, nil, dstAddr); err != nil {
 				hops = append(hops, "*")
 				continue
 			}
@@ -419,7 +433,11 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 			}
 
 			if isReply || isTimeExceeded || isUnreachable {
-				hops = append(hops, src.String())
+				hopAddr := src.String()
+				if udpAddr, ok := src.(*net.UDPAddr); ok {
+					hopAddr = udpAddr.IP.String()
+				}
+				hops = append(hops, hopAddr)
 				if isReply || isUnreachable {
 					return hops, nil
 				}
@@ -439,6 +457,7 @@ func isMTUTooLarge(err error) bool {
 }
 
 func (p *Pinger) Start(privileged bool, interval, timeout time.Duration) error {
+	p.Privileged = privileged
 	var errV4, errV6 error
 
 	// Initialize IPv4
