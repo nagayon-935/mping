@@ -383,15 +383,6 @@ func TestUpdateAlertState(t *testing.T) {
 	}
 }
 
-func TestWrapRoute(t *testing.T) {
-	if got := wrapRoute(nil, 10); got != "-" {
-		t.Fatalf("empty hops: got %q", got)
-	}
-	hops := []string{"a", "b", "c"}
-	if got := wrapRoute(hops, 20); !strings.Contains(got, "a -> b -> c") {
-		t.Fatalf("wrapRoute: got %q", got)
-	}
-}
 
 func TestWrapRouteLines(t *testing.T) {
 	lines := wrapRouteLines([]string{"a", "b", "c"}, 4)

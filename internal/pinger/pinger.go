@@ -67,9 +67,6 @@ type Pinger struct {
 	resolveIPAddr resolveIPAddrFunc
 	now           func() time.Time
 	listenPacket  listenPacketFunc
-
-	lastErrMu  sync.Mutex
-	lastErrMsg string
 }
 
 type resolveIPAddrFunc func(network, address string) (*net.IPAddr, error)
@@ -130,23 +127,8 @@ func (p *Pinger) log(t *stats.TargetStats, seq int, status string, rtt time.Dura
 	p.LogWriter.Write([]byte(line))
 }
 
-func (p *Pinger) setLastErr(err error) {
-	if err == nil {
-		return
-	}
-	p.lastErrMu.Lock()
-	p.lastErrMsg = err.Error()
-	p.lastErrMu.Unlock()
-}
-
 func (p *Pinger) applyLastErrSource(errMsg string) string {
 	if p.Source != "" && strings.Contains(errMsg, "write ip 0.0.0.0->") {
-		return strings.Replace(errMsg, "write ip 0.0.0.0->", "write ip "+p.Source+"->", 1)
-	}
-	p.lastErrMu.Lock()
-	lastErr := p.lastErrMsg
-	p.lastErrMu.Unlock()
-	if p.Source != "" && strings.Contains(lastErr, "write ip 0.0.0.0->") && lastErr == errMsg {
 		return strings.Replace(errMsg, "write ip 0.0.0.0->", "write ip "+p.Source+"->", 1)
 	}
 	return errMsg
@@ -961,7 +943,6 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 		start := time.Now()
 		_, err = writeFunc(b, dstAddr)
 		if err != nil {
-			p.setLastErr(err)
 			errMsg := p.applyLastErrSource(err.Error())
 			t.OnFailure(errMsg)
 			p.log(t, seq, "SendError", 0, 0, err.Error())

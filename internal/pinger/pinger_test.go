@@ -735,13 +735,6 @@ func TestLogWritesCSV(t *testing.T) {
 	}
 }
 
-func TestSetLastErrNil(t *testing.T) {
-	p := NewPingerWithOptions(nil, Options{})
-	p.setLastErr(nil)
-	if p.lastErrMsg != "" {
-		t.Fatalf("expected empty lastErrMsg")
-	}
-}
 
 func TestParseInnerEchoIDSeqShortData(t *testing.T) {
 	if _, _, ok := parseInnerEchoIDSeq([]byte{0x40}); ok {
@@ -806,7 +799,6 @@ func TestBuildPayload(t *testing.T) {
 func TestApplyLastErrSource(t *testing.T) {
 	p := NewPingerWithOptions(nil, Options{})
 	p.Source = "10.0.0.2"
-	p.setLastErr(net.ErrClosed)
 
 	msg := p.applyLastErrSource("write ip 0.0.0.0->8.8.8.8: sendmsg: no route to host")
 	if msg == "" || msg == "write ip 0.0.0.0->8.8.8.8: sendmsg: no route to host" {
@@ -818,7 +810,6 @@ func TestApplyLastErrSource_UsesLastErr(t *testing.T) {
 	p := NewPingerWithOptions(nil, Options{})
 	p.Source = "10.0.0.2"
 	last := "write ip 0.0.0.0->1.1.1.1: sendmsg: no route to host"
-	p.setLastErr(errors.New(last))
 	msg := p.applyLastErrSource(last)
 	if msg == last {
 		t.Fatalf("expected replacement, got %q", msg)

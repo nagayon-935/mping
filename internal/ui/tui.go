@@ -76,7 +76,6 @@ type GraphView struct {
 	interval  time.Duration
 	vividCyan tcell.Color
 	vividRed  tcell.Color
-	sourceIP  string // for reference if needed, though mostly for table
 	scrollRow int
 	showZero  bool
 }
@@ -381,14 +380,8 @@ func buildCompactLayout(targets []*stats.TargetStats, packetSize int, sourceIPv4
 		rttStr := formatRTT(view.LastRTT)
 		avgStr := formatRTT(view.AvgRTT)
 		jitterStr := formatRTT(view.Jitter)
-		mtuStr := "-"
-		if view.IfaceMTU > 0 {
-			mtuStr = fmt.Sprintf("%d", view.IfaceMTU)
-		}
-		ttlStr := "-"
-		if view.LastTTL > 0 {
-			ttlStr = fmt.Sprintf("%d", view.LastTTL)
-		}
+		mtuStr := mtuString(view.IfaceMTU)
+		ttlStr := ttlString(view.LastTTL)
 		rowSourceIP := displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
 		errText := formatTableError(view.LastError)
 
@@ -551,38 +544,8 @@ func appendErrorLog(errorLogs *[]string, errorView *tview.TextView, msg string) 
 	if len(*errorLogs) > 1000 {
 		*errorLogs = (*errorLogs)[1:]
 	}
-	errorText := ""
-	for _, log := range *errorLogs {
-		errorText += log + "\n"
-	}
-	errorView.SetText(errorText)
+	errorView.SetText(strings.Join(*errorLogs, "\n") + "\n")
 	errorView.ScrollToEnd()
-}
-
-func wrapRoute(hops []string, maxWidth int) string {
-	if maxWidth <= 0 || len(hops) == 0 {
-		return "-"
-	}
-	var lines []string
-	current := ""
-	sep := " -> "
-	for _, hop := range hops {
-		if current == "" {
-			current = hop
-			continue
-		}
-		next := current + sep + hop
-		if len([]rune(next)) <= maxWidth {
-			current = next
-			continue
-		}
-		lines = append(lines, current)
-		current = hop
-	}
-	if current != "" {
-		lines = append(lines, current)
-	}
-	return strings.Join(lines, "\n")
 }
 
 func wrapRouteLines(hops []string, maxWidth int) []string {
@@ -1215,29 +1178,20 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 				SetAlign(activeAligns[i]))
 		}
 
+		pickCompact := func(right, left string) string {
+			if right != "" {
+				return right
+			}
+			return left
+		}
 		if compactLayout {
 			for i, r := range compactRows {
 				row := i + 1
-				values := []string{r.hostL + r.hostR, r.pathL + r.pathR, r.statL + r.statR, r.errL + r.errR}
-				if r.hostR != "" {
-					values[0] = r.hostR
-				} else {
-					values[0] = r.hostL
-				}
-				if r.pathR != "" {
-					values[1] = r.pathR
-				} else {
-					values[1] = r.pathL
-				}
-				if r.statR != "" {
-					values[2] = r.statR
-				} else {
-					values[2] = r.statL
-				}
-				if r.errR != "" {
-					values[3] = r.errR
-				} else {
-					values[3] = r.errL
+				values := []string{
+					pickCompact(r.hostR, r.hostL),
+					pickCompact(r.pathR, r.pathL),
+					pickCompact(r.statR, r.statL),
+					pickCompact(r.errR, r.errL),
 				}
 				cells := buildCompactRowCells(values, widths, activeAligns, vividRed, rowColor)
 				for c, cell := range cells {
