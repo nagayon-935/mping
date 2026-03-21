@@ -182,7 +182,19 @@ type config struct {
 }
 
 type hostsFileYAML struct {
-	Hosts []string `yaml:"hosts"`
+	Hosts      []string `yaml:"hosts"`
+	IntervalMs *int     `yaml:"interval"`
+	TimeoutMs  *int     `yaml:"timeout"`
+	OutputFile *string  `yaml:"output"`
+	IfaceName  *string  `yaml:"interface"`
+	SourceAddr *string  `yaml:"source"`
+	PacketSize *int     `yaml:"size"`
+	Count      *int     `yaml:"count"`
+	MtuEnabled *bool    `yaml:"discovery-mtu"`
+	Trace      *bool    `yaml:"traceroute"`
+	Ipv4Only   *bool    `yaml:"ipv4"`
+	Ipv6Only   *bool    `yaml:"ipv6"`
+	PortSpecs  []string `yaml:"port"`
 }
 
 func resolveNetwork(cfg config) string {
@@ -195,15 +207,51 @@ func resolveNetwork(cfg config) string {
 	return "ip"
 }
 
-func mergeHosts(cfg config, hosts []string) ([]string, error) {
+func mergeHosts(cfg config, fs *pflag.FlagSet, hosts []string) ([]string, config, error) {
 	if cfg.hostsFile == "" {
-		return hosts, nil
+		return hosts, cfg, nil
 	}
-	fileHosts, err := parseHostsFile(cfg.hostsFile)
+	doc, err := parseHostsFile(cfg.hostsFile)
 	if err != nil {
-		return nil, err
+		return nil, cfg, err
 	}
-	return append(fileHosts, hosts...), nil
+	if !fs.Changed("interval") && doc.IntervalMs != nil {
+		cfg.intervalMs = *doc.IntervalMs
+	}
+	if !fs.Changed("timeout") && doc.TimeoutMs != nil {
+		cfg.timeoutMs = *doc.TimeoutMs
+	}
+	if !fs.Changed("output") && doc.OutputFile != nil {
+		cfg.outputFile = *doc.OutputFile
+	}
+	if !fs.Changed("interface") && doc.IfaceName != nil {
+		cfg.ifaceName = *doc.IfaceName
+	}
+	if !fs.Changed("source") && doc.SourceAddr != nil {
+		cfg.sourceAddr = *doc.SourceAddr
+	}
+	if !fs.Changed("size") && doc.PacketSize != nil {
+		cfg.packetSize = *doc.PacketSize
+	}
+	if !fs.Changed("count") && doc.Count != nil {
+		cfg.count = *doc.Count
+	}
+	if !fs.Changed("discovery-mtu") && doc.MtuEnabled != nil {
+		cfg.mtuEnabled = *doc.MtuEnabled
+	}
+	if !fs.Changed("traceroute") && doc.Trace != nil {
+		cfg.trace = *doc.Trace
+	}
+	if !fs.Changed("ipv4") && doc.Ipv4Only != nil {
+		cfg.ipv4Only = *doc.Ipv4Only
+	}
+	if !fs.Changed("ipv6") && doc.Ipv6Only != nil {
+		cfg.ipv6Only = *doc.Ipv6Only
+	}
+	if !fs.Changed("port") && len(doc.PortSpecs) > 0 {
+		cfg.portSpecs = doc.PortSpecs
+	}
+	return append(doc.Hosts, hosts...), cfg, nil
 }
 
 func determineSourceIPs(cfg config, hosts []string) (string, string, string, error) {
@@ -259,7 +307,7 @@ func setupLogger(path string) (*os.File, error) {
 	return f, nil
 }
 
-func parseArgs(args []string) (config, []string, string, error) {
+func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) {
 	var cfg config
 	var usageBuf bytes.Buffer
 
@@ -288,47 +336,37 @@ func parseArgs(args []string) (config, []string, string, error) {
 	}
 
 	if err := fs.Parse(args); err != nil {
-		return config{}, nil, usageBuf.String(), err
+		return config{}, nil, nil, usageBuf.String(), err
 	}
 
 	hosts := fs.Args()
 	if len(hosts) == 0 && cfg.hostsFile == "" {
 		fs.Usage()
-		return config{}, nil, usageBuf.String(), fmt.Errorf("no hosts provided")
+		return config{}, nil, nil, usageBuf.String(), fmt.Errorf("no hosts provided")
 	}
 
 	if cfg.ipv4Only && cfg.ipv6Only {
-		return config{}, nil, usageBuf.String(), fmt.Errorf("cannot use both -4 and -6")
+		return config{}, nil, nil, usageBuf.String(), fmt.Errorf("cannot use both -4 and -6")
 	}
 
-	return cfg, hosts, usageBuf.String(), nil
+	return cfg, hosts, fs, usageBuf.String(), nil
 }
 
-func parseHostsFile(path string) ([]string, error) {
+func parseHostsFile(path string) (hostsFileYAML, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
-	}
-
-	// Support either:
-	// - YAML sequence: ["a", "b"]
-	// - Mapping: {hosts: ["a", "b"]}
-	var list []string
-	if err := yaml.Unmarshal(data, &list); err == nil {
-		if len(list) > 0 {
-			return list, nil
-		}
+		return hostsFileYAML{}, err
 	}
 
 	var doc hostsFileYAML
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, err
+		return hostsFileYAML{}, err
 	}
-	return doc.Hosts, nil
+	return doc, nil
 }
 
 func run(args []string, out io.Writer, errOut io.Writer) int {
-	cfg, hosts, usage, err := parseArgs(args)
+	cfg, hosts, fs, usage, err := parseArgs(args)
 	if err != nil {
 		if err == pflag.ErrHelp {
 			fmt.Fprint(out, usage)
@@ -338,7 +376,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		return 1
 	}
 
-	hosts, err = mergeHosts(cfg, hosts)
+	hosts, cfg, err = mergeHosts(cfg, fs, hosts)
 	if err != nil {
 		fmt.Fprintf(errOut, "Error reading hosts file: %v\n", err)
 		return 1

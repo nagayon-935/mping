@@ -13,6 +13,7 @@ import (
 
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
+	"github.com/spf13/pflag"
 )
 
 type fakePinger struct {
@@ -77,7 +78,7 @@ func TestGetPreferredOutboundIP_Localhost(t *testing.T) {
 }
 
 func TestParseArgsDefaults(t *testing.T) {
-	cfg, hosts, _, err := parseArgs([]string{"example.com"})
+	cfg, hosts, _, _, err := parseArgs([]string{"example.com"})
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
@@ -93,14 +94,14 @@ func TestParseArgsDefaults(t *testing.T) {
 }
 
 func TestParseArgsMissingHosts(t *testing.T) {
-	_, _, _, err := parseArgs([]string{})
+	_, _, _, _, err := parseArgs([]string{})
 	if err == nil {
 		t.Fatal("expected error for missing hosts")
 	}
 }
 
 func TestParseArgsHostsFileAllowsNoHosts(t *testing.T) {
-	cfg, hosts, _, err := parseArgs([]string{"--file", "hosts.yaml"})
+	cfg, hosts, _, _, err := parseArgs([]string{"--file", "hosts.yaml"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -113,7 +114,7 @@ func TestParseArgsHostsFileAllowsNoHosts(t *testing.T) {
 }
 
 func TestParseArgsIPv4IPv6Conflict(t *testing.T) {
-	_, _, _, err := parseArgs([]string{"-4", "-6", "example.com"})
+	_, _, _, _, err := parseArgs([]string{"-4", "-6", "example.com"})
 	if err == nil {
 		t.Fatal("expected error for -4 and -6 together")
 	}
@@ -160,21 +161,6 @@ func TestRunMissingHostsFile(t *testing.T) {
 	}
 }
 
-func TestParseHostsFileYAMLSequence(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "hosts.yaml")
-	if err := os.WriteFile(path, []byte("- a\n- b\n"), 0644); err != nil {
-		t.Fatalf("write file: %v", err)
-	}
-	got, err := parseHostsFile(path)
-	if err != nil {
-		t.Fatalf("parseHostsFile: %v", err)
-	}
-	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
-		t.Fatalf("hosts: got %v", got)
-	}
-}
-
 func TestParseHostsFileYAMLMapping(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hosts.yaml")
@@ -185,8 +171,8 @@ func TestParseHostsFileYAMLMapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseHostsFile: %v", err)
 	}
-	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
-		t.Fatalf("hosts: got %v", got)
+	if len(got.Hosts) != 2 || got.Hosts[0] != "a" || got.Hosts[1] != "b" {
+		t.Fatalf("hosts: got %v", got.Hosts)
 	}
 }
 
@@ -280,11 +266,12 @@ func TestResolveNetwork(t *testing.T) {
 func TestMergeHosts(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hosts.yaml")
-	if err := os.WriteFile(path, []byte("- a\n- b\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("hosts:\n  - a\n  - b\n"), 0644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
 	cfg := config{hostsFile: path}
-	got, err := mergeHosts(cfg, []string{"c"})
+	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	got, _, err := mergeHosts(cfg, fs, []string{"c"})
 	if err != nil {
 		t.Fatalf("mergeHosts: %v", err)
 	}

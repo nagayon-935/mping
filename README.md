@@ -76,15 +76,18 @@ sudo ./mping -T -p 443/tcp google.com
 
 ### hosts.yaml の例
 
-```yaml
-- google.com
-- 1.1.1.1
-```
+`hosts:` キーでホストを列挙し、オプションも指定できます。CLIで明示的に指定したオプションはYAMLの値より優先されます。
 
 ```yaml
 hosts:
   - google.com
   - 1.1.1.1
+interval: 500
+timeout: 2000
+traceroute: true
+port:
+  - 443/tcp
+  - 53/udp
 ```
 
 ### オプション
