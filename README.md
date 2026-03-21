@@ -14,6 +14,7 @@
 
 * **YAML ホストリスト**: ホスト一覧をファイルで管理できます。
 * **Traceroute ペイン**: `-T` オプション指定時に Host/Route の 2 カラムテーブル形式で経路を表示します。複数ターゲットを同時に traceroute し、それぞれの結果を行で区切って一覧表示します。
+* **Port Monitor ペイン**: `-p` オプション指定時に TCP/UDP ポートの疎通状況をリアルタイムで監視します。ポート番号から推定されるサービス名、Open/Closed の累計回数、最終ステータス変化時刻を表示します。
 * **PMTU 探索**: DF 付きのパケットサイズ探索を実行できます。
 * **自動ソースIP検出**: 指定がない場合でも、実際に通信に使用されているローカルIPを自動的に表示します。
 * **RTT グラフ**: 各グラフは縦軸 0〜100ms、横軸 30 秒の固定レンジで表示されます。
@@ -62,6 +63,15 @@ sudo ./mping -T google.com
 
 # PMTU 探索 (payload 上限 9872 から探索)
 sudo ./mping -m google.com
+
+# ポート疎通確認 (443/tcp)
+sudo ./mping -p 443/tcp google.com
+
+# 複数ポートをカンマ区切りで指定
+sudo ./mping -p 443/tcp,53/udp google.com 8.8.8.8
+
+# Traceroute と Port Monitor を同時に表示
+sudo ./mping -T -p 443/tcp google.com
 ```
 
 ### hosts.yaml の例
@@ -93,6 +103,7 @@ hosts:
 | `--ipv4` | `-4` | IPv4 のみを使用する | `false` |
 | `--ipv6` | `-6` | IPv6 のみを使用する | `false` |
 | `--output` | `-o` | CSV 形式でのログ出力ファイルパス | `""` |
+| `--port` | `-p` | 疎通確認するポート (例: `443/tcp`, `53/udp`, `443`)。カンマ区切りで複数指定可 | `""` |
 
 ### キー操作
 
@@ -102,14 +113,13 @@ hosts:
 | **s** | Ping 送信を一時停止する |
 | **S** | Ping 送信を再開する (**s** で一時停止した後のみ有効) |
 | **R** | 全ての統計情報とログをリセットする |
-| **Tab** | フォーカスを切り替える (Table / Traceroute / RTT Graphs / Log) |
+| **Tab** | フォーカスを切り替える (Ping Monitor / Traceroute Monitor / Port Monitor / RTT Graphs / Log) |
 | **↑/↓/PgUp/PgDn** | Table/Traceroute/RTT Graphs をスクロール (各ペインにフォーカス時) |
 
 ## 表示項目 (TUI カラム)
 
-* **Hostname**: 指定されたホスト名。
 * **Src IP**: 送信に使用されているローカル IP アドレス。
-* **Dst IP**: 名前解決された宛先 IP アドレス。
+* **Dst IP**: 名前解決された宛先 IP アドレス。ドメイン名で指定した場合は `domain (IP)` の形式で表示。
 * **Success**: 受信に成功したパケット数。
 * **Loss**: 損失したパケット数。
 * **Loss Ratio**: パケット損失率。
@@ -125,12 +135,26 @@ hosts:
 * **Error**: 最新エラーの短縮メッセージを表示 (赤色)。詳細は Log ペインに表示されます。
 * **Last Loss**: 最後にパケットロスが発生してからの経過時間。
 
-## Traceroute ペイン
+## Traceroute Monitor ペイン
 
 * `-T` / `--traceroute` 指定時のみ表示されます。
 * 最大 30 ホップまで探索し、Host と Route の 2 カラム形式で結果を表示します。
 * 複数ターゲット指定時は各ターゲットを行で区切って一覧表示します。
 * 起動後に一度 traceroute を実行し、その後 10 分ごとに自動更新します。
+
+## Port Monitor ペイン
+
+* `-p` / `--port` 指定時のみ表示されます。
+* 指定したポートへの TCP/UDP 疎通確認をリアルタイムで実行します。
+* カンマ区切りで複数のポートを一度に指定できます (例: `-p 443/tcp,53/udp`)。
+* プロトコルを省略した場合は TCP とみなします (例: `-p 443` → `443/tcp`)。
+* 表示カラム:
+  * **Target**: 対象ホスト名
+  * **Port**: ポート番号とプロトコル (例: `443/tcp`)
+  * **Service**: ポート番号から推定されるサービス名 (不明な場合は `Unknown`)
+  * **Status**: 疎通結果 — 緑 `Open` / 赤 `Closed` / 黄 `Filtered` または `Open|Filtered`
+  * **Open/Closed**: Open 判定回数 / Closed・Filtered 判定回数の累計
+  * **Last Change**: ステータスが最後に変化してからの経過時間
 
 ## PMTU 探索
 

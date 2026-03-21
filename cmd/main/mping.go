@@ -178,6 +178,7 @@ type config struct {
 	trace      bool
 	ipv4Only   bool
 	ipv6Only   bool
+	portSpecs  []string
 }
 
 type hostsFileYAML struct {
@@ -277,6 +278,7 @@ func parseArgs(args []string) (config, []string, string, error) {
 	fs.IntVarP(&cfg.count, "count", "c", 0, "stop after sending count packets")
 	fs.BoolVarP(&cfg.ipv4Only, "ipv4", "4", false, "force IPv4 only")
 	fs.BoolVarP(&cfg.ipv6Only, "ipv6", "6", false, "force IPv6 only")
+	fs.StringSliceVarP(&cfg.portSpecs, "port", "p", nil, "port(s) to check, e.g. 443/tcp,53/udp or 443 (defaults to tcp)")
 
 	fs.Usage = func() {
 		fmt.Fprintln(&usageBuf, "Usage: mping [options] host1 host2 ...")
@@ -466,8 +468,31 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		return 1
 	}
 
+	// Parse port specs and start port checker if any ports specified.
+	var portSpecs []pinger.PortSpec
+	for _, raw := range cfg.portSpecs {
+		spec, err := pinger.ParsePortSpec(raw)
+		if err != nil {
+			fmt.Fprintf(errOut, "Invalid port spec %q: %v\n", raw, err)
+			return 1
+		}
+		portSpecs = append(portSpecs, spec)
+	}
+	var portChecker *pinger.PortChecker
+	if len(portSpecs) > 0 {
+		portChecker = pinger.NewPortChecker(targets, portSpecs, interval, timeout)
+		portChecker.Start()
+	}
+
 	if cfg.trace {
 		// Traceroute info can be added to logs if needed
+	}
+
+	stopAll := func() {
+		stopPinger()
+		if portChecker != nil {
+			portChecker.Stop()
+		}
 	}
 
 	// Start TUI
@@ -480,17 +505,25 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		packetSizeToUse,
 		preLogs,
 		cfg.trace,
-		stopPinger,
+		len(portSpecs) > 0,
+		stopAll,
 		func() error {
-			stopPinger()
-			return startPinger()
+			stopAll()
+			if err := startPinger(); err != nil {
+				return err
+			}
+			if portChecker != nil {
+				portChecker = pinger.NewPortChecker(targets, portSpecs, interval, timeout)
+				portChecker.Start()
+			}
+			return nil
 		},
 	); err != nil {
 		fmt.Fprintf(errOut, "Error running application: %v\n", err)
-		stopPinger()
+		stopAll()
 		return 1
 	}
-	stopPinger()
+	stopAll()
 
 	// Print summary on exit
 	fmt.Fprintln(out, "\n--- mping statistics ---")

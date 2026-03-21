@@ -87,6 +87,55 @@ func NewGraphView(targets []*stats.TargetStats, interval time.Duration) *GraphVi
 	}
 }
 
+var wellKnownServices = map[int]map[string]string{
+	20:    {"tcp": "FTP-Data"},
+	21:    {"tcp": "FTP"},
+	22:    {"tcp": "SSH"},
+	23:    {"tcp": "Telnet"},
+	25:    {"tcp": "SMTP"},
+	53:    {"tcp": "DNS", "udp": "DNS"},
+	67:    {"udp": "DHCP"},
+	68:    {"udp": "DHCP"},
+	80:    {"tcp": "HTTP"},
+	110:   {"tcp": "POP3"},
+	123:   {"udp": "NTP"},
+	143:   {"tcp": "IMAP"},
+	161:   {"udp": "SNMP"},
+	389:   {"tcp": "LDAP"},
+	443:   {"tcp": "HTTPS"},
+	445:   {"tcp": "SMB"},
+	465:   {"tcp": "SMTPS"},
+	514:   {"udp": "Syslog"},
+	587:   {"tcp": "SMTP"},
+	636:   {"tcp": "LDAPS"},
+	993:   {"tcp": "IMAPS"},
+	995:   {"tcp": "POP3S"},
+	1433:  {"tcp": "MSSQL"},
+	1521:  {"tcp": "Oracle"},
+	2181:  {"tcp": "ZooKeeper"},
+	3306:  {"tcp": "MySQL"},
+	3389:  {"tcp": "RDP"},
+	5432:  {"tcp": "PostgreSQL"},
+	5672:  {"tcp": "AMQP"},
+	5900:  {"tcp": "VNC"},
+	6379:  {"tcp": "Redis"},
+	8080:  {"tcp": "HTTP-Alt"},
+	8443:  {"tcp": "HTTPS-Alt"},
+	9200:  {"tcp": "Elasticsearch"},
+	9300:  {"tcp": "Elasticsearch"},
+	11211: {"tcp": "Memcached", "udp": "Memcached"},
+	27017: {"tcp": "MongoDB"},
+}
+
+func portServiceName(port int, protocol string) string {
+	if protos, ok := wellKnownServices[port]; ok {
+		if name, ok := protos[protocol]; ok {
+			return name
+		}
+	}
+	return "Unknown"
+}
+
 func formatRTT(d time.Duration) string {
 	if d == 0 {
 		return "-"
@@ -944,7 +993,7 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 	}
 }
 
-func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, onStop func(), onRestart func() error) error {
+func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error) error {
 	// Define vivid colors
 	vividRed := tcell.NewRGBColor(255, 0, 0)
 	vividCyan := tcell.NewRGBColor(0, 255, 255)
@@ -1071,6 +1120,51 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 				screen.SetContent(x+width-1, i, '║', nil, style)
 			}
 			tview.Print(screen, " Traceroute Monitor ", x+1, y, width-2, tview.AlignCenter, traceBorderColor)
+			return x + 1, y + 1, width - 2, height - 2
+		})
+	}
+
+	// Port Monitor pane
+	var portView *tview.TextView
+	var portPane *tview.Flex
+	setPortBorderColor := func(_ tcell.Color) {}
+
+	if portEnabled {
+		portView = tview.NewTextView().
+			SetDynamicColors(true).
+			SetScrollable(true).
+			SetWrap(false)
+		portView.SetBackgroundColor(tcell.ColorBlack)
+
+		portPane = tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(portView, 0, 1, true)
+		portPane.SetBorder(true).SetBorderColor(tcell.ColorWhite)
+
+		portBorderColor := tcell.ColorWhite
+		setPortBorderColor = func(c tcell.Color) {
+			portBorderColor = c
+			portPane.SetBorderColor(c)
+		}
+		portPane.SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
+			if width < 2 || height < 2 {
+				return x + 1, y + 1, width - 2, height - 2
+			}
+			style := tcell.StyleDefault.Foreground(portBorderColor)
+			screen.SetContent(x, y, '╔', nil, style)
+			for i := x + 1; i < x+width-1; i++ {
+				screen.SetContent(i, y, '═', nil, style)
+			}
+			screen.SetContent(x+width-1, y, '╗', nil, style)
+			screen.SetContent(x, y+height-1, '╚', nil, style)
+			for i := x + 1; i < x+width-1; i++ {
+				screen.SetContent(i, y+height-1, '═', nil, style)
+			}
+			screen.SetContent(x+width-1, y+height-1, '╝', nil, style)
+			for i := y + 1; i < y+height-1; i++ {
+				screen.SetContent(x, i, '║', nil, style)
+				screen.SetContent(x+width-1, i, '║', nil, style)
+			}
+			tview.Print(screen, " Port Monitor ", x+1, y, width-2, tview.AlignCenter, portBorderColor)
 			return x + 1, y + 1, width - 2, height - 2
 		})
 	}
@@ -1277,6 +1371,117 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 
 			traceView.SetText(sb.String())
 		}
+
+		if portEnabled && portView != nil {
+			_, _, availW, _ := portView.GetInnerRect()
+
+			// Column widths: Target, Port, Status, Open/Closed, Last Change
+			targetColW := runewidth.StringWidth("Target")
+			for _, t := range targets {
+				if w := runewidth.StringWidth(t.GetView().Host); w > targetColW {
+					targetColW = w
+				}
+			}
+			targetColW += 2
+
+			portColW := runewidth.StringWidth("Port")
+			for _, t := range targets {
+				for _, pr := range t.GetView().PortResults {
+					if w := runewidth.StringWidth(fmt.Sprintf("%d/%s", pr.Port, pr.Protocol)); w > portColW {
+						portColW = w
+					}
+				}
+			}
+			portColW += 2
+
+			serviceColW := runewidth.StringWidth("Service")
+			for _, t := range targets {
+				for _, pr := range t.GetView().PortResults {
+					if w := runewidth.StringWidth(portServiceName(pr.Port, pr.Protocol)); w > serviceColW {
+						serviceColW = w
+					}
+				}
+			}
+			serviceColW += 2
+
+			statusColW := runewidth.StringWidth("Open|Filtered") + 2
+			countColW := runewidth.StringWidth("Open/Closed") + 2
+			// Expand Last Change column to fill remaining width
+			changeColW := runewidth.StringWidth("Last Change") + 2
+			used := targetColW + portColW + serviceColW + statusColW + countColW + changeColW + 6
+			if availW > used {
+				changeColW += availW - used
+			}
+
+			cell := func(text string, colW int) string {
+				return formatCellText(" "+text, colW, tview.AlignLeft)
+			}
+			th := strings.Repeat("─", targetColW)
+			ph := strings.Repeat("─", portColW)
+			svh := strings.Repeat("─", serviceColW)
+			sh := strings.Repeat("─", statusColW)
+			ch := strings.Repeat("─", countColW)
+			lh := strings.Repeat("─", changeColW)
+
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "[white]┌%s┬%s┬%s┬%s┬%s┬%s┐[-]\n", th, ph, svh, sh, ch, lh)
+			fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
+				cell("Target", targetColW), cell("Port", portColW), cell("Service", serviceColW),
+				cell("Status", statusColW), cell("Open/Closed", countColW), cell("Last Change", changeColW))
+			fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┼%s┼%s┤[-]\n", th, ph, svh, sh, ch, lh)
+
+			// Collect targets that have results for separator logic
+			dataTargets := make([]*stats.TargetStats, 0, len(targets))
+			for _, t := range targets {
+				if len(t.GetView().PortResults) > 0 {
+					dataTargets = append(dataTargets, t)
+				}
+			}
+
+			rowCount := 0
+			for ti, t := range dataTargets {
+				view := t.GetView()
+				for i, pr := range view.PortResults {
+					statusColor := "[white]"
+					switch pr.Status {
+					case "Open":
+						statusColor = "[green]"
+					case "Closed":
+						statusColor = "[red]"
+					case "Filtered", "Open|Filtered":
+						statusColor = "[yellow]"
+					}
+					countStr := fmt.Sprintf("%d/%d", pr.OpenCount, pr.ClosedCount)
+					changeStr := "-"
+					if !pr.LastChange.IsZero() {
+						changeStr = formatLossAgo(pr.LastChange)
+					}
+					targetName := ""
+					if i == 0 {
+						targetName = view.Host
+					}
+					fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│%s%s[-][white]│[white]%s[white]│[white]%s[white]│[-]\n",
+						cell(targetName, targetColW),
+						cell(fmt.Sprintf("%d/%s", pr.Port, pr.Protocol), portColW),
+						cell(portServiceName(pr.Port, pr.Protocol), serviceColW),
+						statusColor, cell(pr.Status, statusColW),
+						cell(countStr, countColW),
+						cell(changeStr, changeColW))
+					rowCount++
+				}
+				if ti < len(dataTargets)-1 {
+					fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┼%s┼%s┤[-]\n", th, ph, svh, sh, ch, lh)
+				}
+			}
+			if rowCount == 0 {
+				total := targetColW + portColW + serviceColW + statusColW + countColW + changeColW + 5
+				fmt.Fprintf(&sb, "[white]│[darkgray]%s[white]│[-]\n",
+					formatCellText(" Waiting for results...", total, tview.AlignLeft))
+			}
+			fmt.Fprintf(&sb, "[white]└%s┴%s┴%s┴%s┴%s┴%s┘[-]\n", th, ph, svh, sh, ch, lh)
+
+			portView.SetText(sb.String())
+		}
 	}
 
 	// Keys
@@ -1317,40 +1522,49 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		}
 		switch event.Key() {
 		case tcell.KeyTab:
+			resetAll := func() {
+				table.SetBorderColor(tcell.ColorWhite)
+				errorView.SetBorderColor(tcell.ColorRed)
+				graphView.SetBorderColor(vividCyan)
+				setTraceBorderColor(tcell.ColorWhite)
+				setPortBorderColor(tcell.ColorWhite)
+			}
 			if app.GetFocus() == table {
 				if traceEnabled && traceView != nil {
+					resetAll()
 					app.SetFocus(traceView)
 					setTraceBorderColor(tcell.ColorGreen)
-					table.SetBorderColor(tcell.ColorWhite)
-					errorView.SetBorderColor(tcell.ColorRed)
-					graphView.SetBorderColor(vividCyan)
+				} else if portEnabled && portView != nil {
+					resetAll()
+					app.SetFocus(portView)
+					setPortBorderColor(tcell.ColorGreen)
 				} else {
+					resetAll()
 					app.SetFocus(graphView)
 					graphView.SetBorderColor(tcell.ColorGreen)
-					table.SetBorderColor(tcell.ColorWhite)
-					errorView.SetBorderColor(tcell.ColorRed)
 				}
 			} else if traceEnabled && traceView != nil && app.GetFocus() == traceView {
+				if portEnabled && portView != nil {
+					resetAll()
+					app.SetFocus(portView)
+					setPortBorderColor(tcell.ColorGreen)
+				} else {
+					resetAll()
+					app.SetFocus(graphView)
+					graphView.SetBorderColor(tcell.ColorGreen)
+				}
+			} else if portEnabled && portView != nil && app.GetFocus() == portView {
+				resetAll()
 				app.SetFocus(graphView)
 				graphView.SetBorderColor(tcell.ColorGreen)
-				if tracePane != nil {
-					setTraceBorderColor(tcell.ColorWhite)
-				}
-				table.SetBorderColor(tcell.ColorWhite)
-				errorView.SetBorderColor(tcell.ColorRed)
 			} else if app.GetFocus() == graphView {
+				resetAll()
 				app.SetFocus(errorView)
 				errorView.SetBorderColor(tcell.ColorGreen)
-				graphView.SetBorderColor(vividCyan)
-				table.SetBorderColor(tcell.ColorWhite)
 			} else {
+				resetAll()
 				app.SetFocus(table)
 				table.SetBorderColor(tcell.ColorGreen)
-				errorView.SetBorderColor(tcell.ColorRed)
-				graphView.SetBorderColor(vividCyan)
-				if tracePane != nil {
-					setTraceBorderColor(tcell.ColorWhite)
-				}
 			}
 			return nil
 		}
@@ -1449,11 +1663,28 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		AddItem(errorView, 0, 2, false). // Logs: 2 parts
 		AddItem(footer, 2, 0, false)
 
-	if traceEnabled && tracePane != nil {
+	if traceEnabled && tracePane != nil && portEnabled && portPane != nil {
+		flex = tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(header, 2, 0, false).
+			AddItem(tablePane, 0, 3, true).  // Table: 3 parts
+			AddItem(tracePane, 0, 2, false). // Trace: 2 parts
+			AddItem(portPane, 0, 2, false).  // Port: 2 parts
+			AddItem(graphView, 0, 3, false). // Graph: 3 parts
+			AddItem(errorView, 0, 2, false). // Logs: 2 parts
+			AddItem(footer, 2, 0, false)
+	} else if traceEnabled && tracePane != nil {
 		flex = tview.NewFlex().SetDirection(tview.FlexRow).
 			AddItem(header, 2, 0, false).
 			AddItem(tablePane, 0, 3, true).  // Table: 3 parts
 			AddItem(tracePane, 0, 3, false). // Trace: 3 parts
+			AddItem(graphView, 0, 3, false). // Graph: 3 parts
+			AddItem(errorView, 0, 2, false). // Logs: 2 parts
+			AddItem(footer, 2, 0, false)
+	} else if portEnabled && portPane != nil {
+		flex = tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(header, 2, 0, false).
+			AddItem(tablePane, 0, 3, true).  // Table: 3 parts
+			AddItem(portPane, 0, 3, false).  // Port: 3 parts
 			AddItem(graphView, 0, 3, false). // Graph: 3 parts
 			AddItem(errorView, 0, 2, false). // Logs: 2 parts
 			AddItem(footer, 2, 0, false)
