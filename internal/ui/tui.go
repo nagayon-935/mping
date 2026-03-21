@@ -133,10 +133,14 @@ func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, pack
 
 	rowSourceIP := displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
 
+	dstDisplay := view.IP
+	if view.Host != view.IP {
+		dstDisplay = fmt.Sprintf("%s (%s)", view.Host, view.IP)
+	}
+
 	cols := []string{
-		view.Host,
 		rowSourceIP,
-		view.IP, // Dst IP
+		dstDisplay, // Dst IP
 		fmt.Sprintf("%d", view.Recv),
 		fmt.Sprintf("%d", view.Loss),
 		fmt.Sprintf("%.1f%%", lossRate),
@@ -286,7 +290,7 @@ func fitWidthsToAvailable(desired, minWidths, maxWidths []int, availableColumnsW
 		sum += w
 	}
 
-	shrinkOrder := []int{12, 2, 1, 0, 13, 8, 7, 6, 5, 3, 4, 10, 11, 9}
+	shrinkOrder := []int{11, 1, 0, 12, 7, 6, 5, 4, 2, 3, 9, 10, 8}
 	for sum > availableColumnsWidth {
 		changed := false
 		for _, idx := range shrinkOrder {
@@ -307,7 +311,7 @@ func fitWidthsToAvailable(desired, minWidths, maxWidths []int, availableColumnsW
 		}
 	}
 
-	growOrder := []int{0, 2, 1, 12, 13, 3, 6, 7, 8, 5, 4, 9, 10, 11}
+	growOrder := []int{1, 0, 11, 12, 2, 5, 6, 7, 4, 3, 8, 9, 10}
 	for sum < availableColumnsWidth {
 		changed := false
 		for _, idx := range growOrder {
@@ -504,13 +508,13 @@ func buildFullRowCells(cols []string, widths []int, aligns []int, lossRate float
 			SetAlign(aligns[c])
 
 		switch c {
-		case 5: // Loss Ratio column index
+		case 4: // Loss Ratio column index
 			cell.SetTextColor(lossColor).SetAttributes(tcell.AttrBold)
-		case 6: // RTT column index
+		case 5: // RTT column index
 			cell.SetTextColor(rttColor)
-		case 8: // Jitter column index
+		case 7: // Jitter column index
 			cell.SetTextColor(jitterColor)
-		case 12: // Error column
+		case 11: // Error column
 			if text != "" {
 				cell.SetTextColor(vividRed)
 			}
@@ -528,7 +532,9 @@ func buildCompactRowCells(values []string, widths []int, aligns []int, vividRed 
 			SetBackgroundColor(tcell.ColorBlack).
 			SetTextColor(rowColor).
 			SetAlign(aligns[c])
-		if c == 3 && strings.TrimSpace(v) != "" {
+		if c == 0 {
+			cell.SetTextColor(tcell.ColorWhite)
+		} else if c == 3 && strings.TrimSpace(v) != "" {
 			cell.SetTextColor(vividRed)
 		}
 		cells[c] = cell
@@ -859,16 +865,16 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 
 					// Draw grid line
 					for gx := 0; gx < graphWidth; gx++ {
-						screen.SetContent(graphX+gx, py, '·', nil, tcell.StyleDefault.Foreground(tcell.ColorDarkGray))
+						screen.SetContent(graphX+gx, py, '·', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
 					}
 					// Draw label
-					tview.Print(screen, fmt.Sprintf("%dms", val), graphX+graphWidth+1, py, labelWidth, tview.AlignLeft, tcell.ColorDarkGray)
+					tview.Print(screen, fmt.Sprintf("%dms", val), graphX+graphWidth+1, py, labelWidth, tview.AlignLeft, tcell.ColorGray)
 				}
 			}
 
 			// Label for 0ms (Bottom)
 			bottomY := plotY + plotHeight - 1
-			tview.Print(screen, "0ms", graphX+graphWidth+1, bottomY, labelWidth, tview.AlignLeft, tcell.ColorDarkGray)
+			tview.Print(screen, "0ms", graphX+graphWidth+1, bottomY, labelWidth, tview.AlignLeft, tcell.ColorGray)
 
 			// Label for 100ms (Top) is drawn via grid line to avoid duplicate text.
 
@@ -918,7 +924,7 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 						if r != ' ' {
 							color := g.vividCyan
 							if r == '·' {
-								color = tcell.ColorDarkGray
+								color = tcell.ColorGray
 							}
 							screen.SetContent(px, py, r, nil, tcell.StyleDefault.Foreground(color))
 						}
@@ -930,7 +936,7 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 			sepY := baseY + rowHeight - 1
 			if sepY > graphY && sepY < y+height {
 				for sx := 0; sx < colWidth; sx++ {
-					screen.SetContent(baseX+sx, sepY, '─', nil, tcell.StyleDefault.Foreground(tcell.ColorDarkGray))
+					screen.SetContent(baseX+sx, sepY, '─', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
 				}
 			}
 
@@ -964,50 +970,46 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 	errorView.SetBorder(true).SetTitle(" Log ").SetTitleColor(tcell.ColorRed).SetBorderColor(tcell.ColorRed)
 	errorView.SetBackgroundColor(tcell.ColorBlack)
 
-	// Set black background and white borders
+	// Set black background and darkgray borders
 	table.SetBackgroundColor(tcell.ColorBlack)
 	table.SetBorderColor(tcell.ColorWhite)
+	table.SetBordersColor(tcell.ColorWhite)
 
-	// Columns: Hostname, Src IP, Dst IP, Success, Loss, Loss Ratio, RTT, Avg, Jitter, Size, MTU, TTL, Error, Last Loss
-	fullHeaders := []string{"Hostname", "Src IP", "Dst IP", "Success", "Loss", "Loss Ratio", "RTT", "Avg", "Jitter", "Size", "MTU", "TTL", "Error", "Last Loss"}
+
+	// Columns: Src IP, Dst IP, Success, Loss, Loss Ratio, RTT, Avg, Jitter, Size, MTU, TTL, Error, Last Loss
+	fullHeaders := []string{"Src IP", "Dst IP", "Success", "Loss", "Loss Ratio", "RTT", "Avg", "Jitter", "Size", "MTU", "TTL", "Error", "Last Loss"}
 	fullAligns := []int{
-		tview.AlignLeft, tview.AlignLeft, tview.AlignLeft, tview.AlignRight, tview.AlignRight, tview.AlignRight,
+		tview.AlignLeft, tview.AlignLeft, tview.AlignRight, tview.AlignRight, tview.AlignRight,
 		tview.AlignRight, tview.AlignRight, tview.AlignRight, // RTTs
 		tview.AlignRight, tview.AlignRight, tview.AlignRight, tview.AlignLeft, tview.AlignLeft,
 	}
-	// Hostname / Src IP / Dst IP are dynamically resized from the rendered content.
+	// Src IP / Dst IP are dynamically resized from the rendered content.
 	// Error width is fixed at startup to prevent table size jumps when new errors arrive.
-	baseWidths := []int{8, 6, 6, 8, 7, 10, 10, 10, 10, 6, 6, 5, 30, 15}
-	baseWidths[12] = calcInitialTableErrorWidth(targets, fullHeaders[12], baseWidths[12])
-	minWidths := []int{8, 4, 8, 5, 4, 6, 7, 7, 7, 4, 4, 3, 8, 8}
-	maxWidths := []int{40, 45, 45, 10, 10, 12, 12, 12, 12, 8, 8, 6, baseWidths[12], 18}
+	baseWidths := []int{6, 6, 8, 7, 10, 10, 10, 10, 6, 6, 5, 30, 15}
+	baseWidths[11] = calcInitialTableErrorWidth(targets, fullHeaders[11], baseWidths[11])
+	minWidths := []int{4, 8, 5, 4, 6, 7, 7, 7, 4, 4, 3, 8, 8}
+	maxWidths := []int{45, 60, 10, 10, 12, 12, 12, 12, 8, 8, 6, baseWidths[11], 18}
 
 	headerColor := tcell.ColorYellow
 	rowColor := tcell.ColorWhite
 
-	calcTableWidth := func(widths []int) int {
-		total := 0
-		for _, w := range widths {
-			total += w
-		}
-		return total + len(widths) + 1
-	}
-
 	// Recalculate dynamic column widths based on current output text.
 	calcColumnWidths := func() []int {
 		widths := append([]int(nil), baseWidths...)
-		for _, c := range []int{0, 1, 2} {
+		for _, c := range []int{0, 1} {
 			maxWidth := runewidth.StringWidth(fullHeaders[c])
 			for _, t := range targets {
 				view := t.GetView()
 				value := ""
 				switch c {
 				case 0:
-					value = view.Host
-				case 1:
 					value = displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
-				case 2:
-					value = view.IP
+				case 1:
+					if view.Host != view.IP {
+						value = fmt.Sprintf("%s (%s)", view.Host, view.IP)
+					} else {
+						value = view.IP
+					}
 				}
 				if w := runewidth.StringWidth(value); w > maxWidth {
 					maxWidth = w
@@ -1019,24 +1021,18 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 	}
 
 	widths := calcColumnWidths()
-	tableWidth := calcTableWidth(widths)
 	activeHeaders := append([]string(nil), fullHeaders...)
 	activeAligns := append([]int(nil), fullAligns...)
 	rowCount := len(targets) + 1
 	compactLayout := false
 
-	// tableContainer centers the table horizontally
-	tableContainer := tview.NewFlex().SetDirection(tview.FlexColumn).
-		AddItem(nil, 0, 1, false).
-		AddItem(table, tableWidth, 0, true).
-		AddItem(nil, 0, 1, false)
-
 	tablePane := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(tableContainer, 0, 1, true)
-	tablePane.SetBorder(true).SetTitle(" Table ").SetBorderColor(tcell.ColorWhite)
+		AddItem(table, 0, 1, true)
+	tablePane.SetBorder(true).SetTitle(" Ping Monitor ").SetBorderColor(tcell.ColorWhite)
 
 	var traceView *tview.TextView
 	var tracePane *tview.Flex
+	setTraceBorderColor := func(_ tcell.Color) {}
 
 	if traceEnabled {
 		traceView = tview.NewTextView().
@@ -1047,7 +1043,36 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 
 		tracePane = tview.NewFlex().SetDirection(tview.FlexRow).
 			AddItem(traceView, 0, 1, true)
-		tracePane.SetBorder(true).SetTitle(" Traceroute ").SetBorderColor(tcell.ColorWhite)
+		tracePane.SetBorder(true).SetBorderColor(tcell.ColorWhite)
+
+		traceBorderColor := tcell.ColorWhite
+		setTraceBorderColor = func(c tcell.Color) {
+			traceBorderColor = c
+			tracePane.SetBorderColor(c)
+		}
+		// Override with double-line box drawing characters.
+		tracePane.SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
+			if width < 2 || height < 2 {
+				return x + 1, y + 1, width - 2, height - 2
+			}
+			style := tcell.StyleDefault.Foreground(traceBorderColor)
+			screen.SetContent(x, y, '╔', nil, style)
+			for i := x + 1; i < x+width-1; i++ {
+				screen.SetContent(i, y, '═', nil, style)
+			}
+			screen.SetContent(x+width-1, y, '╗', nil, style)
+			screen.SetContent(x, y+height-1, '╚', nil, style)
+			for i := x + 1; i < x+width-1; i++ {
+				screen.SetContent(i, y+height-1, '═', nil, style)
+			}
+			screen.SetContent(x+width-1, y+height-1, '╝', nil, style)
+			for i := y + 1; i < y+height-1; i++ {
+				screen.SetContent(x, i, '║', nil, style)
+				screen.SetContent(x+width-1, i, '║', nil, style)
+			}
+			tview.Print(screen, " Traceroute Monitor ", x+1, y, width-2, tview.AlignCenter, traceBorderColor)
+			return x + 1, y + 1, width - 2, height - 2
+		})
 	}
 
 	// Error log state
@@ -1066,9 +1091,6 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		table.Clear()
 
 		_, _, availableTableWidth, _ := tablePane.GetInnerRect()
-		if availableTableWidth <= 0 {
-			availableTableWidth = tableWidth
-		}
 		availableColumnsWidth := availableTableWidth - (len(fullHeaders) + 1)
 		if availableColumnsWidth < 0 {
 			availableColumnsWidth = 0
@@ -1110,21 +1132,19 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			rowCount = len(compactRows) + 1
 		}
 
-		newTableWidth := calcTableWidth(widths)
-		if newTableWidth != tableWidth {
-			tableWidth = newTableWidth
-			tableContainer.ResizeItem(table, tableWidth, 0)
-			}
-
 		// Header
 		for i, h := range activeHeaders {
 			text := formatCellText(h, widths[i], activeAligns[i])
-			table.SetCell(0, i, tview.NewTableCell(text).
+			cell := tview.NewTableCell(text).
 				SetBackgroundColor(tcell.ColorBlack).
 				SetTextColor(headerColor).
 				SetAttributes(tcell.AttrBold).
 				SetSelectable(false).
-				SetAlign(activeAligns[i]))
+				SetAlign(activeAligns[i])
+			if i == len(activeHeaders)-1 {
+				cell.SetExpansion(1)
+			}
+			table.SetCell(0, i, cell)
 		}
 
 		pickCompact := func(right, left string) string {
@@ -1208,6 +1228,13 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			}
 			routeColW += 2 // 1 space left + 1 space right
 
+			// Expand Route column to fill available terminal width.
+			// Available width = inner rect width - 3 border chars (│host│route│).
+			_, _, availW, _ := traceView.GetInnerRect()
+			if expanded := availW - hostColW - 3; expanded > routeColW {
+				routeColW = expanded
+			}
+
 			// cell returns text with a leading space, right-padded to fill colW.
 			cell := func(text string, colW int) string {
 				return formatCellText(" "+text, colW, tview.AlignLeft)
@@ -1221,14 +1248,14 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			// Top border.
 			fmt.Fprintf(&sb, "[white]┌%s┬%s┐[-]\n", h, r)
 
-			// Header row: yellow bold labels, white borders.
+			// Header row: yellow bold labels, darkgray borders.
 			fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
 				cell("Host", hostColW), cell("Route", routeColW))
 
 			// Header separator.
 			fmt.Fprintf(&sb, "[white]├%s┼%s┤[-]\n", h, r)
 
-			// Data rows: white values, white borders, separator between rows.
+			// Data rows: host in cyan, route in white, darkgray borders, separator between rows.
 			dataTargets := make([]*stats.TargetStats, 0, len(targets))
 			for _, t := range targets {
 				if len(t.GetView().TraceHops) > 0 {
@@ -1238,7 +1265,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			for i, t := range dataTargets {
 				view := t.GetView()
 				route := strings.Join(view.TraceHops, " -> ")
-				fmt.Fprintf(&sb, "[white]│%s│%s│[-]\n",
+				fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[-]\n",
 					cell(view.Host, hostColW), cell(route, routeColW))
 				if i < len(dataTargets)-1 {
 					fmt.Fprintf(&sb, "[white]├%s┼%s┤[-]\n", h, r)
@@ -1293,7 +1320,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			if app.GetFocus() == table {
 				if traceEnabled && traceView != nil {
 					app.SetFocus(traceView)
-					tracePane.SetBorderColor(tcell.ColorGreen)
+					setTraceBorderColor(tcell.ColorGreen)
 					table.SetBorderColor(tcell.ColorWhite)
 					errorView.SetBorderColor(tcell.ColorRed)
 					graphView.SetBorderColor(vividCyan)
@@ -1307,7 +1334,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 				app.SetFocus(graphView)
 				graphView.SetBorderColor(tcell.ColorGreen)
 				if tracePane != nil {
-					tracePane.SetBorderColor(tcell.ColorWhite)
+					setTraceBorderColor(tcell.ColorWhite)
 				}
 				table.SetBorderColor(tcell.ColorWhite)
 				errorView.SetBorderColor(tcell.ColorRed)
@@ -1322,7 +1349,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 				errorView.SetBorderColor(tcell.ColorRed)
 				graphView.SetBorderColor(vividCyan)
 				if tracePane != nil {
-					tracePane.SetBorderColor(tcell.ColorWhite)
+					setTraceBorderColor(tcell.ColorWhite)
 				}
 			}
 			return nil
