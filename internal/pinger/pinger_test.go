@@ -1133,3 +1133,177 @@ func TestExtractEchoIDSeqV6(t *testing.T) {
 		t.Fatalf("unexpected extract: ok=%v id=%d seq=%d", ok, id, seq)
 	}
 }
+
+// ---- Pinger.Stop() test ----
+
+func TestPingerStop(t *testing.T) {
+	p := NewPinger(nil)
+	// First Stop should close the channel without panic
+	p.Stop()
+	// Second Stop should be a no-op (already closed)
+	p.Stop()
+}
+
+// ---- parseInnerEchoIDSeq additional branches ----
+
+func TestParseInnerEchoIDSeqIPv4UDP(t *testing.T) {
+	// Build ICMP echo message
+	echo := icmp.Message{
+		Type: ipv4.ICMPTypeEcho,
+		Code: 0,
+		Body: &icmp.Echo{ID: 99, Seq: 77, Data: []byte("x")},
+	}
+	inner, err := echo.Marshal(nil)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// Fake IPv4 header (20 bytes) with protocol=17 (UDP)
+	hdr := make([]byte, 20)
+	hdr[0] = 0x45 // version=4, IHL=5
+	hdr[9] = 17   // UDP
+	// 8-byte fake UDP header + ICMP payload
+	udpHdr := make([]byte, 8)
+	data := append(append(hdr, udpHdr...), inner...)
+
+	id, seq, ok := parseInnerEchoIDSeq(data)
+	if !ok || id != 99 || seq != 77 {
+		t.Fatalf("IPv4+UDP: ok=%v id=%d seq=%d", ok, id, seq)
+	}
+}
+
+func TestParseInnerEchoIDSeqIPv6UDP(t *testing.T) {
+	// Build ICMPv6 echo message
+	echo := icmp.Message{
+		Type: ipv6.ICMPTypeEchoRequest,
+		Code: 0,
+		Body: &icmp.Echo{ID: 33, Seq: 44, Data: []byte("x")},
+	}
+	inner, err := echo.Marshal(nil)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// Fake IPv6 header (40 bytes) with next header=17 (UDP)
+	hdr := make([]byte, 40)
+	hdr[0] = 0x60 // version=6
+	hdr[6] = 17   // UDP
+	// 8-byte fake UDP header + ICMPv6 payload
+	udpHdr := make([]byte, 8)
+	data := append(append(hdr, udpHdr...), inner...)
+
+	id, seq, ok := parseInnerEchoIDSeq(data)
+	if !ok || id != 33 || seq != 44 {
+		t.Fatalf("IPv6+UDP: ok=%v id=%d seq=%d", ok, id, seq)
+	}
+}
+
+func TestParseInnerEchoIDSeqShortIPv6(t *testing.T) {
+	// IPv6 version but truncated header (<40 bytes)
+	data := make([]byte, 20)
+	data[0] = 0x60 // version=6, but only 20 bytes
+	_, _, ok := parseInnerEchoIDSeq(data)
+	if ok {
+		t.Fatal("expected false for truncated IPv6 header")
+	}
+}
+
+func TestParseInnerEchoIDSeqUnknownVersion(t *testing.T) {
+	// Version=5 (neither 4 nor 6)
+	data := make([]byte, 20)
+	data[0] = 0x50 // version=5
+	_, _, ok := parseInnerEchoIDSeq(data)
+	if ok {
+		t.Fatal("expected false for unknown IP version")
+	}
+}
+
+func TestParseInnerEchoIDSeqIPv4ShortForIHL(t *testing.T) {
+	// IHL says 10 words (40 bytes) but data is only 10 bytes
+	data := make([]byte, 10)
+	data[0] = 0x4A // version=4, IHL=10 → header is 40 bytes, but data is only 10
+	_, _, ok := parseInnerEchoIDSeq(data)
+	if ok {
+		t.Fatal("expected false when data shorter than IHL")
+	}
+}
+
+// ---- extractEchoIDSeq additional branches ----
+
+func TestExtractEchoIDSeqTRCPattern(t *testing.T) {
+	// Build a payload with TRC- magic pattern (not parseable as IP header)
+	payload := make([]byte, 8)
+	payload[0] = 'T'
+	payload[1] = 'R'
+	payload[2] = 'C'
+	payload[3] = '-'
+	payload[4] = 0x00
+	payload[5] = 0xAB // id = 0xAB
+	payload[6] = 0x00
+	payload[7] = 0xCD // seq = 0xCD
+
+	msg := icmp.Message{
+		Type: ipv4.ICMPTypeDestinationUnreachable,
+		Code: 1,
+		Body: &icmp.DstUnreach{Data: payload},
+	}
+	id, seq, ok := extractEchoIDSeq(&msg)
+	if !ok {
+		t.Fatal("expected ok for TRC- pattern")
+	}
+	if id != 0xAB || seq != 0xCD {
+		t.Errorf("TRC- pattern: got id=%d seq=%d, want id=171 seq=205", id, seq)
+	}
+}
+
+func TestExtractEchoIDSeqTimeExceeded(t *testing.T) {
+	// Build valid inner ICMP echo data
+	echo := icmp.Message{
+		Type: ipv4.ICMPTypeEcho,
+		Code: 0,
+		Body: &icmp.Echo{ID: 11, Seq: 22, Data: []byte("x")},
+	}
+	inner, err := echo.Marshal(nil)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	hdr := make([]byte, 20)
+	hdr[0] = 0x45
+	hdr[9] = 1 // ICMP
+	data := append(hdr, inner...)
+
+	msg := icmp.Message{
+		Type: ipv4.ICMPTypeTimeExceeded,
+		Code: 0,
+		Body: &icmp.TimeExceeded{Data: data},
+	}
+	id, seq, ok := extractEchoIDSeq(&msg)
+	if !ok || id != 11 || seq != 22 {
+		t.Fatalf("TimeExceeded: ok=%v id=%d seq=%d", ok, id, seq)
+	}
+}
+
+func TestExtractEchoIDSeqParamProb(t *testing.T) {
+	// Build valid inner ICMP echo data
+	echo := icmp.Message{
+		Type: ipv4.ICMPTypeEcho,
+		Code: 0,
+		Body: &icmp.Echo{ID: 55, Seq: 66, Data: []byte("x")},
+	}
+	inner, err := echo.Marshal(nil)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	hdr := make([]byte, 20)
+	hdr[0] = 0x45
+	hdr[9] = 1 // ICMP
+	data := append(hdr, inner...)
+
+	msg := icmp.Message{
+		Type: ipv4.ICMPTypeParameterProblem,
+		Code: 0,
+		Body: &icmp.ParamProb{Data: data},
+	}
+	id, seq, ok := extractEchoIDSeq(&msg)
+	if !ok || id != 55 || seq != 66 {
+		t.Fatalf("ParamProb: ok=%v id=%d seq=%d", ok, id, seq)
+	}
+}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net"
 	"os"
@@ -320,5 +321,224 @@ func TestSetupLogger(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "Timestamp,Host,IP") {
 		t.Fatalf("missing header")
+	}
+}
+
+// ---- pingerAdapter setter tests ----
+
+func TestPingerAdapterSetters(t *testing.T) {
+	p := &pingerAdapter{Pinger: pinger.NewPinger(nil)}
+
+	p.SetSource("1.2.3.4")
+	if p.Source != "1.2.3.4" {
+		t.Errorf("SetSource: got %q, want %q", p.Source, "1.2.3.4")
+	}
+	p.SetSize(128)
+	if p.Size != 128 {
+		t.Errorf("SetSize: got %d, want 128", p.Size)
+	}
+	p.SetCount(5)
+	if p.Count != 5 {
+		t.Errorf("SetCount: got %d, want 5", p.Count)
+	}
+	p.SetResolveInterval(30 * time.Second)
+	if p.ResolveInterval != 30*time.Second {
+		t.Errorf("SetResolveInterval: got %v, want 30s", p.ResolveInterval)
+	}
+	var buf bytes.Buffer
+	p.SetLogWriter(&buf)
+	if p.LogWriter != &buf {
+		t.Error("SetLogWriter: writer not set correctly")
+	}
+}
+
+// ---- runTraceroutes tests ----
+
+func TestRunTraceroutes_ContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	targets := []*stats.TargetStats{stats.NewTargetStats("example.com")}
+	fp := &fakePinger{}
+
+	done := make(chan struct{})
+	go func() {
+		runTraceroutes(ctx, fp, targets)
+		close(done)
+	}()
+
+	// Allow initial run to complete then cancel
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runTraceroutes did not stop after context cancel")
+	}
+
+	view := targets[0].GetView()
+	if len(view.TraceHops) == 0 || view.TraceHops[0] != "hop1" {
+		t.Errorf("unexpected hops: %v", view.TraceHops)
+	}
+}
+
+func TestRunTraceroutes_TraceError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	targets := []*stats.TargetStats{stats.NewTargetStats("example.com")}
+	fp := &fakePinger{traceErr: io.ErrUnexpectedEOF}
+
+	runTraceroutes(ctx, fp, targets)
+
+	view := targets[0].GetView()
+	if len(view.TraceHops) == 0 || !strings.HasPrefix(view.TraceHops[0], "error:") {
+		t.Errorf("expected error hop, got %v", view.TraceHops)
+	}
+}
+
+func TestRunTraceroutes_EmptyHops(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	// Verify "Tracing..." is set initially when hops are empty,
+	// then replaced with the result from TraceRoute
+	targets := []*stats.TargetStats{stats.NewTargetStats("example.com")}
+	fp := &fakePinger{}
+
+	runTraceroutes(ctx, fp, targets)
+
+	view := targets[0].GetView()
+	if len(view.TraceHops) == 0 {
+		t.Errorf("expected hops to be set, got empty")
+	}
+}
+
+// ---- determineSourceIPs additional tests ----
+
+func TestDetermineSourceIPs_IPv6SourceAddr(t *testing.T) {
+	bind, v4, v6, err := determineSourceIPs(config{sourceAddr: "2001:db8::1"}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if bind != "2001:db8::1" || v4 != "" || v6 != "2001:db8::1" {
+		t.Errorf("unexpected: bind=%q v4=%q v6=%q", bind, v4, v6)
+	}
+}
+
+func TestDetermineSourceIPs_IfaceNameError(t *testing.T) {
+	_, _, _, err := determineSourceIPs(config{ifaceName: "no-such-iface-xyz"}, nil)
+	if err == nil {
+		t.Fatal("expected error for invalid interface name")
+	}
+}
+
+// ---- getInterfaceIP additional tests ----
+
+func TestGetInterfaceIP_LoopbackNoMatch(t *testing.T) {
+	ifaces, err := net.Interfaces()
+	if err != nil || len(ifaces) == 0 {
+		t.Skip("no interfaces available")
+	}
+	// Find a loopback interface; its IPs are filtered (IsLoopback), so should return error
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback != 0 {
+			_, err := getInterfaceIP(iface.Name, false)
+			// Loopback IPs are skipped, so we expect "no IPv4 address found" error
+			if err == nil {
+				t.Logf("unexpected success on loopback interface %q", iface.Name)
+			}
+			return
+		}
+	}
+	t.Skip("no loopback interface found")
+}
+
+// ---- run() additional coverage ----
+
+func TestRunInvalidPortSpec(t *testing.T) {
+	origPinger := newPinger
+	origUI := uiRun
+	t.Cleanup(func() {
+		newPinger = origPinger
+		uiRun = origUI
+	})
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		return &fakePinger{}
+	}
+	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error) error {
+		return nil
+	}
+	var out, errOut bytes.Buffer
+	code := run([]string{"-p", "notaport", "example.com"}, &out, &errOut)
+	if code == 0 {
+		t.Fatal("expected non-zero code for invalid port spec")
+	}
+	if !strings.Contains(errOut.String(), "Invalid port spec") {
+		t.Errorf("expected invalid port spec message, got: %q", errOut.String())
+	}
+}
+
+func TestRunWithPortSpec(t *testing.T) {
+	origPinger := newPinger
+	origUI := uiRun
+	t.Cleanup(func() {
+		newPinger = origPinger
+		uiRun = origUI
+	})
+	fp := &fakePinger{}
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		return fp
+	}
+	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error) error {
+		return nil
+	}
+	var out, errOut bytes.Buffer
+	code := run([]string{"-p", "443/tcp", "-S", "127.0.0.1", "example.com"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
+	}
+}
+
+func TestRunWithTrace(t *testing.T) {
+	origPinger := newPinger
+	origUI := uiRun
+	t.Cleanup(func() {
+		newPinger = origPinger
+		uiRun = origUI
+	})
+	fp := &fakePinger{}
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		return fp
+	}
+	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error) error {
+		return nil
+	}
+	var out, errOut bytes.Buffer
+	code := run([]string{"-T", "-S", "127.0.0.1", "example.com"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
+	}
+}
+
+func TestRunWithMTUIPv6Warning(t *testing.T) {
+	origPinger := newPinger
+	origUI := uiRun
+	t.Cleanup(func() {
+		newPinger = origPinger
+		uiRun = origUI
+	})
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		return &fakePinger{}
+	}
+	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error) error {
+		return nil
+	}
+	var out, errOut bytes.Buffer
+	code := run([]string{"-6", "-m", "-S", "::1", "example.com"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "PMTU discovery disabled") {
+		t.Errorf("expected PMTU warning, got: %q", errOut.String())
 	}
 }

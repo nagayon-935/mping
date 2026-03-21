@@ -620,3 +620,36 @@ func screenRowString(screen tcell.Screen, y, width int) string {
 	}
 	return b.String()
 }
+
+
+func TestPortServiceName(t *testing.T) {
+	tests := []struct {
+		port     int
+		protocol string
+		want     string
+	}{
+		{443, "tcp", "HTTPS"},
+		{80, "tcp", "HTTP"},
+		{53, "tcp", "DNS"},
+		{53, "udp", "DNS"},
+		{22, "tcp", "SSH"},
+		{67, "udp", "DHCP"},
+		{123, "udp", "NTP"},
+		{3306, "tcp", "MySQL"},
+		{5432, "tcp", "PostgreSQL"},
+		{6379, "tcp", "Redis"},
+		{27017, "tcp", "MongoDB"},
+		// Protocol mismatch → Unknown
+		{80, "udp", "Unknown"},
+		{443, "udp", "Unknown"},
+		// Unknown port → Unknown
+		{9999, "tcp", "Unknown"},
+		{0, "tcp", "Unknown"},
+	}
+	for _, tt := range tests {
+		got := portServiceName(tt.port, tt.protocol)
+		if got != tt.want {
+			t.Errorf("portServiceName(%d, %q): got %q, want %q", tt.port, tt.protocol, got, tt.want)
+		}
+	}
+}
