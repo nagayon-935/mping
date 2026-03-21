@@ -248,8 +248,12 @@ func TestBuildFullColumns(t *testing.T) {
 	if rate <= 0 {
 		t.Fatalf("loss rate: got %v", rate)
 	}
-	if len(cols) != 14 {
+	if len(cols) != 13 {
 		t.Fatalf("cols len: got %d", len(cols))
+	}
+	// Dst IP should include hostname when host != IP
+	if cols[1] != "example.com (1.1.1.1)" {
+		t.Fatalf("dst ip: got %q", cols[1])
 	}
 }
 
@@ -279,7 +283,7 @@ func TestColorHelpers(t *testing.T) {
 }
 
 func TestBuildFullRowCells(t *testing.T) {
-	cols := []string{"h", "s", "d", "1", "2", "10.0%", "1ms", "1ms", "1ms", "56", "1500", "64", "err", "1s ago"}
+	cols := []string{"s", "d", "1", "2", "10.0%", "1ms", "1ms", "1ms", "56", "1500", "64", "err", "1s ago"}
 	widths := make([]int, len(cols))
 	for i := range widths {
 		widths[i] = 5
@@ -289,7 +293,7 @@ func TestBuildFullRowCells(t *testing.T) {
 	if len(cells) != len(cols) {
 		t.Fatalf("cells len mismatch")
 	}
-	if cells[12].Color == tcell.ColorWhite {
+	if cells[11].Color == tcell.ColorWhite {
 		t.Fatalf("expected error cell colored")
 	}
 }
