@@ -7,6 +7,40 @@ import (
 
 const historySize = 3000
 
+// PortCheckResult holds the result of a single TCP/UDP port check.
+type PortCheckResult struct {
+	Port        int
+	Protocol    string // "tcp" or "udp"
+	Status      string // "Open", "Closed", "Filtered", "Open|Filtered", "Error"
+	RTT         time.Duration
+	OpenCount   int
+	ClosedCount int
+	LastChange  time.Time
+	mu          sync.RWMutex
+}
+
+func (r *PortCheckResult) SetResult(status string, rtt time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if status != r.Status {
+		r.LastChange = time.Now()
+	}
+	r.Status = status
+	r.RTT = rtt
+	switch status {
+	case "Open":
+		r.OpenCount++
+	case "Closed", "Filtered", "Open|Filtered":
+		r.ClosedCount++
+	}
+}
+
+func (r *PortCheckResult) GetResult() (status string, rtt time.Duration, openCount, closedCount int, lastChange time.Time) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.Status, r.RTT, r.OpenCount, r.ClosedCount, r.LastChange
+}
+
 // TargetStats holds the statistics for a single ping target.
 type TargetStats struct {
 	Host         string
@@ -14,6 +48,7 @@ type TargetStats struct {
 	IfaceMTU     int
 	PMTU         int
 	TraceHops    []string
+	PortResults  []*PortCheckResult
 	Sent         int
 	Recv         int
 	Loss         int
@@ -35,7 +70,16 @@ type TargetStats struct {
 	mu sync.RWMutex
 }
 
-
+// PortCheckView is a read-only snapshot of a single port check result.
+type PortCheckView struct {
+	Port        int
+	Protocol    string
+	Status      string
+	RTT         time.Duration
+	OpenCount   int
+	ClosedCount int
+	LastChange  time.Time
+}
 
 // TargetView represents a read-only snapshot of the stats for UI rendering.
 type TargetView struct {
@@ -44,6 +88,7 @@ type TargetView struct {
 	IfaceMTU     int
 	PMTU         int
 	TraceHops    []string
+	PortResults  []PortCheckView
 	Sent         int
 	Recv         int
 	Loss         int
@@ -84,6 +129,15 @@ func (t *TargetStats) GetView() TargetView {
 	copy(histCopy, t.rttHistory)
 	traceCopy := make([]string, len(t.TraceHops))
 	copy(traceCopy, t.TraceHops)
+	portCopy := make([]PortCheckView, len(t.PortResults))
+	for i, r := range t.PortResults {
+		status, rtt, openCount, closedCount, lastChange := r.GetResult()
+		portCopy[i] = PortCheckView{
+			Port: r.Port, Protocol: r.Protocol,
+			Status: status, RTT: rtt,
+			OpenCount: openCount, ClosedCount: closedCount, LastChange: lastChange,
+		}
+	}
 
 	return TargetView{
 		Host:         t.Host,
@@ -91,6 +145,7 @@ func (t *TargetStats) GetView() TargetView {
 		IfaceMTU:     t.IfaceMTU,
 		PMTU:         t.PMTU,
 		TraceHops:    traceCopy,
+		PortResults:  portCopy,
 		Sent:         t.Sent,
 		Recv:         t.Recv,
 		Loss:         t.Loss,
