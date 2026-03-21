@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -651,5 +652,1475 @@ func TestPortServiceName(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("portServiceName(%d, %q): got %q, want %q", tt.port, tt.protocol, got, tt.want)
 		}
+	}
+}
+
+// ---- rttColorForRTT / jitterColorForJitter missing branches ----
+
+func TestRttColorForRTT_Orange(t *testing.T) {
+	// 50ms < rtt <= 200ms → ColorOrange
+	got := rttColorForRTT(100*time.Millisecond, tcell.ColorRed)
+	if got != tcell.ColorOrange {
+		t.Errorf("expected ColorOrange for 100ms rtt, got %v", got)
+	}
+}
+
+func TestJitterColorForJitter_Green(t *testing.T) {
+	// 0 < jitter <= 10ms → ColorGreen
+	got := jitterColorForJitter(5*time.Millisecond, tcell.ColorRed)
+	if got != tcell.ColorGreen {
+		t.Errorf("expected ColorGreen for 5ms jitter, got %v", got)
+	}
+}
+
+// ---- appendErrorLog truncation ----
+
+func TestAppendErrorLog_Truncation(t *testing.T) {
+	view := tview.NewTextView()
+	logs := make([]string, 0)
+	// Fill to exactly 1000 entries
+	for i := 0; i < 1000; i++ {
+		logs = append(logs, "entry")
+	}
+	// Adding one more should trigger truncation (remove oldest entry)
+	appendErrorLog(&logs, view, "new-entry")
+	if len(logs) != 1000 {
+		t.Errorf("expected 1000 after truncation, got %d", len(logs))
+	}
+	if logs[len(logs)-1] != "new-entry" {
+		t.Errorf("last entry should be new-entry, got %q", logs[len(logs)-1])
+	}
+}
+
+// ---- calcInitialTableErrorWidth with target error ----
+
+func TestCalcInitialTableErrorWidth_TargetError(t *testing.T) {
+	tgt := stats.NewTargetStats("example.com")
+	tgt.OnFailure("This is a very long error message that exceeds normal width expectations!!")
+	got := calcInitialTableErrorWidth([]*stats.TargetStats{tgt}, "Error", 5)
+	if got < len("This is a very long error message") {
+		t.Errorf("expected width to include target error, got %d", got)
+	}
+}
+
+// ---- truncateToDisplayWidth width <= 3 ----
+
+func TestTruncateToDisplayWidth_VerySmall(t *testing.T) {
+	got := truncateToDisplayWidth("hello", 2)
+	if got != ".." {
+		t.Errorf("width=2 long string: got %q, want %q", got, "..")
+	}
+	got = truncateToDisplayWidth("hello", 1)
+	if got != "." {
+		t.Errorf("width=1 long string: got %q, want %q", got, ".")
+	}
+}
+
+// ---- formatCellText: width=0 and AlignLeft padding ----
+
+func TestFormatCellText_ZeroWidth(t *testing.T) {
+	got := formatCellText("x", 0, tview.AlignLeft)
+	if got != "" {
+		t.Errorf("width=0: got %q, want empty", got)
+	}
+}
+
+func TestFormatCellText_AlignLeftPadding(t *testing.T) {
+	got := formatCellText("hi", 5, tview.AlignLeft)
+	if got != "hi   " {
+		t.Errorf("AlignLeft pad: got %q, want %q", got, "hi   ")
+	}
+}
+
+// ---- fitWidthsToAvailable: length mismatch and minWidth > maxWidth ----
+
+func TestFitWidthsToAvailable_LengthMismatch(t *testing.T) {
+	_, ok := fitWidthsToAvailable([]int{10, 20}, []int{5}, []int{50, 50}, 30)
+	if ok {
+		t.Error("expected false for length mismatch")
+	}
+}
+
+func TestFitWidthsToAvailable_MinGTMax(t *testing.T) {
+	// minWidths[0]=10 > maxWidths[0]=5 → maxWidths[0] clamped to 10
+	widths, ok := fitWidthsToAvailable([]int{8}, []int{10}, []int{5}, 10)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if widths[0] != 10 {
+		t.Errorf("expected width=10 (clamped), got %d", widths[0])
+	}
+}
+
+// ---- displaySourceIPForDst: IPv6-like string without sourceIPv6 ----
+
+func TestDisplaySourceIPForDst_ColonNoSrc6(t *testing.T) {
+	// String contains ":" but is not parseable as IP → falls through to colon check
+	got := displaySourceIPForDst("not::valid::ip", "", "")
+	if got != "Auto" {
+		t.Errorf("expected Auto, got %q", got)
+	}
+	got = displaySourceIPForDst("not::valid::ip", "10.0.0.1", "")
+	if got != "Auto" {
+		t.Errorf("expected Auto for IPv6-like without src6, got %q", got)
+	}
+}
+
+// ---- InputHandler: PgUp and PgDn ----
+
+func TestGraphViewInputHandlerPgUpPgDn(t *testing.T) {
+	targets := make([]*stats.TargetStats, 8)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats("host")
+	}
+	g := NewGraphView(targets, time.Second)
+	g.SetRect(0, 0, 80, 40)
+
+	handler := g.InputHandler()
+
+	// PgDn should increase scroll by 3
+	before := g.scrollRow
+	handler(tcell.NewEventKey(tcell.KeyPgDn, 0, 0), func(p tview.Primitive) {})
+	if g.scrollRow <= before {
+		t.Errorf("PgDn: scrollRow should increase, got %d (was %d)", g.scrollRow, before)
+	}
+
+	// PgUp should decrease scroll
+	before = g.scrollRow
+	handler(tcell.NewEventKey(tcell.KeyPgUp, 0, 0), func(p tview.Primitive) {})
+	if g.scrollRow >= before {
+		t.Errorf("PgUp: scrollRow should decrease, got %d (was %d)", g.scrollRow, before)
+	}
+}
+
+func TestGraphViewInputHandlerDefault(t *testing.T) {
+	g := NewGraphView([]*stats.TargetStats{stats.NewTargetStats("a")}, time.Second)
+	g.SetRect(0, 0, 80, 20)
+	handler := g.InputHandler()
+	before := g.scrollRow
+	// Unhandled key should be a no-op (returns early)
+	handler(tcell.NewEventKey(tcell.KeyEnter, 0, 0), func(p tview.Primitive) {})
+	if g.scrollRow != before {
+		t.Errorf("unhandled key: scrollRow changed unexpectedly")
+	}
+}
+
+// ---- clampScroll: numRowsTotal < visibleRows → maxScroll clamped from negative ----
+
+func TestClampScroll_NegativeMaxScroll(t *testing.T) {
+	g := NewGraphView(nil, time.Second)
+	g.scrollRow = 5
+	// numRowsTotal=1 < visibleRows=3 → maxScroll = -2 → clamped to 0 → scrollRow = 0
+	g.clampScroll(1, 3)
+	if g.scrollRow != 0 {
+		t.Errorf("expected scrollRow=0 after negative maxScroll, got %d", g.scrollRow)
+	}
+}
+
+func TestClampScroll_ScrollRowAboveMax(t *testing.T) {
+	g := NewGraphView(nil, time.Second)
+	g.scrollRow = 10
+	// numRowsTotal=5, visibleRows=2 → maxScroll=3; scrollRow(10) > maxScroll(3) → clamp
+	g.clampScroll(5, 2)
+	if g.scrollRow != 3 {
+		t.Errorf("expected scrollRow=3, got %d", g.scrollRow)
+	}
+}
+
+// ---- adjustPlotArea: small height ----
+
+func TestAdjustPlotArea_SmallHeight(t *testing.T) {
+	// height=2: desiredSteps=0 < 1 → clamped to 1; then plotY-- → plotY < graphY → clamped
+	plotY, plotHeight := adjustPlotArea(5, 2)
+	if plotHeight < 1 {
+		t.Errorf("plotHeight should be >= 1, got %d", plotHeight)
+	}
+	if plotY < 5 {
+		t.Errorf("plotY should be >= graphY(5), got %d", plotY)
+	}
+}
+
+func TestAdjustPlotArea_HeightOne(t *testing.T) {
+	// height=1: plotHeight=1, first if (plotHeight > 1) is false → no adjustment
+	plotY, plotHeight := adjustPlotArea(3, 1)
+	if plotY != 3 || plotHeight != 1 {
+		t.Errorf("expected plotY=3 plotHeight=1, got plotY=%d plotHeight=%d", plotY, plotHeight)
+	}
+}
+
+// ---- gridStepsForHeight: height=1 → totalSteps clamped to 1 ----
+
+func TestGridStepsForHeight_One(t *testing.T) {
+	totalSteps, _, _, _, _ := gridStepsForHeight(1)
+	if totalSteps != 1 {
+		t.Errorf("expected totalSteps=1 for height=1, got %d", totalSteps)
+	}
+}
+
+// ---- layout: narrow width, many targets, small height ----
+
+func TestGraphViewLayout_NarrowWidth(t *testing.T) {
+	targets := []*stats.TargetStats{
+		stats.NewTargetStats("a"), stats.NewTargetStats("b"),
+	}
+	g := NewGraphView(targets, time.Second)
+	// Width too narrow for 2 columns → forced to 1 column
+	numCols, _, _, _, _ := g.layout(20, 20)
+	if numCols != 1 {
+		t.Errorf("expected numCols=1 for narrow width, got %d", numCols)
+	}
+}
+
+func TestGraphViewLayout_ManyTargets(t *testing.T) {
+	targets := make([]*stats.TargetStats, 10)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats("host")
+	}
+	g := NewGraphView(targets, time.Second)
+	// 10 targets with 2 cols → numRowsTotal=5 > graphMaxVisibleRows(3) → cap visibleRows
+	_, _, visibleRows, _, _ := g.layout(80, 60)
+	if visibleRows > graphMaxVisibleRows {
+		t.Errorf("visibleRows should be capped at %d, got %d", graphMaxVisibleRows, visibleRows)
+	}
+}
+
+func TestGraphViewLayout_SmallHeight(t *testing.T) {
+	targets := []*stats.TargetStats{stats.NewTargetStats("a")}
+	g := NewGraphView(targets, time.Second)
+	// height=1 → initial rowHeight=1 < 2 → clamped to 2
+	numCols, numRows, visRows, _, rowH := g.layout(80, 1)
+	if numCols < 1 || numRows < 0 || visRows < 0 || rowH < 2 {
+		t.Errorf("unexpected layout values: cols=%d rows=%d vis=%d rowH=%d",
+			numCols, numRows, visRows, rowH)
+	}
+}
+
+func TestGraphViewLayout_ZeroTargets(t *testing.T) {
+	g := NewGraphView(nil, time.Second)
+	numCols, numRows, visRows, colW, rowH := g.layout(80, 24)
+	if numCols != 1 || numRows != 0 || visRows != 0 || colW != 0 || rowH != 0 {
+		t.Errorf("zero targets: unexpected %d %d %d %d %d", numCols, numRows, visRows, colW, rowH)
+	}
+}
+
+// ---- Run() with traceEnabled, portEnabled, both, initialLogs, doneCh, keyboard ----
+
+func makeSimScreen(t *testing.T) (func() *tview.Application, chan tcell.SimulationScreen) {
+	t.Helper()
+	ch := make(chan tcell.SimulationScreen, 1)
+	return func() *tview.Application {
+		app := tview.NewApplication()
+		screen := tcell.NewSimulationScreen("UTF-8")
+		screen.Init()
+		app.SetScreen(screen)
+		screen.SetSize(200, 50)
+		ch <- screen
+		return app
+	}, ch
+}
+
+func TestRunWithTraceEnabled(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	target.SetTraceHops([]string{"10.0.0.1", "1.1.1.1"})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, true, false, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(30 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+func TestRunWithPortEnabled(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	target.SetIP("127.0.0.1")
+	target.PortResults = []*stats.PortCheckResult{
+		{Port: 443, Protocol: "tcp", Status: "Open"},
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, false, true, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(30 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+func TestRunWithBothTracAndPort(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	target.SetIP("127.0.0.1")
+	target.PortResults = []*stats.PortCheckResult{
+		{Port: 80, Protocol: "tcp", Status: "Closed"},
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, true, true, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(30 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+func TestRunWithInitialLogs(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	logs := []string{"[red]initial error 1[-]", "[red]initial error 2[-]"}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, logs, false, false, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(30 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+func TestRunWithDoneChClosed(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	doneCh := make(chan struct{})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, doneCh, "", "", 56, nil, false, false, nil, nil)
+	}()
+
+	screen := <-screenCh
+	// Close doneCh to trigger "Finished" footer path
+	time.Sleep(15 * time.Millisecond)
+	close(doneCh)
+	time.Sleep(20 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+func TestRunKeyboardStop(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	stopCalled := make(chan struct{}, 1)
+	onStop := func() { stopCalled <- struct{}{} }
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false, onStop, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(20 * time.Millisecond)
+	// Press 's' to stop
+	screen.InjectKey(tcell.KeyRune, 's', tcell.ModNone)
+	time.Sleep(30 * time.Millisecond)
+	// Press 'q' to quit
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+func TestRunKeyboardReset(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	target.IncSent()
+	target.OnSuccess(10*time.Millisecond, 64)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(20 * time.Millisecond)
+	// Press 'R' to reset stats
+	screen.InjectKey(tcell.KeyRune, 'R', tcell.ModNone)
+	time.Sleep(20 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+func TestRunKeyboardRestart(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	restartCalled := make(chan struct{}, 1)
+	onStop := func() {}
+	onRestart := func() error {
+		restartCalled <- struct{}{}
+		return nil
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false, onStop, onRestart)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(20 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 's', tcell.ModNone) // stop first
+	time.Sleep(20 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'S', tcell.ModNone) // restart
+	time.Sleep(50 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+func TestRunKeyboardTab(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(20 * time.Millisecond)
+	// Tab cycles focus between table, graph, errorView
+	screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
+	time.Sleep(10 * time.Millisecond)
+	screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
+	time.Sleep(10 * time.Millisecond)
+	screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
+	time.Sleep(10 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- truncateToDisplayWidth: width <= 0 ----
+
+func TestTruncateToDisplayWidth_ZeroWidth(t *testing.T) {
+	if got := truncateToDisplayWidth("hello", 0); got != "" {
+		t.Errorf("width=0: got %q, want empty", got)
+	}
+	if got := truncateToDisplayWidth("hello", -1); got != "" {
+		t.Errorf("width=-1: got %q, want empty", got)
+	}
+}
+
+// ---- projectDurationsToGraph: windowPoints=1 ----
+
+func TestProjectDurationsToGraph_WindowOne(t *testing.T) {
+	data := []time.Duration{5 * time.Millisecond}
+	values, has := projectDurationsToGraph(data, 1, 10)
+	if len(values) != 10 || len(has) != 10 {
+		t.Fatalf("unexpected size: values=%d has=%d", len(values), len(has))
+	}
+	if !has[9] || values[9] != 5*time.Millisecond {
+		t.Errorf("expected last slot filled: has[9]=%v values[9]=%v", has[9], values[9])
+	}
+}
+
+// ---- InputHandler: zero-size rect → early return; zero targets → scrollRow=0 ----
+
+func TestGraphViewInputHandlerNoRect(t *testing.T) {
+	targets := []*stats.TargetStats{stats.NewTargetStats("a")}
+	g := NewGraphView(targets, time.Second)
+	// Do NOT call SetRect → inner rect is (0,0,0,0) → width=0, height=0
+	handler := g.InputHandler()
+	// Should return early after key handling (width <= 0 || height <= 0)
+	handler(tcell.NewEventKey(tcell.KeyDown, 0, 0), func(p tview.Primitive) {})
+	// No assert needed: just verifying no panic and early-return path is hit
+}
+
+func TestGraphViewInputHandlerNoTargets(t *testing.T) {
+	// GraphView with no targets → layout returns visibleRows=0 → scrollRow reset to 0
+	g := NewGraphView(nil, time.Second)
+	g.SetRect(0, 0, 80, 20)
+	g.scrollRow = 5
+	handler := g.InputHandler()
+	handler(tcell.NewEventKey(tcell.KeyDown, 0, 0), func(p tview.Primitive) {})
+	if g.scrollRow != 0 {
+		t.Errorf("expected scrollRow=0 for no-targets, got %d", g.scrollRow)
+	}
+}
+
+// ---- layout: small height, loop rowHeight < 2 ----
+
+func TestGraphViewLayout_SmallHeightMultiRows(t *testing.T) {
+	targets := make([]*stats.TargetStats, 6)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats("host")
+	}
+	g := NewGraphView(targets, time.Second)
+	// height=3, visibleRows starts at 3, loop will reduce visibleRows and set rowHeight < 2
+	_, _, visRows, _, rowH := g.layout(80, 3)
+	if visRows < 1 {
+		t.Errorf("visibleRows should be at least 1, got %d", visRows)
+	}
+	if rowH < 2 {
+		t.Errorf("rowHeight should be at least 2, got %d", rowH)
+	}
+}
+
+// ---- displaySourceIPForDst: IPv4 auto (no sourceIPv4) ----
+
+func TestDisplaySourceIPForDst_IPv4Auto(t *testing.T) {
+	// IPv4 destination but no sourceIPv4 → "Auto"
+	got := displaySourceIPForDst("8.8.8.8", "", "2001:db8::1")
+	if got != "Auto" {
+		t.Errorf("expected Auto for IPv4 dst without src4, got %q", got)
+	}
+}
+
+// ---- Run with Tab when trace + port enabled (covers more Tab branches) ----
+
+func TestRunTabWithTraceAndPort(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	target.SetIP("127.0.0.1")
+	target.PortResults = []*stats.PortCheckResult{{Port: 443, Protocol: "tcp", Status: "Open"}}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, true, true, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(20 * time.Millisecond)
+	// Tab multiple times to cycle through: table→trace→port→graph→error→table
+	for i := 0; i < 6; i++ {
+		screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
+		time.Sleep(10 * time.Millisecond)
+	}
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- Run: 's' key when onStop is nil (stopRequested path without callback) ----
+
+func TestRunKeyboardStopNoCallback(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+
+	errCh := make(chan error, 1)
+	go func() {
+		// onStop=nil, onRestart=nil
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(20 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 's', tcell.ModNone) // stop (no callback)
+	time.Sleep(20 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 's', tcell.ModNone) // second 's' is no-op (already stopped)
+	time.Sleep(10 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- Run: target with loss → error log entry ----
+
+func TestRunWithLossTarget(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	target.SetIP("1.1.1.1")
+	target.IncSent()
+	target.OnFailure("Timeout")
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, false, false, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(80 * time.Millisecond) // wait for at least one tick to update table
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- fitWidthsToAvailable: grow path (sum < available) ----
+
+func TestFitWidthsToAvailable_GrowPath(t *testing.T) {
+	// desired sum=9 < available=15 → grow loop expands columns
+	widths, ok := fitWidthsToAvailable([]int{3, 3, 3}, []int{2, 2, 2}, []int{10, 10, 10}, 15)
+	if !ok {
+		t.Fatal("expected ok for grow path")
+	}
+	total := 0
+	for _, w := range widths {
+		total += w
+	}
+	if total != 15 {
+		t.Errorf("grow: total width should be 15, got %d", total)
+	}
+}
+
+// ---- projectDurationsToGraph: data > windowPoints → trim ----
+
+func TestProjectDurationsToGraph_DataExceedsWindow(t *testing.T) {
+	data := []time.Duration{
+		1 * time.Millisecond,
+		2 * time.Millisecond,
+		3 * time.Millisecond,
+		4 * time.Millisecond,
+	}
+	// windowPoints=2 < len(data)=4 → trim to last 2
+	values, has := projectDurationsToGraph(data, 2, 5)
+	if len(values) != 5 || len(has) != 5 {
+		t.Fatalf("unexpected size: values=%d has=%d", len(values), len(has))
+	}
+}
+
+// ---- Run: table key scroll (KeyDown when table is focused) ----
+
+func TestRunTableScrollKeys(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	// Many targets so there are rows to scroll
+	targets := make([]*stats.TargetStats, 12)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats("host")
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run(targets, 50*time.Millisecond, nil, "", "", 56, nil, false, false, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(20 * time.Millisecond)
+	// Table should be focused initially; send scroll keys
+	screen.InjectKey(tcell.KeyDown, 0, tcell.ModNone)
+	time.Sleep(10 * time.Millisecond)
+	screen.InjectKey(tcell.KeyPgDn, 0, tcell.ModNone)
+	time.Sleep(10 * time.Millisecond)
+	screen.InjectKey(tcell.KeyUp, 0, tcell.ModNone)
+	time.Sleep(10 * time.Millisecond)
+	screen.InjectKey(tcell.KeyPgUp, 0, tcell.ModNone)
+	time.Sleep(10 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- Run: onRestart returning error ----
+
+func TestRunRestartError(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	onStop := func() {}
+	restartErr := errors.New("restart failed")
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false,
+			onStop,
+			func() error { return restartErr },
+		)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(20 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 's', tcell.ModNone)
+	time.Sleep(20 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'S', tcell.ModNone)
+	time.Sleep(60 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- Draw: RTT > 100ms (v > yMax cap) ----
+
+func TestGraphViewDraw_HighRTT(t *testing.T) {
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatalf("screen init: %v", err)
+	}
+	defer screen.Fini()
+	screen.SetSize(120, 20)
+
+	target := stats.NewTargetStats("example.com")
+	// Add RTT values > 100ms to trigger v > yMax cap branch
+	for i := 0; i < 5; i++ {
+		target.IncSent()
+		target.OnSuccess(200*time.Millisecond, 64)
+	}
+	target.IncSent()
+	target.OnSuccess(500*time.Millisecond, 64)
+
+	g := NewGraphView([]*stats.TargetStats{target}, 200*time.Millisecond)
+	g.SetRect(0, 0, 120, 20)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Draw panicked: %v", r)
+		}
+	}()
+	g.Draw(screen)
+}
+
+// ---- Draw: very small RTT (ratio < 0.05 floor) ----
+
+func TestGraphViewDraw_SmallRTT(t *testing.T) {
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatalf("screen init: %v", err)
+	}
+	defer screen.Fini()
+	screen.SetSize(120, 20)
+
+	target := stats.NewTargetStats("example.com")
+	// Add very small RTT (1ms) to trigger ratio < 0.05 floor branch
+	for i := 0; i < 5; i++ {
+		target.IncSent()
+		target.OnSuccess(1*time.Millisecond, 64)
+	}
+
+	g := NewGraphView([]*stats.TargetStats{target}, 200*time.Millisecond)
+	g.SetRect(0, 0, 120, 20)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Draw panicked: %v", r)
+		}
+	}()
+	g.Draw(screen)
+}
+
+// ---- Run: Tab with traceEnabled only (covers traceView→graphView branch) ----
+
+func TestRunTabTraceOnly(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	target.SetTraceHops([]string{"10.0.0.1", "1.1.1.1"})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, true, false, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(20 * time.Millisecond)
+	// Tab cycles: table→traceView→graphView→errorView→table
+	for i := 0; i < 5; i++ {
+		screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
+		time.Sleep(10 * time.Millisecond)
+	}
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- Run: Tab with portEnabled only (covers table→portView branch) ----
+
+func TestRunTabPortOnly(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	target.SetIP("127.0.0.1")
+	target.PortResults = []*stats.PortCheckResult{{Port: 443, Protocol: "tcp", Status: "Open"}}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, true, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(20 * time.Millisecond)
+	// Tab cycles: table→portView→graphView→errorView→table
+	for i := 0; i < 5; i++ {
+		screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
+		time.Sleep(10 * time.Millisecond)
+	}
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- Run: narrow screen triggers compact layout path ----
+
+func makeNarrowSimScreen(t *testing.T) (func() *tview.Application, chan tcell.SimulationScreen) {
+	t.Helper()
+	ch := make(chan tcell.SimulationScreen, 1)
+	return func() *tview.Application {
+		app := tview.NewApplication()
+		screen := tcell.NewSimulationScreen("UTF-8")
+		screen.Init()
+		app.SetScreen(screen)
+		// Width 70: too narrow for full 13-col layout (~89 min) but fits compact (~55 min)
+		screen.SetSize(70, 30)
+		ch <- screen
+		return app
+	}, ch
+}
+
+func TestRunNarrowScreenCompactLayout(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeNarrowSimScreen(t)
+	newApplication = factory
+
+	targets := make([]*stats.TargetStats, 3)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats("host")
+		targets[i].IncSent()
+		targets[i].OnSuccess(10*time.Millisecond, 64)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run(targets, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, false, false, nil, nil)
+	}()
+
+	screen := <-screenCh
+	// Wait for multiple ticks so updateTable runs and compact layout is evaluated
+	time.Sleep(150 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- InputHandler: KeyUp with valid rect and targets ----
+
+func TestGraphViewInputHandler_KeyUp(t *testing.T) {
+	targets := make([]*stats.TargetStats, 4)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats("host")
+	}
+	g := NewGraphView(targets, time.Second)
+	g.SetRect(0, 0, 80, 40)
+	g.scrollRow = 2 // start scrolled down
+
+	handler := g.InputHandler()
+	before := g.scrollRow
+	handler(tcell.NewEventKey(tcell.KeyUp, 0, 0), func(p tview.Primitive) {})
+	if g.scrollRow >= before {
+		t.Errorf("KeyUp: scrollRow should decrease, got %d (was %d)", g.scrollRow, before)
+	}
+}
+
+// ---- displaySourceIPForDst: IPv6 dst with sourceIPv6 set ----
+
+func TestDisplaySourceIPForDst_IPv6WithSrc6(t *testing.T) {
+	got := displaySourceIPForDst("2001:db8::1", "", "2001:db8::cafe")
+	if got != "2001:db8::cafe" {
+		t.Errorf("IPv6 dst with src6: got %q, want %q", got, "2001:db8::cafe")
+	}
+}
+
+// ---- truncateToDisplayWidth: zero-width character ----
+
+func TestTruncateToDisplayWidth_ZeroWidthChar(t *testing.T) {
+	// U+0300 COMBINING GRAVE ACCENT has runewidth=0 → code converts to 1
+	// "\u0300hello" displayWidth=5 (0+1+1+1+1+1), truncate at width=4 → limit=1
+	got := truncateToDisplayWidth("\u0300hello", 4)
+	if !strings.HasSuffix(got, "...") {
+		t.Errorf("zero-width char truncation: got %q, expected ellipsis suffix", got)
+	}
+}
+
+// ---- fitWidthsToAvailable: grow loop !changed (all at max, still below available) ----
+
+func TestFitWidthsToAvailable_GrowNoChange(t *testing.T) {
+	// desired=maxWidths=5, available=20, sum(5)=5 < 20
+	// All widths already at max → grow loop fires !changed and breaks
+	widths, ok := fitWidthsToAvailable([]int{5}, []int{1}, []int{5}, 20)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	// Result should be capped at maxWidths[0]=5 even though available=20
+	if widths[0] != 5 {
+		t.Errorf("expected width capped at maxWidth 5, got %d", widths[0])
+	}
+}
+
+// ---- Run: portEnabled with no port results (rowCount==0 path) ----
+
+func TestRunPortEnabledNoResults(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	target.SetIP("127.0.0.1")
+	// No PortResults → triggers "Waiting for results..." row
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, true, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(120 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- Run: high RTT and jitter triggers alert state ----
+
+func TestRunWithHighRTTAndJitter(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	target.SetIP("1.1.1.1")
+	// Simulate high RTT (> 200ms red threshold) and high jitter (> 50ms red threshold)
+	for i := 0; i < 5; i++ {
+		target.IncSent()
+		target.OnSuccess(300*time.Millisecond, 64)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, false, false, nil, nil)
+	}()
+
+	screen := <-screenCh
+	// Wait > 100ms for ticker to fire so updateTable runs and alerts are checked
+	time.Sleep(150 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- Run: high loss rate triggers lossRed alert ----
+
+func TestRunWithHighLossAlert(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	target.SetIP("1.1.1.1")
+	// Simulate >80% loss: 9 packets lost, 1 success
+	for i := 0; i < 9; i++ {
+		target.IncSent()
+		target.OnFailure("Timeout")
+	}
+	target.IncSent()
+	target.OnSuccess(10*time.Millisecond, 64)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, false, false, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(150 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- Run: traceEnabled with ticker (>100ms wait) to cover updateTable trace path ----
+
+func TestRunWithTraceAndTicker(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	target.SetTraceHops([]string{"10.0.0.1", "10.0.0.2", "1.1.1.1"})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, true, false, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(150 * time.Millisecond) // wait for ticker to fire and updateTable to run
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- Run: portEnabled with ticker (>100ms wait) to cover updateTable port path ----
+
+func TestRunWithPortAndTicker(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	target.SetIP("127.0.0.1")
+	target.PortResults = []*stats.PortCheckResult{
+		{Port: 443, Protocol: "tcp", Status: "Open"},
+		{Port: 80, Protocol: "tcp", Status: "Closed"},
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, true, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(150 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- Run: both trace and port with ticker ----
+
+func TestRunWithBothAndTicker(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	target.SetIP("127.0.0.1")
+	target.SetTraceHops([]string{"10.0.0.1", "1.1.1.1"})
+	target.PortResults = []*stats.PortCheckResult{
+		{Port: 443, Protocol: "tcp", Status: "Open"},
+	}
+
+	// Two targets so route separator row fires
+	target2 := stats.NewTargetStats("example2.com")
+	target2.SetIP("8.8.8.8")
+	target2.SetTraceHops([]string{"10.0.0.1"})
+	target2.PortResults = []*stats.PortCheckResult{
+		{Port: 80, Protocol: "tcp", Status: "Filtered"},
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target, target2}, 50*time.Millisecond, nil, "10.0.0.1", "2001::1", 56, nil, true, true, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(150 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- displaySourceIPForDst: covers % zone ID path and remaining branches ----
+
+func TestDisplaySourceIPForDst_ZoneID(t *testing.T) {
+	// IPv6 with zone ID (e.g. "fe80::1%eth0") → strip % and treat as IPv6
+	got := displaySourceIPForDst("fe80::1%eth0", "", "2001::cafe")
+	if got != "2001::cafe" {
+		t.Errorf("zone ID: got %q, want %q", got, "2001::cafe")
+	}
+}
+
+func TestDisplaySourceIPForDst_HostnameWithSrc4(t *testing.T) {
+	// Non-IP hostname with no colon → falls to final IPv4 check
+	got := displaySourceIPForDst("hostname.local", "10.0.0.1", "")
+	if got != "10.0.0.1" {
+		t.Errorf("hostname with src4: got %q, want %q", got, "10.0.0.1")
+	}
+}
+
+func TestDisplaySourceIPForDst_ColonWithSrc6(t *testing.T) {
+	// Non-IP with colon and sourceIPv6 set → return sourceIPv6
+	got := displaySourceIPForDst("not::valid::ip", "10.0.0.1", "2001::cafe")
+	if got != "2001::cafe" {
+		t.Errorf("colon with src6: got %q, want %q", got, "2001::cafe")
+	}
+}
+
+// ---- Draw: very small height (4) with small RTT covers totalLevels=1 ----
+
+func TestGraphViewDraw_SmallHeightSmallRTT(t *testing.T) {
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatalf("screen init: %v", err)
+	}
+	defer screen.Fini()
+	screen.SetSize(120, 4)
+
+	target := stats.NewTargetStats("example.com")
+	// Very small RTT = 1ms → ratio=0.01 < 0.05 → floored to 0.05
+	// With plotHeight=2: totalLevels = int(0.05*2*8)=0 → totalLevels=1 branch
+	for i := 0; i < 5; i++ {
+		target.IncSent()
+		target.OnSuccess(1*time.Millisecond, 64)
+	}
+
+	g := NewGraphView([]*stats.TargetStats{target}, 200*time.Millisecond)
+	g.SetRect(0, 0, 120, 4)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Draw panicked: %v", r)
+		}
+	}()
+	g.Draw(screen)
+}
+
+// ---- Run: scroll key with 1 target (maxOffset < 0 path) ----
+
+func TestRunScrollKeyWithFewTargets(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	// Only 1 target → rowCount=2 < tableMaxRows+1=11 → maxOffset < 0 → clamped to 0
+	target := stats.NewTargetStats("example.com")
+	target.SetIP("1.1.1.1")
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, false, false, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(20 * time.Millisecond)
+	// Press scroll keys while table is focused (few targets → maxOffset < 0 path)
+	screen.InjectKey(tcell.KeyDown, 0, tcell.ModNone)
+	time.Sleep(5 * time.Millisecond)
+	screen.InjectKey(tcell.KeyUp, 0, tcell.ModNone)
+	time.Sleep(5 * time.Millisecond)
+	screen.InjectKey(tcell.KeyPgDn, 0, tcell.ModNone)
+	time.Sleep(5 * time.Millisecond)
+	screen.InjectKey(tcell.KeyPgUp, 0, tcell.ModNone)
+	time.Sleep(5 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- Run: target with IP==host covers calcColumnWidths value=view.IP branch ----
+
+func TestRunWithIPAsHost(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	// Host and IP are the same → value = view.IP branch in calcColumnWidths
+	target := stats.NewTargetStats("1.2.3.4")
+	target.SetIP("1.2.3.4")
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(150 * time.Millisecond) // wait for ticker
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- Run: port with non-zero LastChange covers changeStr=formatLossAgo path ----
+
+func TestRunWithPortLastChange(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	target.SetIP("127.0.0.1")
+	result := &stats.PortCheckResult{Port: 443, Protocol: "tcp", Status: "Checking..."}
+	target.PortResults = []*stats.PortCheckResult{result}
+	// Trigger LastChange by changing status
+	result.SetResult("Open", 10*time.Millisecond)
+	result.SetResult("Closed", 5*time.Millisecond) // status change sets LastChange
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, true, nil, nil)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(150 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
 	}
 }
