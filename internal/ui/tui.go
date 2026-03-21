@@ -19,12 +19,9 @@ const (
 	graphWindowSeconds  = 30
 	errorLogVisibleRows = 15
 	errorLogBoxHeight   = errorLogVisibleRows + 2
-	tableMaxRows        = 10
-	// Table rows include header; with table borders enabled, each row consumes 2 lines plus 1 for bottom border.
+	// tableMaxRows is for the main stats table
+	tableMaxRows    = 10
 	tablePaneHeight = ((tableMaxRows + 1) * 2) + 1 + 2 // table height + pane border
-	traceMaxRows    = 10
-	tracePaneHeight = ((traceMaxRows + 1) * 2) + 1 + 2 // table height + pane border
-	traceHostWidth  = 20
 
 	rttOrangeThreshold    = 50 * time.Millisecond
 	rttRedThreshold       = 200 * time.Millisecond
@@ -548,31 +545,6 @@ func appendErrorLog(errorLogs *[]string, errorView *tview.TextView, msg string) 
 	errorView.ScrollToEnd()
 }
 
-func wrapRouteLines(hops []string, maxWidth int) []string {
-	if maxWidth <= 0 || len(hops) == 0 {
-		return []string{"-"}
-	}
-	var lines []string
-	current := ""
-	sep := " -> "
-	for _, hop := range hops {
-		if current == "" {
-			current = hop
-			continue
-		}
-		next := current + sep + hop
-		if len([]rune(next)) <= maxWidth {
-			current = next
-			continue
-		}
-		lines = append(lines, current+" ->")
-		current = hop
-	}
-	if current != "" {
-		lines = append(lines, current)
-	}
-	return lines
-}
 
 func projectDurationsToGraph(data []time.Duration, windowPoints, graphWidth int) ([]time.Duration, []bool) {
 	if windowPoints <= 0 || graphWidth <= 0 || len(data) == 0 {
@@ -1063,34 +1035,18 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		AddItem(tableContainer, 0, 1, true)
 	tablePane.SetBorder(true).SetTitle(" Table ").SetBorderColor(tcell.ColorWhite)
 
-	var traceTable *tview.Table
-	var traceContainer *tview.Flex
+	var traceView *tview.TextView
 	var tracePane *tview.Flex
-	traceRouteWidth := 0
-	traceRowCount := 1
-	{
-		traceRouteWidth = tableWidth - traceHostWidth - 3
-		if traceRouteWidth < 10 {
-			traceRouteWidth = 10
-		}
-	}
 
 	if traceEnabled {
-		traceTable = tview.NewTable().
-			SetBorders(true).
-			SetSelectable(false, false).
-			SetFixed(1, 1)
-		traceTable.SetBackgroundColor(tcell.ColorBlack)
-		traceTable.SetBorderColor(tcell.ColorWhite)
-
-		// traceContainer centers the trace table horizontally
-		traceContainer = tview.NewFlex().SetDirection(tview.FlexColumn).
-			AddItem(nil, 0, 1, false).
-			AddItem(traceTable, tableWidth, 0, true).
-			AddItem(nil, 0, 1, false)
+		traceView = tview.NewTextView().
+			SetDynamicColors(true).
+			SetScrollable(true).
+			SetWrap(false)
+		traceView.SetBackgroundColor(tcell.ColorBlack)
 
 		tracePane = tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(traceContainer, 0, 1, true)
+			AddItem(traceView, 0, 1, true)
 		tracePane.SetBorder(true).SetTitle(" Traceroute ").SetBorderColor(tcell.ColorWhite)
 	}
 
@@ -1108,9 +1064,6 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 
 	updateTable := func() {
 		table.Clear()
-		if traceTable != nil {
-			traceTable.Clear()
-		}
 
 		_, _, availableTableWidth, _ := tablePane.GetInnerRect()
 		if availableTableWidth <= 0 {
@@ -1161,14 +1114,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		if newTableWidth != tableWidth {
 			tableWidth = newTableWidth
 			tableContainer.ResizeItem(table, tableWidth, 0)
-			if traceEnabled && traceContainer != nil && traceTable != nil {
-				traceContainer.ResizeItem(traceTable, tableWidth, 0)
-				traceRouteWidth = tableWidth - traceHostWidth - 3
-				if traceRouteWidth < 10 {
-					traceRouteWidth = 10
-				}
 			}
-		}
 
 		// Header
 		for i, h := range activeHeaders {
@@ -1240,50 +1186,69 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 				table.SetCell(row, c, cell)
 			}
 
-			if traceEnabled && traceTable != nil {
-				if row == 1 {
-					traceTable.SetCell(0, 0, tview.NewTableCell("Host").
-						SetBackgroundColor(tcell.ColorBlack).
-						SetTextColor(headerColor).
-						SetAttributes(tcell.AttrBold).
-						SetSelectable(false).
-						SetAlign(tview.AlignLeft).
-						SetMaxWidth(traceHostWidth))
-					traceTable.SetCell(0, 1, tview.NewTableCell("Route").
-						SetBackgroundColor(tcell.ColorBlack).
-						SetTextColor(headerColor).
-						SetAttributes(tcell.AttrBold).
-						SetSelectable(false).
-						SetAlign(tview.AlignLeft).
-						SetMaxWidth(traceRouteWidth))
-				}
-			}
 		}
 
-		if traceEnabled && traceTable != nil {
-			traceRow := 1
+		if traceEnabled && traceView != nil {
+			// Compute Host column width from the longest hostname (with 1-space padding each side).
+			hostColW := runewidth.StringWidth("Host")
 			for _, t := range targets {
-				view := t.GetView()
-				lines := wrapRouteLines(view.TraceHops, traceRouteWidth)
-				for i, line := range lines {
-					hostText := ""
-					if i == 0 {
-						hostText = view.Host
-					}
-					traceTable.SetCell(traceRow, 0, tview.NewTableCell(hostText).
-						SetBackgroundColor(tcell.ColorBlack).
-						SetTextColor(rowColor).
-						SetAlign(tview.AlignLeft).
-						SetMaxWidth(traceHostWidth))
-					traceTable.SetCell(traceRow, 1, tview.NewTableCell(line).
-						SetBackgroundColor(tcell.ColorBlack).
-						SetTextColor(rowColor).
-						SetAlign(tview.AlignLeft).
-						SetMaxWidth(traceRouteWidth))
-					traceRow++
+				if w := runewidth.StringWidth(t.GetView().Host); w > hostColW {
+					hostColW = w
 				}
 			}
-			traceRowCount = traceRow
+			hostColW += 2 // 1 space left + 1 space right
+
+			// Compute Route column width from the longest route string (with 1-space padding each side).
+			routeColW := runewidth.StringWidth("Route")
+			for _, t := range targets {
+				hops := t.GetView().TraceHops
+				if w := runewidth.StringWidth(strings.Join(hops, " -> ")); w > routeColW {
+					routeColW = w
+				}
+			}
+			routeColW += 2 // 1 space left + 1 space right
+
+			// cell returns text with a leading space, right-padded to fill colW.
+			cell := func(text string, colW int) string {
+				return formatCellText(" "+text, colW, tview.AlignLeft)
+			}
+
+			h := strings.Repeat("─", hostColW)
+			r := strings.Repeat("─", routeColW)
+
+			var sb strings.Builder
+
+			// Top border.
+			fmt.Fprintf(&sb, "[white]┌%s┬%s┐[-]\n", h, r)
+
+			// Header row: yellow bold labels, white borders.
+			fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
+				cell("Host", hostColW), cell("Route", routeColW))
+
+			// Header separator.
+			fmt.Fprintf(&sb, "[white]├%s┼%s┤[-]\n", h, r)
+
+			// Data rows: white values, white borders, separator between rows.
+			dataTargets := make([]*stats.TargetStats, 0, len(targets))
+			for _, t := range targets {
+				if len(t.GetView().TraceHops) > 0 {
+					dataTargets = append(dataTargets, t)
+				}
+			}
+			for i, t := range dataTargets {
+				view := t.GetView()
+				route := strings.Join(view.TraceHops, " -> ")
+				fmt.Fprintf(&sb, "[white]│%s│%s│[-]\n",
+					cell(view.Host, hostColW), cell(route, routeColW))
+				if i < len(dataTargets)-1 {
+					fmt.Fprintf(&sb, "[white]├%s┼%s┤[-]\n", h, r)
+				}
+			}
+
+			// Bottom border.
+			fmt.Fprintf(&sb, "[white]└%s┴%s┘[-]\n", h, r)
+
+			traceView.SetText(sb.String())
 		}
 	}
 
@@ -1323,42 +1288,11 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 				return nil
 			}
 		}
-		if traceEnabled && traceTable != nil && app.GetFocus() == traceTable {
-			switch event.Key() {
-			case tcell.KeyUp, tcell.KeyDown, tcell.KeyPgUp, tcell.KeyPgDn:
-				rowOffset, colOffset := traceTable.GetOffset()
-				totalRows := traceRowCount
-				visibleRows := traceMaxRows + 1
-				maxOffset := totalRows - visibleRows
-				if maxOffset < 0 {
-					maxOffset = 0
-				}
-				delta := 0
-				switch event.Key() {
-				case tcell.KeyUp:
-					delta = -1
-				case tcell.KeyDown:
-					delta = 1
-				case tcell.KeyPgUp:
-					delta = -traceMaxRows
-				case tcell.KeyPgDn:
-					delta = traceMaxRows
-				}
-				rowOffset += delta
-				if rowOffset < 0 {
-					rowOffset = 0
-				} else if rowOffset > maxOffset {
-					rowOffset = maxOffset
-				}
-				traceTable.SetOffset(rowOffset, colOffset)
-				return nil
-			}
-		}
 		switch event.Key() {
 		case tcell.KeyTab:
 			if app.GetFocus() == table {
-				if traceEnabled && traceTable != nil {
-					app.SetFocus(traceTable)
+				if traceEnabled && traceView != nil {
+					app.SetFocus(traceView)
 					tracePane.SetBorderColor(tcell.ColorGreen)
 					table.SetBorderColor(tcell.ColorWhite)
 					errorView.SetBorderColor(tcell.ColorRed)
@@ -1369,7 +1303,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 					table.SetBorderColor(tcell.ColorWhite)
 					errorView.SetBorderColor(tcell.ColorRed)
 				}
-			} else if traceEnabled && traceTable != nil && app.GetFocus() == traceTable {
+			} else if traceEnabled && traceView != nil && app.GetFocus() == traceView {
 				app.SetFocus(graphView)
 				graphView.SetBorderColor(tcell.ColorGreen)
 				if tracePane != nil {
@@ -1483,18 +1417,18 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 
 	flex := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(header, 2, 0, false).
-		AddItem(tablePane, tablePaneHeight, 0, true).
-		AddItem(graphView, 0, 4, false). // Graph: 40%
-		AddItem(errorView, errorLogBoxHeight, 0, false).
+		AddItem(tablePane, 0, 3, true).  // Table: 3 parts
+		AddItem(graphView, 0, 3, false). // Graph: 3 parts
+		AddItem(errorView, 0, 2, false). // Logs: 2 parts
 		AddItem(footer, 2, 0, false)
 
 	if traceEnabled && tracePane != nil {
 		flex = tview.NewFlex().SetDirection(tview.FlexRow).
 			AddItem(header, 2, 0, false).
-			AddItem(tablePane, tablePaneHeight, 0, true).
-			AddItem(tracePane, tracePaneHeight, 0, false).
-			AddItem(graphView, 0, 4, false).
-			AddItem(errorView, errorLogBoxHeight, 0, false).
+			AddItem(tablePane, 0, 3, true).  // Table: 3 parts
+			AddItem(tracePane, 0, 3, false). // Trace: 3 parts
+			AddItem(graphView, 0, 3, false). // Graph: 3 parts
+			AddItem(errorView, 0, 2, false). // Logs: 2 parts
 			AddItem(footer, 2, 0, false)
 	}
 

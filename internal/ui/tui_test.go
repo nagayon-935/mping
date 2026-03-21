@@ -384,13 +384,6 @@ func TestUpdateAlertState(t *testing.T) {
 }
 
 
-func TestWrapRouteLines(t *testing.T) {
-	lines := wrapRouteLines([]string{"a", "b", "c"}, 4)
-	if len(lines) < 2 {
-		t.Fatalf("expected wrapped lines, got %v", lines)
-	}
-}
-
 func TestFormatRTT(t *testing.T) {
 	if got := formatRTT(0); got != "-" {
 		t.Fatalf("expected '-', got %q", got)
