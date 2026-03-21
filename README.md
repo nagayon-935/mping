@@ -13,7 +13,7 @@
 * **詳細な設定**: インターフェイス、ソースIP、パケットサイズ、送信回数などの柔軟な指定が可能です。
 
 * **YAML ホストリスト**: ホスト一覧をファイルで管理できます。
-* **Traceroute ペイン**: ルートを簡易表示できます。
+* **Traceroute ペイン**: `-T` オプション指定時に Host/Route の 2 カラムテーブル形式で経路を表示します。複数ターゲットを同時に traceroute し、それぞれの結果を行で区切って一覧表示します。
 * **PMTU 探索**: DF 付きのパケットサイズ探索を実行できます。
 * **自動ソースIP検出**: 指定がない場合でも、実際に通信に使用されているローカルIPを自動的に表示します。
 * **RTT グラフ**: 各グラフは縦軸 0〜100ms、横軸 30 秒の固定レンジで表示されます。
@@ -26,7 +26,7 @@
 必須要件: Go 1.24 以上
 
 ```bash
-git clone https://github.com/yourusername/mping.git
+git clone https://github.com/nagayon-935/mping.git
 cd mping
 go build -o mping ./cmd/main
 ```
@@ -83,7 +83,6 @@ hosts:
 | :--- | :--- | :--- | :--- |
 | `--interval` | `-i` | Ping の送信間隔 (ミリ秒) | `1000` |
 | `--timeout` | `-t` | Ping のタイムアウト (ミリ秒) | `1000` |
-| `--privileged` | `-p` | 特権 ICMP ソケットを使用するか (true/false) | `true` |
 | `--file` | `-f` | ホスト一覧の YAML ファイルパス | `""` |
 | `--traceroute` | `-T` | Traceroute ペインを表示する | `false` |
 | `--discovery-mtu` | `-m` | 最大 payload サイズを DF で探索する | `false` |
@@ -128,8 +127,10 @@ hosts:
 
 ## Traceroute ペイン
 
-* `--traceroute` 指定時のみ表示されます。
-* 最大 30 ホップまで探索し、結果をスクロール可能な表形式で表示します。
+* `-T` / `--traceroute` 指定時のみ表示されます。
+* 最大 30 ホップまで探索し、Host と Route の 2 カラム形式で結果を表示します。
+* 複数ターゲット指定時は各ターゲットを行で区切って一覧表示します。
+* 起動後に一度 traceroute を実行し、その後 10 分ごとに自動更新します。
 
 ## PMTU 探索
 
