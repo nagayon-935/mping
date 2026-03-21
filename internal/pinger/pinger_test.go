@@ -182,6 +182,7 @@ func buildInnerEchoDataV4(id, seq int) []byte {
 	}
 	ipHeader := make([]byte, 20)
 	ipHeader[0] = 0x45
+	ipHeader[9] = 1 // ICMP
 	return append(ipHeader, inner...)
 }
 type fakePacketConnV6 struct {
@@ -298,6 +299,7 @@ func TestRunReceiverDispatchesICMPError(t *testing.T) {
 	}
 	ipHeader := make([]byte, 20)
 	ipHeader[0] = 0x45
+	ipHeader[9] = 1 // ICMP
 	data := append(ipHeader, inner...)
 
 	unreach := icmp.Message{
@@ -416,6 +418,7 @@ func TestRunReceiverDispatchesICMPErrorV6(t *testing.T) {
 	}
 	data := make([]byte, 40)
 	data[0] = 0x60 // IPv6 version
+	data[6] = 58   // ICMPv6
 	data = append(data, inner...)
 
 	unreach := icmp.Message{
@@ -470,7 +473,7 @@ func TestStartWithIPv4Source(t *testing.T) {
 		},
 	})
 	p.Source = "1.1.1.1"
-	if err := p.Start(false, 10*time.Millisecond, 10*time.Millisecond); err != nil {
+	if err := p.Start(10*time.Millisecond, 10*time.Millisecond); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	if p.connV4 == nil {
@@ -488,7 +491,7 @@ func TestStartDualStack(t *testing.T) {
 			return &fakeNetPacketConn{}, nil
 		},
 	})
-	if err := p.Start(false, 10*time.Millisecond, 10*time.Millisecond); err != nil {
+	if err := p.Start(10*time.Millisecond, 10*time.Millisecond); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	if p.connV4 == nil || p.connV6 == nil {
@@ -504,7 +507,7 @@ func TestStartIPv6Only(t *testing.T) {
 		},
 	})
 	p.Source = "2001:db8::1"
-	if err := p.Start(false, 10*time.Millisecond, 10*time.Millisecond); err != nil {
+	if err := p.Start(10*time.Millisecond, 10*time.Millisecond); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	if p.connV6 == nil {
@@ -522,7 +525,7 @@ func TestStartListenError(t *testing.T) {
 			return nil, errors.New("listen failed")
 		},
 	})
-	if err := p.Start(false, 10*time.Millisecond, 10*time.Millisecond); err == nil {
+	if err := p.Start(10*time.Millisecond, 10*time.Millisecond); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -565,10 +568,10 @@ func TestWaitBlocksUntilDone(t *testing.T) {
 
 func TestDiscoverMaxPayloadErrors(t *testing.T) {
 	p := NewPingerWithOptions(nil, Options{})
-	if _, err := p.DiscoverMaxPayload("", 1, 0, false, nil); err == nil {
+	if _, err := p.DiscoverMaxPayload("", 1, 0, nil); err == nil {
 		t.Fatal("expected error for empty dest")
 	}
-	if _, err := p.DiscoverMaxPayload("example.com", 0, 0, false, nil); err == nil {
+	if _, err := p.DiscoverMaxPayload("example.com", 0, 0, nil); err == nil {
 		t.Fatal("expected error for start <= 0")
 	}
 }
@@ -579,7 +582,7 @@ func TestDiscoverMaxPayloadIPv6NotSupported(t *testing.T) {
 			return &net.IPAddr{IP: net.ParseIP("2001:db8::1")}, nil
 		},
 	})
-	size, err := p.DiscoverMaxPayload("example.com", 100, 0, false, nil)
+	size, err := p.DiscoverMaxPayload("example.com", 100, 0, nil)
 	if err == nil {
 		t.Fatal("expected error for ipv6")
 	}
@@ -601,7 +604,7 @@ func TestDiscoverMaxPayloadBinarySearch(t *testing.T) {
 			return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
 		},
 	})
-	got, err := p.DiscoverMaxPayload("example.com", 200, 0, false, nil)
+	got, err := p.DiscoverMaxPayload("example.com", 200, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -623,7 +626,7 @@ func TestDiscoverMaxPayloadCanSendError(t *testing.T) {
 			return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
 		},
 	})
-	if _, err := p.DiscoverMaxPayload("example.com", 100, 0, false, nil); err == nil {
+	if _, err := p.DiscoverMaxPayload("example.com", 100, 0, nil); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -1036,6 +1039,7 @@ func TestParseInnerEchoIDSeqIPv4(t *testing.T) {
 	}
 	ipHeader := make([]byte, 20)
 	ipHeader[0] = 0x45
+	ipHeader[9] = 1 // ICMP
 	data := append(ipHeader, inner...)
 
 	id, seq, ok := parseInnerEchoIDSeq(data)
@@ -1059,6 +1063,7 @@ func TestParseInnerEchoIDSeqIPv6(t *testing.T) {
 	}
 	ipHeader := make([]byte, 40)
 	ipHeader[0] = 0x60
+	ipHeader[6] = 58 // ICMPv6
 	data := append(ipHeader, inner...)
 
 	id, seq, ok := parseInnerEchoIDSeq(data)
@@ -1091,6 +1096,7 @@ func TestExtractEchoIDSeqV4(t *testing.T) {
 	}
 	ipHeader := make([]byte, 20)
 	ipHeader[0] = 0x45
+	ipHeader[9] = 1 // ICMP
 	data := append(ipHeader, inner...)
 	unreach := icmp.Message{
 		Type: ipv4.ICMPTypeDestinationUnreachable,
@@ -1115,6 +1121,7 @@ func TestExtractEchoIDSeqV6(t *testing.T) {
 	}
 	ipHeader := make([]byte, 40)
 	ipHeader[0] = 0x60
+	ipHeader[6] = 58 // ICMPv6
 	data := append(ipHeader, inner...)
 	unreach := icmp.Message{
 		Type: ipv6.ICMPTypeDestinationUnreachable,
