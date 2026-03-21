@@ -220,7 +220,7 @@ func TestRunStopRestart(t *testing.T) {
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return fp
 	}
-	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, onStop func(), onRestart func() error) error {
+	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error) error {
 		onStop()
 		if err := onRestart(); err != nil {
 			t.Fatalf("restart failed: %v", err)
@@ -250,7 +250,7 @@ func TestRunStartError(t *testing.T) {
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return fp
 	}
-	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, onStop func(), onRestart func() error) error {
+	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error) error {
 		return nil
 	}
 
