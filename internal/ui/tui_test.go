@@ -498,7 +498,7 @@ func TestRunWithSimulationScreen(t *testing.T) {
 		close(done)
 	}()
 
-	err := Run([]*stats.TargetStats{target}, 50*time.Millisecond, done, "", "", 56, nil, false, nil, nil)
+	err := Run([]*stats.TargetStats{target}, 50*time.Millisecond, done, "", "", 56, nil, false, false, nil, nil)
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
