@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -17,10 +18,10 @@ import (
 )
 
 type pingerController interface {
-	Start(privileged bool, interval, timeout time.Duration) error
-	Close()
+	Start(interval, timeout time.Duration) error
+	Stop()
 	Wait()
-	DiscoverMaxPayload(dest string, start int, min int, privileged bool, logf func(string)) (int, error)
+	DiscoverMaxPayload(dest string, start int, min int, logf func(string)) (int, error)
 	TraceRoute(dest string, maxHops int, timeout time.Duration) ([]string, error)
 	SetSource(ip string)
 	SetSize(size int)
@@ -167,7 +168,6 @@ func detectAutoSourceIPs(hosts []string) (string, string) {
 type config struct {
 	intervalMs int
 	timeoutMs  int
-	privileged bool
 	outputFile string
 	hostsFile  string
 	ifaceName  string
@@ -267,7 +267,6 @@ func parseArgs(args []string) (config, []string, string, error) {
 
 	fs.IntVarP(&cfg.intervalMs, "interval", "i", 1000, "ping interval in ms")
 	fs.IntVarP(&cfg.timeoutMs, "timeout", "t", 1000, "ping timeout in ms")
-	fs.BoolVarP(&cfg.privileged, "privileged", "p", true, "use privileged (raw) ICMP socket (requires sudo)")
 	fs.StringVarP(&cfg.outputFile, "output", "o", "", "log output file path (csv format)")
 	fs.StringVarP(&cfg.hostsFile, "file", "f", "", "hosts list YAML file path")
 	fs.BoolVarP(&cfg.mtuEnabled, "discovery-mtu", "m", false, "discover maximum payload size using DF probes (IPv4 only)")
@@ -410,7 +409,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			fmt.Fprintln(errOut, "Warning: PMTU discovery disabled for IPv6")
 		} else {
 			probe := makePinger(cfg.packetSize)
-			maxPayload, err := probe.DiscoverMaxPayload(hosts[0], 9872, cfg.packetSize, cfg.privileged, func(line string) {
+			maxPayload, err := probe.DiscoverMaxPayload(hosts[0], 9872, cfg.packetSize, func(line string) {
 				preLogs = append(preLogs, line)
 			})
 			if err != nil {
@@ -422,17 +421,25 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	}
 
 	var (
-		pMu sync.Mutex
-		p   pingerController
+		pMu         sync.Mutex
+		p           pingerController
+		traceCtx    context.Context
+		traceCancel context.CancelFunc
 	)
 
 	startPinger := func() error {
 		next := makePinger(packetSizeToUse)
-		if err := next.Start(cfg.privileged, interval, timeout); err != nil {
+		if err := next.Start(interval, timeout); err != nil {
 			return err
 		}
 		if cfg.trace {
-			go runTraceroutes(next, targets)
+			pMu.Lock()
+			if traceCancel != nil {
+				traceCancel()
+			}
+			traceCtx, traceCancel = context.WithCancel(context.Background())
+			go runTraceroutes(traceCtx, next, targets)
+			pMu.Unlock()
 		}
 		pMu.Lock()
 		p = next
@@ -442,21 +449,25 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 
 	stopPinger := func() {
 		pMu.Lock()
+		if traceCancel != nil {
+			traceCancel()
+		}
 		cur := p
-		p = nil
 		pMu.Unlock()
 		if cur != nil {
-			cur.Close()
+			cur.Stop()
 			cur.Wait()
 		}
 	}
 
 	if err := startPinger(); err != nil {
 		fmt.Fprintf(errOut, "Error starting pinger: %v\n", err)
-		if cfg.privileged {
-			fmt.Fprintln(errOut, "Try running with sudo or use --privileged=false (UDP ping, may not support TTL on all OS).")
-		}
+		fmt.Fprintln(errOut, "This program requires root privileges (sudo) for raw ICMP sockets.")
 		return 1
+	}
+
+	if cfg.trace {
+		// Traceroute info can be added to logs if needed
 	}
 
 	// Start TUI
@@ -506,21 +517,47 @@ type tracer interface {
 	TraceRoute(dest string, maxHops int, timeout time.Duration) ([]string, error)
 }
 
-func runTraceroutes(p tracer, targets []*stats.TargetStats) {
-	var wg sync.WaitGroup
-	for _, t := range targets {
-		wg.Add(1)
-		go func(t *stats.TargetStats) {
-			defer wg.Done()
-			hops, err := p.TraceRoute(t.Host, 30, 2*time.Second)
-			if err != nil {
-				t.SetTraceHops([]string{"error"})
-				return
+func runTraceroutes(ctx context.Context, p tracer, targets []*stats.TargetStats) {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	runOnce := func() {
+		for _, t := range targets {
+			if len(t.GetView().TraceHops) == 0 {
+				t.SetTraceHops([]string{"Tracing..."})
 			}
-			t.SetTraceHops(hops)
-		}(t)
+		}
+
+		var wg sync.WaitGroup
+		for _, t := range targets {
+			wg.Add(1)
+			go func(t *stats.TargetStats) {
+				defer wg.Done()
+				hops, err := p.TraceRoute(t.Host, 30, 1*time.Second)
+				if err != nil {
+					t.SetTraceHops([]string{"error: " + err.Error()})
+					return
+				}
+				if len(hops) == 0 {
+					t.SetTraceHops([]string{"no route found"})
+					return
+				}
+				t.SetTraceHops(hops)
+			}(t)
+		}
+		wg.Wait()
 	}
-	wg.Wait()
+
+	runOnce() // Initial run
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runOnce()
+		}
+	}
 }
 
 func main() {

@@ -25,7 +25,7 @@ type fakePinger struct {
 	logWriterSet bool
 }
 
-func (f *fakePinger) Start(privileged bool, interval, timeout time.Duration) error {
+func (f *fakePinger) Start(interval, timeout time.Duration) error {
 	if f.startErr != nil {
 		return f.startErr
 	}
@@ -41,7 +41,7 @@ func (f *fakePinger) Wait() {
 	f.waited = true
 }
 
-func (f *fakePinger) DiscoverMaxPayload(dest string, start int, min int, privileged bool, logf func(string)) (int, error) {
+func (f *fakePinger) DiscoverMaxPayload(dest string, start int, min int, logf func(string)) (int, error) {
 	if f.discoverErr != nil {
 		return 0, f.discoverErr
 	}
@@ -62,6 +62,7 @@ func (f *fakePinger) SetSource(ip string) {}
 func (f *fakePinger) SetSize(size int)  {}
 func (f *fakePinger) SetCount(count int) {}
 func (f *fakePinger) SetResolveInterval(interval time.Duration) {}
+func (f *fakePinger) Stop()                    { f.closed = true }
 func (f *fakePinger) SetLogWriter(w io.Writer) { f.logWriterSet = true }
 
 func TestGetPreferredOutboundIP_Localhost(t *testing.T) {
