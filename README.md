@@ -29,6 +29,23 @@
 ```bash
 git clone https://github.com/nagayon-935/mping.git
 cd mping
+```
+
+#### make を使ったビルド (推奨)
+
+```bash
+# ビルドのみ
+make build
+
+# ビルド + setuid 付与 (sudo なしで実行可能になります)
+make install
+```
+
+`make install` はビルド後に `sudo chown root:wheel` と `sudo chmod u+s` を自動で実行するため、途中でパスワードの入力が求められます。
+
+#### go build を使ったビルド
+
+```bash
 go build -o mping ./cmd/main
 ```
 
