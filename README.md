@@ -22,6 +22,32 @@
 
 ## インストール
 
+### リリース済みバイナリを使う (推奨)
+
+[Releases](https://github.com/nagayon-935/mping/releases) から対応するアーカイブをダウンロードして展開し、同梱の `install.sh` を実行します。
+
+```bash
+# 例: Linux (amd64)
+tar -xzf mping-v1.0.0-linux-amd64.tar.gz
+sudo ./install.sh
+
+# インストール先を変更したい場合 (デフォルト: /usr/local/bin)
+sudo INSTALL_DIR=/usr/local/bin ./install.sh
+```
+
+`install.sh` はバイナリを `INSTALL_DIR` にコピーし、OS に応じて自動でケーパビリティ/setuid を設定します。
+
+* **Linux**: `setcap cap_net_raw+ep` を付与 (未インストールの場合は setuid にフォールバック)
+* **macOS**: `chown root` + `chmod u+s` で setuid を付与
+
+インストール後は `sudo` なしで実行できます。
+
+```bash
+mping google.com 1.1.1.1
+```
+
+---
+
 ### ソースコードからビルド
 
 必須要件: Go 1.24 以上
@@ -31,7 +57,7 @@ git clone https://github.com/nagayon-935/mping.git
 cd mping
 ```
 
-#### make を使ったビルド (推奨)
+#### make を使ったビルド
 
 ```bash
 # ビルドのみ
@@ -47,6 +73,7 @@ make install
 
 ```bash
 go build -o mping ./cmd/main
+sudo ./install.sh
 ```
 
 ## 使い方
