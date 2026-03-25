@@ -128,14 +128,15 @@ func (p *Pinger) canSendPayload(dstAddr *net.IPAddr, payloadLen int) (bool, erro
 
 	deadline := time.Now().Add(pmtuProbeTimeout)
 	buf := make([]byte, probeBufferSize)
-	for {
+	for time.Now().Before(deadline) {
 		_ = rc.SetReadDeadline(deadline)
 		_, pld, _, err := rc.ReadFrom(buf)
 		if err != nil {
 			if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
 				return false, nil
 			}
-			continue
+			// Non-timeout read errors (e.g. socket closed) are treated as no reply.
+			return false, nil
 		}
 		parsed, err := icmp.ParseMessage(1, pld)
 		if err != nil {
@@ -154,6 +155,8 @@ func (p *Pinger) canSendPayload(dstAddr *net.IPAddr, payloadLen int) (bool, erro
 			}
 		}
 	}
+	// Deadline exceeded with no matching reply.
+	return false, nil
 }
 
 func isMTUTooLarge(err error) bool {
