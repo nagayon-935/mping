@@ -1,20 +1,29 @@
 package pinger
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
-	"github.com/nagayon-935/mping/internal/stats"
 
+	"github.com/nagayon-935/mping/internal/stats"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
+)
+
+const (
+	receiverBufferSize  = 65535             // buffer size for IPv4/IPv6 receiver goroutines
+	probeBufferSize     = 1500              // buffer size for PMTU probe and TraceRoute responses
+	replyChanBuffer     = 100              // buffered channel size for ICMP echo replies per target
+	traceChanBuffer     = 200              // buffered channel size for TraceRoute messages
+	receiverReadTimeout = 1 * time.Second  // read deadline for receiver goroutines (enables done check)
+	pmtuProbeTimeout    = 300 * time.Millisecond // read deadline per PMTU probe attempt
+	payloadSignature    = "MPING"          // signature embedded at the start of ping payloads
+	traceSignature      = "TRC-"           // 4-byte signature embedded in TraceRoute payloads
 )
 
 // PacketConnV4 interface matches *ipv4.PacketConn methods we use
@@ -87,8 +96,6 @@ type Options struct {
 	ListenPacket  listenPacketFunc
 }
 
-var canSendPayloadFn = (*Pinger).canSendPayload
-
 func NewPinger(targets []*stats.TargetStats) *Pinger {
 	return NewPingerWithOptions(targets, Options{})
 }
@@ -142,366 +149,6 @@ func (p *Pinger) applyLastErrSource(errMsg string) string {
 	return errMsg
 }
 
-func (p *Pinger) DiscoverMaxPayload(dest string, start int, min int, logf func(string)) (int, error) {
-	if dest == "" {
-		return 0, fmt.Errorf("destination is empty")
-	}
-	if start <= 0 {
-		return 0, fmt.Errorf("start MTU must be > 0")
-	}
-	if min < 0 {
-		min = 0
-	}
-
-	dstAddr, err := p.resolveIPAddr("ip", dest)
-	if err != nil {
-		return 0, fmt.Errorf("resolve %s: %w", dest, err)
-	}
-
-	// PMTU currently only supported for IPv4
-	if dstAddr.IP.To4() == nil {
-		return p.Size, fmt.Errorf("PMTU discovery not supported for IPv6")
-	}
-
-	// No need to initialize p.conn here as we use fresh connections for probing in canSendPayload
-
-	low := min
-	if low > start {
-		low = start
-	}
-	high := start
-	for low < high {
-		mid := (low + high + 1) / 2
-		ok, err := canSendPayloadFn(p, dstAddr, mid)
-		if err != nil {
-			return 0, err
-		}
-		if ok {
-			if logf != nil {
-				logf(fmt.Sprintf("[PMTU] payload=%d OK", mid))
-			}
-			low = mid
-		} else {
-			if logf != nil {
-				logf(fmt.Sprintf("[PMTU] payload=%d FAIL", mid))
-			}
-			high = mid - 1
-		}
-	}
-	return low, nil
-}
-
-func (p *Pinger) canSendPayload(dstAddr *net.IPAddr, payloadLen int) (bool, error) {
-	if payloadLen < 0 {
-		payloadLen = 0
-	}
-
-	payload := buildPayload(payloadLen)
-	msg := icmp.Message{
-		Type: ipv4.ICMPTypeEcho,
-		Code: 0,
-		Body: &icmp.Echo{
-			ID:   p.baseID & 0xffff,
-			Seq:  0,
-			Data: payload,
-		},
-	}
-	b, err := msg.Marshal(nil)
-	if err != nil {
-		return false, err
-	}
-
-	bindAddr := "0.0.0.0"
-	if p.Source != "" {
-		bindAddr = p.Source
-	}
-
-	c, err := p.listenPacket("ip4:icmp", bindAddr)
-	if err != nil {
-		return false, err
-	}
-	defer c.Close()
-
-	rc, err := ipv4.NewRawConn(c)
-	if err != nil {
-		return false, err
-	}
-
-	h := &ipv4.Header{
-		Version:  4,
-		Len:      ipv4.HeaderLen,
-		TotalLen: ipv4.HeaderLen + len(b),
-		TTL:      64,
-		Protocol: 1,
-		Dst:      dstAddr.IP,
-		Flags:    ipv4.DontFragment,
-	}
-	// Note: checking p.Source is redundant if we bind, but RawConn might need Src set
-	if p.Source != "" {
-		h.Src = net.ParseIP(p.Source)
-	}
-
-	if err := rc.WriteTo(h, b, nil); err != nil {
-		if isMTUTooLarge(err) {
-			return false, nil
-		}
-		return false, err
-	}
-
-	deadline := time.Now().Add(300 * time.Millisecond)
-	buf := make([]byte, 1500)
-	for {
-		_ = rc.SetReadDeadline(deadline)
-		_, pld, _, err := rc.ReadFrom(buf)
-		if err != nil {
-			if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
-				return false, nil
-			}
-			continue
-		}
-		parsed, err := icmp.ParseMessage(1, pld)
-		if err != nil {
-			continue
-		}
-		switch parsed.Type {
-		case ipv4.ICMPTypeEchoReply:
-			if echo, ok := parsed.Body.(*icmp.Echo); ok {
-				if echo.ID == (p.baseID&0xffff) && echo.Seq == 0 {
-					return true, nil
-				}
-			}
-		case ipv4.ICMPTypeDestinationUnreachable:
-			if parsed.Code == 4 {
-				return false, nil
-			}
-		}
-	}
-}
-
-func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]string, error) {
-	if dest == "" {
-		return nil, fmt.Errorf("destination is empty")
-	}
-	if maxHops <= 0 {
-		return nil, fmt.Errorf("maxHops must be > 0")
-	}
-	dstAddr, err := p.resolveIPAddr("ip", dest)
-	if err != nil {
-		return nil, fmt.Errorf("resolve %s: %w", dest, err)
-	}
-
-	isV4 := dstAddr.IP.To4() != nil
-
-	// Register a channel in traceChans when the pinger's receiver is running for
-	// this address family. This avoids the macOS raw-socket race where the pinger's
-	// continuous ReadFrom consumes Time Exceeded replies before our socket can see them.
-	var traceCh chan traceMsg
-	if (isV4 && p.connV4 != nil) || (!isV4 && p.connV6 != nil) {
-		traceCh = make(chan traceMsg, 200)
-		p.traceChansMu.Lock()
-		p.traceChans = append(p.traceChans, traceCh)
-		p.traceChansMu.Unlock()
-		defer func() {
-			p.traceChansMu.Lock()
-			for i, ch := range p.traceChans {
-				if ch == traceCh {
-					p.traceChans = append(p.traceChans[:i], p.traceChans[i+1:]...)
-					break
-				}
-			}
-			p.traceChansMu.Unlock()
-		}()
-	}
-
-	// Open a socket solely for sending TTL-limited probes.
-	var sendV4 *ipv4.PacketConn
-	var sendV6 *ipv6.PacketConn
-	var sendConn net.PacketConn
-
-	if isV4 {
-		bindAddr := "0.0.0.0"
-		if p.Source != "" {
-			bindAddr = p.Source
-		}
-		c, err := p.listenPacket("ip4:icmp", bindAddr)
-		if err != nil {
-			return nil, err
-		}
-		sendConn = c
-		sendV4 = ipv4.NewPacketConn(c)
-	} else {
-		bindAddr := "::"
-		if p.Source != "" {
-			bindAddr = p.Source
-		}
-		c, err := p.listenPacket("ip6:ipv6-icmp", bindAddr)
-		if err != nil {
-			return nil, err
-		}
-		sendConn = c
-		sendV6 = ipv6.NewPacketConn(c)
-		sendV6.SetControlMessage(ipv6.FlagHopLimit, true)
-	}
-	defer sendConn.Close()
-
-	traceID := (p.baseID + 0x1234 + (time.Now().Nanosecond() & 0x3fff)) & 0xffff
-	hops := make([]string, 0, maxHops)
-
-	// acceptPacket checks whether a received message is a valid reply to the
-	// probe with the given ttl and returns (srcIP, reachedDest, accepted).
-	acceptPacket := func(parsed *icmp.Message, src net.Addr, ttl int) (string, bool, bool) {
-		srcIP := ""
-		if ipAddr, ok := src.(*net.IPAddr); ok {
-			srcIP = ipAddr.IP.String()
-		} else if udpAddr, ok := src.(*net.UDPAddr); ok {
-			srcIP = udpAddr.IP.String()
-		} else if src != nil {
-			srcIP = src.String()
-		}
-
-		switch parsed.Type {
-		case ipv4.ICMPTypeEchoReply, ipv6.ICMPTypeEchoReply:
-			if echo, ok := parsed.Body.(*icmp.Echo); ok {
-				if echo.ID == traceID && echo.Seq == ttl {
-					return srcIP, true, true
-				}
-			}
-		case ipv4.ICMPTypeTimeExceeded, ipv6.ICMPTypeTimeExceeded:
-			id, seq, ok := extractEchoIDSeq(parsed)
-			if ok && id == traceID && seq == ttl {
-				return srcIP, false, true
-			}
-			if !ok {
-				return srcIP, false, true
-			}
-		case ipv4.ICMPTypeDestinationUnreachable, ipv6.ICMPTypeDestinationUnreachable:
-			id, seq, ok := extractEchoIDSeq(parsed)
-			if ok && id == traceID && seq == ttl {
-				return srcIP, true, true
-			}
-		}
-		return "", false, false
-	}
-
-	buf := make([]byte, 1500)
-
-	for ttl := 1; ttl <= maxHops; ttl++ {
-		payload := make([]byte, 8)
-		copy(payload[0:4], "TRC-")
-		payload[4] = byte(traceID >> 8)
-		payload[5] = byte(traceID & 0xff)
-		payload[6] = byte(ttl >> 8)
-		payload[7] = byte(ttl & 0xff)
-
-		var probeMsg icmp.Message
-		if isV4 {
-			probeMsg = icmp.Message{
-				Type: ipv4.ICMPTypeEcho,
-				Code: 0,
-				Body: &icmp.Echo{ID: traceID, Seq: ttl, Data: payload},
-			}
-		} else {
-			probeMsg = icmp.Message{
-				Type: ipv6.ICMPTypeEchoRequest,
-				Code: 0,
-				Body: &icmp.Echo{ID: traceID, Seq: ttl, Data: payload},
-			}
-		}
-		b, err := probeMsg.Marshal(nil)
-		if err != nil {
-			hops = append(hops, "*")
-			continue
-		}
-
-		if isV4 {
-			_ = sendV4.SetTTL(ttl)
-			if _, err := sendV4.WriteTo(b, nil, dstAddr); err != nil {
-				hops = append(hops, "*")
-				continue
-			}
-		} else {
-			cm := &ipv6.ControlMessage{HopLimit: ttl}
-			if _, err := sendV6.WriteTo(b, cm, dstAddr); err != nil {
-				hops = append(hops, "*")
-				continue
-			}
-		}
-
-		found := false
-		reachedDest := false
-
-		if traceCh != nil {
-			// Receive via the pinger's shared receiver to avoid socket competition.
-			timer := time.NewTimer(timeout)
-		recvLoop:
-			for {
-				select {
-				case tm := <-traceCh:
-					srcIP, reached, accepted := acceptPacket(tm.parsed, tm.src, ttl)
-					if accepted {
-						if srcIP == "" {
-							srcIP = "*"
-						}
-						hops = append(hops, srcIP)
-						found = true
-						reachedDest = reached
-						timer.Stop()
-						break recvLoop
-					}
-				case <-timer.C:
-					break recvLoop
-				}
-			}
-		} else {
-			// Fallback: read directly from our send socket (pinger not running).
-			deadline := time.Now().Add(timeout)
-			if isV4 {
-				sendV4.SetReadDeadline(deadline)
-			} else {
-				sendV6.SetReadDeadline(deadline)
-			}
-			for {
-				var n int
-				var src net.Addr
-				if isV4 {
-					n, _, src, err = sendV4.ReadFrom(buf)
-				} else {
-					n, _, src, err = sendV6.ReadFrom(buf)
-				}
-				if err != nil {
-					break
-				}
-				proto := 1
-				if !isV4 {
-					proto = 58
-				}
-				parsed, err := icmp.ParseMessage(proto, buf[:n])
-				if err != nil {
-					continue
-				}
-				srcIP, reached, accepted := acceptPacket(parsed, src, ttl)
-				if accepted {
-					if srcIP == "" {
-						srcIP = "*"
-					}
-					hops = append(hops, srcIP)
-					found = true
-					reachedDest = reached
-					break
-				}
-			}
-		}
-
-		if !found {
-			hops = append(hops, "*")
-		}
-		if reachedDest {
-			break
-		}
-	}
-	return hops, nil
-}
-
 func (p *Pinger) Stop() {
 	if p.done != nil {
 		select {
@@ -511,14 +158,6 @@ func (p *Pinger) Stop() {
 			close(p.done)
 		}
 	}
-}
-
-func isMTUTooLarge(err error) bool {
-	if errors.Is(err, syscall.EMSGSIZE) {
-		return true
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "message too long") || strings.Contains(msg, "EMSGSIZE")
 }
 
 func (p *Pinger) Start(interval, timeout time.Duration) error {
@@ -572,7 +211,7 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 
 		p.mapMu.Lock()
 		p.targetMap[id] = t
-		p.targetChans[id] = make(chan Reply, 100)
+		p.targetChans[id] = make(chan Reply, replyChanBuffer)
 		p.mapMu.Unlock()
 
 		p.wg.Add(1)
@@ -624,13 +263,13 @@ func (p *Pinger) broadcastTrace(msg *icmp.Message, src net.Addr) {
 }
 
 func (p *Pinger) runReceiverV4() {
-	buf := make([]byte, 65535)
+	buf := make([]byte, receiverBufferSize)
 	for {
 		select {
 		case <-p.done:
 			return
 		default:
-			p.connV4.SetReadDeadline(time.Now().Add(1 * time.Second))
+			p.connV4.SetReadDeadline(time.Now().Add(receiverReadTimeout))
 			n, cm, src, err := p.connV4.ReadFrom(buf)
 			if err != nil {
 				if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
@@ -699,13 +338,13 @@ func (p *Pinger) runReceiverV4() {
 }
 
 func (p *Pinger) runReceiverV6() {
-	buf := make([]byte, 65535)
+	buf := make([]byte, receiverBufferSize)
 	for {
 		select {
 		case <-p.done:
 			return
 		default:
-			p.connV6.SetReadDeadline(time.Now().Add(1 * time.Second))
+			p.connV6.SetReadDeadline(time.Now().Add(receiverReadTimeout))
 			n, cm, src, err := p.connV6.ReadFrom(buf)
 			if err != nil {
 				if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
@@ -758,206 +397,6 @@ func (p *Pinger) runReceiverV6() {
 				}
 			}
 		}
-	}
-}
-
-func icmpV6ErrorString(typ icmp.Type, code int) string {
-	switch typ {
-	case ipv6.ICMPTypeDestinationUnreachable:
-		return destUnreachV6String(code)
-	case ipv6.ICMPTypeTimeExceeded:
-		return "Time Exceeded"
-	case ipv6.ICMPTypeParameterProblem:
-		return "Parameter Problem"
-	default:
-		return "ICMPv6 Error"
-	}
-}
-
-func destUnreachV6String(code int) string {
-	switch code {
-	case 0: return "No Route to Destination"
-	case 1: return "Communication with Destination Administratively Prohibited"
-	case 3: return "Address Unreachable"
-	case 4: return "Port Unreachable"
-	default: return "Destination Unreachable"
-	}
-}
-
-
-func extractEchoIDSeq(msg *icmp.Message) (int, int, bool) {
-	var data []byte
-	switch body := msg.Body.(type) {
-	case *icmp.DstUnreach:
-		id, seq, ok := parseInnerEchoIDSeq(body.Data)
-		if ok { return id, seq, ok }
-		data = body.Data
-	case *icmp.TimeExceeded:
-		id, seq, ok := parseInnerEchoIDSeq(body.Data)
-		if ok { return id, seq, ok }
-		data = body.Data
-	case *icmp.ParamProb:
-		id, seq, ok := parseInnerEchoIDSeq(body.Data)
-		if ok { return id, seq, ok }
-		data = body.Data
-	default:
-		return 0, 0, false
-	}
-
-	// Fallback: Pattern matching for "TRC-" + ID (2B) + Seq (2B)
-	for i := 0; i <= len(data)-8; i++ {
-		if data[i] == 'T' && data[i+1] == 'R' && data[i+2] == 'C' && data[i+3] == '-' {
-			id := int(data[i+4])<<8 | int(data[i+5])
-			seq := int(data[i+6])<<8 | int(data[i+7])
-			return id, seq, true
-		}
-	}
-	return 0, 0, false
-}
-
-func parseInnerEchoIDSeq(data []byte) (int, int, bool) {
-	if len(data) < 1 {
-		return 0, 0, false
-	}
-	version := data[0] >> 4
-
-	if version == 4 {
-		ihl := int(data[0]&0x0f) * 4
-		if ihl <= 0 || len(data) < ihl {
-			return 0, 0, false
-		}
-
-		// The inner packet could be ICMP (Protocol 1) or UDP (Protocol 17)
-		// if we sent it via a udp4 socket.
-		protocol := int(data[9])
-		innerData := data[ihl:]
-
-		if protocol == 1 { // ICMP
-			inner, err := icmp.ParseMessage(1, innerData)
-			if err == nil {
-				if echo, ok := inner.Body.(*icmp.Echo); ok {
-					return echo.ID, echo.Seq, true
-				}
-			}
-		} else if protocol == 17 { // UDP
-			// If we sent ICMP over a UDP socket (non-privileged), 
-			// the original packet will have a UDP header (8 bytes).
-			if len(innerData) >= 8 {
-				// Skip UDP header and try to parse the payload as ICMP
-				inner, err := icmp.ParseMessage(1, innerData[8:])
-				if err == nil {
-					if echo, ok := inner.Body.(*icmp.Echo); ok {
-						return echo.ID, echo.Seq, true
-					}
-				}
-			}
-		}
-		return 0, 0, false
-	} else if version == 6 {
-		// IPv6 header is 40 bytes.
-		const ipv6HeaderLen = 40
-		if len(data) < ipv6HeaderLen {
-			return 0, 0, false
-		}
-
-		protocol := int(data[6]) // Next Header
-		innerData := data[ipv6HeaderLen:]
-
-		if protocol == 58 { // ICMPv6
-			inner, err := icmp.ParseMessage(58, innerData)
-			if err == nil {
-				if echo, ok := inner.Body.(*icmp.Echo); ok {
-					return echo.ID, echo.Seq, true
-				}
-			}
-		} else if protocol == 17 { // UDP
-			if len(innerData) >= 8 {
-				inner, err := icmp.ParseMessage(58, innerData[8:])
-				if err == nil {
-					if echo, ok := inner.Body.(*icmp.Echo); ok {
-						return echo.ID, echo.Seq, true
-					}
-				}
-			}
-		}
-	}
-	return 0, 0, false
-}
-
-
-func icmpErrorString(typ icmp.Type, code int) string {
-	switch typ {
-	case ipv4.ICMPTypeDestinationUnreachable:
-		return destUnreachString(code)
-	case ipv4.ICMPTypeTimeExceeded:
-		return timeExceededString(code)
-	case ipv4.ICMPTypeParameterProblem:
-		return paramProblemString(code)
-	default:
-		return "ICMP Error"
-	}
-}
-
-func destUnreachString(code int) string {
-	switch code {
-	case 0:
-		return "Destination Network Unreachable"
-	case 1:
-		return "Destination Host Unreachable"
-	case 2:
-		return "Destination Protocol Unreachable"
-	case 3:
-		return "Destination Port Unreachable"
-	case 4:
-		return "Fragmentation Needed"
-	case 5:
-		return "Source Route Failed"
-	case 6:
-		return "Destination Network Unknown"
-	case 7:
-		return "Destination Host Unknown"
-	case 8:
-		return "Source Host Isolated"
-	case 9:
-		return "Network Administratively Prohibited"
-	case 10:
-		return "Host Administratively Prohibited"
-	case 11:
-		return "Network Unreachable for ToS"
-	case 12:
-		return "Host Unreachable for ToS"
-	case 13:
-		return "Communication Administratively Prohibited"
-	case 14:
-		return "Host Precedence Violation"
-	case 15:
-		return "Precedence Cutoff in Effect"
-	default:
-		return "Destination Unreachable"
-	}
-}
-
-func timeExceededString(code int) string {
-	switch code {
-	case 0:
-		return "Time Exceeded"
-	case 1:
-		return "Fragment Reassembly Time Exceeded"
-	default:
-		return "Time Exceeded"
-	}
-}
-
-func paramProblemString(code int) string {
-	switch code {
-	case 0:
-		return "Parameter Problem"
-	case 1:
-		return "Missing Required Option"
-	case 2:
-		return "Bad Length"
-	default:
-		return "Parameter Problem"
 	}
 }
 
@@ -1155,9 +594,9 @@ func buildPayload(size int) []byte {
 	for i := range payload {
 		payload[i] = 'A' // Fill with pattern
 	}
-	// Embed "MPING" signature at the beginning if size permits
-	if len(payload) >= 5 {
-		copy(payload, "MPING")
+	// Embed signature at the beginning if size permits
+	if len(payload) >= len(payloadSignature) {
+		copy(payload, payloadSignature)
 	}
 	return payload
 }

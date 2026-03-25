@@ -5,7 +5,10 @@ import (
 	"time"
 )
 
-const historySize = 3000
+const (
+	historySize   = 3000 // RTT history ring buffer size
+	jitterDivisor = 16   // RFC 1889 jitter smoothing factor: J = J + (|D| - J) / jitterDivisor
+)
 
 // PortCheckResult holds the result of a single TCP/UDP port check.
 type PortCheckResult struct {
@@ -204,7 +207,7 @@ func (t *TargetStats) OnSuccess(rtt time.Duration, ttl int) {
 			delta = -delta
 		}
 		// t.jitter is stored in nanoseconds
-		t.jitter += (delta - t.jitter) / 16
+		t.jitter += (delta - t.jitter) / jitterDivisor
 	}
 
 	t.Recv++
