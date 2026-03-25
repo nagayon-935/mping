@@ -17,6 +17,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	pmtuMaxPayload       = 9872             // upper bound for PMTU binary search (max ICMP payload for jumbo frames)
+	dnsResolveInterval   = 60 * time.Second // how often each worker re-resolves the target hostname
+	tracerouteInterval   = 10 * time.Minute // how often the background traceroute is re-run
+	tracerouteMaxHops    = 30               // maximum TTL / hop count for traceroute
+	tracerouteHopTimeout = 1 * time.Second  // per-hop timeout for traceroute probes
+	probePort            = "80"             // destination port used when detecting the preferred outbound IP
+)
+
 type pingerController interface {
 	Start(interval, timeout time.Duration) error
 	Stop()
@@ -130,7 +139,7 @@ func getInterfaceMTU(ifaceName, sourceIP, firstHost string) (int, error) {
 // getPreferredOutboundIP determines the preferred local IP address for reaching a remote host.
 func getPreferredOutboundIP(remoteAddr, network string) string {
 	// network should be "udp", "udp4", or "udp6"
-	conn, err := net.Dial(network, net.JoinHostPort(remoteAddr, "80"))
+	conn, err := net.Dial(network, net.JoinHostPort(remoteAddr, probePort))
 	if err != nil {
 		return ""
 	}
@@ -435,7 +444,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		p.SetSource(bindIP)
 		p.SetSize(size)
 		p.SetCount(cfg.count)
-		p.SetResolveInterval(60 * time.Second)
+		p.SetResolveInterval(dnsResolveInterval)
 		if logFile != nil {
 			p.SetLogWriter(logFile)
 		}
@@ -449,7 +458,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			fmt.Fprintln(errOut, "Warning: PMTU discovery disabled for IPv6")
 		} else {
 			probe := makePinger(cfg.packetSize)
-			maxPayload, err := probe.DiscoverMaxPayload(hosts[0], 9872, cfg.packetSize, func(line string) {
+			maxPayload, err := probe.DiscoverMaxPayload(hosts[0], pmtuMaxPayload, cfg.packetSize, func(line string) {
 				preLogs = append(preLogs, line)
 			})
 			if err != nil {
@@ -589,7 +598,7 @@ type tracer interface {
 }
 
 func runTraceroutes(ctx context.Context, p tracer, targets []*stats.TargetStats) {
-	ticker := time.NewTicker(10 * time.Minute)
+	ticker := time.NewTicker(tracerouteInterval)
 	defer ticker.Stop()
 
 	runOnce := func() {
@@ -604,7 +613,7 @@ func runTraceroutes(ctx context.Context, p tracer, targets []*stats.TargetStats)
 			wg.Add(1)
 			go func(t *stats.TargetStats) {
 				defer wg.Done()
-				hops, err := p.TraceRoute(t.Host, 30, 1*time.Second)
+				hops, err := p.TraceRoute(t.Host, tracerouteMaxHops, tracerouteHopTimeout)
 				if err != nil {
 					t.SetTraceHops([]string{"error: " + err.Error()})
 					return

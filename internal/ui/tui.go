@@ -27,7 +27,13 @@ const (
 	rttRedThreshold       = 200 * time.Millisecond
 	jitterOrangeThreshold = 10 * time.Millisecond
 	jitterRedThreshold    = 50 * time.Millisecond
+	lossOrangeThreshold   = 20.0
 	lossRedThreshold      = 80.0
+
+	graphYMax         = 100 * time.Millisecond // fixed Y-axis upper bound for the RTT graph
+	errorLogMaxSize   = 1000                   // maximum number of lines kept in the error log pane
+	minUIRefresh      = 200 * time.Millisecond // minimum UI refresh interval when ping interval is very short
+	fastUIRefresh     = 100 * time.Millisecond // UI refresh rate used when ping interval < minUIRefresh
 )
 
 var graphGridValues = []int{25, 50, 75, 100}
@@ -209,7 +215,7 @@ func lossColorForRate(lossRate float64, vividRed tcell.Color) tcell.Color {
 	if lossRate > lossRedThreshold {
 		return vividRed
 	}
-	if lossRate > 20 {
+	if lossRate > lossOrangeThreshold {
 		return tcell.ColorOrange
 	}
 	return tcell.ColorGreen
@@ -593,7 +599,7 @@ func buildCompactRowCells(values []string, widths []int, aligns []int, vividRed 
 
 func appendErrorLog(errorLogs *[]string, errorView *tview.TextView, msg string) {
 	*errorLogs = append(*errorLogs, msg)
-	if len(*errorLogs) > 1000 {
+	if len(*errorLogs) > errorLogMaxSize {
 		*errorLogs = (*errorLogs)[1:]
 	}
 	errorView.SetText(strings.Join(*errorLogs, "\n") + "\n")
@@ -876,8 +882,8 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 			// Render graph data for a fixed 30s window and project it onto current width.
 			data, hasData := projectDurationsToGraph(view.History, timeBasedWidth, graphWidth)
 
-			// Y-Axis fixed to 0-100ms
-			const yMax = 100 * time.Millisecond
+			// Y-Axis fixed to 0-graphYMax
+			const yMax = graphYMax
 			const yMin = 0
 			const yMaxMs = 100.0
 
@@ -1635,8 +1641,8 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 	// Refresh loop
 	go func() {
 		ticker := time.NewTicker(interval / 2)
-		if interval < 200*time.Millisecond {
-			ticker.Reset(100 * time.Millisecond)
+		if interval < minUIRefresh {
+			ticker.Reset(fastUIRefresh)
 		}
 		defer ticker.Stop()
 		for {

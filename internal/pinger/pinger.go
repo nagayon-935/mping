@@ -17,6 +17,17 @@ import (
 	"golang.org/x/net/ipv6"
 )
 
+const (
+	receiverBufferSize  = 65535             // buffer size for IPv4/IPv6 receiver goroutines
+	probeBufferSize     = 1500              // buffer size for PMTU probe and TraceRoute responses
+	replyChanBuffer     = 100              // buffered channel size for ICMP echo replies per target
+	traceChanBuffer     = 200              // buffered channel size for TraceRoute messages
+	receiverReadTimeout = 1 * time.Second  // read deadline for receiver goroutines (enables done check)
+	pmtuProbeTimeout    = 300 * time.Millisecond // read deadline per PMTU probe attempt
+	payloadSignature    = "MPING"          // signature embedded at the start of ping payloads
+	traceSignature      = "TRC-"           // 4-byte signature embedded in TraceRoute payloads
+)
+
 // PacketConnV4 interface matches *ipv4.PacketConn methods we use
 type PacketConnV4 interface {
 	ReadFrom(b []byte) (int, *ipv4.ControlMessage, net.Addr, error)
@@ -248,8 +259,8 @@ func (p *Pinger) canSendPayload(dstAddr *net.IPAddr, payloadLen int) (bool, erro
 		return false, err
 	}
 
-	deadline := time.Now().Add(300 * time.Millisecond)
-	buf := make([]byte, 1500)
+	deadline := time.Now().Add(pmtuProbeTimeout)
+	buf := make([]byte, probeBufferSize)
 	for {
 		_ = rc.SetReadDeadline(deadline)
 		_, pld, _, err := rc.ReadFrom(buf)
@@ -297,7 +308,7 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 	// continuous ReadFrom consumes Time Exceeded replies before our socket can see them.
 	var traceCh chan traceMsg
 	if (isV4 && p.connV4 != nil) || (!isV4 && p.connV6 != nil) {
-		traceCh = make(chan traceMsg, 200)
+		traceCh = make(chan traceMsg, traceChanBuffer)
 		p.traceChansMu.Lock()
 		p.traceChans = append(p.traceChans, traceCh)
 		p.traceChansMu.Unlock()
@@ -383,11 +394,11 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 		return "", false, false
 	}
 
-	buf := make([]byte, 1500)
+	buf := make([]byte, probeBufferSize)
 
 	for ttl := 1; ttl <= maxHops; ttl++ {
 		payload := make([]byte, 8)
-		copy(payload[0:4], "TRC-")
+		copy(payload[0:4], traceSignature)
 		payload[4] = byte(traceID >> 8)
 		payload[5] = byte(traceID & 0xff)
 		payload[6] = byte(ttl >> 8)
@@ -572,7 +583,7 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 
 		p.mapMu.Lock()
 		p.targetMap[id] = t
-		p.targetChans[id] = make(chan Reply, 100)
+		p.targetChans[id] = make(chan Reply, replyChanBuffer)
 		p.mapMu.Unlock()
 
 		p.wg.Add(1)
@@ -624,13 +635,13 @@ func (p *Pinger) broadcastTrace(msg *icmp.Message, src net.Addr) {
 }
 
 func (p *Pinger) runReceiverV4() {
-	buf := make([]byte, 65535)
+	buf := make([]byte, receiverBufferSize)
 	for {
 		select {
 		case <-p.done:
 			return
 		default:
-			p.connV4.SetReadDeadline(time.Now().Add(1 * time.Second))
+			p.connV4.SetReadDeadline(time.Now().Add(receiverReadTimeout))
 			n, cm, src, err := p.connV4.ReadFrom(buf)
 			if err != nil {
 				if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
@@ -699,13 +710,13 @@ func (p *Pinger) runReceiverV4() {
 }
 
 func (p *Pinger) runReceiverV6() {
-	buf := make([]byte, 65535)
+	buf := make([]byte, receiverBufferSize)
 	for {
 		select {
 		case <-p.done:
 			return
 		default:
-			p.connV6.SetReadDeadline(time.Now().Add(1 * time.Second))
+			p.connV6.SetReadDeadline(time.Now().Add(receiverReadTimeout))
 			n, cm, src, err := p.connV6.ReadFrom(buf)
 			if err != nil {
 				if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
@@ -804,9 +815,9 @@ func extractEchoIDSeq(msg *icmp.Message) (int, int, bool) {
 		return 0, 0, false
 	}
 
-	// Fallback: Pattern matching for "TRC-" + ID (2B) + Seq (2B)
+	// Fallback: Pattern matching for traceSignature + ID (2B) + Seq (2B)
 	for i := 0; i <= len(data)-8; i++ {
-		if data[i] == 'T' && data[i+1] == 'R' && data[i+2] == 'C' && data[i+3] == '-' {
+		if data[i] == traceSignature[0] && data[i+1] == traceSignature[1] && data[i+2] == traceSignature[2] && data[i+3] == traceSignature[3] {
 			id := int(data[i+4])<<8 | int(data[i+5])
 			seq := int(data[i+6])<<8 | int(data[i+7])
 			return id, seq, true
@@ -1155,9 +1166,9 @@ func buildPayload(size int) []byte {
 	for i := range payload {
 		payload[i] = 'A' // Fill with pattern
 	}
-	// Embed "MPING" signature at the beginning if size permits
-	if len(payload) >= 5 {
-		copy(payload, "MPING")
+	// Embed signature at the beginning if size permits
+	if len(payload) >= len(payloadSignature) {
+		copy(payload, payloadSignature)
 	}
 	return payload
 }
