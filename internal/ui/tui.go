@@ -810,6 +810,8 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		SetWrap(false)
 	footer.SetBackgroundColor(tcell.ColorBlack)
 
+	appStop := make(chan struct{})
+
 	// Refresh loop
 	go func() {
 		ticker := time.NewTicker(interval / 2)
@@ -829,6 +831,8 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 					updateTable()
 				})
 				// Stop refreshing since pinger is done
+				return
+			case <-appStop:
 				return
 			}
 		}
@@ -870,5 +874,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 
 	flex.SetBackgroundColor(tcell.ColorBlack)
 
-	return app.SetRoot(flex, true).Run()
+	err := app.SetRoot(flex, true).Run()
+	close(appStop) // stop the refresh goroutine now that the screen is torn down
+	return err
 }
