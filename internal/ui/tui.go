@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/stats"
@@ -648,6 +649,10 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		}
 	}
 
+	appStop := make(chan struct{})
+	var appStopOnce sync.Once
+	closeAppStop := func() { appStopOnce.Do(func() { close(appStop) }) }
+
 	// Keys
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if app.GetFocus() == table {
@@ -735,6 +740,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 
 		switch event.Rune() {
 		case 'q':
+			closeAppStop() // stop refresh goroutine before screen teardown
 			app.Stop()
 		case 's':
 			if !stopRequested {
@@ -810,8 +816,6 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		SetWrap(false)
 	footer.SetBackgroundColor(tcell.ColorBlack)
 
-	appStop := make(chan struct{})
-
 	// Refresh loop
 	go func() {
 		ticker := time.NewTicker(interval / 2)
@@ -875,6 +879,6 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 	flex.SetBackgroundColor(tcell.ColorBlack)
 
 	err := app.SetRoot(flex, true).Run()
-	close(appStop) // stop the refresh goroutine now that the screen is torn down
+	closeAppStop() // fallback: ensure goroutine stops even on non-interactive exit
 	return err
 }
