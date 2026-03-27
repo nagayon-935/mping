@@ -133,6 +133,62 @@ func ttlString(ttl int) string {
 	return fmt.Sprintf("%d", ttl)
 }
 
+// inferInitialTTL returns the likely initial TTL the remote host used,
+// inferred from the received TTL (LastTTL).
+// Common OS defaults: 64 (Linux/macOS), 128 (Windows), 255 (network devices).
+func inferInitialTTL(lastTTL int) string {
+	switch {
+	case lastTTL <= 0:
+		return "-"
+	case lastTTL <= 64:
+		return "64"
+	case lastTTL <= 128:
+		return "128"
+	default:
+		return "255"
+	}
+}
+
+func hopCountString(hops []string) string {
+	if len(hops) == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%d", len(hops))
+}
+
+// wrapHops splits hops into lines that fit within maxWidth display columns.
+// Each hop is joined with " -> " and a new line is started when adding the
+// next hop would exceed maxWidth.
+func wrapHops(hops []string, maxWidth int) []string {
+	if len(hops) == 0 || maxWidth <= 0 {
+		return nil
+	}
+	var lines []string
+	var current []string
+	currentW := 0
+	for _, hop := range hops {
+		var segment string
+		if len(current) == 0 {
+			segment = hop
+		} else {
+			segment = " -> " + hop
+		}
+		segW := runewidth.StringWidth(segment)
+		if len(current) > 0 && currentW+segW > maxWidth {
+			lines = append(lines, strings.Join(current, " -> "))
+			current = []string{hop}
+			currentW = runewidth.StringWidth(hop)
+		} else {
+			current = append(current, hop)
+			currentW += segW
+		}
+	}
+	if len(current) > 0 {
+		lines = append(lines, strings.Join(current, " -> "))
+	}
+	return lines
+}
+
 func mtuString(mtu int) string {
 	if mtu <= 0 {
 		return "-"

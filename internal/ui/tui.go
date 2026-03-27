@@ -23,7 +23,7 @@ const (
 
 var newApplication = tview.NewApplication
 
-func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error) error {
+func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error, onResetTrace func()) error {
 	// Define vivid colors
 	vividRed := tcell.NewRGBColor(255, 0, 0)
 	vividCyan := tcell.NewRGBColor(0, 255, 255)
@@ -333,6 +333,8 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		}
 
 		if traceEnabled && traceView != nil {
+			const minRouteContentW = 20 // minimum Route column content width
+
 			// Compute Host column width from the longest hostname (with 1-space padding each side).
 			hostColW := runewidth.StringWidth("Host")
 			for _, t := range targets {
@@ -342,62 +344,101 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			}
 			hostColW += 2 // 1 space left + 1 space right
 
-			// Compute Route column width from the longest route string (with 1-space padding each side).
-			routeColW := runewidth.StringWidth("Route")
-			for _, t := range targets {
-				hops := t.GetView().TraceHops
-				if w := runewidth.StringWidth(strings.Join(hops, " -> ")); w > routeColW {
-					routeColW = w
-				}
-			}
-			routeColW += 2 // 1 space left + 1 space right
+			// Fixed column widths for Hops and Init TTL.
+			hopsColW := runewidth.StringWidth("Hops") + 2
+			initTTLColW := runewidth.StringWidth("Init TTL") + 2
 
-			// Expand Route column to fill available terminal width.
-			// Available width = inner rect width - 3 border chars (│host│route│).
 			_, _, availW, _ := traceView.GetInnerRect()
-			if expanded := availW - hostColW - 3; expanded > routeColW {
-				routeColW = expanded
-			}
+
+			// Full mode needs 5 border chars: │host│hops│initTTL│route│
+			// Compact mode needs 3 border chars: │host│route│
+			fullRouteContentW := availW - hostColW - hopsColW - initTTLColW - 5
+			traceCompact := fullRouteContentW < minRouteContentW
 
 			// cell returns text with a leading space, right-padded to fill colW.
 			cell := func(text string, colW int) string {
 				return formatCellText(" "+text, colW, tview.AlignLeft)
 			}
 
-			h := strings.Repeat("─", hostColW)
-			r := strings.Repeat("─", routeColW)
-
-			var sb strings.Builder
-
-			// Top border.
-			fmt.Fprintf(&sb, "[white]┌%s┬%s┐[-]\n", h, r)
-
-			// Header row: yellow bold labels, darkgray borders.
-			fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
-				cell("Host", hostColW), cell("Route", routeColW))
-
-			// Header separator.
-			fmt.Fprintf(&sb, "[white]├%s┼%s┤[-]\n", h, r)
-
-			// Data rows: host in cyan, route in white, darkgray borders, separator between rows.
+			// Collect targets that have trace data.
 			dataTargets := make([]*stats.TargetStats, 0, len(targets))
 			for _, t := range targets {
 				if len(t.GetView().TraceHops) > 0 {
 					dataTargets = append(dataTargets, t)
 				}
 			}
-			for i, t := range dataTargets {
-				view := t.GetView()
-				route := strings.Join(view.TraceHops, " -> ")
-				fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[-]\n",
-					cell(view.Host, hostColW), cell(route, routeColW))
-				if i < len(dataTargets)-1 {
-					fmt.Fprintf(&sb, "[white]├%s┼%s┤[-]\n", h, r)
-				}
-			}
 
-			// Bottom border.
-			fmt.Fprintf(&sb, "[white]└%s┴%s┘[-]\n", h, r)
+			var sb strings.Builder
+			h := strings.Repeat("─", hostColW)
+
+			if traceCompact {
+				// 2-column compact mode: Host | Route
+				routeColW := availW - hostColW - 3
+				if routeColW < minRouteContentW {
+					routeColW = minRouteContentW
+				}
+				routeContentW := routeColW - 1
+				r := strings.Repeat("─", routeColW)
+
+				fmt.Fprintf(&sb, "[white]┌%s┬%s┐[-]\n", h, r)
+				fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
+					cell("Host", hostColW), cell("Route", routeColW))
+				fmt.Fprintf(&sb, "[white]├%s┼%s┤[-]\n", h, r)
+
+				emptyHost := cell("", hostColW)
+				for i, t := range dataTargets {
+					view := t.GetView()
+					routeLines := wrapHops(view.TraceHops, routeContentW)
+					if len(routeLines) == 0 {
+						routeLines = []string{""}
+					}
+					fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[-]\n",
+						cell(view.Host, hostColW), cell(routeLines[0], routeColW))
+					for _, rl := range routeLines[1:] {
+						fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[-]\n",
+							emptyHost, cell(rl, routeColW))
+					}
+					if i < len(dataTargets)-1 {
+						fmt.Fprintf(&sb, "[white]├%s┼%s┤[-]\n", h, r)
+					}
+				}
+				fmt.Fprintf(&sb, "[white]└%s┴%s┘[-]\n", h, r)
+			} else {
+				// 4-column full mode: Host | Hops | Init TTL | Route
+				routeColW := fullRouteContentW + 1 // add back the leading-space padding
+				ho := strings.Repeat("─", hopsColW)
+				it := strings.Repeat("─", initTTLColW)
+				r := strings.Repeat("─", routeColW)
+				routeContentW := routeColW - 1
+
+				fmt.Fprintf(&sb, "[white]┌%s┬%s┬%s┬%s┐[-]\n", h, ho, it, r)
+				fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
+					cell("Host", hostColW), cell("Hops", hopsColW), cell("Init TTL", initTTLColW), cell("Route", routeColW))
+				fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┤[-]\n", h, ho, it, r)
+
+				emptyHost := cell("", hostColW)
+				emptyHops := cell("", hopsColW)
+				emptyInitTTL := cell("", initTTLColW)
+				for i, t := range dataTargets {
+					view := t.GetView()
+					hopsStr := hopCountString(view.TraceHops)
+					initTTLStr := inferInitialTTL(view.LastTTL)
+					routeLines := wrapHops(view.TraceHops, routeContentW)
+					if len(routeLines) == 0 {
+						routeLines = []string{""}
+					}
+					fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[-]\n",
+						cell(view.Host, hostColW), cell(hopsStr, hopsColW), cell(initTTLStr, initTTLColW), cell(routeLines[0], routeColW))
+					for _, rl := range routeLines[1:] {
+						fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[-]\n",
+							emptyHost, emptyHops, emptyInitTTL, cell(rl, routeColW))
+					}
+					if i < len(dataTargets)-1 {
+						fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┤[-]\n", h, ho, it, r)
+					}
+				}
+				fmt.Fprintf(&sb, "[white]└%s┴%s┴%s┴%s┘[-]\n", h, ho, it, r)
+			}
 
 			traceView.SetText(sb.String())
 		}
@@ -644,6 +685,14 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			errorView.SetText("")
 			lastLossTimes = make(map[string]time.Time)
 			alertState = make(map[string]alertFlags)
+			if traceEnabled {
+				for _, t := range targets {
+					t.SetTraceHops(nil)
+				}
+				if onResetTrace != nil {
+					go onResetTrace()
+				}
+			}
 		}
 		return event
 	})

@@ -207,7 +207,7 @@ func TestRunStopRestart(t *testing.T) {
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return fp
 	}
-	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error) error {
+	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error, onResetTrace func()) error {
 		onStop()
 		if err := onRestart(); err != nil {
 			t.Fatalf("restart failed: %v", err)
@@ -237,7 +237,7 @@ func TestRunStartError(t *testing.T) {
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return fp
 	}
-	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error) error {
+	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error, onResetTrace func()) error {
 		return nil
 	}
 
@@ -452,7 +452,7 @@ func TestRunInvalidPortSpec(t *testing.T) {
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return &fakePinger{}
 	}
-	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error) error {
+	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error, onResetTrace func()) error {
 		return nil
 	}
 	var out, errOut bytes.Buffer
@@ -476,7 +476,7 @@ func TestRunWithPortSpec(t *testing.T) {
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return fp
 	}
-	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error) error {
+	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error, onResetTrace func()) error {
 		return nil
 	}
 	var out, errOut bytes.Buffer
@@ -497,9 +497,55 @@ func TestRunWithTrace(t *testing.T) {
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return fp
 	}
-	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error) error {
+	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error, onResetTrace func()) error {
 		return nil
 	}
+	var out, errOut bytes.Buffer
+	code := run([]string{"-T", "-S", "127.0.0.1", "example.com"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
+	}
+}
+
+// TestRunResetTrace verifies that the onResetTrace callback passed to uiRun,
+// when called, re-triggers a traceroute and repopulates TraceHops.
+func TestRunResetTrace(t *testing.T) {
+	origPinger := newPinger
+	origUI := uiRun
+	t.Cleanup(func() {
+		newPinger = origPinger
+		uiRun = origUI
+	})
+
+	fp := &fakePinger{}
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		return fp
+	}
+
+	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error, onResetTrace func()) error {
+		if onResetTrace == nil {
+			t.Error("onResetTrace must not be nil when traceEnabled=true")
+			return nil
+		}
+		// Simulate the UI clearing TraceHops before calling onResetTrace (as 'R' does).
+		for _, tg := range targets {
+			tg.SetTraceHops(nil)
+		}
+		onResetTrace()
+		// Wait for the re-run to populate TraceHops.
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if len(targets[0].GetView().TraceHops) > 0 {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if hops := targets[0].GetView().TraceHops; len(hops) == 0 {
+			t.Error("TraceHops not repopulated after onResetTrace()")
+		}
+		return nil
+	}
+
 	var out, errOut bytes.Buffer
 	code := run([]string{"-T", "-S", "127.0.0.1", "example.com"}, &out, &errOut)
 	if code != 0 {
@@ -517,7 +563,7 @@ func TestRunWithMTUIPv6Warning(t *testing.T) {
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return &fakePinger{}
 	}
-	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error) error {
+	uiRun = func(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error, onResetTrace func()) error {
 		return nil
 	}
 	var out, errOut bytes.Buffer
