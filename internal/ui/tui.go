@@ -405,11 +405,12 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 				fmt.Fprintf(&sb, "[white]└%s┴%s┘[-]\n", h, r)
 			} else {
 				// 4-column full mode: Host | Hops | Init TTL | Route
-				routeColW := fullRouteContentW + 1 // add back the leading-space padding
+				// fullRouteContentW is already the full column width (border chars already subtracted).
+				routeColW := fullRouteContentW
 				ho := strings.Repeat("─", hopsColW)
 				it := strings.Repeat("─", initTTLColW)
 				r := strings.Repeat("─", routeColW)
-				routeContentW := routeColW - 1
+				routeContentW := routeColW - 1 // leading space in cell takes 1 char
 
 				fmt.Fprintf(&sb, "[white]┌%s┬%s┬%s┬%s┐[-]\n", h, ho, it, r)
 				fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
@@ -479,7 +480,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			countColW := runewidth.StringWidth("Open/Closed") + 2
 			// Expand Last Change column to fill remaining width
 			changeColW := runewidth.StringWidth("Last Change") + 2
-			used := targetColW + portColW + serviceColW + statusColW + countColW + changeColW + 6
+			used := targetColW + portColW + serviceColW + statusColW + countColW + changeColW + 7 // 7 border chars: │t│p│sv│st│c│ch│
 			if availW > used {
 				changeColW += availW - used
 			}
