@@ -779,16 +779,18 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			lastLossTimes = make(map[string]time.Time)
 			alertState = make(map[string]alertFlags)
 			lastPortStatuses = make(map[string]string)
-			if traceEnabled {
-				for _, t := range targets {
-					t.SetTraceHops(nil)
+			if !stopRequested {
+				if traceEnabled {
+					for _, t := range targets {
+						t.SetTraceHops(nil)
+					}
+					if onResetTrace != nil {
+						go onResetTrace()
+					}
 				}
-				if onResetTrace != nil {
-					go onResetTrace()
+				if portEnabled && onResetPort != nil {
+					go onResetPort()
 				}
-			}
-			if portEnabled && onResetPort != nil {
-				go onResetPort()
 			}
 		}
 		return event

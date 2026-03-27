@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/stats"
@@ -46,6 +47,7 @@ type PortChecker struct {
 	interval time.Duration
 	timeout  time.Duration
 	done     chan struct{}
+	stopOnce sync.Once
 }
 
 // NewPortChecker creates a PortChecker and initialises PortResults on each target.
@@ -76,9 +78,9 @@ func (pc *PortChecker) Start() {
 	}
 }
 
-// Stop signals all goroutines to exit.
+// Stop signals all goroutines to exit. Safe to call multiple times.
 func (pc *PortChecker) Stop() {
-	close(pc.done)
+	pc.stopOnce.Do(func() { close(pc.done) })
 }
 
 func (pc *PortChecker) loop(t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
