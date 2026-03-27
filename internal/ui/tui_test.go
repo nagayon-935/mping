@@ -605,7 +605,7 @@ func TestRunWithSimulationScreen(t *testing.T) {
 		close(done)
 	}()
 
-	err := Run([]*stats.TargetStats{target}, 50*time.Millisecond, done, "", "", 56, nil, false, false, nil, nil, nil)
+	err := Run([]*stats.TargetStats{target}, 50*time.Millisecond, done, "", "", 56, nil, false, false, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
@@ -1037,7 +1037,7 @@ func TestRunWithTraceEnabled(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, true, false, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, true, false, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1069,7 +1069,7 @@ func TestRunWithPortEnabled(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, false, true, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, false, true, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1101,7 +1101,7 @@ func TestRunWithBothTracAndPort(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, true, true, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, true, true, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1130,7 +1130,7 @@ func TestRunWithInitialLogs(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, logs, false, false, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, logs, false, false, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1159,7 +1159,7 @@ func TestRunWithDoneChClosed(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, doneCh, "", "", 56, nil, false, false, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, doneCh, "", "", 56, nil, false, false, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1192,7 +1192,7 @@ func TestRunKeyboardStop(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false, onStop, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false, onStop, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1226,7 +1226,7 @@ func TestRunKeyboardReset(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1263,7 +1263,7 @@ func TestRunKeyboardRestart(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false, onStop, onRestart, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false, onStop, onRestart, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1295,7 +1295,7 @@ func TestRunKeyboardTab(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1410,7 +1410,7 @@ func TestRunTabWithTraceAndPort(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, true, true, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, true, true, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1446,7 +1446,7 @@ func TestRunKeyboardStopNoCallback(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		// onStop=nil, onRestart=nil
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1483,7 +1483,7 @@ func TestRunWithLossTarget(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, false, false, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, false, false, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1550,7 +1550,7 @@ func TestRunTableScrollKeys(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run(targets, 50*time.Millisecond, nil, "", "", 56, nil, false, false, nil, nil, nil)
+		errCh <- Run(targets, 50*time.Millisecond, nil, "", "", 56, nil, false, false, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1594,6 +1594,7 @@ func TestRunRestartError(t *testing.T) {
 		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false,
 			onStop,
 			func() error { return restartErr },
+			nil,
 			nil,
 		)
 	}()
@@ -1688,7 +1689,7 @@ func TestRunTabTraceOnly(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, true, false, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, true, false, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1725,7 +1726,7 @@ func TestRunTabPortOnly(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, true, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, true, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1780,7 +1781,7 @@ func TestRunNarrowScreenCompactLayout(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run(targets, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, false, false, nil, nil, nil)
+		errCh <- Run(targets, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, false, false, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1867,7 +1868,7 @@ func TestRunPortEnabledNoResults(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, true, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, true, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1903,7 +1904,7 @@ func TestRunWithHighRTTAndJitter(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, false, false, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, false, false, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1942,7 +1943,7 @@ func TestRunWithHighLossAlert(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, false, false, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, false, false, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -1973,7 +1974,7 @@ func TestRunWithTraceAndTicker(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, true, false, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, true, false, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -2008,7 +2009,7 @@ func TestRunWithPortAndTicker(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, true, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, true, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -2051,7 +2052,7 @@ func TestRunWithBothAndTicker(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target, target2}, 50*time.Millisecond, nil, "10.0.0.1", "2001::1", 56, nil, true, true, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target, target2}, 50*time.Millisecond, nil, "10.0.0.1", "2001::1", 56, nil, true, true, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -2138,7 +2139,7 @@ func TestRunScrollKeyWithFewTargets(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, false, false, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "10.0.0.1", "", 56, nil, false, false, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -2179,7 +2180,7 @@ func TestRunWithIPAsHost(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, false, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
@@ -2213,7 +2214,7 @@ func TestRunResetTraceKey(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, true, false, nil, nil, onResetTrace)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, true, false, nil, nil, onResetTrace, nil)
 	}()
 
 	screen := <-screenCh
@@ -2231,6 +2232,89 @@ func TestRunResetTraceKey(t *testing.T) {
 	if hops := target.GetView().TraceHops; len(hops) != 0 {
 		t.Errorf("TraceHops not cleared after 'R': got %v", hops)
 	}
+
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- Run: 'R' key with portEnabled calls onResetPort ----
+
+func TestRunResetPortKey(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	target.SetIP("127.0.0.1")
+	result := &stats.PortCheckResult{Port: 80, Protocol: "tcp"}
+	result.SetResult("Open", 5*time.Millisecond)
+	target.PortResults = []*stats.PortCheckResult{result}
+
+	resetCalled := make(chan struct{}, 1)
+	onResetPort := func() { resetCalled <- struct{}{} }
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, true, nil, nil, nil, onResetPort)
+	}()
+
+	screen := <-screenCh
+	time.Sleep(30 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'R', tcell.ModNone)
+
+	select {
+	case <-resetCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("onResetPort was not called after 'R' key")
+	}
+
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
+// ---- Run: port status change logs message to error pane ----
+
+func TestRunPortStatusChangeLogged(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	target.SetIP("127.0.0.1")
+	result := &stats.PortCheckResult{Port: 443, Protocol: "tcp"}
+	result.SetResult("Open", 5*time.Millisecond)
+	target.PortResults = []*stats.PortCheckResult{result}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, true, nil, nil, nil, nil)
+	}()
+
+	screen := <-screenCh
+	// Let one render cycle run so the initial status is recorded
+	time.Sleep(120 * time.Millisecond)
+
+	// Change port status to trigger change detection on next render
+	result.SetResult("Closed", 0)
+	time.Sleep(120 * time.Millisecond)
 
 	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
 	select {
@@ -2262,7 +2346,7 @@ func TestRunWithPortLastChange(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, true, nil, nil, nil)
+		errCh <- Run([]*stats.TargetStats{target}, 50*time.Millisecond, nil, "", "", 56, nil, false, true, nil, nil, nil, nil)
 	}()
 
 	screen := <-screenCh
