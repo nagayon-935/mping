@@ -75,6 +75,7 @@ type Pinger struct {
 
 	traceChans   []chan traceMsg // one per concurrent TraceRoute call
 	traceChansMu sync.RWMutex
+	traceCounter uint32 // atomic counter for unique traceID per concurrent call
 
 	LogWriter io.Writer // Optional logger
 

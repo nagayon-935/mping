@@ -3,6 +3,7 @@ package pinger
 import (
 	"fmt"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/icmp"
@@ -81,7 +82,7 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 	}
 	defer sendConn.Close()
 
-	traceID := (p.baseID + 0x1234 + (time.Now().Nanosecond() & 0x3fff)) & 0xffff
+	traceID := (p.baseID + 0x1234 + int(atomic.AddUint32(&p.traceCounter, 1))) & 0xffff
 	hops := make([]string, 0, maxHops)
 
 	// acceptPacket checks whether a received message is a valid reply to the
@@ -106,9 +107,6 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 		case ipv4.ICMPTypeTimeExceeded, ipv6.ICMPTypeTimeExceeded:
 			id, seq, ok := extractEchoIDSeq(parsed)
 			if ok && id == traceID && seq == ttl {
-				return srcIP, false, true
-			}
-			if !ok {
 				return srcIP, false, true
 			}
 		case ipv4.ICMPTypeDestinationUnreachable, ipv6.ICMPTypeDestinationUnreachable:
