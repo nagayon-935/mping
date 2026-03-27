@@ -478,7 +478,15 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			serviceColW += 2
 
 			statusColW := runewidth.StringWidth("Open|Filtered") + 2
-			rttColW := runewidth.StringWidth("RTT") + 2
+			rttColW := runewidth.StringWidth("RTT")
+			for _, t := range targets {
+				for _, pr := range t.GetView().PortResults {
+					if w := runewidth.StringWidth(formatRTT(pr.RTT)); w > rttColW {
+						rttColW = w
+					}
+				}
+			}
+			rttColW += 2
 			countColW := runewidth.StringWidth("Open/Closed") + 2
 			changeColW := runewidth.StringWidth("Last Change") + 2
 
