@@ -554,6 +554,18 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		pMu.Unlock()
 	}
 
+	// resetPort stops and restarts the port checker for an immediate re-check.
+	var resetPort func()
+	if len(portSpecs) > 0 {
+		resetPort = func() {
+			if portChecker != nil {
+				portChecker.Stop()
+			}
+			portChecker = pinger.NewPortChecker(targets, portSpecs, interval, timeout)
+			portChecker.Start()
+		}
+	}
+
 	// Start TUI
 	if err := uiRun(
 		targets,
@@ -578,6 +590,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			return nil
 		},
 		resetTrace,
+		resetPort,
 	); err != nil {
 		fmt.Fprintf(errOut, "Error running application: %v\n", err)
 		stopAll()
