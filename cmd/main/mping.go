@@ -542,6 +542,18 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		}
 	}
 
+	// resetTrace clears TraceHops and re-runs traceroute immediately.
+	resetTrace := func() {
+		pMu.Lock()
+		cur := p
+		if traceCancel != nil {
+			traceCancel()
+		}
+		traceCtx, traceCancel = context.WithCancel(context.Background())
+		go runTraceroutes(traceCtx, cur, targets)
+		pMu.Unlock()
+	}
+
 	// Start TUI
 	if err := uiRun(
 		targets,
@@ -565,6 +577,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			}
 			return nil
 		},
+		resetTrace,
 	); err != nil {
 		fmt.Fprintf(errOut, "Error running application: %v\n", err)
 		stopAll()
