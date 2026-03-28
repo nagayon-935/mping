@@ -1307,3 +1307,384 @@ func TestExtractEchoIDSeqParamProb(t *testing.T) {
 		t.Fatalf("ParamProb: ok=%v id=%d seq=%d", ok, id, seq)
 	}
 }
+
+// ---- Tests for refactored helper functions ----
+
+func TestLookupICMPCode(t *testing.T) {
+	codes := map[int]string{0: "Zero", 1: "One"}
+	if got := lookupICMPCode(codes, 0, "fallback"); got != "Zero" {
+		t.Fatalf("lookupICMPCode(0) = %q, want %q", got, "Zero")
+	}
+	if got := lookupICMPCode(codes, 1, "fallback"); got != "One" {
+		t.Fatalf("lookupICMPCode(1) = %q, want %q", got, "One")
+	}
+	if got := lookupICMPCode(codes, 99, "fallback"); got != "fallback" {
+		t.Fatalf("lookupICMPCode(99) = %q, want %q", got, "fallback")
+	}
+}
+
+func TestICMPErrorBodyData(t *testing.T) {
+	tests := []struct {
+		name    string
+		msg     *icmp.Message
+		wantOK  bool
+	}{
+		{
+			name:   "DstUnreach",
+			msg:    &icmp.Message{Body: &icmp.DstUnreach{Data: []byte("test")}},
+			wantOK: true,
+		},
+		{
+			name:   "TimeExceeded",
+			msg:    &icmp.Message{Body: &icmp.TimeExceeded{Data: []byte("test")}},
+			wantOK: true,
+		},
+		{
+			name:   "ParamProb",
+			msg:    &icmp.Message{Body: &icmp.ParamProb{Data: []byte("test")}},
+			wantOK: true,
+		},
+		{
+			name:   "Echo (unsupported)",
+			msg:    &icmp.Message{Body: &icmp.Echo{Data: []byte("test")}},
+			wantOK: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, ok := icmpErrorBodyData(tt.msg)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if ok && string(data) != "test" {
+				t.Fatalf("data = %q, want %q", data, "test")
+			}
+		})
+	}
+}
+
+func TestIsErrorType(t *testing.T) {
+	errorTypes := []icmp.Type{
+		ipv4.ICMPTypeDestinationUnreachable,
+		ipv4.ICMPTypeTimeExceeded,
+		ipv4.ICMPTypeParameterProblem,
+	}
+	if !isErrorType(ipv4.ICMPTypeDestinationUnreachable, errorTypes) {
+		t.Fatal("expected true for DestinationUnreachable")
+	}
+	if !isErrorType(ipv4.ICMPTypeTimeExceeded, errorTypes) {
+		t.Fatal("expected true for TimeExceeded")
+	}
+	if isErrorType(ipv4.ICMPTypeEchoReply, errorTypes) {
+		t.Fatal("expected false for EchoReply")
+	}
+}
+
+func TestResolveTarget(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{
+			ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {
+				return &net.IPAddr{IP: net.IPv4(1, 2, 3, 4)}, nil
+			},
+		})
+		addr := p.resolveTarget(target)
+		if addr == nil {
+			t.Fatal("expected non-nil address")
+		}
+		if addr.IP.String() != "1.2.3.4" {
+			t.Fatalf("IP = %q, want 1.2.3.4", addr.IP.String())
+		}
+		view := target.GetView()
+		if view.IP != "1.2.3.4" {
+			t.Fatalf("target IP = %q, want 1.2.3.4", view.IP)
+		}
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		target := stats.NewTargetStats("bad.host")
+		p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{
+			ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {
+				return nil, errors.New("dns failure")
+			},
+		})
+		addr := p.resolveTarget(target)
+		if addr != nil {
+			t.Fatal("expected nil address")
+		}
+		view := target.GetView()
+		if view.LastError != "DNS Error" {
+			t.Fatalf("LastError = %q, want %q", view.LastError, "DNS Error")
+		}
+	})
+}
+
+func TestGetWriteFunc(t *testing.T) {
+	t.Run("IPv4 with conn", func(t *testing.T) {
+		p := NewPinger(nil)
+		p.connV4 = &fakePacketConn{}
+		msgType, writeFunc, errStr := p.getWriteFunc(&net.IPAddr{IP: net.IPv4(8, 8, 8, 8)})
+		if writeFunc == nil {
+			t.Fatal("expected non-nil writeFunc")
+		}
+		if errStr != "" {
+			t.Fatalf("errStr = %q, want empty", errStr)
+		}
+		if msgType != ipv4.ICMPTypeEcho {
+			t.Fatalf("msgType = %v, want ICMPTypeEcho", msgType)
+		}
+	})
+
+	t.Run("IPv4 without conn", func(t *testing.T) {
+		p := NewPinger(nil)
+		_, writeFunc, errStr := p.getWriteFunc(&net.IPAddr{IP: net.IPv4(8, 8, 8, 8)})
+		if writeFunc != nil {
+			t.Fatal("expected nil writeFunc")
+		}
+		if errStr != "No IPv4 Conn" {
+			t.Fatalf("errStr = %q, want %q", errStr, "No IPv4 Conn")
+		}
+	})
+
+	t.Run("IPv6 with conn", func(t *testing.T) {
+		p := NewPinger(nil)
+		p.connV6 = &fakePacketConnV6{}
+		msgType, writeFunc, errStr := p.getWriteFunc(&net.IPAddr{IP: net.ParseIP("2001:db8::1")})
+		if writeFunc == nil {
+			t.Fatal("expected non-nil writeFunc")
+		}
+		if errStr != "" {
+			t.Fatalf("errStr = %q, want empty", errStr)
+		}
+		if msgType != ipv6.ICMPTypeEchoRequest {
+			t.Fatalf("msgType = %v, want ICMPTypeEchoRequest", msgType)
+		}
+	})
+
+	t.Run("IPv6 without conn", func(t *testing.T) {
+		p := NewPinger(nil)
+		_, writeFunc, errStr := p.getWriteFunc(&net.IPAddr{IP: net.ParseIP("2001:db8::1")})
+		if writeFunc != nil {
+			t.Fatal("expected nil writeFunc")
+		}
+		if errStr != "No IPv6 Conn" {
+			t.Fatalf("errStr = %q, want %q", errStr, "No IPv6 Conn")
+		}
+	})
+}
+
+func TestSendProbe(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{})
+		p.connV4 = &fakePacketConn{}
+
+		start, ok := p.sendProbe(target, 1, 1, []byte("test"), &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)})
+		if !ok {
+			t.Fatal("expected success")
+		}
+		if start.IsZero() {
+			t.Fatal("expected non-zero start time")
+		}
+		view := target.GetView()
+		if view.Sent != 1 {
+			t.Fatalf("Sent = %d, want 1", view.Sent)
+		}
+	})
+
+	t.Run("no conn", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{})
+
+		_, ok := p.sendProbe(target, 1, 1, []byte("test"), &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)})
+		if ok {
+			t.Fatal("expected failure")
+		}
+		view := target.GetView()
+		if view.LastError != "No IPv4 Conn" {
+			t.Fatalf("LastError = %q, want %q", view.LastError, "No IPv4 Conn")
+		}
+	})
+
+	t.Run("send error", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{})
+		p.connV4 = &fakeErrPacketConn{err: errors.New("send failed")}
+
+		_, ok := p.sendProbe(target, 1, 1, []byte("test"), &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)})
+		if ok {
+			t.Fatal("expected failure on send error")
+		}
+		view := target.GetView()
+		if view.LastError == "" {
+			t.Fatal("expected LastError on send error")
+		}
+	})
+}
+
+func TestWaitForReply(t *testing.T) {
+	t.Run("success reply", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		p := NewPinger([]*stats.TargetStats{target})
+
+		ch := make(chan Reply, 1)
+		ch <- Reply{Seq: 1, TTL: 64}
+		timer := time.NewTimer(1 * time.Second)
+
+		ok := p.waitForReply(target, ch, 1, time.Now(), timer)
+		if !ok {
+			t.Fatal("expected true")
+		}
+		view := target.GetView()
+		if view.Recv != 1 {
+			t.Fatalf("Recv = %d, want 1", view.Recv)
+		}
+		if view.LastTTL != 64 {
+			t.Fatalf("LastTTL = %d, want 64", view.LastTTL)
+		}
+	})
+
+	t.Run("error reply", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		p := NewPinger([]*stats.TargetStats{target})
+
+		ch := make(chan Reply, 1)
+		ch <- Reply{Seq: 1, Err: "Destination Host Unreachable"}
+		timer := time.NewTimer(1 * time.Second)
+
+		ok := p.waitForReply(target, ch, 1, time.Now(), timer)
+		if !ok {
+			t.Fatal("expected true")
+		}
+		view := target.GetView()
+		if view.Loss != 1 {
+			t.Fatalf("Loss = %d, want 1", view.Loss)
+		}
+		if view.LastError != "Destination Host Unreachable" {
+			t.Fatalf("LastError = %q, want %q", view.LastError, "Destination Host Unreachable")
+		}
+	})
+
+	t.Run("timeout", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		p := NewPinger([]*stats.TargetStats{target})
+
+		ch := make(chan Reply, 1)
+		timer := time.NewTimer(1 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond) // let timer expire
+
+		ok := p.waitForReply(target, ch, 1, time.Now(), timer)
+		if !ok {
+			t.Fatal("expected true on timeout")
+		}
+		view := target.GetView()
+		if view.Loss != 1 {
+			t.Fatalf("Loss = %d, want 1", view.Loss)
+		}
+	})
+
+	t.Run("done channel", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		p := NewPinger([]*stats.TargetStats{target})
+
+		ch := make(chan Reply) // unbuffered, will block
+		timer := time.NewTimer(10 * time.Second)
+
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			close(p.done)
+		}()
+
+		ok := p.waitForReply(target, ch, 1, time.Now(), timer)
+		if ok {
+			t.Fatal("expected false when done channel closed")
+		}
+	})
+}
+
+func TestHandleEchoReply(t *testing.T) {
+	t.Run("matching ID", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		p := NewPinger([]*stats.TargetStats{target})
+		id := p.baseID & 0xffff
+		p.targetMap[id] = target
+		ch := make(chan Reply, 1)
+		p.targetChans[id] = ch
+
+		msg := &icmp.Message{
+			Body: &icmp.Echo{ID: id, Seq: 5},
+		}
+		p.handleEchoReply(msg, 64)
+
+		select {
+		case reply := <-ch:
+			if reply.TTL != 64 || reply.Seq != 5 {
+				t.Fatalf("reply: TTL=%d Seq=%d, want TTL=64 Seq=5", reply.TTL, reply.Seq)
+			}
+		default:
+			t.Fatal("expected reply in channel")
+		}
+	})
+
+	t.Run("unknown ID", func(t *testing.T) {
+		p := NewPinger(nil)
+		msg := &icmp.Message{
+			Body: &icmp.Echo{ID: 9999, Seq: 1},
+		}
+		// Should not panic
+		p.handleEchoReply(msg, 64)
+	})
+
+	t.Run("non-echo body", func(t *testing.T) {
+		p := NewPinger(nil)
+		msg := &icmp.Message{
+			Body: &icmp.DstUnreach{Data: []byte("test")},
+		}
+		// Should not panic
+		p.handleEchoReply(msg, 64)
+	})
+}
+
+func TestHandleICMPError(t *testing.T) {
+	target := stats.NewTargetStats("example.com")
+	p := NewPinger([]*stats.TargetStats{target})
+	id := p.baseID & 0xffff
+	p.targetMap[id] = target
+	ch := make(chan Reply, 1)
+	p.targetChans[id] = ch
+
+	// Build inner echo
+	echo := icmp.Message{
+		Type: ipv4.ICMPTypeEcho,
+		Code: 0,
+		Body: &icmp.Echo{ID: id, Seq: 3, Data: []byte("x")},
+	}
+	inner, _ := echo.Marshal(nil)
+	hdr := make([]byte, 20)
+	hdr[0] = 0x45
+	hdr[9] = 1
+	data := append(hdr, inner...)
+
+	msg := &icmp.Message{
+		Type: ipv4.ICMPTypeDestinationUnreachable,
+		Code: 1,
+		Body: &icmp.DstUnreach{Data: data},
+	}
+
+	p.handleICMPError(msg, icmpErrorString)
+
+	select {
+	case reply := <-ch:
+		if reply.Seq != 3 {
+			t.Fatalf("Seq = %d, want 3", reply.Seq)
+		}
+		if reply.Err == "" {
+			t.Fatal("expected error string")
+		}
+		if reply.Err != "Destination Host Unreachable" {
+			t.Fatalf("Err = %q, want %q", reply.Err, "Destination Host Unreachable")
+		}
+	default:
+		t.Fatal("expected reply in channel")
+	}
+}

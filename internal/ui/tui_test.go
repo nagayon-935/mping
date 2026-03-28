@@ -2362,3 +2362,219 @@ func TestRunWithPortLastChange(t *testing.T) {
 		t.Fatal("Run did not stop")
 	}
 }
+
+// ---- Tests for refactored helper functions ----
+
+func TestPaddedCell(t *testing.T) {
+	tests := []struct {
+		name  string
+		text  string
+		colW  int
+		check func(string) bool
+	}{
+		{
+			name: "leading space",
+			text: "abc",
+			colW: 10,
+			check: func(s string) bool {
+				return len(s) > 0 && s[0] == ' '
+			},
+		},
+		{
+			name: "padded to width",
+			text: "abc",
+			colW: 10,
+			check: func(s string) bool {
+				return len(s) == 10
+			},
+		},
+		{
+			name: "empty text",
+			text: "",
+			colW: 5,
+			check: func(s string) bool {
+				return len(s) == 5
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := paddedCell(tt.text, tt.colW)
+			if !tt.check(got) {
+				t.Fatalf("paddedCell(%q, %d) = %q, check failed", tt.text, tt.colW, got)
+			}
+		})
+	}
+}
+
+func TestStatusColorTag(t *testing.T) {
+	tests := []struct {
+		status string
+		want   string
+	}{
+		{"Open", "[green]"},
+		{"Closed", "[red]"},
+		{"Filtered", "[yellow]"},
+		{"Open|Filtered", "[yellow]"},
+		{"Unknown", "[white]"},
+		{"", "[white]"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			if got := statusColorTag(tt.status); got != tt.want {
+				t.Fatalf("statusColorTag(%q) = %q, want %q", tt.status, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRenderTracerouteTable(t *testing.T) {
+	t.Run("no data targets", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		got := renderTracerouteTable([]*stats.TargetStats{target}, 80)
+		if !strings.Contains(got, "Host") || !strings.Contains(got, "Route") {
+			t.Fatalf("expected table headers, got: %s", got)
+		}
+	})
+
+	t.Run("with data targets full mode", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		target.SetTraceHops([]string{"1.1.1.1", "2.2.2.2", "8.8.8.8"})
+		got := renderTracerouteTable([]*stats.TargetStats{target}, 120)
+		if !strings.Contains(got, "example.com") {
+			t.Fatalf("expected hostname in output, got: %s", got)
+		}
+		if !strings.Contains(got, "Hops") {
+			t.Fatalf("expected full mode with Hops column, got: %s", got)
+		}
+	})
+
+	t.Run("compact mode narrow width", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		target.SetTraceHops([]string{"1.1.1.1"})
+		got := renderTracerouteTable([]*stats.TargetStats{target}, 30)
+		if !strings.Contains(got, "example.com") {
+			t.Fatalf("expected hostname in output, got: %s", got)
+		}
+		if strings.Contains(got, "Hops") {
+			t.Fatalf("expected compact mode without Hops column, got: %s", got)
+		}
+	})
+
+	t.Run("multiple targets", func(t *testing.T) {
+		t1 := stats.NewTargetStats("a.com")
+		t1.SetTraceHops([]string{"1.1.1.1"})
+		t2 := stats.NewTargetStats("b.com")
+		t2.SetTraceHops([]string{"2.2.2.2"})
+		got := renderTracerouteTable([]*stats.TargetStats{t1, t2}, 120)
+		if !strings.Contains(got, "a.com") || !strings.Contains(got, "b.com") {
+			t.Fatalf("expected both hosts in output, got: %s", got)
+		}
+	})
+}
+
+func TestRenderPortMonitorTable(t *testing.T) {
+	t.Run("no data targets", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		lastStatuses := make(map[string]string)
+		errorLogs := []string{}
+		errorView := tview.NewTextView()
+		got := renderPortMonitorTable([]*stats.TargetStats{target}, 120, lastStatuses, &errorLogs, errorView)
+		if !strings.Contains(got, "Waiting for results") {
+			t.Fatalf("expected waiting message, got: %s", got)
+		}
+	})
+
+	t.Run("with data full mode", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		target.SetIP("1.1.1.1")
+		result := &stats.PortCheckResult{Port: 443, Protocol: "tcp"}
+		result.SetResult("Open", 5*time.Millisecond)
+		target.PortResults = []*stats.PortCheckResult{result}
+
+		lastStatuses := make(map[string]string)
+		errorLogs := []string{}
+		errorView := tview.NewTextView()
+		got := renderPortMonitorTable([]*stats.TargetStats{target}, 120, lastStatuses, &errorLogs, errorView)
+		if !strings.Contains(got, "example.com") {
+			t.Fatalf("expected hostname, got: %s", got)
+		}
+		if !strings.Contains(got, "Service") {
+			t.Fatalf("expected full mode with Service column, got: %s", got)
+		}
+	})
+
+	t.Run("compact mode narrow width", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		target.SetIP("1.1.1.1")
+		result := &stats.PortCheckResult{Port: 80, Protocol: "tcp"}
+		result.SetResult("Closed", 0)
+		target.PortResults = []*stats.PortCheckResult{result}
+
+		lastStatuses := make(map[string]string)
+		errorLogs := []string{}
+		errorView := tview.NewTextView()
+		got := renderPortMonitorTable([]*stats.TargetStats{target}, 30, lastStatuses, &errorLogs, errorView)
+		if !strings.Contains(got, "example.com") {
+			t.Fatalf("expected hostname, got: %s", got)
+		}
+		if strings.Contains(got, "Service") {
+			t.Fatalf("expected compact mode without Service column, got: %s", got)
+		}
+	})
+
+	t.Run("status change logs", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		target.SetIP("1.1.1.1")
+		result := &stats.PortCheckResult{Port: 443, Protocol: "tcp"}
+		result.SetResult("Open", 5*time.Millisecond)
+		target.PortResults = []*stats.PortCheckResult{result}
+
+		lastStatuses := map[string]string{
+			"example.com|443/tcp": "Closed",
+		}
+		errorLogs := []string{}
+		errorView := tview.NewTextView()
+		renderPortMonitorTable([]*stats.TargetStats{target}, 120, lastStatuses, &errorLogs, errorView)
+
+		if len(errorLogs) == 0 {
+			t.Fatal("expected status change log entry")
+		}
+		if !strings.Contains(errorLogs[0], "Open") {
+			t.Fatalf("expected log to mention Open, got: %s", errorLogs[0])
+		}
+	})
+}
+
+func TestMakeDoubleBorderDrawFunc(t *testing.T) {
+	borderColor := tcell.ColorWhite
+	drawFunc := makeDoubleBorderDrawFunc(" Test Title ", &borderColor)
+
+	if drawFunc == nil {
+		t.Fatal("expected non-nil drawFunc")
+	}
+
+	screen := tcell.NewSimulationScreen("")
+	if err := screen.Init(); err != nil {
+		t.Fatalf("screen init: %v", err)
+	}
+	defer screen.Fini()
+
+	// Should not panic with small dimensions
+	ix, iy, iw, ih := drawFunc(screen, 0, 0, 1, 1)
+	if iw != -1 || ih != -1 {
+		t.Fatalf("small dims: inner w=%d h=%d, want -1 -1", iw, ih)
+	}
+	_ = ix
+	_ = iy
+
+	// Test with normal dimensions
+	ix, iy, iw, ih = drawFunc(screen, 0, 0, 40, 10)
+	if ix != 1 || iy != 1 || iw != 38 || ih != 8 {
+		t.Fatalf("normal dims: ix=%d iy=%d iw=%d ih=%d, want 1 1 38 8", ix, iy, iw, ih)
+	}
+
+	// Verify border color can be changed dynamically
+	borderColor = tcell.ColorRed
+	drawFunc(screen, 0, 0, 40, 10)
+}

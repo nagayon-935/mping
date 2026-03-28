@@ -32,111 +32,92 @@ func icmpV6ErrorString(typ icmp.Type, code int) string {
 	}
 }
 
-func destUnreachString(code int) string {
-	switch code {
-	case 0:
-		return "Destination Network Unreachable"
-	case 1:
-		return "Destination Host Unreachable"
-	case 2:
-		return "Destination Protocol Unreachable"
-	case 3:
-		return "Destination Port Unreachable"
-	case 4:
-		return "Fragmentation Needed"
-	case 5:
-		return "Source Route Failed"
-	case 6:
-		return "Destination Network Unknown"
-	case 7:
-		return "Destination Host Unknown"
-	case 8:
-		return "Source Host Isolated"
-	case 9:
-		return "Network Administratively Prohibited"
-	case 10:
-		return "Host Administratively Prohibited"
-	case 11:
-		return "Network Unreachable for ToS"
-	case 12:
-		return "Host Unreachable for ToS"
-	case 13:
-		return "Communication Administratively Prohibited"
-	case 14:
-		return "Host Precedence Violation"
-	case 15:
-		return "Precedence Cutoff in Effect"
-	default:
-		return "Destination Unreachable"
+var destUnreachCodes = map[int]string{
+	0:  "Destination Network Unreachable",
+	1:  "Destination Host Unreachable",
+	2:  "Destination Protocol Unreachable",
+	3:  "Destination Port Unreachable",
+	4:  "Fragmentation Needed",
+	5:  "Source Route Failed",
+	6:  "Destination Network Unknown",
+	7:  "Destination Host Unknown",
+	8:  "Source Host Isolated",
+	9:  "Network Administratively Prohibited",
+	10: "Host Administratively Prohibited",
+	11: "Network Unreachable for ToS",
+	12: "Host Unreachable for ToS",
+	13: "Communication Administratively Prohibited",
+	14: "Host Precedence Violation",
+	15: "Precedence Cutoff in Effect",
+}
+
+var destUnreachV6Codes = map[int]string{
+	0: "No Route to Destination",
+	1: "Communication with Destination Administratively Prohibited",
+	3: "Address Unreachable",
+	4: "Port Unreachable",
+}
+
+var timeExceededCodes = map[int]string{
+	0: "Time Exceeded",
+	1: "Fragment Reassembly Time Exceeded",
+}
+
+var paramProblemCodes = map[int]string{
+	0: "Parameter Problem",
+	1: "Missing Required Option",
+	2: "Bad Length",
+}
+
+func lookupICMPCode(codes map[int]string, code int, fallback string) string {
+	if s, ok := codes[code]; ok {
+		return s
 	}
+	return fallback
+}
+
+func destUnreachString(code int) string {
+	return lookupICMPCode(destUnreachCodes, code, "Destination Unreachable")
 }
 
 func destUnreachV6String(code int) string {
-	switch code {
-	case 0:
-		return "No Route to Destination"
-	case 1:
-		return "Communication with Destination Administratively Prohibited"
-	case 3:
-		return "Address Unreachable"
-	case 4:
-		return "Port Unreachable"
-	default:
-		return "Destination Unreachable"
-	}
+	return lookupICMPCode(destUnreachV6Codes, code, "Destination Unreachable")
 }
 
 func timeExceededString(code int) string {
-	switch code {
-	case 0:
-		return "Time Exceeded"
-	case 1:
-		return "Fragment Reassembly Time Exceeded"
-	default:
-		return "Time Exceeded"
-	}
+	return lookupICMPCode(timeExceededCodes, code, "Time Exceeded")
 }
 
 func paramProblemString(code int) string {
-	switch code {
-	case 0:
-		return "Parameter Problem"
-	case 1:
-		return "Missing Required Option"
-	case 2:
-		return "Bad Length"
-	default:
-		return "Parameter Problem"
-	}
+	return lookupICMPCode(paramProblemCodes, code, "Parameter Problem")
 }
 
 // extractEchoIDSeq extracts the ICMP echo ID and sequence number from an ICMP
 // error message (Time Exceeded, Destination Unreachable, Parameter Problem).
 // It first tries parsing the embedded original IP+ICMP headers, then falls back
 // to scanning for the traceSignature pattern in the payload.
-func extractEchoIDSeq(msg *icmp.Message) (int, int, bool) {
-	var data []byte
+// icmpErrorBodyData extracts the embedded original packet data from an ICMP error body.
+func icmpErrorBodyData(msg *icmp.Message) ([]byte, bool) {
 	switch body := msg.Body.(type) {
 	case *icmp.DstUnreach:
-		id, seq, ok := parseInnerEchoIDSeq(body.Data)
-		if ok {
-			return id, seq, ok
-		}
-		data = body.Data
+		return body.Data, true
 	case *icmp.TimeExceeded:
-		id, seq, ok := parseInnerEchoIDSeq(body.Data)
-		if ok {
-			return id, seq, ok
-		}
-		data = body.Data
+		return body.Data, true
 	case *icmp.ParamProb:
-		id, seq, ok := parseInnerEchoIDSeq(body.Data)
-		if ok {
-			return id, seq, ok
-		}
-		data = body.Data
+		return body.Data, true
 	default:
+		return nil, false
+	}
+}
+
+func extractEchoIDSeq(msg *icmp.Message) (int, int, bool) {
+	data, ok := icmpErrorBodyData(msg)
+	if !ok {
 		return 0, 0, false
+	}
+
+	if id, seq, ok := parseInnerEchoIDSeq(data); ok {
+		return id, seq, true
 	}
 
 	// Fallback: Pattern matching for traceSignature + ID (2B) + Seq (2B)
