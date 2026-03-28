@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -15,8 +14,7 @@ import (
 
 const (
 	// tableMaxRows is for the main stats table
-	tableMaxRows    = 10
-	tablePaneHeight = ((tableMaxRows + 1) * 2) + 1 + 2 // table height + pane border
+	tableMaxRows = 10
 
 	minUIRefresh  = 200 * time.Millisecond // minimum UI refresh interval when ping interval is very short
 	fastUIRefresh = 100 * time.Millisecond // UI refresh rate used when ping interval < minUIRefresh
@@ -130,29 +128,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			traceBorderColor = c
 			tracePane.SetBorderColor(c)
 		}
-		// Override with double-line box drawing characters.
-		tracePane.SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
-			if width < 2 || height < 2 {
-				return x + 1, y + 1, width - 2, height - 2
-			}
-			style := tcell.StyleDefault.Foreground(traceBorderColor)
-			screen.SetContent(x, y, '╔', nil, style)
-			for i := x + 1; i < x+width-1; i++ {
-				screen.SetContent(i, y, '═', nil, style)
-			}
-			screen.SetContent(x+width-1, y, '╗', nil, style)
-			screen.SetContent(x, y+height-1, '╚', nil, style)
-			for i := x + 1; i < x+width-1; i++ {
-				screen.SetContent(i, y+height-1, '═', nil, style)
-			}
-			screen.SetContent(x+width-1, y+height-1, '╝', nil, style)
-			for i := y + 1; i < y+height-1; i++ {
-				screen.SetContent(x, i, '║', nil, style)
-				screen.SetContent(x+width-1, i, '║', nil, style)
-			}
-			tview.Print(screen, " Traceroute Monitor ", x+1, y, width-2, tview.AlignCenter, traceBorderColor)
-			return x + 1, y + 1, width - 2, height - 2
-		})
+		tracePane.SetDrawFunc(makeDoubleBorderDrawFunc(" Traceroute Monitor ", &traceBorderColor))
 	}
 
 	// Port Monitor pane
@@ -176,28 +152,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			portBorderColor = c
 			portPane.SetBorderColor(c)
 		}
-		portPane.SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
-			if width < 2 || height < 2 {
-				return x + 1, y + 1, width - 2, height - 2
-			}
-			style := tcell.StyleDefault.Foreground(portBorderColor)
-			screen.SetContent(x, y, '╔', nil, style)
-			for i := x + 1; i < x+width-1; i++ {
-				screen.SetContent(i, y, '═', nil, style)
-			}
-			screen.SetContent(x+width-1, y, '╗', nil, style)
-			screen.SetContent(x, y+height-1, '╚', nil, style)
-			for i := x + 1; i < x+width-1; i++ {
-				screen.SetContent(i, y+height-1, '═', nil, style)
-			}
-			screen.SetContent(x+width-1, y+height-1, '╝', nil, style)
-			for i := y + 1; i < y+height-1; i++ {
-				screen.SetContent(x, i, '║', nil, style)
-				screen.SetContent(x+width-1, i, '║', nil, style)
-			}
-			tview.Print(screen, " Port Monitor ", x+1, y, width-2, tview.AlignCenter, portBorderColor)
-			return x + 1, y + 1, width - 2, height - 2
-		})
+		portPane.SetDrawFunc(makeDoubleBorderDrawFunc(" Port Monitor ", &portBorderColor))
 	}
 
 	// Error log state
@@ -335,317 +290,13 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		}
 
 		if traceEnabled && traceView != nil {
-			const minRouteContentW = 20 // minimum Route column content width
-
-			// Compute Host column width from the longest hostname (with 1-space padding each side).
-			hostColW := runewidth.StringWidth("Host")
-			for _, t := range targets {
-				if w := runewidth.StringWidth(t.GetView().Host); w > hostColW {
-					hostColW = w
-				}
-			}
-			hostColW += 2 // 1 space left + 1 space right
-
-			// Fixed column widths for Hops and Init TTL.
-			hopsColW := runewidth.StringWidth("Hops") + 2
-			initTTLColW := runewidth.StringWidth("Init TTL") + 2
-
 			_, _, availW, _ := traceView.GetInnerRect()
-
-			// Full mode needs 5 border chars: │host│hops│initTTL│route│
-			// Compact mode needs 3 border chars: │host│route│
-			fullRouteContentW := availW - hostColW - hopsColW - initTTLColW - 5
-			traceCompact := fullRouteContentW < minRouteContentW
-
-			// cell returns text with a leading space, right-padded to fill colW.
-			cell := func(text string, colW int) string {
-				return formatCellText(" "+text, colW, tview.AlignLeft)
-			}
-
-			// Collect targets that have trace data.
-			dataTargets := make([]*stats.TargetStats, 0, len(targets))
-			for _, t := range targets {
-				if len(t.GetView().TraceHops) > 0 {
-					dataTargets = append(dataTargets, t)
-				}
-			}
-
-			var sb strings.Builder
-			h := strings.Repeat("─", hostColW)
-
-			if traceCompact {
-				// 2-column compact mode: Host | Route
-				routeColW := availW - hostColW - 3
-				if routeColW < minRouteContentW {
-					routeColW = minRouteContentW
-				}
-				routeContentW := routeColW - 1
-				r := strings.Repeat("─", routeColW)
-
-				fmt.Fprintf(&sb, "[white]┌%s┬%s┐[-]\n", h, r)
-				fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
-					cell("Host", hostColW), cell("Route", routeColW))
-				fmt.Fprintf(&sb, "[white]├%s┼%s┤[-]\n", h, r)
-
-				emptyHost := cell("", hostColW)
-				for i, t := range dataTargets {
-					view := t.GetView()
-					routeLines := wrapHops(view.TraceHops, routeContentW)
-					if len(routeLines) == 0 {
-						routeLines = []string{""}
-					}
-					fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[-]\n",
-						cell(view.Host, hostColW), cell(routeLines[0], routeColW))
-					for _, rl := range routeLines[1:] {
-						fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[-]\n",
-							emptyHost, cell(rl, routeColW))
-					}
-					if i < len(dataTargets)-1 {
-						fmt.Fprintf(&sb, "[white]├%s┼%s┤[-]\n", h, r)
-					}
-				}
-				fmt.Fprintf(&sb, "[white]└%s┴%s┘[-]\n", h, r)
-			} else {
-				// 4-column full mode: Host | Hops | Init TTL | Route
-				// fullRouteContentW is already the full column width (border chars already subtracted).
-				routeColW := fullRouteContentW
-				ho := strings.Repeat("─", hopsColW)
-				it := strings.Repeat("─", initTTLColW)
-				r := strings.Repeat("─", routeColW)
-				routeContentW := routeColW - 1 // leading space in cell takes 1 char
-
-				fmt.Fprintf(&sb, "[white]┌%s┬%s┬%s┬%s┐[-]\n", h, ho, it, r)
-				fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
-					cell("Host", hostColW), cell("Hops", hopsColW), cell("Init TTL", initTTLColW), cell("Route", routeColW))
-				fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┤[-]\n", h, ho, it, r)
-
-				emptyHost := cell("", hostColW)
-				emptyHops := cell("", hopsColW)
-				emptyInitTTL := cell("", initTTLColW)
-				for i, t := range dataTargets {
-					view := t.GetView()
-					hopsStr := hopCountString(view.TraceHops)
-					initTTLStr := inferInitialTTL(view.LastTTL)
-					routeLines := wrapHops(view.TraceHops, routeContentW)
-					if len(routeLines) == 0 {
-						routeLines = []string{""}
-					}
-					fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[-]\n",
-						cell(view.Host, hostColW), cell(hopsStr, hopsColW), cell(initTTLStr, initTTLColW), cell(routeLines[0], routeColW))
-					for _, rl := range routeLines[1:] {
-						fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[-]\n",
-							emptyHost, emptyHops, emptyInitTTL, cell(rl, routeColW))
-					}
-					if i < len(dataTargets)-1 {
-						fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┤[-]\n", h, ho, it, r)
-					}
-				}
-				fmt.Fprintf(&sb, "[white]└%s┴%s┴%s┴%s┘[-]\n", h, ho, it, r)
-			}
-
-			traceView.SetText(sb.String())
+			traceView.SetText(renderTracerouteTable(targets, availW))
 		}
 
 		if portEnabled && portView != nil {
 			_, _, availW, _ := portView.GetInnerRect()
-
-			// Compute column widths from data
-			targetColW := runewidth.StringWidth("Target")
-			for _, t := range targets {
-				if w := runewidth.StringWidth(t.GetView().Host); w > targetColW {
-					targetColW = w
-				}
-			}
-			targetColW += 2
-
-			portColW := runewidth.StringWidth("Port")
-			for _, t := range targets {
-				for _, pr := range t.GetView().PortResults {
-					if w := runewidth.StringWidth(fmt.Sprintf("%d/%s", pr.Port, pr.Protocol)); w > portColW {
-						portColW = w
-					}
-				}
-			}
-			portColW += 2
-
-			serviceColW := runewidth.StringWidth("Service")
-			for _, t := range targets {
-				for _, pr := range t.GetView().PortResults {
-					if w := runewidth.StringWidth(portServiceName(pr.Port, pr.Protocol)); w > serviceColW {
-						serviceColW = w
-					}
-				}
-			}
-			serviceColW += 2
-
-			statusColW := runewidth.StringWidth("Open|Filtered") + 2
-			rttColW := runewidth.StringWidth("RTT")
-			for _, t := range targets {
-				for _, pr := range t.GetView().PortResults {
-					if w := runewidth.StringWidth(formatRTT(pr.RTT)); w > rttColW {
-						rttColW = w
-					}
-				}
-			}
-			rttColW += 2
-			countColW := runewidth.StringWidth("Open/Closed") + 2
-			changeColW := runewidth.StringWidth("Last Change") + 2
-
-			// Full mode: 8 borders │t│p│sv│st│rtt│c│ch│ = 8 chars
-			usedFull := targetColW + portColW + serviceColW + statusColW + rttColW + countColW + changeColW + 8
-			// Compact mode: 5 borders │t│p│st│rtt│ = 5 chars
-			const minPortContentW = 20
-			portCompact := availW-targetColW-portColW-statusColW-rttColW-5 < minPortContentW
-
-			cell := func(text string, colW int) string {
-				return formatCellText(" "+text, colW, tview.AlignLeft)
-			}
-
-			// Collect targets that have results; detect status changes while iterating
-			dataTargets := make([]*stats.TargetStats, 0, len(targets))
-			for _, t := range targets {
-				view := t.GetView()
-				if len(view.PortResults) == 0 {
-					continue
-				}
-				dataTargets = append(dataTargets, t)
-				for _, pr := range view.PortResults {
-					if pr.Status == "" || pr.Status == "Checking..." {
-						continue
-					}
-					key := fmt.Sprintf("%s|%d/%s", view.Host, pr.Port, pr.Protocol)
-					prev, seen := lastPortStatuses[key]
-					if seen && prev != pr.Status {
-						color := "[yellow]"
-						if pr.Status == "Open" {
-							color = "[green]"
-						}
-						now := time.Now()
-						msg := fmt.Sprintf("[darkgray]%s[-] %s%s[-] [white]%d/%s:[white] %s → %s%s[-]",
-							now.Format("15:04:05"), "[white]", view.Host, pr.Port, pr.Protocol,
-							prev, color, pr.Status)
-						appendErrorLog(&errorLogs, errorView, msg)
-					}
-					lastPortStatuses[key] = pr.Status
-				}
-			}
-
-			var sb strings.Builder
-
-			if portCompact {
-				// Compact mode: Target | Port | Status | RTT
-				th := strings.Repeat("─", targetColW)
-				ph := strings.Repeat("─", portColW)
-				sh := strings.Repeat("─", statusColW)
-				rh := strings.Repeat("─", rttColW)
-
-				fmt.Fprintf(&sb, "[white]┌%s┬%s┬%s┬%s┐[-]\n", th, ph, sh, rh)
-				fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
-					cell("Target", targetColW), cell("Port", portColW),
-					cell("Status", statusColW), cell("RTT", rttColW))
-				fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┤[-]\n", th, ph, sh, rh)
-
-				rowCount := 0
-				for ti, t := range dataTargets {
-					view := t.GetView()
-					for i, pr := range view.PortResults {
-						statusColor := "[white]"
-						switch pr.Status {
-						case "Open":
-							statusColor = "[green]"
-						case "Closed":
-							statusColor = "[red]"
-						case "Filtered", "Open|Filtered":
-							statusColor = "[yellow]"
-						}
-						targetName := ""
-						if i == 0 {
-							targetName = view.Host
-						}
-						fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│%s%s[-][white]│[white]%s[white]│[-]\n",
-							cell(targetName, targetColW),
-							cell(fmt.Sprintf("%d/%s", pr.Port, pr.Protocol), portColW),
-							statusColor, cell(pr.Status, statusColW),
-							cell(formatRTT(pr.RTT), rttColW))
-						rowCount++
-					}
-					if ti < len(dataTargets)-1 {
-						fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┤[-]\n", th, ph, sh, rh)
-					}
-				}
-				if rowCount == 0 {
-					total := targetColW + portColW + statusColW + rttColW + 3
-					fmt.Fprintf(&sb, "[white]│[darkgray]%s[white]│[-]\n",
-						formatCellText(" Waiting for results...", total, tview.AlignLeft))
-				}
-				fmt.Fprintf(&sb, "[white]└%s┴%s┴%s┴%s┘[-]\n", th, ph, sh, rh)
-			} else {
-				// Full mode: Target | Port | Service | Status | RTT | Open/Closed | Last Change
-				// Expand Last Change column to fill remaining width
-				if availW > usedFull {
-					changeColW += availW - usedFull
-				}
-
-				th := strings.Repeat("─", targetColW)
-				ph := strings.Repeat("─", portColW)
-				svh := strings.Repeat("─", serviceColW)
-				sh := strings.Repeat("─", statusColW)
-				rh := strings.Repeat("─", rttColW)
-				cch := strings.Repeat("─", countColW)
-				lh := strings.Repeat("─", changeColW)
-
-				fmt.Fprintf(&sb, "[white]┌%s┬%s┬%s┬%s┬%s┬%s┬%s┐[-]\n", th, ph, svh, sh, rh, cch, lh)
-				fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
-					cell("Target", targetColW), cell("Port", portColW), cell("Service", serviceColW),
-					cell("Status", statusColW), cell("RTT", rttColW),
-					cell("Open/Closed", countColW), cell("Last Change", changeColW))
-				fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┼%s┼%s┼%s┤[-]\n", th, ph, svh, sh, rh, cch, lh)
-
-				rowCount := 0
-				for ti, t := range dataTargets {
-					view := t.GetView()
-					for i, pr := range view.PortResults {
-						statusColor := "[white]"
-						switch pr.Status {
-						case "Open":
-							statusColor = "[green]"
-						case "Closed":
-							statusColor = "[red]"
-						case "Filtered", "Open|Filtered":
-							statusColor = "[yellow]"
-						}
-						countStr := fmt.Sprintf("%d/%d", pr.OpenCount, pr.ClosedCount)
-						changeStr := "-"
-						if !pr.LastChange.IsZero() {
-							changeStr = formatLossAgo(pr.LastChange)
-						}
-						targetName := ""
-						if i == 0 {
-							targetName = view.Host
-						}
-						fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│%s%s[-][white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[-]\n",
-							cell(targetName, targetColW),
-							cell(fmt.Sprintf("%d/%s", pr.Port, pr.Protocol), portColW),
-							cell(portServiceName(pr.Port, pr.Protocol), serviceColW),
-							statusColor, cell(pr.Status, statusColW),
-							cell(formatRTT(pr.RTT), rttColW),
-							cell(countStr, countColW),
-							cell(changeStr, changeColW))
-						rowCount++
-					}
-					if ti < len(dataTargets)-1 {
-						fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┼%s┼%s┼%s┤[-]\n", th, ph, svh, sh, rh, cch, lh)
-					}
-				}
-				if rowCount == 0 {
-					total := targetColW + portColW + serviceColW + statusColW + rttColW + countColW + changeColW + 6
-					fmt.Fprintf(&sb, "[white]│[darkgray]%s[white]│[-]\n",
-						formatCellText(" Waiting for results...", total, tview.AlignLeft))
-				}
-				fmt.Fprintf(&sb, "[white]└%s┴%s┴%s┴%s┴%s┴%s┴%s┘[-]\n", th, ph, svh, sh, rh, cch, lh)
-			}
-
-			portView.SetText(sb.String())
+			portView.SetText(renderPortMonitorTable(targets, availW, lastPortStatuses, &errorLogs, errorView))
 		}
 	}
 

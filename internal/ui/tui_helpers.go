@@ -623,3 +623,322 @@ func appendErrorLog(errorLogs *[]string, errorView *tview.TextView, msg string) 
 	errorView.ScrollToEnd()
 }
 
+// paddedCell returns text with a leading space, right-padded to fill colW.
+func paddedCell(text string, colW int) string {
+	return formatCellText(" "+text, colW, tview.AlignLeft)
+}
+
+// statusColorTag returns a tview color tag for the given port status.
+func statusColorTag(status string) string {
+	switch status {
+	case "Open":
+		return "[green]"
+	case "Closed":
+		return "[red]"
+	case "Filtered", "Open|Filtered":
+		return "[yellow]"
+	default:
+		return "[white]"
+	}
+}
+
+// renderTracerouteTable builds the traceroute monitor table string.
+func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
+	const minRouteContentW = 20
+
+	hostColW := runewidth.StringWidth("Host")
+	for _, t := range targets {
+		if w := runewidth.StringWidth(t.GetView().Host); w > hostColW {
+			hostColW = w
+		}
+	}
+	hostColW += 2
+
+	hopsColW := runewidth.StringWidth("Hops") + 2
+	initTTLColW := runewidth.StringWidth("Init TTL") + 2
+
+	fullRouteContentW := availW - hostColW - hopsColW - initTTLColW - 5
+	traceCompact := fullRouteContentW < minRouteContentW
+
+	dataTargets := make([]*stats.TargetStats, 0, len(targets))
+	for _, t := range targets {
+		if len(t.GetView().TraceHops) > 0 {
+			dataTargets = append(dataTargets, t)
+		}
+	}
+
+	var sb strings.Builder
+	h := strings.Repeat("─", hostColW)
+
+	if traceCompact {
+		routeColW := availW - hostColW - 3
+		if routeColW < minRouteContentW {
+			routeColW = minRouteContentW
+		}
+		routeContentW := routeColW - 1
+		r := strings.Repeat("─", routeColW)
+
+		fmt.Fprintf(&sb, "[white]┌%s┬%s┐[-]\n", h, r)
+		fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
+			paddedCell("Host", hostColW), paddedCell("Route", routeColW))
+		fmt.Fprintf(&sb, "[white]├%s┼%s┤[-]\n", h, r)
+
+		emptyHost := paddedCell("", hostColW)
+		for i, t := range dataTargets {
+			view := t.GetView()
+			routeLines := wrapHops(view.TraceHops, routeContentW)
+			if len(routeLines) == 0 {
+				routeLines = []string{""}
+			}
+			fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[-]\n",
+				paddedCell(view.Host, hostColW), paddedCell(routeLines[0], routeColW))
+			for _, rl := range routeLines[1:] {
+				fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[-]\n",
+					emptyHost, paddedCell(rl, routeColW))
+			}
+			if i < len(dataTargets)-1 {
+				fmt.Fprintf(&sb, "[white]├%s┼%s┤[-]\n", h, r)
+			}
+		}
+		fmt.Fprintf(&sb, "[white]└%s┴%s┘[-]\n", h, r)
+	} else {
+		routeColW := fullRouteContentW
+		ho := strings.Repeat("─", hopsColW)
+		it := strings.Repeat("─", initTTLColW)
+		r := strings.Repeat("─", routeColW)
+		routeContentW := routeColW - 1
+
+		fmt.Fprintf(&sb, "[white]┌%s┬%s┬%s┬%s┐[-]\n", h, ho, it, r)
+		fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
+			paddedCell("Host", hostColW), paddedCell("Hops", hopsColW), paddedCell("Init TTL", initTTLColW), paddedCell("Route", routeColW))
+		fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┤[-]\n", h, ho, it, r)
+
+		emptyHost := paddedCell("", hostColW)
+		emptyHops := paddedCell("", hopsColW)
+		emptyInitTTL := paddedCell("", initTTLColW)
+		for i, t := range dataTargets {
+			view := t.GetView()
+			hopsStr := hopCountString(view.TraceHops)
+			initTTLStr := inferInitialTTL(view.LastTTL)
+			routeLines := wrapHops(view.TraceHops, routeContentW)
+			if len(routeLines) == 0 {
+				routeLines = []string{""}
+			}
+			fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[-]\n",
+				paddedCell(view.Host, hostColW), paddedCell(hopsStr, hopsColW), paddedCell(initTTLStr, initTTLColW), paddedCell(routeLines[0], routeColW))
+			for _, rl := range routeLines[1:] {
+				fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[-]\n",
+					emptyHost, emptyHops, emptyInitTTL, paddedCell(rl, routeColW))
+			}
+			if i < len(dataTargets)-1 {
+				fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┤[-]\n", h, ho, it, r)
+			}
+		}
+		fmt.Fprintf(&sb, "[white]└%s┴%s┴%s┴%s┘[-]\n", h, ho, it, r)
+	}
+
+	return sb.String()
+}
+
+// renderPortMonitorTable builds the port monitor table string.
+// It also detects status changes and appends log messages.
+func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortStatuses map[string]string, errorLogs *[]string, errorView *tview.TextView) string {
+	targetColW := runewidth.StringWidth("Target")
+	for _, t := range targets {
+		if w := runewidth.StringWidth(t.GetView().Host); w > targetColW {
+			targetColW = w
+		}
+	}
+	targetColW += 2
+
+	portColW := runewidth.StringWidth("Port")
+	for _, t := range targets {
+		for _, pr := range t.GetView().PortResults {
+			if w := runewidth.StringWidth(fmt.Sprintf("%d/%s", pr.Port, pr.Protocol)); w > portColW {
+				portColW = w
+			}
+		}
+	}
+	portColW += 2
+
+	serviceColW := runewidth.StringWidth("Service")
+	for _, t := range targets {
+		for _, pr := range t.GetView().PortResults {
+			if w := runewidth.StringWidth(portServiceName(pr.Port, pr.Protocol)); w > serviceColW {
+				serviceColW = w
+			}
+		}
+	}
+	serviceColW += 2
+
+	statusColW := runewidth.StringWidth("Open|Filtered") + 2
+	rttColW := runewidth.StringWidth("RTT")
+	for _, t := range targets {
+		for _, pr := range t.GetView().PortResults {
+			if w := runewidth.StringWidth(formatRTT(pr.RTT)); w > rttColW {
+				rttColW = w
+			}
+		}
+	}
+	rttColW += 2
+	countColW := runewidth.StringWidth("Open/Closed") + 2
+	changeColW := runewidth.StringWidth("Last Change") + 2
+
+	usedFull := targetColW + portColW + serviceColW + statusColW + rttColW + countColW + changeColW + 8
+	const minPortContentW = 20
+	portCompact := availW-targetColW-portColW-statusColW-rttColW-5 < minPortContentW
+
+	// Collect targets that have results; detect status changes
+	dataTargets := make([]*stats.TargetStats, 0, len(targets))
+	for _, t := range targets {
+		view := t.GetView()
+		if len(view.PortResults) == 0 {
+			continue
+		}
+		dataTargets = append(dataTargets, t)
+		for _, pr := range view.PortResults {
+			if pr.Status == "" || pr.Status == "Checking..." {
+				continue
+			}
+			key := fmt.Sprintf("%s|%d/%s", view.Host, pr.Port, pr.Protocol)
+			prev, seen := lastPortStatuses[key]
+			if seen && prev != pr.Status {
+				color := "[yellow]"
+				if pr.Status == "Open" {
+					color = "[green]"
+				}
+				now := time.Now()
+				msg := fmt.Sprintf("[darkgray]%s[-] %s%s[-] [white]%d/%s:[white] %s → %s%s[-]",
+					now.Format("15:04:05"), "[white]", view.Host, pr.Port, pr.Protocol,
+					prev, color, pr.Status)
+				appendErrorLog(errorLogs, errorView, msg)
+			}
+			lastPortStatuses[key] = pr.Status
+		}
+	}
+
+	var sb strings.Builder
+
+	if portCompact {
+		th := strings.Repeat("─", targetColW)
+		ph := strings.Repeat("─", portColW)
+		sh := strings.Repeat("─", statusColW)
+		rh := strings.Repeat("─", rttColW)
+
+		fmt.Fprintf(&sb, "[white]┌%s┬%s┬%s┬%s┐[-]\n", th, ph, sh, rh)
+		fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
+			paddedCell("Target", targetColW), paddedCell("Port", portColW),
+			paddedCell("Status", statusColW), paddedCell("RTT", rttColW))
+		fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┤[-]\n", th, ph, sh, rh)
+
+		rowCount := 0
+		for ti, t := range dataTargets {
+			view := t.GetView()
+			for i, pr := range view.PortResults {
+				targetName := ""
+				if i == 0 {
+					targetName = view.Host
+				}
+				fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│%s%s[-][white]│[white]%s[white]│[-]\n",
+					paddedCell(targetName, targetColW),
+					paddedCell(fmt.Sprintf("%d/%s", pr.Port, pr.Protocol), portColW),
+					statusColorTag(pr.Status), paddedCell(pr.Status, statusColW),
+					paddedCell(formatRTT(pr.RTT), rttColW))
+				rowCount++
+			}
+			if ti < len(dataTargets)-1 {
+				fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┤[-]\n", th, ph, sh, rh)
+			}
+		}
+		if rowCount == 0 {
+			total := targetColW + portColW + statusColW + rttColW + 3
+			fmt.Fprintf(&sb, "[white]│[darkgray]%s[white]│[-]\n",
+				formatCellText(" Waiting for results...", total, tview.AlignLeft))
+		}
+		fmt.Fprintf(&sb, "[white]└%s┴%s┴%s┴%s┘[-]\n", th, ph, sh, rh)
+	} else {
+		if availW > usedFull {
+			changeColW += availW - usedFull
+		}
+
+		th := strings.Repeat("─", targetColW)
+		ph := strings.Repeat("─", portColW)
+		svh := strings.Repeat("─", serviceColW)
+		sh := strings.Repeat("─", statusColW)
+		rh := strings.Repeat("─", rttColW)
+		cch := strings.Repeat("─", countColW)
+		lh := strings.Repeat("─", changeColW)
+
+		fmt.Fprintf(&sb, "[white]┌%s┬%s┬%s┬%s┬%s┬%s┬%s┐[-]\n", th, ph, svh, sh, rh, cch, lh)
+		fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
+			paddedCell("Target", targetColW), paddedCell("Port", portColW), paddedCell("Service", serviceColW),
+			paddedCell("Status", statusColW), paddedCell("RTT", rttColW),
+			paddedCell("Open/Closed", countColW), paddedCell("Last Change", changeColW))
+		fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┼%s┼%s┼%s┤[-]\n", th, ph, svh, sh, rh, cch, lh)
+
+		rowCount := 0
+		for ti, t := range dataTargets {
+			view := t.GetView()
+			for i, pr := range view.PortResults {
+				countStr := fmt.Sprintf("%d/%d", pr.OpenCount, pr.ClosedCount)
+				changeStr := "-"
+				if !pr.LastChange.IsZero() {
+					changeStr = formatLossAgo(pr.LastChange)
+				}
+				targetName := ""
+				if i == 0 {
+					targetName = view.Host
+				}
+				fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│%s%s[-][white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[-]\n",
+					paddedCell(targetName, targetColW),
+					paddedCell(fmt.Sprintf("%d/%s", pr.Port, pr.Protocol), portColW),
+					paddedCell(portServiceName(pr.Port, pr.Protocol), serviceColW),
+					statusColorTag(pr.Status), paddedCell(pr.Status, statusColW),
+					paddedCell(formatRTT(pr.RTT), rttColW),
+					paddedCell(countStr, countColW),
+					paddedCell(changeStr, changeColW))
+				rowCount++
+			}
+			if ti < len(dataTargets)-1 {
+				fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┼%s┼%s┼%s┤[-]\n", th, ph, svh, sh, rh, cch, lh)
+			}
+		}
+		if rowCount == 0 {
+			total := targetColW + portColW + serviceColW + statusColW + rttColW + countColW + changeColW + 6
+			fmt.Fprintf(&sb, "[white]│[darkgray]%s[white]│[-]\n",
+				formatCellText(" Waiting for results...", total, tview.AlignLeft))
+		}
+		fmt.Fprintf(&sb, "[white]└%s┴%s┴%s┴%s┴%s┴%s┴%s┘[-]\n", th, ph, svh, sh, rh, cch, lh)
+	}
+
+	return sb.String()
+}
+
+// makeDoubleBorderDrawFunc creates a SetDrawFunc callback that draws a
+// double-line (╔═╗║╚═╝) border with a centered title.
+// borderColor is a pointer so the caller can change the color dynamically.
+func makeDoubleBorderDrawFunc(title string, borderColor *tcell.Color) func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
+	return func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
+		if width < 2 || height < 2 {
+			return x + 1, y + 1, width - 2, height - 2
+		}
+		style := tcell.StyleDefault.Foreground(*borderColor)
+		screen.SetContent(x, y, '╔', nil, style)
+		for i := x + 1; i < x+width-1; i++ {
+			screen.SetContent(i, y, '═', nil, style)
+		}
+		screen.SetContent(x+width-1, y, '╗', nil, style)
+		screen.SetContent(x, y+height-1, '╚', nil, style)
+		for i := x + 1; i < x+width-1; i++ {
+			screen.SetContent(i, y+height-1, '═', nil, style)
+		}
+		screen.SetContent(x+width-1, y+height-1, '╝', nil, style)
+		for i := y + 1; i < y+height-1; i++ {
+			screen.SetContent(x, i, '║', nil, style)
+			screen.SetContent(x+width-1, i, '║', nil, style)
+		}
+		tview.Print(screen, title, x+1, y, width-2, tview.AlignCenter, *borderColor)
+		return x + 1, y + 1, width - 2, height - 2
+	}
+}
+

@@ -263,15 +263,82 @@ func (p *Pinger) broadcastTrace(msg *icmp.Message, src net.Addr) {
 	p.traceChansMu.RUnlock()
 }
 
+// receiverConfig holds IP-version-specific parameters for the unified receiver loop.
+type receiverConfig struct {
+	protocol     int        // ICMP protocol number (1 for v4, 58 for v6)
+	echoReply    icmp.Type  // ICMPTypeEchoReply or ICMPTypeEchoReply (v6)
+	errorTypes   []icmp.Type // Destination Unreachable, Time Exceeded, Parameter Problem
+	errorStringFn func(icmp.Type, int) string
+}
+
+var receiverV4Config = receiverConfig{
+	protocol:     1,
+	echoReply:    ipv4.ICMPTypeEchoReply,
+	errorTypes:   []icmp.Type{ipv4.ICMPTypeDestinationUnreachable, ipv4.ICMPTypeTimeExceeded, ipv4.ICMPTypeParameterProblem},
+	errorStringFn: icmpErrorString,
+}
+
+var receiverV6Config = receiverConfig{
+	protocol:     58,
+	echoReply:    ipv6.ICMPTypeEchoReply,
+	errorTypes:   []icmp.Type{ipv6.ICMPTypeDestinationUnreachable, ipv6.ICMPTypeTimeExceeded, ipv6.ICMPTypeParameterProblem},
+	errorStringFn: icmpV6ErrorString,
+}
+
 func (p *Pinger) runReceiverV4() {
+	p.runReceiver(receiverV4Config, func(buf []byte) (int, int, net.Addr, error) {
+		n, cm, src, err := p.connV4.ReadFrom(buf)
+		ttl := 0
+		if cm != nil {
+			ttl = cm.TTL
+		}
+		return n, ttl, src, err
+	}, func(t time.Time) error {
+		return p.connV4.SetReadDeadline(t)
+	}, func(buf []byte, n int, msg *icmp.Message) *icmp.Message {
+		// Try parsing as IP packet with header
+		if msg == nil && n > 0 && buf[0] == 0x45 {
+			ihl := int(buf[0]&0x0f) * 4
+			if n > ihl {
+				if msg2, err2 := icmp.ParseMessage(1, buf[ihl:n]); err2 == nil {
+					return msg2
+				}
+			}
+		}
+		return msg
+	})
+}
+
+func (p *Pinger) runReceiverV6() {
+	p.runReceiver(receiverV6Config, func(buf []byte) (int, int, net.Addr, error) {
+		n, cm, src, err := p.connV6.ReadFrom(buf)
+		hopLimit := 0
+		if cm != nil {
+			hopLimit = cm.HopLimit
+		}
+		return n, hopLimit, src, err
+	}, func(t time.Time) error {
+		return p.connV6.SetReadDeadline(t)
+	}, nil)
+}
+
+// runReceiver is the unified receiver loop for both IPv4 and IPv6.
+// readFrom returns (bytesRead, ttlOrHopLimit, srcAddr, error).
+// fallbackParse is an optional fallback parser for raw IP packets (used by IPv4).
+func (p *Pinger) runReceiver(
+	cfg receiverConfig,
+	readFrom func(buf []byte) (int, int, net.Addr, error),
+	setDeadline func(time.Time) error,
+	fallbackParse func(buf []byte, n int, msg *icmp.Message) *icmp.Message,
+) {
 	buf := make([]byte, receiverBufferSize)
 	for {
 		select {
 		case <-p.done:
 			return
 		default:
-			p.connV4.SetReadDeadline(time.Now().Add(receiverReadTimeout))
-			n, cm, src, err := p.connV4.ReadFrom(buf)
+			setDeadline(time.Now().Add(receiverReadTimeout))
+			n, ttl, src, err := readFrom(buf)
 			if err != nil {
 				if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
 					continue
@@ -279,136 +346,168 @@ func (p *Pinger) runReceiverV4() {
 				return
 			}
 
-			msg, err := icmp.ParseMessage(1, buf[:n]) // Protocol 1 for ICMPv4
+			msg, err := icmp.ParseMessage(cfg.protocol, buf[:n])
 			if err != nil {
-				// Try parsing as IP packet if needed (omitted for brevity, usually ParseMessage works with NewPacketConn)
-				if len(buf[:n]) > 0 && buf[0] == 0x45 {
-					ihl := int(buf[0]&0x0f) * 4
-					if n > ihl {
-						if msg2, err2 := icmp.ParseMessage(1, buf[ihl:n]); err2 == nil {
-							msg = msg2
-							err = nil
-						}
-					}
+				if fallbackParse != nil {
+					msg = fallbackParse(buf, n, nil)
 				}
-				if err != nil {
+				if msg == nil {
 					continue
 				}
 			}
 
 			p.broadcastTrace(msg, src)
 
-			switch msg.Type {
-			case ipv4.ICMPTypeEchoReply:
-				echo, ok := msg.Body.(*icmp.Echo)
-				if !ok {
-					continue
-				}
-				p.mapMu.RLock()
-				ch, exists := p.targetChans[echo.ID]
-				p.mapMu.RUnlock()
-
-				if exists {
-					ttl := 0
-					if cm != nil {
-						ttl = cm.TTL
-					}
-					select {
-					case ch <- Reply{TTL: ttl, Seq: echo.Seq}:
-					default:
-					}
-				}
-			case ipv4.ICMPTypeDestinationUnreachable, ipv4.ICMPTypeTimeExceeded, ipv4.ICMPTypeParameterProblem:
-				id, seq, ok := extractEchoIDSeq(msg)
-				if !ok {
-					continue
-				}
-				errMsg := icmpErrorString(msg.Type, msg.Code)
-				p.mapMu.RLock()
-				ch, exists := p.targetChans[id]
-				p.mapMu.RUnlock()
-				if exists {
-					select {
-					case ch <- Reply{Seq: seq, Err: errMsg}:
-					default:
-					}
-				}
+			if msg.Type == cfg.echoReply {
+				p.handleEchoReply(msg, ttl)
+			} else if isErrorType(msg.Type, cfg.errorTypes) {
+				p.handleICMPError(msg, cfg.errorStringFn)
 			}
 		}
 	}
 }
 
-func (p *Pinger) runReceiverV6() {
-	buf := make([]byte, receiverBufferSize)
+func isErrorType(t icmp.Type, errorTypes []icmp.Type) bool {
+	for _, et := range errorTypes {
+		if t == et {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Pinger) handleEchoReply(msg *icmp.Message, ttl int) {
+	echo, ok := msg.Body.(*icmp.Echo)
+	if !ok {
+		return
+	}
+	p.mapMu.RLock()
+	ch, exists := p.targetChans[echo.ID]
+	p.mapMu.RUnlock()
+	if exists {
+		select {
+		case ch <- Reply{TTL: ttl, Seq: echo.Seq}:
+		default:
+		}
+	}
+}
+
+func (p *Pinger) handleICMPError(msg *icmp.Message, errorStringFn func(icmp.Type, int) string) {
+	id, seq, ok := extractEchoIDSeq(msg)
+	if !ok {
+		return
+	}
+	errMsg := errorStringFn(msg.Type, msg.Code)
+	p.mapMu.RLock()
+	ch, exists := p.targetChans[id]
+	p.mapMu.RUnlock()
+	if exists {
+		select {
+		case ch <- Reply{Seq: seq, Err: errMsg}:
+		default:
+		}
+	}
+}
+
+// resolveTarget attempts DNS resolution and updates the target's IP.
+// Returns the resolved address, or nil if resolution failed.
+func (p *Pinger) resolveTarget(t *stats.TargetStats) *net.IPAddr {
+	addr, err := p.resolveIPAddr("ip", t.Host)
+	if err != nil {
+		t.OnFailure("DNS Error")
+		return nil
+	}
+	t.SetIP(addr.String())
+	return addr
+}
+
+// getWriteFunc returns the appropriate ICMP message type and write function
+// for the given destination address.
+func (p *Pinger) getWriteFunc(dstAddr *net.IPAddr) (icmp.Type, func([]byte, net.Addr) (int, error), string) {
+	isV4 := dstAddr.IP.To4() != nil
+	if isV4 {
+		if p.connV4 != nil {
+			return ipv4.ICMPTypeEcho, func(b []byte, dst net.Addr) (int, error) {
+				return p.connV4.WriteTo(b, nil, dst)
+			}, ""
+		}
+		return nil, nil, "No IPv4 Conn"
+	}
+	if p.connV6 != nil {
+		return ipv6.ICMPTypeEchoRequest, func(b []byte, dst net.Addr) (int, error) {
+			return p.connV6.WriteTo(b, nil, dst)
+		}, ""
+	}
+	return nil, nil, "No IPv6 Conn"
+}
+
+// sendProbe marshals and sends an ICMP echo request. Returns the send time, or an error string.
+func (p *Pinger) sendProbe(t *stats.TargetStats, id, seq int, payload []byte, dstAddr *net.IPAddr) (time.Time, bool) {
+	msgType, writeFunc, errStr := p.getWriteFunc(dstAddr)
+	if writeFunc == nil {
+		t.OnFailure(errStr)
+		return time.Time{}, false
+	}
+
+	msg := icmp.Message{
+		Type: msgType,
+		Code: 0,
+		Body: &icmp.Echo{
+			ID:   id,
+			Seq:  seq,
+			Data: payload,
+		},
+	}
+	b, err := msg.Marshal(nil)
+	if err != nil {
+		return time.Time{}, false
+	}
+
+	start := time.Now()
+	_, err = writeFunc(b, dstAddr)
+	if err != nil {
+		errMsg := p.applyLastErrSource(err.Error())
+		t.OnFailure(errMsg)
+		p.log(t, seq, "SendError", 0, 0, err.Error())
+		return time.Time{}, false
+	}
+
+	t.IncSent()
+	return start, true
+}
+
+// waitForReply waits for a matching reply or timeout. Returns false if done channel was closed.
+func (p *Pinger) waitForReply(t *stats.TargetStats, ch <-chan Reply, seq int, start time.Time, timeoutTimer *time.Timer) bool {
 	for {
 		select {
-		case <-p.done:
-			return
-		default:
-			p.connV6.SetReadDeadline(time.Now().Add(receiverReadTimeout))
-			n, cm, src, err := p.connV6.ReadFrom(buf)
-			if err != nil {
-				if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
-					continue
-				}
-				return
-			}
-
-			msg, err := icmp.ParseMessage(58, buf[:n])
-			if err != nil {
+		case reply := <-ch:
+			if reply.Seq != seq {
 				continue
 			}
-
-			p.broadcastTrace(msg, src)
-
-			switch msg.Type {
-			case ipv6.ICMPTypeEchoReply:
-				echo, ok := msg.Body.(*icmp.Echo)
-				if !ok {
-					continue
-				}
-				p.mapMu.RLock()
-				ch, exists := p.targetChans[echo.ID]
-				p.mapMu.RUnlock()
-
-				if exists {
-					hopLimit := 0
-					if cm != nil {
-						hopLimit = cm.HopLimit
-					}
-					select {
-					case ch <- Reply{TTL: hopLimit, Seq: echo.Seq}:
-					default:
-					}
-				}
-			case ipv6.ICMPTypeDestinationUnreachable, ipv6.ICMPTypeTimeExceeded, ipv6.ICMPTypeParameterProblem:
-				id, seq, ok := extractEchoIDSeq(msg)
-				if !ok {
-					continue
-				}
-				errMsg := icmpV6ErrorString(msg.Type, msg.Code)
-				p.mapMu.RLock()
-				ch, exists := p.targetChans[id]
-				p.mapMu.RUnlock()
-				if exists {
-					select {
-					case ch <- Reply{Seq: seq, Err: errMsg}:
-					default:
-					}
-				}
+			if reply.Err != "" {
+				t.OnFailure(reply.Err)
+				p.log(t, seq, "ICMPError", 0, 0, reply.Err)
+			} else {
+				rtt := time.Since(start)
+				t.OnSuccess(rtt, reply.TTL)
+				p.log(t, seq, "OK", rtt, reply.TTL, "")
 			}
+			timeoutTimer.Stop()
+			return true
+		case <-timeoutTimer.C:
+			errMsg := p.applyLastErrSource("Timeout")
+			t.OnFailure(errMsg)
+			p.log(t, seq, "Timeout", 0, 0, "Request timed out")
+			return true
+		case <-p.done:
+			timeoutTimer.Stop()
+			return false
 		}
 	}
 }
 
 func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.Duration) {
-	// Initial resolution using "ip" to support both V4 and V6
-	dstAddr, err := p.resolveIPAddr("ip", t.Host)
-	if err != nil {
-		t.OnFailure("DNS Error")
-	} else {
-		t.SetIP(dstAddr.String())
-	}
+	dstAddr := p.resolveTarget(t)
 
 	seq := 0
 	ticker := time.NewTicker(interval)
@@ -427,32 +526,25 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 	ch := p.targetChans[id]
 	p.mapMu.RUnlock()
 
-	// Prepare payload
 	payload := buildPayload(p.Size)
 
 	for {
-		// Check count limit
 		if p.Count > 0 && seq >= p.Count {
 			return
 		}
 
 		select {
 		case <-dnsTicker.C:
-			// Re-resolve DNS
-			newAddr, err := p.resolveIPAddr("ip", t.Host)
-			if err == nil {
+			if newAddr := p.resolveTarget(t); newAddr != nil {
 				dstAddr = newAddr
-				t.SetIP(dstAddr.String())
 			}
 		default:
 		}
 
-		// Check if we have a valid address to send to
 		if dstAddr == nil {
-			// Try to resolve again immediately if we have no address
-			addr, err := p.resolveIPAddr("ip", t.Host)
-			if err != nil {
-				t.OnFailure("DNS Error")
+			if addr := p.resolveTarget(t); addr != nil {
+				dstAddr = addr
+			} else {
 				select {
 				case <-p.done:
 					return
@@ -460,40 +552,12 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 					continue
 				}
 			}
-			dstAddr = addr
-			t.SetIP(addr.String())
 		}
 
 		seq++
 
-		var msgType icmp.Type
-		var writeFunc func([]byte, net.Addr) (int, error)
-		isV4 := dstAddr.IP.To4() != nil
-
-		if isV4 {
-			msgType = ipv4.ICMPTypeEcho
-			if p.connV4 != nil {
-				writeFunc = func(b []byte, dst net.Addr) (int, error) {
-					return p.connV4.WriteTo(b, nil, dst)
-				}
-			}
-		} else {
-			msgType = ipv6.ICMPTypeEchoRequest
-			if p.connV6 != nil {
-				writeFunc = func(b []byte, dst net.Addr) (int, error) {
-					return p.connV6.WriteTo(b, nil, dst)
-				}
-			}
-		}
-
-		if writeFunc == nil {
-			errStr := "No Conn"
-			if isV4 {
-				errStr = "No IPv4 Conn"
-			} else {
-				errStr = "No IPv6 Conn"
-			}
-			t.OnFailure(errStr)
+		start, ok := p.sendProbe(t, id, seq, payload, dstAddr)
+		if !ok {
 			select {
 			case <-p.done:
 				return
@@ -502,38 +566,6 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 			}
 		}
 
-		msg := icmp.Message{
-			Type: msgType,
-			Code: 0,
-			Body: &icmp.Echo{
-				ID:   id,
-				Seq:  seq,
-				Data: payload,
-			},
-		}
-		b, err := msg.Marshal(nil)
-		if err != nil {
-			continue
-		}
-
-		start := time.Now()
-		_, err = writeFunc(b, dstAddr)
-		if err != nil {
-			errMsg := p.applyLastErrSource(err.Error())
-			t.OnFailure(errMsg)
-			p.log(t, seq, "SendError", 0, 0, err.Error())
-
-			select {
-			case <-p.done:
-				return
-			case <-ticker.C:
-				continue
-			}
-		}
-
-		t.IncSent()
-		
-		// Wait for reply
 		if timeoutTimer == nil {
 			timeoutTimer = time.NewTimer(timeout)
 		} else {
@@ -545,34 +577,10 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 			}
 			timeoutTimer.Reset(timeout)
 		}
-		found := false
-		for !found {
-			select {
-			case reply := <-ch:
-				if reply.Seq == seq {
-					if reply.Err != "" {
-						t.OnFailure(reply.Err)
-						p.log(t, seq, "ICMPError", 0, 0, reply.Err)
-					} else {
-						rtt := time.Since(start)
-						t.OnSuccess(rtt, reply.TTL)
-						p.log(t, seq, "OK", rtt, reply.TTL, "")
-					}
-					found = true
-				}
-			case <-timeoutTimer.C:
-				errMsg := p.applyLastErrSource("Timeout")
-				t.OnFailure(errMsg)
-				p.log(t, seq, "Timeout", 0, 0, "Request timed out")
-				found = true
-			case <-p.done:
-				if timeoutTimer != nil {
-					timeoutTimer.Stop()
-				}
-				return
-			}
+
+		if !p.waitForReply(t, ch, seq, start, timeoutTimer) {
+			return
 		}
-		timeoutTimer.Stop()
 
 		if p.Count > 0 && seq >= p.Count {
 			return
@@ -582,7 +590,6 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 		case <-p.done:
 			return
 		case <-ticker.C:
-			// Next loop
 		}
 	}
 }
