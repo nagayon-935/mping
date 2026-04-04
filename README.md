@@ -1,46 +1,86 @@
 # mping
 
-**mping** は Go言語で書かれたターミナルベースのマルチターゲット Ping ツールです。複数のホストに対して同時に Ping を実行し、パケットロス率、RTT、TTL などの統計情報をリアルタイムで見やすい TUI (テキストユーザーインターフェース) で監視できます。
+**mping** is a terminal-based multi-target ping tool written in Go. It pings multiple hosts simultaneously and displays real-time statistics — packet loss, RTT, TTL, and more — in a clean TUI (Text User Interface).
 
 ![Go Version1.24](https://img.shields.io/badge/go-v1.24-blue "Go Version1.24")![MIT License](https://img.shields.io/badge/license-MIT-blue "MIT License")[![Coverage Status](https://coveralls.io/repos/github/nagayon-935/mping/badge.svg?branch=main)](https://coveralls.io/github/nagayon-935/mping?branch=main)![Go Report Card](https://goreportcard.com/badge/github.com/nagayon-935/mping)
 
-## 特徴
+## Features
 
-* **複数ターゲットへの Ping**: 複数のホストを並行して監視できます。
-* **リアルタイム統計**: パケットロス、RTT、TTL、エラーメッセージをリアルタイムで更新します。
-* **TUI ダッシュボード**: 黒背景固定の視認性の高いテーブル表示を採用。ウィンドウ幅に応じて列幅を自動再配分し、狭い場合は 1 ターゲット 2 行のコンパクトレイアウトへ自動切替します。
-* **色分けによる警告**: パケットロス率/RTT/Jitter に応じて直感的に状況を把握できます。閾値を超えると Log ペインにアラートが記録されます。
-* **詳細な設定**: インターフェイス、ソースIP、パケットサイズ、送信回数などの柔軟な指定が可能です。
+* **Multi-target ping** — monitor multiple hosts concurrently in a single view.
+* **Real-time statistics** — packet loss, RTT, TTL, and error messages updated live.
+* **TUI dashboard** — high-visibility table on a black background. Column widths are distributed automatically based on terminal width; switches to a compact 2-row-per-target layout when the window is narrow.
+* **Color-coded alerts** — loss ratio, RTT, and Jitter are color-coded for instant status recognition. Alerts are recorded in the Log pane when thresholds are exceeded.
+* **Flexible configuration** — specify interface, source IP, packet size, send count, and more.
+* **YAML host list** — manage target hosts in a file.
+* **Traceroute pane** — show the route to each target in a Host/Route table when `-T` is given. Multiple targets are traced concurrently and displayed together.
+* **Port Monitor pane** — monitor TCP/UDP port reachability in real time with `-p`. Displays the estimated service name, cumulative Open/Closed counts, and time since last status change.
+* **PMTU discovery** — probe maximum payload size using DF-bit ICMP packets.
+* **Auto source IP detection** — automatically detects and displays the local IP used for each destination.
+* **RTT graph** — fixed range of 0–100 ms (Y-axis) × 30 seconds (X-axis) per target.
+* **CSV log output** — save results with statistics to a file.
 
-* **YAML ホストリスト**: ホスト一覧をファイルで管理できます。
-* **Traceroute ペイン**: `-T` オプション指定時に Host/Route の 2 カラムテーブル形式で経路を表示します。複数ターゲットを同時に traceroute し、それぞれの結果を行で区切って一覧表示します。
-* **Port Monitor ペイン**: `-p` オプション指定時に TCP/UDP ポートの疎通状況をリアルタイムで監視します。ポート番号から推定されるサービス名、Open/Closed の累計回数、最終ステータス変化時刻を表示します。
-* **PMTU 探索**: DF 付きのパケットサイズ探索を実行できます。
-* **自動ソースIP検出**: 指定がない場合でも、実際に通信に使用されているローカルIPを自動的に表示します。
-* **RTT グラフ**: 各グラフは縦軸 0〜100ms、横軸 30 秒の固定レンジで表示されます。
-* **CSV ログ出力**: 実行結果を統計情報とともにファイルに保存できます。
+## Supported platforms
 
-## インストール
+| OS | Architecture | Notes |
+| :--- | :--- | :--- |
+| Linux | amd64, arm64 | Recommended: grant `CAP_NET_RAW` via `setcap` |
+| macOS | amd64, arm64 (Apple Silicon) | Uses `setuid` |
 
-### リリース済みバイナリを使う (推奨)
+> **Privileges required** — mping uses raw ICMP sockets to obtain accurate TTL values. On Linux the preferred approach is granting `CAP_NET_RAW` with `setcap`; `install.sh` handles this automatically. On macOS a `setuid` bit is set instead.
 
-[Releases](https://github.com/nagayon-935/mping/releases) から対応するアーカイブをダウンロードして展開し、同梱の `install.sh` を実行します。
+## Installation
+
+### Option 1 — Pre-built binary (recommended)
+
+Download the archive for your platform from the [Releases](https://github.com/nagayon-935/mping/releases) page and run the bundled `install.sh`.
+
+#### Linux (amd64)
 
 ```bash
-# 例: Linux (amd64)
-tar -xzf mping-v1.0.0-linux-amd64.tar.gz
-sudo ./install.sh
+# Download and extract (replace vX.Y.Z with the latest version)
+curl -LO https://github.com/nagayon-935/mping/releases/download/vX.Y.Z/mping-vX.Y.Z-linux-amd64.tar.gz
+tar -xzf mping-vX.Y.Z-linux-amd64.tar.gz
 
-# インストール先を変更したい場合 (デフォルト: /usr/local/bin)
+# Install (grants CAP_NET_RAW via setcap; falls back to setuid if setcap is unavailable)
+sudo ./install.sh
+```
+
+#### Linux (arm64 — e.g. Raspberry Pi, AWS Graviton)
+
+```bash
+curl -LO https://github.com/nagayon-935/mping/releases/download/vX.Y.Z/mping-vX.Y.Z-linux-arm64.tar.gz
+tar -xzf mping-vX.Y.Z-linux-arm64.tar.gz
+sudo ./install.sh
+```
+
+#### macOS (Intel)
+
+```bash
+curl -LO https://github.com/nagayon-935/mping/releases/download/vX.Y.Z/mping-vX.Y.Z-darwin-amd64.tar.gz
+tar -xzf mping-vX.Y.Z-darwin-amd64.tar.gz
+sudo ./install.sh
+```
+
+#### macOS (Apple Silicon)
+
+```bash
+curl -LO https://github.com/nagayon-935/mping/releases/download/vX.Y.Z/mping-vX.Y.Z-darwin-arm64.tar.gz
+tar -xzf mping-vX.Y.Z-darwin-arm64.tar.gz
+sudo ./install.sh
+```
+
+`install.sh` copies the binary to `INSTALL_DIR` (default: `/usr/local/bin`) and sets the appropriate privilege:
+
+* **Linux** — `setcap cap_net_raw+ep` (falls back to `setuid` if `setcap` is not available)
+* **macOS** — `chown root` + `chmod u+s` (setuid)
+
+To install to a different directory:
+
+```bash
 sudo INSTALL_DIR=/usr/local/bin ./install.sh
 ```
 
-`install.sh` はバイナリを `INSTALL_DIR` にコピーし、OS に応じて自動でケーパビリティ/setuid を設定します。
-
-* **Linux**: `setcap cap_net_raw+ep` を付与 (未インストールの場合は setuid にフォールバック)
-* **macOS**: `chown root` + `chmod u+s` で setuid を付与
-
-インストール後は `sudo` なしで実行できます。
+After installation, run mping **without** `sudo`:
 
 ```bash
 mping google.com 1.1.1.1
@@ -48,79 +88,82 @@ mping google.com 1.1.1.1
 
 ---
 
-### ソースコードからビルド
+### Option 2 — Build from source
 
-必須要件: Go 1.24 以上
+**Requirements:** Go 1.24 or later
 
 ```bash
 git clone https://github.com/nagayon-935/mping.git
 cd mping
 ```
 
-#### make を使ったビルド
+#### Using make
 
 ```bash
-# ビルドのみ
+# Build only
 make build
 
-# ビルド + setuid 付与 (sudo なしで実行可能になります)
+# Build + install (sets setuid on macOS; use install.sh on Linux for setcap)
 make install
 ```
 
-`make install` はビルド後に `sudo chown root:wheel` と `sudo chmod u+s` を自動で実行するため、途中でパスワードの入力が求められます。
+> **Note for Linux users:** `make install` sets a `setuid` bit, which works but is less secure than `setcap`. For production use, run `go build -o mping ./cmd/main` and then `sudo ./install.sh` to get `CAP_NET_RAW` via `setcap`.
 
-#### go build を使ったビルド
+#### Using go build directly
 
 ```bash
 go build -o mping ./cmd/main
 sudo ./install.sh
 ```
 
-## 使い方
-
-`mping` はデフォルトで最も正確な結果 (TTLを含む) を得るために Raw ICMP ソケットを使用するため、通常は `sudo` または `CAP_NET_RAW` ケーパビリティが必要です。
+## Usage
 
 ```bash
-# 基本的な使い方 (要 sudo)
-sudo ./mping google.com 1.1.1.1 8.8.8.8
+# Basic (no sudo needed after install.sh)
+mping google.com 1.1.1.1 8.8.8.8
 
-# インターフェイスを指定して実行
-sudo ./mping -I en0 google.com
+# Specify network interface
+mping -I eth0 google.com
 
-# パケットサイズ (100バイト) と 送信回数 (10回) を指定
-sudo ./mping -s 100 -c 10 google.com
+# Set packet size (100 bytes) and count (10 packets)
+mping -s 100 -c 10 google.com
 
-# ログを CSV ファイルに出力
-sudo ./mping -o results.csv google.com
+# Save results to a CSV file
+mping -o results.csv google.com
 
-# YAML からホストを読み込み
-sudo ./mping -f hosts.yaml
+# Load hosts from a YAML file
+mping -f hosts.yaml
 
-# IPv4 のみを強制
-sudo ./mping -4 google.com
+# Force IPv4 only
+mping -4 google.com
 
-# IPv6 のみを強制
-sudo ./mping -6 google.com
+# Force IPv6 only
+mping -6 google.com
 
-# Traceroute ペインを表示
-sudo ./mping -T google.com
+# Show Traceroute pane
+mping -T google.com
 
-# PMTU 探索 (payload 上限 9872 から探索)
-sudo ./mping -m google.com
+# PMTU discovery (probes from payload size 9872 downward)
+mping -m google.com
 
-# ポート疎通確認 (443/tcp)
-sudo ./mping -p 443/tcp google.com
+# TCP port reachability check (443/tcp)
+mping -p 443/tcp google.com
 
-# 複数ポートをカンマ区切りで指定
-sudo ./mping -p 443/tcp,53/udp google.com 8.8.8.8
+# Multiple ports (comma-separated)
+mping -p 443/tcp,53/udp google.com 8.8.8.8
 
-# Traceroute と Port Monitor を同時に表示
-sudo ./mping -T -p 443/tcp google.com
+# Traceroute + Port Monitor simultaneously
+mping -T -p 443/tcp google.com
 ```
 
-### hosts.yaml の例
+> If you run mping **without** installing (i.e. without `setcap`/`setuid`), prepend `sudo`:
+> ```bash
+> sudo ./mping google.com
+> ```
 
-`hosts:` キーでホストを列挙し、オプションも指定できます。CLIで明示的に指定したオプションはYAMLの値より優先されます。
+### hosts.yaml example
+
+List hosts under the `hosts:` key. Options specified here are overridden by explicit CLI flags.
 
 ```yaml
 hosts:
@@ -134,81 +177,79 @@ port:
   - 53/udp
 ```
 
-### オプション
+### Options
 
-| フラグ | 短縮形 | 説明 | デフォルト |
+| Flag | Short | Description | Default |
 | :--- | :--- | :--- | :--- |
-| `--interval` | `-i` | Ping の送信間隔 (ミリ秒) | `1000` |
-| `--timeout` | `-t` | Ping のタイムアウト (ミリ秒) | `1000` |
-| `--file` | `-f` | ホスト一覧の YAML ファイルパス | `""` |
-| `--traceroute` | `-T` | Traceroute ペインを表示する | `false` |
-| `--discovery-mtu` | `-m` | 最大 payload サイズを DF で探索する | `false` |
-| `--interface` | `-I` | 使用するネットワークインターフェイス名 (例: `eth0`) | `""` |
-| `--source` | `-S` | 送信元 IPv4 アドレスの指定 | `""` (自動検出) |
-| `--size` | `-s` | パケットのペイロードサイズ (バイト) | `56` |
-| `--count` | `-c` | 各ターゲットに送信する回数 (0 は無制限) | `0` |
-| `--ipv4` | `-4` | IPv4 のみを使用する | `false` |
-| `--ipv6` | `-6` | IPv6 のみを使用する | `false` |
-| `--output` | `-o` | CSV 形式でのログ出力ファイルパス | `""` |
-| `--port` | `-p` | 疎通確認するポート (例: `443/tcp`, `53/udp`, `443`)。カンマ区切りで複数指定可 | `""` |
+| `--interval` | `-i` | Ping send interval (ms) | `1000` |
+| `--timeout` | `-t` | Ping timeout (ms) | `1000` |
+| `--file` | `-f` | Path to YAML host list file | `""` |
+| `--traceroute` | `-T` | Show Traceroute pane | `false` |
+| `--discovery-mtu` | `-m` | Discover max payload size with DF bit | `false` |
+| `--interface` | `-I` | Network interface name (e.g. `eth0`, `en0`) | `""` |
+| `--source` | `-S` | Source IPv4 address | `""` (auto-detect) |
+| `--size` | `-s` | Payload size in bytes | `56` |
+| `--count` | `-c` | Number of packets per target (0 = unlimited) | `0` |
+| `--ipv4` | `-4` | Use IPv4 only | `false` |
+| `--ipv6` | `-6` | Use IPv6 only | `false` |
+| `--output` | `-o` | CSV log output file path | `""` |
+| `--port` | `-p` | Ports to check (e.g. `443/tcp`, `53/udp`, `443`). Comma-separated for multiple. | `""` |
 
-### キー操作
+### Key bindings
 
-| キー | 動作 |
+| Key | Action |
 | :--- | :--- |
-| **q** | アプリケーションを終了する |
-| **s** | Ping 送信を一時停止する |
-| **S** | Ping 送信を再開する (**s** で一時停止した後のみ有効) |
-| **R** | 全ての統計情報とログをリセットする |
-| **Tab** | フォーカスを切り替える (Ping Monitor / Traceroute Monitor / Port Monitor / RTT Graphs / Log) |
-| **↑/↓/PgUp/PgDn** | Table/Traceroute/RTT Graphs をスクロール (各ペインにフォーカス時) |
+| **q** | Quit the application |
+| **s** | Pause ping |
+| **S** | Resume ping (only valid after **s**) |
+| **R** | Reset all statistics and logs |
+| **Tab** | Cycle focus: Ping Monitor → Traceroute Monitor → Port Monitor → RTT Graphs → Log |
+| **↑ / ↓ / PgUp / PgDn** | Scroll focused pane (Table / Traceroute / RTT Graphs) |
 
-## 表示項目 (TUI カラム)
+## TUI columns
 
-* **Src IP**: 送信に使用されているローカル IP アドレス。
-* **Dst IP**: 名前解決された宛先 IP アドレス。ドメイン名で指定した場合は `domain (IP)` の形式で表示。
-* **Success**: 受信に成功したパケット数。
-* **Loss**: 損失したパケット数。
-* **Loss Ratio**: パケット損失率。
-  * **緑**: 0% 〜 20%
-  * **オレンジ**: 20% 〜 80%
-  * **鮮やかな赤**: 80% 超
-* **RTT / Avg / Jitter**: 往復時間 (Round Trip Time) の最新/平均/ジッタ値。
-  * **RTT**: 緑 (<=50ms) / オレンジ (<=200ms) / 赤 (>200ms)
-  * **Jitter**: 緑 (<=10ms) / オレンジ (<=50ms) / 赤 (>50ms)
-* **Size**: 送信パケットのペイロードサイズ。
-* **MTU**: 送信に使用されているインターフェイスの MTU (最大転送単位)。
-* **TTL**: 最後のパケットの生存時間 (Time To Live)。
-* **Error**: 最新エラーの短縮メッセージを表示 (赤色)。詳細は Log ペインに表示されます。
-* **Last Loss**: 最後にパケットロスが発生してからの経過時間。
+* **Src IP** — Local IP address used for sending.
+* **Dst IP** — Resolved destination IP. Shown as `domain (IP)` when a hostname is given.
+* **Success** — Number of packets received successfully.
+* **Loss** — Number of lost packets.
+* **Loss Ratio** — Packet loss percentage.
+  * **Green**: 0%–20% &nbsp;|&nbsp; **Orange**: 20%–80% &nbsp;|&nbsp; **Vivid red**: >80%
+* **RTT / Avg / Jitter** — Latest / average / jitter round-trip time.
+  * **RTT**: Green (≤50 ms) / Orange (≤200 ms) / Red (>200 ms)
+  * **Jitter**: Green (≤10 ms) / Orange (≤50 ms) / Red (>50 ms)
+* **Size** — Payload size of sent packets.
+* **MTU** — MTU of the outbound interface.
+* **TTL** — Time To Live of the last received packet.
+* **Error** — Abbreviated latest error message (red). Full details appear in the Log pane.
+* **Last Loss** — Time elapsed since the last packet loss.
 
-## Traceroute Monitor ペイン
+## Traceroute Monitor pane
 
-* `-T` / `--traceroute` 指定時のみ表示されます。
-* 最大 30 ホップまで探索し、Host と Route の 2 カラム形式で結果を表示します。
-* 複数ターゲット指定時は各ターゲットを行で区切って一覧表示します。
-* 起動後に一度 traceroute を実行し、その後 10 分ごとに自動更新します。
+* Shown only when `-T` / `--traceroute` is given.
+* Probes up to 30 hops and displays results in a Host / Route two-column table.
+* Multiple targets are traced concurrently and separated by divider rows.
+* One traceroute is run at startup, then automatically refreshed every 10 minutes.
 
-## Port Monitor ペイン
+## Port Monitor pane
 
-* `-p` / `--port` 指定時のみ表示されます。
-* 指定したポートへの TCP/UDP 疎通確認をリアルタイムで実行します。
-* カンマ区切りで複数のポートを一度に指定できます (例: `-p 443/tcp,53/udp`)。
-* プロトコルを省略した場合は TCP とみなします (例: `-p 443` → `443/tcp`)。
-* 表示カラム:
-  * **Target**: 対象ホスト名
-  * **Port**: ポート番号とプロトコル (例: `443/tcp`)
-  * **Service**: ポート番号から推定されるサービス名 (不明な場合は `Unknown`)
-  * **Status**: 疎通結果 — 緑 `Open` / 赤 `Closed` / 黄 `Filtered` または `Open|Filtered`
-  * **Open/Closed**: Open 判定回数 / Closed・Filtered 判定回数の累計
-  * **Last Change**: ステータスが最後に変化してからの経過時間
+* Shown only when `-p` / `--port` is given.
+* Performs TCP/UDP reachability checks in real time at the ping interval.
+* Multiple ports can be specified comma-separated (e.g. `-p 443/tcp,53/udp`).
+* Omitting the protocol defaults to TCP (e.g. `-p 443` → `443/tcp`).
+* Columns:
+  * **Target** — Hostname
+  * **Port** — Port number and protocol (e.g. `443/tcp`)
+  * **Service** — Estimated service name (`Unknown` if not recognized)
+  * **Status** — Green `Open` / Red `Closed` / Yellow `Filtered` or `Open|Filtered`
+  * **Open/Closed** — Cumulative Open count / Closed+Filtered count
+  * **Last Change** — Time elapsed since the last status change
 
-## PMTU 探索
+## PMTU discovery
 
-* `--discovery-mtu` 指定時に最大 payload サイズを探索します。
-* 探索は DF 付き ICMP を使い、payload 上限は 9872 から開始します。
-* 探索結果は `Size` に反映されます。
+* Enabled with `--discovery-mtu` / `-m`.
+* Probes maximum payload size using DF-bit ICMP, starting from 9872 bytes.
+* The discovered size is reflected in the **Size** column.
 
-## ライセンス
+## License
 
 MIT
