@@ -30,6 +30,8 @@
 
 > **Privileges required** — mping uses raw ICMP sockets to obtain accurate TTL values. On Linux the preferred approach is granting `CAP_NET_RAW` with `setcap`; `install.sh` handles this automatically. On macOS a `setuid` bit is set instead.
 
+> **Terminal Compatibility** — Standard terminals on Linux and macOS may not render colors correctly. If you experience issues with color display, consider using a modern terminal emulator (e.g., iTerm2, Alacritty, or kitty).
+
 ## Installation
 
 ### Option 1 — Pre-built binary (recommended)
