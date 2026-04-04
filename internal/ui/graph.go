@@ -36,8 +36,8 @@ func NewGraphView(targets []*stats.TargetStats, interval time.Duration) *GraphVi
 		Box:       tview.NewBox(),
 		targets:   targets,
 		interval:  interval,
-		vividCyan: tcell.ColorAqua,
-		vividRed:  tcell.ColorRed,
+		vividCyan: tcell.Color(51),  // xterm-256 fixed index: #00FFFF
+		vividRed:  tcell.Color(196), // xterm-256 fixed index: #FF0000
 	}
 }
 

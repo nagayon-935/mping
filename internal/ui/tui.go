@@ -25,9 +25,10 @@ const (
 var newApplication = tview.NewApplication
 
 func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error, onResetTrace func(), onResetPort func()) error {
-	// Define colors using named ANSI palette for broad terminal compatibility
-	vividRed := tcell.ColorRed
-	vividCyan := tcell.ColorAqua
+	// Use xterm-256 fixed palette indices (16-231) which are not remapped by terminal themes.
+	// Index 51 = #00FFFF (cyan), Index 196 = #FF0000 (red).
+	vividRed := tcell.Color(196)
+	vividCyan := tcell.Color(51)
 
 	app := newApplication()
 	table := tview.NewTable().
