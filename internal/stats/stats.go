@@ -46,12 +46,13 @@ func (r *PortCheckResult) GetResult() (status string, rtt time.Duration, openCou
 
 // TargetStats holds the statistics for a single ping target.
 type TargetStats struct {
-	Host         string
-	IP           string
-	IfaceMTU     int
-	PMTU         int
-	TraceHops    []string
-	PortResults  []*PortCheckResult
+	Host              string
+	IP                string
+	IfaceMTU          int
+	PMTU              int
+	PMTUBottleneckIP  string
+	TraceHops         []string
+	PortResults       []*PortCheckResult
 	Sent         int
 	Recv         int
 	Loss         int
@@ -86,11 +87,12 @@ type PortCheckView struct {
 
 // TargetView represents a read-only snapshot of the stats for UI rendering.
 type TargetView struct {
-	Host         string
-	IP           string
-	IfaceMTU     int
-	PMTU         int
-	TraceHops    []string
+	Host             string
+	IP               string
+	IfaceMTU         int
+	PMTU             int
+	PMTUBottleneckIP string
+	TraceHops        []string
 	PortResults  []PortCheckView
 	Sent         int
 	Recv         int
@@ -143,11 +145,12 @@ func (t *TargetStats) GetView() TargetView {
 	}
 
 	return TargetView{
-		Host:         t.Host,
-		IP:           t.IP,
-		IfaceMTU:     t.IfaceMTU,
-		PMTU:         t.PMTU,
-		TraceHops:    traceCopy,
+		Host:             t.Host,
+		IP:               t.IP,
+		IfaceMTU:         t.IfaceMTU,
+		PMTU:             t.PMTU,
+		PMTUBottleneckIP: t.PMTUBottleneckIP,
+		TraceHops:        traceCopy,
 		PortResults:  portCopy,
 		Sent:         t.Sent,
 		Recv:         t.Recv,
@@ -187,6 +190,12 @@ func (t *TargetStats) SetPMTU(pmtu int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.PMTU = pmtu
+}
+
+func (t *TargetStats) SetPMTUBottleneckIP(ip string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.PMTUBottleneckIP = ip
 }
 
 func (t *TargetStats) IncSent() {

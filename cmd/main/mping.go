@@ -30,7 +30,7 @@ type pingerController interface {
 	Start(interval, timeout time.Duration) error
 	Stop()
 	Wait()
-	DiscoverMaxPayload(dest string, start int, min int, logf func(string)) (int, error)
+	DiscoverMaxPayload(dest string, start int, min int, logf func(string)) (int, string, error)
 	TraceRoute(dest string, maxHops int, timeout time.Duration) ([]string, error)
 	SetSource(ip string)
 	SetSize(size int)
@@ -458,13 +458,19 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			fmt.Fprintln(errOut, "Warning: PMTU discovery disabled for IPv6")
 		} else {
 			probe := makePinger(cfg.packetSize)
-			maxPayload, err := probe.DiscoverMaxPayload(hosts[0], pmtuMaxPayload, cfg.packetSize, func(line string) {
+			maxPayload, bottleneckIP, err := probe.DiscoverMaxPayload(hosts[0], pmtuMaxPayload, cfg.packetSize, func(line string) {
 				preLogs = append(preLogs, line)
 			})
 			if err != nil {
 				fmt.Fprintf(errOut, "PMTU discovery failed: %v\n", err)
 			} else {
 				packetSizeToUse = maxPayload
+				for _, t := range targets {
+					t.SetPMTU(maxPayload)
+					if bottleneckIP != "" {
+						t.SetPMTUBottleneckIP(bottleneckIP)
+					}
+				}
 			}
 		}
 	}
