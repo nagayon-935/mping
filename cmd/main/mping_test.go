@@ -17,14 +17,15 @@ import (
 )
 
 type fakePinger struct {
-	startErr     error
-	started      bool
-	closed       bool
-	waited       bool
-	discoverMTU  int
-	discoverErr  error
-	traceErr     error
-	logWriterSet bool
+	startErr           error
+	started            bool
+	closed             bool
+	waited             bool
+	discoverMTU        int
+	discoverBottleneckIP string
+	discoverErr        error
+	traceErr           error
+	logWriterSet       bool
 }
 
 func (f *fakePinger) Start(interval, timeout time.Duration) error {
@@ -43,14 +44,14 @@ func (f *fakePinger) Wait() {
 	f.waited = true
 }
 
-func (f *fakePinger) DiscoverMaxPayload(dest string, start int, min int, logf func(string)) (int, error) {
+func (f *fakePinger) DiscoverMaxPayload(dest string, start int, min int, logf func(string)) (int, string, error) {
 	if f.discoverErr != nil {
-		return 0, f.discoverErr
+		return 0, "", f.discoverErr
 	}
 	if f.discoverMTU == 0 {
-		return start, nil
+		return start, "", nil
 	}
-	return f.discoverMTU, nil
+	return f.discoverMTU, f.discoverBottleneckIP, nil
 }
 
 func (f *fakePinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]string, error) {

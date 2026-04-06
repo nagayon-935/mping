@@ -13,18 +13,21 @@ import (
 )
 
 // canSendPayloadFn is a variable holding canSendPayload to allow overriding in tests.
-var canSendPayloadFn = (*Pinger).canSendPayload
+var canSendPayloadFn = func(p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
+	return p.canSendPayload(dst, payloadLen)
+}
 
 // DiscoverMaxPayload performs a binary search to find the maximum ICMP payload
 // size that can be sent to dest without fragmentation (DF flag set).
 // start is the upper bound to probe; min is the lower bound (usually the
 // configured packet size). IPv6 destinations are not supported.
-func (p *Pinger) DiscoverMaxPayload(dest string, start int, min int, logf func(string)) (int, error) {
+// Returns the max payload size, the bottleneck router IP (if detected), and any error.
+func (p *Pinger) DiscoverMaxPayload(dest string, start int, min int, logf func(string)) (int, string, error) {
 	if dest == "" {
-		return 0, fmt.Errorf("destination is empty")
+		return 0, "", fmt.Errorf("destination is empty")
 	}
 	if start <= 0 {
-		return 0, fmt.Errorf("start MTU must be > 0")
+		return 0, "", fmt.Errorf("start MTU must be > 0")
 	}
 	if min < 0 {
 		min = 0
@@ -32,12 +35,12 @@ func (p *Pinger) DiscoverMaxPayload(dest string, start int, min int, logf func(s
 
 	dstAddr, err := p.resolveIPAddr("ip", dest)
 	if err != nil {
-		return 0, fmt.Errorf("resolve %s: %w", dest, err)
+		return 0, "", fmt.Errorf("resolve %s: %w", dest, err)
 	}
 
 	// PMTU currently only supported for IPv4
 	if dstAddr.IP.To4() == nil {
-		return p.Size, fmt.Errorf("PMTU discovery not supported for IPv6")
+		return p.Size, "", fmt.Errorf("PMTU discovery not supported for IPv6")
 	}
 
 	low := min
@@ -45,11 +48,12 @@ func (p *Pinger) DiscoverMaxPayload(dest string, start int, min int, logf func(s
 		low = start
 	}
 	high := start
+	var bottleneckIP string
 	for low < high {
 		mid := (low + high + 1) / 2
-		ok, err := canSendPayloadFn(p, dstAddr, mid)
+		ok, hopIP, err := canSendPayloadFn(p, dstAddr, mid)
 		if err != nil {
-			return 0, err
+			return 0, "", err
 		}
 		if ok {
 			if logf != nil {
@@ -57,20 +61,31 @@ func (p *Pinger) DiscoverMaxPayload(dest string, start int, min int, logf func(s
 			}
 			low = mid
 		} else {
+			if hopIP != "" {
+				bottleneckIP = hopIP
+			}
 			if logf != nil {
-				logf(fmt.Sprintf("[PMTU] payload=%d FAIL", mid))
+				if bottleneckIP != "" {
+					logf(fmt.Sprintf("[PMTU] payload=%d FAIL (bottleneck: %s)", mid, bottleneckIP))
+				} else {
+					logf(fmt.Sprintf("[PMTU] payload=%d FAIL", mid))
+				}
 			}
 			high = mid - 1
 		}
 	}
-	return low, nil
+	if bottleneckIP != "" && logf != nil {
+		logf(fmt.Sprintf("[PMTU] bottleneck router: %s", bottleneckIP))
+	}
+	return low, bottleneckIP, nil
 }
 
 // canSendPayload sends a single ICMP Echo with the given payload length and
 // DF bit set. Returns true if an Echo Reply is received, false if the packet
-// is too large (EMSGSIZE or ICMP Fragmentation Needed), and an error for
+// is too large (EMSGSIZE or ICMP Fragmentation Needed), the bottleneck router
+// IP if an ICMP Fragmentation Needed response was received, and an error for
 // unexpected failures.
-func (p *Pinger) canSendPayload(dstAddr *net.IPAddr, payloadLen int) (bool, error) {
+func (p *Pinger) canSendPayload(dstAddr *net.IPAddr, payloadLen int) (bool, string, error) {
 	if payloadLen < 0 {
 		payloadLen = 0
 	}
@@ -87,7 +102,7 @@ func (p *Pinger) canSendPayload(dstAddr *net.IPAddr, payloadLen int) (bool, erro
 	}
 	b, err := msg.Marshal(nil)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 
 	bindAddr := "0.0.0.0"
@@ -97,13 +112,13 @@ func (p *Pinger) canSendPayload(dstAddr *net.IPAddr, payloadLen int) (bool, erro
 
 	c, err := p.listenPacket("ip4:icmp", bindAddr)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	defer c.Close()
 
 	rc, err := ipv4.NewRawConn(c)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 
 	h := &ipv4.Header{
@@ -121,22 +136,22 @@ func (p *Pinger) canSendPayload(dstAddr *net.IPAddr, payloadLen int) (bool, erro
 
 	if err := rc.WriteTo(h, b, nil); err != nil {
 		if isMTUTooLarge(err) {
-			return false, nil
+			return false, "", nil
 		}
-		return false, err
+		return false, "", err
 	}
 
 	deadline := time.Now().Add(pmtuProbeTimeout)
 	buf := make([]byte, probeBufferSize)
 	for time.Now().Before(deadline) {
 		_ = rc.SetReadDeadline(deadline)
-		_, pld, _, err := rc.ReadFrom(buf)
+		hdr, pld, _, err := rc.ReadFrom(buf)
 		if err != nil {
 			if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
-				return false, nil
+				return false, "", nil
 			}
 			// Non-timeout read errors (e.g. socket closed) are treated as no reply.
-			return false, nil
+			return false, "", nil
 		}
 		parsed, err := icmp.ParseMessage(1, pld)
 		if err != nil {
@@ -146,17 +161,21 @@ func (p *Pinger) canSendPayload(dstAddr *net.IPAddr, payloadLen int) (bool, erro
 		case ipv4.ICMPTypeEchoReply:
 			if echo, ok := parsed.Body.(*icmp.Echo); ok {
 				if echo.ID == (p.baseID&0xffff) && echo.Seq == 0 {
-					return true, nil
+					return true, "", nil
 				}
 			}
 		case ipv4.ICMPTypeDestinationUnreachable:
 			if parsed.Code == 4 { // Fragmentation Needed
-				return false, nil
+				var srcIP string
+				if hdr != nil && hdr.Src != nil {
+					srcIP = hdr.Src.String()
+				}
+				return false, srcIP, nil
 			}
 		}
 	}
 	// Deadline exceeded with no matching reply.
-	return false, nil
+	return false, "", nil
 }
 
 func isMTUTooLarge(err error) bool {

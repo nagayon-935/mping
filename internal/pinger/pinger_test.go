@@ -568,10 +568,10 @@ func TestWaitBlocksUntilDone(t *testing.T) {
 
 func TestDiscoverMaxPayloadErrors(t *testing.T) {
 	p := NewPingerWithOptions(nil, Options{})
-	if _, err := p.DiscoverMaxPayload("", 1, 0, nil); err == nil {
+	if _, _, err := p.DiscoverMaxPayload("", 1, 0, nil); err == nil {
 		t.Fatal("expected error for empty dest")
 	}
-	if _, err := p.DiscoverMaxPayload("example.com", 0, 0, nil); err == nil {
+	if _, _, err := p.DiscoverMaxPayload("example.com", 0, 0, nil); err == nil {
 		t.Fatal("expected error for start <= 0")
 	}
 }
@@ -582,7 +582,7 @@ func TestDiscoverMaxPayloadIPv6NotSupported(t *testing.T) {
 			return &net.IPAddr{IP: net.ParseIP("2001:db8::1")}, nil
 		},
 	})
-	size, err := p.DiscoverMaxPayload("example.com", 100, 0, nil)
+	size, _, err := p.DiscoverMaxPayload("example.com", 100, 0, nil)
 	if err == nil {
 		t.Fatal("expected error for ipv6")
 	}
@@ -595,8 +595,8 @@ func TestDiscoverMaxPayloadBinarySearch(t *testing.T) {
 	orig := canSendPayloadFn
 	t.Cleanup(func() { canSendPayloadFn = orig })
 
-	canSendPayloadFn = func(p *Pinger, dst *net.IPAddr, payloadLen int) (bool, error) {
-		return payloadLen <= 100, nil
+	canSendPayloadFn = func(p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
+		return payloadLen <= 100, "", nil
 	}
 
 	p := NewPingerWithOptions(nil, Options{
@@ -604,7 +604,7 @@ func TestDiscoverMaxPayloadBinarySearch(t *testing.T) {
 			return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
 		},
 	})
-	got, err := p.DiscoverMaxPayload("example.com", 200, 0, nil)
+	got, _, err := p.DiscoverMaxPayload("example.com", 200, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -617,8 +617,8 @@ func TestDiscoverMaxPayloadCanSendError(t *testing.T) {
 	orig := canSendPayloadFn
 	t.Cleanup(func() { canSendPayloadFn = orig })
 
-	canSendPayloadFn = func(p *Pinger, dst *net.IPAddr, payloadLen int) (bool, error) {
-		return false, errors.New("send failed")
+	canSendPayloadFn = func(p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
+		return false, "", errors.New("send failed")
 	}
 
 	p := NewPingerWithOptions(nil, Options{
@@ -626,7 +626,7 @@ func TestDiscoverMaxPayloadCanSendError(t *testing.T) {
 			return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
 		},
 	})
-	if _, err := p.DiscoverMaxPayload("example.com", 100, 0, nil); err == nil {
+	if _, _, err := p.DiscoverMaxPayload("example.com", 100, 0, nil); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -637,7 +637,7 @@ func TestCanSendPayloadListenError(t *testing.T) {
 			return nil, errors.New("listen failed")
 		},
 	})
-	_, err := p.canSendPayload(&net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, 0)
+	_, _, err := p.canSendPayload(&net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, 0)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -649,7 +649,7 @@ func TestCanSendPayloadRawConnError(t *testing.T) {
 			return &fakeNetPacketConn{}, nil
 		},
 	})
-	_, err := p.canSendPayload(&net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, -1)
+	_, _, err := p.canSendPayload(&net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, -1)
 	if err == nil {
 		t.Fatal("expected error from raw conn")
 	}
