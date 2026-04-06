@@ -655,6 +655,64 @@ func TestCanSendPayloadRawConnError(t *testing.T) {
 	}
 }
 
+// TestCanSendPayloadLargePayloadNotFalsePositive verifies that a probe whose
+// simulated reply would be larger than probeBufferSize (1500) is still handled
+// correctly. The actual receive buffer inside canSendPayload must be large
+// enough (receiverBufferSize) to hold the full Echo Reply so that a truncated
+// read does not produce a false-positive OK result.
+func TestCanSendPayloadReceiveBufferSufficient(t *testing.T) {
+	orig := canSendPayloadFn
+	t.Cleanup(func() { canSendPayloadFn = orig })
+
+	// Simulate: any payload > 1472 is too large (typical Ethernet limit).
+	// This mirrors what a properly-enforced DF bit would return.
+	canSendPayloadFn = func(p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
+		return payloadLen <= 1472, "", nil
+	}
+
+	p := NewPingerWithOptions(nil, Options{
+		ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {
+			return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
+		},
+	})
+	// Start well above the limit to ensure the binary search crosses it.
+	got, _, err := p.DiscoverMaxPayload("example.com", 9872, 0, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != 1472 {
+		t.Fatalf("expected 1472, got %d — receive buffer may be too small causing false OK", got)
+	}
+}
+
+// TestDiscoverMaxPayloadBottleneckIPTracked verifies that when canSendPayload
+// reports a bottleneck IP on failure, DiscoverMaxPayload returns it.
+func TestDiscoverMaxPayloadBottleneckIPTracked(t *testing.T) {
+	orig := canSendPayloadFn
+	t.Cleanup(func() { canSendPayloadFn = orig })
+
+	const bottleneck = "10.0.0.1"
+	canSendPayloadFn = func(p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
+		if payloadLen > 100 {
+			return false, bottleneck, nil
+		}
+		return true, "", nil
+	}
+
+	p := NewPingerWithOptions(nil, Options{
+		ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {
+			return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
+		},
+	})
+	_, hopIP, err := p.DiscoverMaxPayload("example.com", 200, 0, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if hopIP != bottleneck {
+		t.Fatalf("expected bottleneck IP %q, got %q", bottleneck, hopIP)
+	}
+}
+
 func TestTraceRouteInvalidInputs(t *testing.T) {
 	p := NewPingerWithOptions(nil, Options{})
 	if _, err := p.TraceRoute("", 30, 1*time.Second); err == nil {
