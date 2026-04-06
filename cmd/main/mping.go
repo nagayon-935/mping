@@ -18,7 +18,8 @@ import (
 )
 
 const (
-	pmtuMaxPayload       = 9872             // upper bound for PMTU binary search (max ICMP payload for jumbo frames)
+	pmtuMaxPayload       = 9872             // fallback upper bound for PMTU binary search when interface MTU is unknown
+	pmtuHeaderBytes      = 20 + 8          // IPv4 header (20) + ICMP header (8)
 	dnsResolveInterval   = 60 * time.Second // how often each worker re-resolves the target hostname
 	tracerouteInterval   = 10 * time.Minute // how often the background traceroute is re-run
 	tracerouteMaxHops    = 30               // maximum TTL / hop count for traceroute
@@ -458,7 +459,14 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			fmt.Fprintln(errOut, "Warning: PMTU discovery disabled for IPv6")
 		} else {
 			probe := makePinger(cfg.packetSize)
-			maxPayload, bottleneckIP, err := probe.DiscoverMaxPayload(hosts[0], pmtuMaxPayload, cfg.packetSize, func(line string) {
+			// Use the interface MTU as the upper bound for binary search so
+			// that the search is accurate for any MTU (1500, 9000, 65535, …).
+			// Fall back to pmtuMaxPayload when the interface MTU is unknown.
+			startPayload := pmtuMaxPayload
+			if ifaceMTU > pmtuHeaderBytes {
+				startPayload = ifaceMTU - pmtuHeaderBytes
+			}
+			maxPayload, bottleneckIP, err := probe.DiscoverMaxPayload(hosts[0], startPayload, cfg.packetSize, func(line string) {
 				preLogs = append(preLogs, line)
 			})
 			if err != nil {
