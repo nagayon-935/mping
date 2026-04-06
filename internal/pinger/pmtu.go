@@ -66,7 +66,7 @@ func (p *Pinger) DiscoverMaxPayload(dest string, start int, min int, logf func(s
 			}
 			if logf != nil {
 				if bottleneckIP != "" {
-					logf(fmt.Sprintf("[PMTU] payload=%d FAIL (bottleneck: %s)", mid, bottleneckIP))
+					logf(fmt.Sprintf("[PMTU] payload=%d FAIL (mtu mismatch: %s)", mid, bottleneckIP))
 				} else {
 					logf(fmt.Sprintf("[PMTU] payload=%d FAIL", mid))
 				}
@@ -75,7 +75,7 @@ func (p *Pinger) DiscoverMaxPayload(dest string, start int, min int, logf func(s
 		}
 	}
 	if bottleneckIP != "" && logf != nil {
-		logf(fmt.Sprintf("[PMTU] bottleneck router: %s", bottleneckIP))
+		logf(fmt.Sprintf("[PMTU] mtu mismatch at: %s", bottleneckIP))
 	}
 	return low, bottleneckIP, nil
 }
