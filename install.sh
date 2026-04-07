@@ -34,6 +34,8 @@ case "$OS" in
     echo "Setting setuid bit (macOS)..."
     chown root "$INSTALL_DIR/$BINARY"
     chmod u+s "$INSTALL_DIR/$BINARY"
+    echo "Code signing (macOS requires valid signature for setuid binaries)..."
+    codesign --sign - --force "$INSTALL_DIR/$BINARY"
     ;;
   *)
     echo "Warning: Unsupported OS '$OS'. You may need to manually grant CAP_NET_RAW or set setuid."

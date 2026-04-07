@@ -7,8 +7,7 @@ build:
 	$(BUILD_CMD)
 
 install: build
-	sudo chown root:wheel $(BINARY)
-	sudo chmod u+s $(BINARY)
+	sudo ./install.sh
 
 test:
 	go test ./...
