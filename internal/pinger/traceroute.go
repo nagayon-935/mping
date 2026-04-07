@@ -168,6 +168,7 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 		if traceCh != nil {
 			// Receive via the pinger's shared receiver to avoid socket competition.
 			timer := time.NewTimer(timeout)
+			defer timer.Stop()
 		recvLoop:
 			for {
 				select {
