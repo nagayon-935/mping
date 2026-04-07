@@ -16,14 +16,14 @@ import (
 )
 
 const (
-	receiverBufferSize  = 65535             // buffer size for IPv4/IPv6 receiver goroutines
-	probeBufferSize     = 1500              // buffer size for PMTU probe and TraceRoute responses
-	replyChanBuffer     = 100              // buffered channel size for ICMP echo replies per target
-	traceChanBuffer     = 200              // buffered channel size for TraceRoute messages
-	receiverReadTimeout = 1 * time.Second  // read deadline for receiver goroutines (enables done check)
-	pmtuProbeTimeout    = 300 * time.Millisecond // read deadline per PMTU probe attempt
-	payloadSignature    = "MPING"          // signature embedded at the start of ping payloads
-	traceSignature      = "TRC-"           // 4-byte signature embedded in TraceRoute payloads
+	receiverBufferSize  = 65535                      // max IPv4 packet size; large enough for any ICMP message
+	probeBufferSize     = 1500                       // typical Ethernet MTU; sufficient for PMTU probe responses
+	replyChanBuffer     = 100                        // allow burst of replies without blocking the receiver
+	traceChanBuffer     = 200                        // larger buffer for concurrent TraceRoute calls
+	receiverReadTimeout = 1 * time.Second            // poll interval for checking done channel in receiver loop
+	pmtuProbeTimeout    = 300 * time.Millisecond     // generous enough for WAN RTTs, short enough for interactive use
+	payloadSignature    = "MPING"                    // identifies our probes in packet captures
+	traceSignature      = "TRC-"                     // 4-byte prefix distinguishing traceroute probes from ping probes
 )
 
 // PacketConnV4 interface matches *ipv4.PacketConn methods we use
