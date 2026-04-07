@@ -6,8 +6,8 @@ import (
 )
 
 const (
-	historySize   = 3000 // RTT history ring buffer size
-	jitterDivisor = 16   // RFC 1889 jitter smoothing factor: J = J + (|D| - J) / jitterDivisor
+	historySize   = 3000 // 30s of data at the minimum UI refresh rate (100ms per point)
+	jitterDivisor = 16   // RFC 1889 §A.8 smoothing factor: J = J + (|D| - J) / 16
 )
 
 // PortCheckResult holds the result of a single TCP/UDP port check.
@@ -67,9 +67,10 @@ type TargetStats struct {
 	// Jitter (RFC 1889)
 	jitter int64 // Stored as nanoseconds for smooth calculation
 
-	// History for Sparkline
+	// History for Sparkline (ring buffer)
 	rttHistory []time.Duration
-	historyIdx int
+	historyIdx int // write pointer (next slot to write)
+	historyLen int // number of valid entries written (up to historySize)
 
 	mu sync.RWMutex
 }
@@ -113,7 +114,7 @@ type TargetView struct {
 func NewTargetStats(host string) *TargetStats {
 	return &TargetStats{
 		Host:       host,
-		rttHistory: make([]time.Duration, 0, historySize),
+		rttHistory: make([]time.Duration, historySize),
 	}
 }
 
@@ -129,9 +130,17 @@ func (t *TargetStats) GetView() TargetView {
 		avg = t.SumRTT / time.Duration(t.Recv)
 	}
 
-	// Copy history for view
-	histCopy := make([]time.Duration, len(t.rttHistory))
-	copy(histCopy, t.rttHistory)
+	// Reconstruct ordered history from ring buffer
+	var histCopy []time.Duration
+	if t.historyLen < historySize {
+		histCopy = make([]time.Duration, t.historyLen)
+		copy(histCopy, t.rttHistory[:t.historyLen])
+	} else {
+		start := t.historyIdx % historySize
+		histCopy = make([]time.Duration, historySize)
+		copy(histCopy, t.rttHistory[start:])
+		copy(histCopy[historySize-start:], t.rttHistory[:start])
+	}
 	traceCopy := make([]string, len(t.TraceHops))
 	copy(traceCopy, t.TraceHops)
 	portCopy := make([]PortCheckView, len(t.PortResults))
@@ -237,15 +246,11 @@ func (t *TargetStats) OnSuccess(rtt time.Duration, ttl int) {
 }
 
 func (t *TargetStats) appendHistory(rtt time.Duration) {
-	// Update history ring buffer style (append until full, then shift? or ring?)
-	// Simple append and shift is easier for slice
-	if len(t.rttHistory) < historySize {
-		t.rttHistory = append(t.rttHistory, rtt)
-		return
+	t.rttHistory[t.historyIdx%historySize] = rtt
+	t.historyIdx++
+	if t.historyLen < historySize {
+		t.historyLen++
 	}
-	// Shift
-	copy(t.rttHistory, t.rttHistory[1:])
-	t.rttHistory[historySize-1] = rtt
 }
 
 func (t *TargetStats) OnFailure(reason string) {
@@ -269,5 +274,7 @@ func (t *TargetStats) Reset() {
 	t.LastTTL = 0
 	t.LastLossTime = time.Time{}
 	t.LastError = ""
-	t.rttHistory = make([]time.Duration, 0, historySize)
+	t.rttHistory = make([]time.Duration, historySize)
+	t.historyIdx = 0
+	t.historyLen = 0
 }

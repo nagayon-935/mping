@@ -13,11 +13,9 @@ import (
 )
 
 const (
-	// tableMaxRows is for the main stats table
-	tableMaxRows = 10
-
-	minUIRefresh  = 200 * time.Millisecond // minimum UI refresh interval when ping interval is very short
-	fastUIRefresh = 100 * time.Millisecond // UI refresh rate used when ping interval < minUIRefresh
+	tableMaxRows  = 10                      // max ping targets shown without scrolling; keeps UI readable at typical terminal heights
+	minUIRefresh  = 200 * time.Millisecond  // minimum refresh to avoid flicker at very short ping intervals
+	fastUIRefresh = 100 * time.Millisecond  // UI refresh rate when ping interval < minUIRefresh
 )
 
 var newApplication = tview.NewApplication
@@ -108,6 +106,19 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		AddItem(table, 0, 1, true)
 	tablePane.SetBorder(true).SetTitle(" Ping Monitor ").SetBorderColor(tcell.ColorWhite)
 
+	// Cached column widths: recalculate only when the terminal width changes.
+	var cachedWidths []int
+	lastTermWidth := -1
+
+	calcColumnWidthsCached := func() []int {
+		_, _, curTermWidth, _ := tablePane.GetInnerRect()
+		if cachedWidths == nil || curTermWidth != lastTermWidth {
+			cachedWidths = calcColumnWidths()
+			lastTermWidth = curTermWidth
+		}
+		return cachedWidths
+	}
+
 	var traceView *tview.TextView
 	var tracePane *tview.Flex
 	setTraceBorderColor := func(_ tcell.Color) {}
@@ -177,7 +188,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			availableColumnsWidth = 0
 		}
 
-		updatedWidths := calcColumnWidths()
+		updatedWidths := calcColumnWidthsCached()
 		dynamicMaxWidths := append([]int(nil), maxWidths...)
 		for _, c := range []int{0, 1, 2} {
 			if updatedWidths[c] > dynamicMaxWidths[c] {
