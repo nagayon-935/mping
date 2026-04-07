@@ -190,6 +190,27 @@ func TestTargetStats_SetPMTU(t *testing.T) {
 	}
 }
 
+func TestSetPMTUBottleneckIP(t *testing.T) {
+	tests := []struct {
+		name string
+		ip   string
+	}{
+		{"non-empty IP", "10.0.0.1"},
+		{"empty string", ""},
+		{"another IP", "192.168.1.254"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tgt := NewTargetStats("example.com")
+			tgt.SetPMTUBottleneckIP(tt.ip)
+			view := tgt.GetView()
+			if view.PMTUBottleneckIP != tt.ip {
+				t.Errorf("PMTUBottleneckIP: got %q, want %q", view.PMTUBottleneckIP, tt.ip)
+			}
+		})
+	}
+}
+
 func TestTargetStatsFailureAndReset(t *testing.T) {
 	tgt := NewTargetStats("example.com")
 	tgt.IncSent()

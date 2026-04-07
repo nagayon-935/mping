@@ -612,3 +612,116 @@ func TestRunWithMTUIPv6Warning(t *testing.T) {
 		t.Errorf("expected PMTU warning, got: %q", errOut.String())
 	}
 }
+
+// ---- pingerAdapter.Close() test ----
+
+func TestPingerAdapterClose(t *testing.T) {
+	fp := &fakePinger{}
+	// Call Close via the interface to exercise the adapter method.
+	fp.Close()
+	if !fp.closed {
+		t.Fatal("expected Close() to set closed=true")
+	}
+}
+
+// ---- setupPMTU tests ----
+
+func TestSetupPMTU_Disabled(t *testing.T) {
+	called := false
+	make := func(size int) pingerController {
+		called = true
+		return &fakePinger{}
+	}
+	var errOut bytes.Buffer
+	cfg := config{mtuEnabled: false}
+	packetSize, preLogs := setupPMTU(make, cfg, 1500, nil, "example.com", &errOut)
+	if called {
+		t.Fatal("expected makePinger not to be called when mtuEnabled=false")
+	}
+	if packetSize != 0 {
+		t.Fatalf("expected packetSize=0 (cfg.packetSize default), got %d", packetSize)
+	}
+	if len(preLogs) != 0 {
+		t.Fatalf("expected no preLogs, got %v", preLogs)
+	}
+}
+
+func TestSetupPMTU_IPv6Disabled(t *testing.T) {
+	called := false
+	makeFn := func(size int) pingerController {
+		called = true
+		return &fakePinger{}
+	}
+	var errOut bytes.Buffer
+	cfg := config{mtuEnabled: true, ipv6Only: true, packetSize: 56}
+	packetSize, preLogs := setupPMTU(makeFn, cfg, 1500, nil, "example.com", &errOut)
+	if called {
+		t.Fatal("expected makePinger not to be called for IPv6-only")
+	}
+	if packetSize != 56 {
+		t.Fatalf("expected packetSize=56, got %d", packetSize)
+	}
+	if len(preLogs) != 0 {
+		t.Fatalf("expected no preLogs, got %v", preLogs)
+	}
+	if !strings.Contains(errOut.String(), "PMTU discovery disabled") {
+		t.Errorf("expected PMTU disabled warning in errOut, got: %q", errOut.String())
+	}
+}
+
+func TestSetupPMTU_DiscoverError(t *testing.T) {
+	makeFn := func(size int) pingerController {
+		return &fakePinger{discoverErr: io.ErrUnexpectedEOF}
+	}
+	var errOut bytes.Buffer
+	cfg := config{mtuEnabled: true, ipv6Only: false, packetSize: 56}
+	targets := []*stats.TargetStats{stats.NewTargetStats("example.com")}
+	packetSize, preLogs := setupPMTU(makeFn, cfg, 1500, targets, "example.com", &errOut)
+	if packetSize != 56 {
+		t.Fatalf("expected packetSize=56 on error, got %d", packetSize)
+	}
+	if len(preLogs) != 0 {
+		t.Fatalf("expected no preLogs on error, got %v", preLogs)
+	}
+	if !strings.Contains(errOut.String(), "PMTU discovery failed") {
+		t.Errorf("expected failure message, got: %q", errOut.String())
+	}
+}
+
+func TestSetupPMTU_SuccessWithBottleneck(t *testing.T) {
+	makeFn := func(size int) pingerController {
+		return &fakePinger{discoverMTU: 1400, discoverBottleneckIP: "10.0.0.1"}
+	}
+	var errOut bytes.Buffer
+	cfg := config{mtuEnabled: true, ipv6Only: false, packetSize: 56}
+	targets := []*stats.TargetStats{stats.NewTargetStats("example.com")}
+	packetSize, _ := setupPMTU(makeFn, cfg, 1500, targets, "example.com", &errOut)
+	if packetSize != 1400 {
+		t.Fatalf("expected packetSize=1400, got %d", packetSize)
+	}
+	view := targets[0].GetView()
+	if view.PMTU != 1400 {
+		t.Fatalf("expected PMTU=1400, got %d", view.PMTU)
+	}
+	if view.PMTUBottleneckIP != "10.0.0.1" {
+		t.Fatalf("expected bottleneck IP 10.0.0.1, got %q", view.PMTUBottleneckIP)
+	}
+}
+
+func TestSetupPMTU_SuccessNoBottleneck(t *testing.T) {
+	makeFn := func(size int) pingerController {
+		return &fakePinger{discoverMTU: 1200, discoverBottleneckIP: ""}
+	}
+	var errOut bytes.Buffer
+	cfg := config{mtuEnabled: true, ipv6Only: false, packetSize: 56}
+	targets := []*stats.TargetStats{stats.NewTargetStats("example.com")}
+	packetSize, _ := setupPMTU(makeFn, cfg, 0, targets, "example.com", &errOut)
+	if packetSize != 1200 {
+		t.Fatalf("expected packetSize=1200, got %d", packetSize)
+	}
+	view := targets[0].GetView()
+	// bottleneckIP is empty so SetPMTUBottleneckIP should not have been called
+	if view.PMTUBottleneckIP != "" {
+		t.Fatalf("expected empty bottleneck IP, got %q", view.PMTUBottleneckIP)
+	}
+}
