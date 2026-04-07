@@ -121,6 +121,11 @@ func (p *Pinger) canSendPayload(dstAddr *net.IPAddr, payloadLen int) (bool, stri
 		return false, "", err
 	}
 
+	// On macOS, setting the DF bit in the IP header via IP_HDRINCL is not
+	// sufficient — the kernel silently fragments the packet anyway. We must
+	// also set the IP_DONTFRAG socket option to prevent this.
+	setSocketDontFragment(c)
+
 	h := &ipv4.Header{
 		Version:  4,
 		Len:      ipv4.HeaderLen,
@@ -142,7 +147,11 @@ func (p *Pinger) canSendPayload(dstAddr *net.IPAddr, payloadLen int) (bool, stri
 	}
 
 	deadline := time.Now().Add(pmtuProbeTimeout)
-	buf := make([]byte, probeBufferSize)
+	// The receive buffer must be large enough to hold a full ICMP Echo Reply
+	// for any probe size we send. Using probeBufferSize (1500) would cause
+	// truncated reads for large payloads, making the ID/Seq still parseable
+	// and producing false-positive OK results.
+	buf := make([]byte, receiverBufferSize)
 	for time.Now().Before(deadline) {
 		_ = rc.SetReadDeadline(deadline)
 		hdr, pld, _, err := rc.ReadFrom(buf)
