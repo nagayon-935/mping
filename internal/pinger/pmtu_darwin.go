@@ -4,17 +4,17 @@ package pinger
 
 import (
 	"net"
-	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
-// ipDontFrag is the IP_DONTFRAG socket option value on macOS/Darwin.
-// When set, the kernel will return EMSGSIZE instead of silently fragmenting
-// packets that exceed the outgoing interface MTU, even for raw sockets with
-// IP_HDRINCL where the DF bit in the IP header is not honoured by the kernel.
-const ipDontFrag = 0x1e // 30
-
-// setSocketDontFragment sets IP_DONTFRAG on the underlying socket so that the
-// macOS kernel enforces the do-not-fragment constraint at the socket level.
+// setSocketDontFragment sets IP_DONTFRAG (0x43 / 67) on the underlying socket
+// so that the macOS kernel returns EMSGSIZE instead of silently fragmenting
+// packets that exceed the outgoing interface MTU.
+//
+// On macOS, setting the DF bit in the IP header via IP_HDRINCL is not
+// sufficient — the kernel ignores it and fragments transparently. The
+// IP_DONTFRAG socket option is the only reliable way to enforce DF on Darwin.
 func setSocketDontFragment(c net.PacketConn) {
 	ipConn, ok := c.(*net.IPConn)
 	if !ok {
@@ -25,6 +25,6 @@ func setSocketDontFragment(c net.PacketConn) {
 		return
 	}
 	_ = rawConn.Control(func(fd uintptr) {
-		_ = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IP, ipDontFrag, 1)
+		_ = unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_DONTFRAG, 1)
 	})
 }
