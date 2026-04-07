@@ -18,19 +18,25 @@ import (
 )
 
 const (
-	pmtuMaxPayload       = 9872             // fallback upper bound for PMTU binary search when interface MTU is unknown
-	pmtuHeaderBytes      = 20 + 8          // IPv4 header (20) + ICMP header (8)
+	pmtuMaxPayload       = 9872              // max ICMP payload for 9900-byte jumbo frames (9900 - 20 IP - 8 ICMP)
+	pmtuHeaderBytes      = 20 + 8           // IPv4 header (20) + ICMP header (8) subtracted from MTU to get max payload
 	dnsResolveInterval   = 60 * time.Second // how often each worker re-resolves the target hostname
 	tracerouteInterval   = 10 * time.Minute // how often the background traceroute is re-run
-	tracerouteMaxHops    = 30               // maximum TTL / hop count for traceroute
+	tracerouteMaxHops    = 30               // RFC 1393 recommended maximum; internet paths rarely exceed 30 hops
 	tracerouteHopTimeout = 1 * time.Second  // per-hop timeout for traceroute probes
 	probePort            = "80"             // destination port used when detecting the preferred outbound IP
 )
 
+// pingerController manages the lifecycle of a pinger instance.
+// Lifecycle: Start() → [running] → Stop() → Wait() → (done)
+// Stop() signals the pinger to stop; Wait() blocks until all goroutines exit.
+// Close() closes underlying network connections immediately (use only when
+// Start() was never called or after Wait() has returned).
 type pingerController interface {
 	Start(interval, timeout time.Duration) error
 	Stop()
 	Wait()
+	Close()
 	DiscoverMaxPayload(dest string, start int, min int, logf func(string)) (int, string, error)
 	TraceRoute(dest string, maxHops int, timeout time.Duration) ([]string, error)
 	SetSource(ip string)
@@ -62,6 +68,10 @@ func (p *pingerAdapter) SetResolveInterval(interval time.Duration) {
 
 func (p *pingerAdapter) SetLogWriter(w io.Writer) {
 	p.LogWriter = w
+}
+
+func (p *pingerAdapter) Close() {
+	p.Pinger.Close()
 }
 
 var newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
@@ -375,6 +385,72 @@ func parseHostsFile(path string) (hostsFileYAML, error) {
 	return doc, nil
 }
 
+// makePingerFactory returns a closure that creates a configured pinger instance
+// with the given payload size. The returned factory is called each time a new
+// pinger is needed (initial start and after restart).
+func makePingerFactory(targets []*stats.TargetStats, opts pinger.Options, cfg config, bindIP string, logFile io.Writer) func(size int) pingerController {
+	return func(size int) pingerController {
+		p := newPinger(targets, opts)
+		p.SetSource(bindIP)
+		p.SetSize(size)
+		p.SetCount(cfg.count)
+		p.SetResolveInterval(dnsResolveInterval)
+		if logFile != nil {
+			p.SetLogWriter(logFile)
+		}
+		return p
+	}
+}
+
+// setupPMTU runs PMTU discovery using a probe pinger and updates per-target
+// sizes. It returns the discovered payload size and any pre-log messages.
+func setupPMTU(makePinger func(size int) pingerController, cfg config, ifaceMTU int, targets []*stats.TargetStats, firstHost string, errOut io.Writer) (packetSize int, preLogs []string) {
+	packetSize = cfg.packetSize
+	if !cfg.mtuEnabled {
+		return
+	}
+	if cfg.ipv6Only {
+		fmt.Fprintln(errOut, "Warning: PMTU discovery disabled for IPv6")
+		return
+	}
+	probe := makePinger(cfg.packetSize)
+	// probe.Start() is never called — DiscoverMaxPayload opens/closes
+	// its own sockets internally. Stop() only closes the done channel
+	// (safe to call without Start) and prevents any future goroutine
+	// from blocking on it.
+	defer probe.Stop()
+	startPayload := pmtuMaxPayload
+	if ifaceMTU > pmtuHeaderBytes {
+		startPayload = ifaceMTU - pmtuHeaderBytes
+	}
+	maxPayload, bottleneckIP, err := probe.DiscoverMaxPayload(firstHost, startPayload, cfg.packetSize, func(line string) {
+		preLogs = append(preLogs, line)
+	})
+	if err != nil {
+		fmt.Fprintf(errOut, "PMTU discovery failed: %v\n", err)
+		return
+	}
+	packetSize = maxPayload
+	for _, t := range targets {
+		t.SetPMTU(maxPayload)
+		if bottleneckIP != "" {
+			t.SetPMTUBottleneckIP(bottleneckIP)
+		}
+	}
+	return
+}
+
+// setupPortChecker parses port specs and starts a PortChecker if any specs are
+// provided. Returns nil if no specs are given.
+func setupPortChecker(targets []*stats.TargetStats, portSpecs []pinger.PortSpec, interval, timeout time.Duration) *pinger.PortChecker {
+	if len(portSpecs) == 0 {
+		return nil
+	}
+	pc := pinger.NewPortChecker(targets, portSpecs, interval, timeout)
+	pc.Start()
+	return pc
+}
+
 func run(args []string, out io.Writer, errOut io.Writer) int {
 	cfg, hosts, fs, usage, err := parseArgs(args)
 	if err != nil {
@@ -440,48 +516,9 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		defer logFile.Close()
 	}
 
-	makePinger := func(size int) pingerController {
-		p := newPinger(targets, opts)
-		p.SetSource(bindIP)
-		p.SetSize(size)
-		p.SetCount(cfg.count)
-		p.SetResolveInterval(dnsResolveInterval)
-		if logFile != nil {
-			p.SetLogWriter(logFile)
-		}
-		return p
-	}
+	makePinger := makePingerFactory(targets, opts, cfg, bindIP, logFile)
 
-	packetSizeToUse := cfg.packetSize
-	var preLogs []string
-	if cfg.mtuEnabled {
-		if cfg.ipv6Only {
-			fmt.Fprintln(errOut, "Warning: PMTU discovery disabled for IPv6")
-		} else {
-			probe := makePinger(cfg.packetSize)
-			// Use the interface MTU as the upper bound for binary search so
-			// that the search is accurate for any MTU (1500, 9000, 65535, …).
-			// Fall back to pmtuMaxPayload when the interface MTU is unknown.
-			startPayload := pmtuMaxPayload
-			if ifaceMTU > pmtuHeaderBytes {
-				startPayload = ifaceMTU - pmtuHeaderBytes
-			}
-			maxPayload, bottleneckIP, err := probe.DiscoverMaxPayload(hosts[0], startPayload, cfg.packetSize, func(line string) {
-				preLogs = append(preLogs, line)
-			})
-			if err != nil {
-				fmt.Fprintf(errOut, "PMTU discovery failed: %v\n", err)
-			} else {
-				packetSizeToUse = maxPayload
-				for _, t := range targets {
-					t.SetPMTU(maxPayload)
-					if bottleneckIP != "" {
-						t.SetPMTUBottleneckIP(bottleneckIP)
-					}
-				}
-			}
-		}
-	}
+	packetSizeToUse, preLogs := setupPMTU(makePinger, cfg, ifaceMTU, targets, hosts[0], errOut)
 
 	var (
 		pMu         sync.Mutex
@@ -539,11 +576,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		}
 		portSpecs = append(portSpecs, spec)
 	}
-	var portChecker *pinger.PortChecker
-	if len(portSpecs) > 0 {
-		portChecker = pinger.NewPortChecker(targets, portSpecs, interval, timeout)
-		portChecker.Start()
-	}
+	portChecker := setupPortChecker(targets, portSpecs, interval, timeout)
 
 	if cfg.trace {
 		// Traceroute info can be added to logs if needed
@@ -575,8 +608,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			if portChecker != nil {
 				portChecker.Stop()
 			}
-			portChecker = pinger.NewPortChecker(targets, portSpecs, interval, timeout)
-			portChecker.Start()
+			portChecker = setupPortChecker(targets, portSpecs, interval, timeout)
 		}
 	}
 
@@ -598,8 +630,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 				return err
 			}
 			if portChecker != nil {
-				portChecker = pinger.NewPortChecker(targets, portSpecs, interval, timeout)
-				portChecker.Start()
+				portChecker = setupPortChecker(targets, portSpecs, interval, timeout)
 			}
 			return nil
 		},
