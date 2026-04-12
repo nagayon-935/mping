@@ -207,6 +207,13 @@ func (t *TargetStats) SetPMTUBottleneckIP(ip string) {
 	t.PMTUBottleneckIP = ip
 }
 
+// SetPortResults replaces the port check results slice atomically.
+func (t *TargetStats) SetPortResults(results []*PortCheckResult) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.PortResults = results
+}
+
 func (t *TargetStats) IncSent() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
