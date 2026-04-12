@@ -57,7 +57,7 @@ func NewPortChecker(targets []*stats.TargetStats, specs []PortSpec, interval, ti
 		for i, s := range specs {
 			results[i] = &stats.PortCheckResult{Port: s.Port, Protocol: s.Protocol, Status: "Checking..."}
 		}
-		t.PortResults = results
+		t.SetPortResults(results)
 	}
 	return &PortChecker{
 		targets:  targets,

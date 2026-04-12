@@ -168,7 +168,6 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 		if traceCh != nil {
 			// Receive via the pinger's shared receiver to avoid socket competition.
 			timer := time.NewTimer(timeout)
-			defer timer.Stop()
 		recvLoop:
 			for {
 				select {
@@ -188,6 +187,7 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 					break recvLoop
 				}
 			}
+			timer.Stop()
 		} else {
 			// Fallback: read directly from our send socket (pinger not running).
 			deadline := time.Now().Add(timeout)
