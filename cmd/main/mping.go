@@ -272,7 +272,7 @@ func mergeHosts(cfg config, fs *pflag.FlagSet, hosts []string) ([]string, config
 		cfg.portSpecs = doc.PortSpecs
 	}
 	if cfg.ipv4Only && cfg.ipv6Only {
-		return nil, cfg, fmt.Errorf("cannot use both ipv4 and ipv6 options")
+		return nil, cfg, fmt.Errorf("cannot use both -4 and -6")
 	}
 	return append(doc.Hosts, hosts...), cfg, nil
 }
@@ -332,7 +332,10 @@ func setupLogger(path string) (*os.File, error) {
 		return nil, err
 	}
 	if info.Size() == 0 {
-		f.Write([]byte("Timestamp,Host,IP,Seq,Status,RTT(ms),TTL,Error\n"))
+		if _, err := f.Write([]byte("Timestamp,Host,IP,Seq,Status,RTT(ms),TTL,Error\n")); err != nil {
+			f.Close()
+			return nil, fmt.Errorf("write csv header: %w", err)
+		}
 	}
 	return f, nil
 }

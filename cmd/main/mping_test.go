@@ -281,6 +281,23 @@ func TestMergeHosts(t *testing.T) {
 	}
 }
 
+func TestMergeHosts_IPv4AndIPv6Conflict(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts.yaml")
+	if err := os.WriteFile(path, []byte("hosts:\n  - a\nipv4: true\nipv6: true\n"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	cfg := config{hostsFile: path}
+	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	_, _, err := mergeHosts(cfg, fs, nil)
+	if err == nil {
+		t.Fatal("expected error for ipv4+ipv6 conflict, got nil")
+	}
+	if !strings.Contains(err.Error(), "cannot use both -4 and -6") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
 func TestDetermineSourceIPs_SourceAddr(t *testing.T) {
 	bind, v4, v6, err := determineSourceIPs(config{sourceAddr: "10.0.0.2"}, nil)
 	if err != nil {
@@ -309,6 +326,34 @@ func TestSetupLogger(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "Timestamp,Host,IP") {
 		t.Fatalf("missing header")
+	}
+}
+
+func TestSetupLogger_ExistingFile_NoExtraHeader(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "out.csv")
+
+	// First run: creates file and writes header.
+	f, err := setupLogger(path)
+	if err != nil {
+		t.Fatalf("first setupLogger: %v", err)
+	}
+	f.Close()
+
+	// Second run: file is non-empty; header must NOT be appended again.
+	f2, err := setupLogger(path)
+	if err != nil {
+		t.Fatalf("second setupLogger: %v", err)
+	}
+	f2.Close()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	const header = "Timestamp,Host,IP,Seq,Status,RTT(ms),TTL,Error\n"
+	if count := strings.Count(string(data), header); count != 1 {
+		t.Errorf("header appears %d times, want exactly 1", count)
 	}
 }
 

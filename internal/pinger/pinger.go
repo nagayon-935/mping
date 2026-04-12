@@ -246,14 +246,7 @@ func (p *Pinger) Wait() {
 }
 
 func (p *Pinger) Close() {
-	if p.done != nil {
-		select {
-		case <-p.done:
-			// Already closed
-		default:
-			close(p.done)
-		}
-	}
+	p.Stop() // reuse the idempotent done-channel guard
 	if p.connV4 != nil {
 		p.connV4.Close()
 	}

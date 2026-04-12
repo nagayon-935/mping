@@ -44,6 +44,10 @@ func ParsePortSpec(s string) (PortSpec, error) {
 type PortChecker struct {
 	targets  []*stats.TargetStats
 	specs    []PortSpec
+	// results[i][j] is the PortCheckResult for targets[i] × specs[j].
+	// Stored here so Start() never reads t.PortResults directly, eliminating
+	// the data race between NewPortChecker and concurrent GetView() calls.
+	results  [][]*stats.PortCheckResult
 	interval time.Duration
 	timeout  time.Duration
 	done     chan struct{}
@@ -52,16 +56,18 @@ type PortChecker struct {
 
 // NewPortChecker creates a PortChecker and initialises PortResults on each target.
 func NewPortChecker(targets []*stats.TargetStats, specs []PortSpec, interval, timeout time.Duration) *PortChecker {
-	for _, t := range targets {
-		results := make([]*stats.PortCheckResult, len(specs))
-		for i, s := range specs {
-			results[i] = &stats.PortCheckResult{Port: s.Port, Protocol: s.Protocol, Status: "Checking..."}
+	results := make([][]*stats.PortCheckResult, len(targets))
+	for i, t := range targets {
+		results[i] = make([]*stats.PortCheckResult, len(specs))
+		for j, s := range specs {
+			results[i][j] = &stats.PortCheckResult{Port: s.Port, Protocol: s.Protocol, Status: "Checking..."}
 		}
-		t.SetPortResults(results)
+		t.SetPortResults(results[i])
 	}
 	return &PortChecker{
 		targets:  targets,
 		specs:    specs,
+		results:  results,
 		interval: interval,
 		timeout:  timeout,
 		done:     make(chan struct{}),
@@ -70,9 +76,9 @@ func NewPortChecker(targets []*stats.TargetStats, specs []PortSpec, interval, ti
 
 // Start launches one goroutine per (target, spec) pair.
 func (pc *PortChecker) Start() {
-	for _, t := range pc.targets {
-		for i, spec := range pc.specs {
-			result := t.PortResults[i]
+	for i, t := range pc.targets {
+		for j, spec := range pc.specs {
+			result := pc.results[i][j] // use internally stored pointer; never reads t.PortResults
 			go pc.loop(t, spec, result)
 		}
 	}
