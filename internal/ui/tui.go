@@ -39,10 +39,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 	errorView := tview.NewTextView().
 		SetDynamicColors(true).
 		SetScrollable(true).
-		SetWordWrap(true). // Ensure long messages wrap
-		SetChangedFunc(func() {
-			app.Draw()
-		})
+		SetWordWrap(true) // Ensure long messages wrap
 	errorView.SetBorder(true).SetTitle(" Log ").SetTitleColor(tcell.ColorRed).SetBorderColor(tcell.ColorRed)
 	errorView.SetBackgroundColor(tcell.ColorBlack)
 
