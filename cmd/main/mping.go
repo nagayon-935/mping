@@ -631,6 +631,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	if err := uiRun(
 		targets,
 		interval,
+		timeout,
 		nil,
 		displaySourceIPv4,
 		displaySourceIPv6,
@@ -641,6 +642,19 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		stopAll,
 		func() error {
 			stopAll()
+			if err := startPinger(); err != nil {
+				return err
+			}
+			if portChecker != nil {
+				portChecker = setupPortChecker(targets, portSpecs, interval, timeout)
+			}
+			return nil
+		},
+		func(newInterval, newTimeout time.Duration, newPacketSize int) error {
+			stopAll()
+			interval = newInterval
+			timeout = newTimeout
+			packetSizeToUse = newPacketSize
 			if err := startPinger(); err != nil {
 				return err
 			}

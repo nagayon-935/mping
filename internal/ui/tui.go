@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -20,7 +21,7 @@ const (
 
 var newApplication = tview.NewApplication
 
-func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error, onResetTrace func(), onResetPort func()) error {
+func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error, onSettingsChange func(interval, timeout time.Duration, packetSize int) error, onResetTrace func(), onResetPort func()) error {
 	// Define vivid colors
 	vividRed := tcell.NewRGBColor(255, 0, 0)
 	vividCyan := tcell.NewRGBColor(0, 255, 255)
@@ -109,6 +110,30 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		SetFieldTextColor(tcell.ColorWhite).
 		SetLabelColor(tcell.ColorYellow)
 
+	// Config form
+	var configForm *tview.Form
+	configForm = tview.NewForm()
+	configForm.SetBorder(true).SetTitle(" Settings ").SetTitleColor(tcell.ColorYellow)
+	configForm.SetBackgroundColor(tcell.ColorBlack)
+	configForm.SetFieldBackgroundColor(tcell.ColorBlack)
+	configForm.SetFieldTextColor(tcell.ColorWhite)
+
+	isInteger := func(textToCheck string, lastChar rune) bool {
+		if textToCheck == "" {
+			return true
+		}
+		_, err := strconv.Atoi(textToCheck)
+		return err == nil
+	}
+
+	intervalField := tview.NewInputField().SetLabel("Interval (ms)").SetText(fmt.Sprintf("%d", interval.Milliseconds())).SetAcceptanceFunc(isInteger)
+	timeoutField := tview.NewInputField().SetLabel("Timeout (ms)").SetText(fmt.Sprintf("%d", timeout.Milliseconds())).SetAcceptanceFunc(isInteger)
+	packetSizeField := tview.NewInputField().SetLabel("Packet Size (bytes)").SetText(fmt.Sprintf("%d", packetSize)).SetAcceptanceFunc(isInteger)
+
+	configForm.AddFormItem(intervalField).
+		AddFormItem(timeoutField).
+		AddFormItem(packetSizeField)
+
 	tablePane := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(table, 0, 1, true)
 	tablePane.SetBorder(true).SetTitle(" Ping Monitor ").SetBorderColor(tcell.ColorWhite)
@@ -192,15 +217,71 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 
 	var footer *tview.TextView
 	footer = tview.NewTextView().
-		SetText("Tab: Switch Focus | /: Filter | q: Quit | s: Stop ping | R: Reset stats").
+		SetText("Tab: Switch Focus | /: Filter | ,: Settings | q: Quit | s: Stop ping | R: Reset stats").
 		SetTextAlign(tview.AlignCenter).
 		SetTextColor(tcell.ColorYellow).
 		SetWrap(false)
 	footer.SetBackgroundColor(tcell.ColorBlack)
 
+	// Center configForm
+	configFormContainer := tview.NewFlex().
+		AddItem(nil, 0, 1, false).
+		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(nil, 0, 1, false).
+			AddItem(configForm, 15, 1, true).
+			AddItem(nil, 0, 1, false), 60, 1, true).
+		AddItem(nil, 0, 1, false)
+
 	pages := tview.NewPages().
 		AddPage("footer", footer, true, true).
-		AddPage("filter", filterInput, true, false)
+		AddPage("filter", filterInput, true, false).
+		AddPage("settings", configFormContainer, true, false)
+
+	updateTickerCh := make(chan time.Duration, 1)
+
+	configForm.AddButton("Apply", func() {
+		newIntMs, _ := strconv.Atoi(intervalField.GetText())
+		newTimeoutMs, _ := strconv.Atoi(timeoutField.GetText())
+		newPacketSize, _ := strconv.Atoi(packetSizeField.GetText())
+
+		newInterval := time.Duration(newIntMs) * time.Millisecond
+		newTimeout := time.Duration(newTimeoutMs) * time.Millisecond
+
+		if onSettingsChange != nil {
+			// Reset all statistics
+			for _, t := range targets {
+				t.Reset()
+			}
+			// Clear UI state
+			errorLogs = []string{}
+			errorView.SetText("")
+			lastLossTimes = make(map[string]time.Time)
+			alertState = make(map[string]alertFlags)
+			lastPortStatuses = make(map[string]string)
+
+			if err := onSettingsChange(newInterval, newTimeout, newPacketSize); err != nil {
+				appendErrorLog(&errorLogs, errorView, fmt.Sprintf("[red]Settings change failed: %v[-]", err))
+			} else {
+				interval = newInterval
+				packetSize = newPacketSize
+				updateTickerCh <- newInterval
+				header.SetText(fmt.Sprintf("MPING - Multi Ping Tool | Interval: %dms", interval.Milliseconds()))
+				appendErrorLog(&errorLogs, errorView, fmt.Sprintf("[green]Settings applied: Interval=%dms, Timeout=%dms, PacketSize=%d bytes[-]", newIntMs, newTimeoutMs, newPacketSize))
+			}
+		}
+		pages.SwitchToPage("footer")
+		app.SetFocus(table)
+	})
+
+	configForm.AddButton("Cancel", func() {
+		pages.SwitchToPage("footer")
+		app.SetFocus(table)
+	})
+
+	configForm.SetCancelFunc(func() {
+		pages.SwitchToPage("footer")
+		app.SetFocus(table)
+	})
 
 	var updateTable func()
 
@@ -372,7 +453,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 
 	// Keys
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if app.GetFocus() == filterInput {
+		if app.GetFocus() == filterInput || app.GetFocus() == configForm {
 			return event
 		}
 		if app.GetFocus() == table {
@@ -463,6 +544,10 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			pages.SwitchToPage("filter")
 			app.SetFocus(filterInput)
 			return nil
+		case ',':
+			pages.SwitchToPage("settings")
+			app.SetFocus(configForm)
+			return nil
 		case 'q':
 			closeAppStop() // stop refresh goroutine before screen teardown
 			app.Stop()
@@ -525,7 +610,6 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		}
 		return event
 	})
-
 	// Refresh loop
 	go func() {
 		ticker := time.NewTicker(interval / 2)
@@ -535,6 +619,13 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		defer ticker.Stop()
 		for {
 			select {
+			case newInterval := <-updateTickerCh:
+				ticker.Stop()
+				if newInterval < minUIRefresh {
+					ticker = time.NewTicker(fastUIRefresh)
+				} else {
+					ticker = time.NewTicker(newInterval / 2)
+				}
 			case <-ticker.C:
 				app.QueueUpdateDraw(updateTable)
 			case <-doneCh:
