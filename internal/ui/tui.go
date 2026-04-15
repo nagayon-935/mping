@@ -100,6 +100,14 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 	activeAligns := append([]int(nil), fullAligns...)
 	rowCount := len(targets) + 1
 	compactLayout := false
+	filter := ""
+
+	// Filter input
+	filterInput := tview.NewInputField().
+		SetLabel(" Filter: ").
+		SetFieldBackgroundColor(tcell.ColorBlack).
+		SetFieldTextColor(tcell.ColorWhite).
+		SetLabelColor(tcell.ColorYellow)
 
 	tablePane := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(table, 0, 1, true)
@@ -175,11 +183,54 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		appendErrorLog(&errorLogs, errorView, line)
 	}
 
-	var footer *tview.TextView
-	stopRequested := false
+	header := tview.NewTextView().
+		SetText(fmt.Sprintf("MPING - Multi Ping Tool | Interval: %dms", interval.Milliseconds())).
+		SetTextAlign(tview.AlignCenter).
+		SetTextColor(tcell.ColorGreen).
+		SetWrap(false)
+	header.SetBackgroundColor(tcell.ColorBlack)
 
-	updateTable := func() {
+	var footer *tview.TextView
+	footer = tview.NewTextView().
+		SetText("Tab: Switch Focus | /: Filter | q: Quit | s: Stop ping | R: Reset stats").
+		SetTextAlign(tview.AlignCenter).
+		SetTextColor(tcell.ColorYellow).
+		SetWrap(false)
+	footer.SetBackgroundColor(tcell.ColorBlack)
+
+	pages := tview.NewPages().
+		AddPage("footer", footer, true, true).
+		AddPage("filter", filterInput, true, false)
+
+	var updateTable func()
+
+	filterInput.SetDoneFunc(func(key tcell.Key) {
+		if key == tcell.KeyEnter {
+			filter = filterInput.GetText()
+		} else if key == tcell.KeyEscape {
+			filterInput.SetText(filter) // Restore previous filter
+		}
+		pages.SwitchToPage("footer")
+		app.SetFocus(table)
+		app.QueueUpdateDraw(updateTable)
+	})
+
+	stopRequested := false
+	updateTable = func() {
 		table.Clear()
+
+		var filteredTargets []*stats.TargetStats
+		for _, t := range targets {
+			if matchesFilter(t.GetView(), filter) {
+				filteredTargets = append(filteredTargets, t)
+			}
+		}
+
+		title := " Ping Monitor "
+		if filter != "" {
+			title = fmt.Sprintf(" Ping Monitor (Filter: %q, showing %d/%d) ", filter, len(filteredTargets), len(targets))
+		}
+		tablePane.SetTitle(title)
 
 		_, _, availableTableWidth, _ := tablePane.GetInnerRect()
 		availableColumnsWidth := availableTableWidth - (len(fullHeaders) + 1)
@@ -196,7 +247,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		}
 		fitted, ok := fitWidthsToAvailable(updatedWidths, minWidths, dynamicMaxWidths, availableColumnsWidth)
 
-		compact := buildCompactLayout(targets, packetSize, sourceIPv4, sourceIPv6, baseWidths[12])
+		compact := buildCompactLayout(filteredTargets, packetSize, sourceIPv4, sourceIPv6, baseWidths[12])
 		compactRows := compact.rows
 		compactDesired := compact.desired
 		compactHeaders := compact.headers
@@ -214,7 +265,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			widths = fitted
 			activeHeaders = append([]string(nil), fullHeaders...)
 			activeAligns = append([]int(nil), fullAligns...)
-			rowCount = len(targets) + 1
+			rowCount = len(filteredTargets) + 1
 		} else if compactOK {
 			compactLayout = true
 			widths = compactWidths
@@ -261,7 +312,8 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		}
 
 		// Update table rows AND Error logs
-		for i, t := range targets {
+		displayIdx := 1
+		for _, t := range targets {
 			view := t.GetView()
 
 			// Check for new errors
@@ -276,11 +328,16 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 				}
 			}
 
+			if !matchesFilter(view, filter) {
+				continue
+			}
+
 			if compactLayout {
 				continue
 			}
 
-			row := i + 1
+			row := displayIdx
+			displayIdx++
 			cols, rowSourceIP, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize)
 
 			// Alert logs on red thresholds
@@ -296,7 +353,6 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			for c, cell := range cells {
 				table.SetCell(row, c, cell)
 			}
-
 		}
 
 		if traceEnabled && traceView != nil {
@@ -316,6 +372,9 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 
 	// Keys
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if app.GetFocus() == filterInput {
+			return event
+		}
 		if app.GetFocus() == table {
 			switch event.Key() {
 			case tcell.KeyUp, tcell.KeyDown, tcell.KeyPgUp, tcell.KeyPgDn:
@@ -400,6 +459,10 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		}
 
 		switch event.Rune() {
+		case '/':
+			pages.SwitchToPage("filter")
+			app.SetFocus(filterInput)
+			return nil
 		case 'q':
 			closeAppStop() // stop refresh goroutine before screen teardown
 			app.Stop()
@@ -463,20 +526,6 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		return event
 	})
 
-	header := tview.NewTextView().
-		SetText(fmt.Sprintf("MPING - Multi Ping Tool | Interval: %dms", interval.Milliseconds())).
-		SetTextAlign(tview.AlignCenter).
-		SetTextColor(tcell.ColorGreen).
-		SetWrap(false)
-	header.SetBackgroundColor(tcell.ColorBlack)
-
-	footer = tview.NewTextView().
-		SetText("Tab: Switch Focus | q: Quit | s: Stop ping | R: Reset stats").
-		SetTextAlign(tview.AlignCenter).
-		SetTextColor(tcell.ColorYellow).
-		SetWrap(false)
-	footer.SetBackgroundColor(tcell.ColorBlack)
-
 	// Refresh loop
 	go func() {
 		ticker := time.NewTicker(interval / 2)
@@ -508,7 +557,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 		AddItem(tablePane, 0, 3, true).  // Table: 3 parts
 		AddItem(graphView, 0, 3, false). // Graph: 3 parts
 		AddItem(errorView, 0, 2, false). // Logs: 2 parts
-		AddItem(footer, 2, 0, false)
+		AddItem(pages, 1, 0, false)
 
 	if traceEnabled && tracePane != nil && portEnabled && portPane != nil {
 		flex = tview.NewFlex().SetDirection(tview.FlexRow).
@@ -518,7 +567,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			AddItem(portPane, 0, 2, false).  // Port: 2 parts
 			AddItem(graphView, 0, 3, false). // Graph: 3 parts
 			AddItem(errorView, 0, 2, false). // Logs: 2 parts
-			AddItem(footer, 2, 0, false)
+			AddItem(pages, 1, 0, false)
 	} else if traceEnabled && tracePane != nil {
 		flex = tview.NewFlex().SetDirection(tview.FlexRow).
 			AddItem(header, 2, 0, false).
@@ -526,7 +575,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			AddItem(tracePane, 0, 3, false). // Trace: 3 parts
 			AddItem(graphView, 0, 3, false). // Graph: 3 parts
 			AddItem(errorView, 0, 2, false). // Logs: 2 parts
-			AddItem(footer, 2, 0, false)
+			AddItem(pages, 1, 0, false)
 	} else if portEnabled && portPane != nil {
 		flex = tview.NewFlex().SetDirection(tview.FlexRow).
 			AddItem(header, 2, 0, false).
@@ -534,7 +583,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			AddItem(portPane, 0, 3, false).  // Port: 3 parts
 			AddItem(graphView, 0, 3, false). // Graph: 3 parts
 			AddItem(errorView, 0, 2, false). // Logs: 2 parts
-			AddItem(footer, 2, 0, false)
+			AddItem(pages, 1, 0, false)
 	}
 
 	flex.SetBackgroundColor(tcell.ColorBlack)
