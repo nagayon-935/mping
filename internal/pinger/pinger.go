@@ -73,6 +73,9 @@ type Pinger struct {
 	mapMu       sync.RWMutex
 	baseID      int
 
+	asnCache map[string]string
+	asnMu    sync.RWMutex
+
 	traceChans   []chan traceMsg // one per concurrent TraceRoute call
 	traceChansMu sync.RWMutex
 	traceCounter uint32 // atomic counter for unique traceID per concurrent call
@@ -119,6 +122,7 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		Targets:         targets,
 		targetMap:       make(map[int]*stats.TargetStats),
 		targetChans:     make(map[int]chan Reply),
+		asnCache:        make(map[string]string),
 		baseID:          os.Getpid() & 0xffff,
 		Size:            56, // Default payload size (like standard ping)
 		ResolveInterval: 60 * time.Second,
@@ -420,8 +424,64 @@ func (p *Pinger) resolveTarget(t *stats.TargetStats) *net.IPAddr {
 		t.OnFailure("DNS Error")
 		return nil
 	}
-	t.SetIP(addr.String())
+	ipStr := addr.String()
+	t.SetIP(ipStr)
+	go p.lookupASN(t, ipStr)
 	return addr
+}
+
+func (p *Pinger) lookupASN(t *stats.TargetStats, ipStr string) {
+	p.asnMu.RLock()
+	asn, found := p.asnCache[ipStr]
+	p.asnMu.RUnlock()
+
+	if found {
+		t.SetASN(asn)
+		return
+	}
+
+	// Reverse IP for cymru DNS lookup
+	var query string
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return
+	}
+	
+	if ip4 := ip.To4(); ip4 != nil {
+		query = fmt.Sprintf("%d.%d.%d.%d.origin.asn.cymru.com", ip4[3], ip4[2], ip4[1], ip4[0])
+	} else {
+		// IPv6 reverse lookup
+		query = "origin6.asn.cymru.com"
+		// The v6 format requires nybbles, but cymru handles v6 origin lookups as:
+		// nybbles reversed .origin6.asn.cymru.com
+		// Actually cymru ipv6 is a bit complex, let's just do v4 for simplicity or implement v6 if needed.
+		// For now, let's implement standard IPv6 cymru format.
+		// Ex: 2001:4860:4860::8888 -> 8.8.8.8.0...1.0.0.2.origin6.asn.cymru.com
+		var sb strings.Builder
+		for i := 15; i >= 0; i-- {
+			sb.WriteString(fmt.Sprintf("%x.%x.", ip[i]&0xf, ip[i]>>4))
+		}
+		sb.WriteString("origin6.asn.cymru.com")
+		query = sb.String()
+	}
+
+	txts, err := net.LookupTXT(query)
+	if err != nil || len(txts) == 0 {
+		return
+	}
+
+	// Response example: "15169 | 8.8.8.0/24 | US | arin | 1992-12-01"
+	parts := strings.Split(txts[0], "|")
+	if len(parts) > 0 {
+		asn = strings.TrimSpace(parts[0])
+		if !strings.HasPrefix(asn, "AS") {
+			asn = "AS" + asn
+		}
+		p.asnMu.Lock()
+		p.asnCache[ipStr] = asn
+		p.asnMu.Unlock()
+		t.SetASN(asn)
+	}
 }
 
 // getWriteFunc returns the appropriate ICMP message type and write function

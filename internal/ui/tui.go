@@ -49,19 +49,19 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 	table.SetBordersColor(tcell.ColorWhite)
 
 
-	// Columns: Src IP, Dst IP, Success, Loss, Loss Ratio, RTT, Avg, Jitter, Size, MTU, TTL, Error, Last Loss
-	fullHeaders := []string{"Src IP", "Dst IP", "Success", "Loss", "Loss Ratio", "RTT", "Avg", "Jitter", "Size", "MTU", "TTL", "Error", "Last Loss"}
+	// Columns: Src IP, Dst IP, ASN, Success, Loss, Loss Ratio, RTT, Avg, Jitter, Size, MTU, TTL, Error, Last Loss
+	fullHeaders := []string{"Src IP", "Dst IP", "ASN", "Success", "Loss", "Loss Ratio", "RTT", "Avg", "Jitter", "Size", "MTU", "TTL", "Error", "Last Loss"}
 	fullAligns := []int{
-		tview.AlignLeft, tview.AlignLeft, tview.AlignRight, tview.AlignRight, tview.AlignRight,
+		tview.AlignLeft, tview.AlignLeft, tview.AlignLeft, tview.AlignRight, tview.AlignRight, tview.AlignRight,
 		tview.AlignRight, tview.AlignRight, tview.AlignRight, // RTTs
 		tview.AlignRight, tview.AlignRight, tview.AlignRight, tview.AlignLeft, tview.AlignLeft,
 	}
-	// Src IP / Dst IP are dynamically resized from the rendered content.
+	// Src IP / Dst IP / ASN are dynamically resized from the rendered content.
 	// Error width is fixed at startup to prevent table size jumps when new errors arrive.
-	baseWidths := []int{6, 6, 8, 7, 10, 10, 10, 10, 6, 6, 5, 30, 15}
-	baseWidths[11] = calcInitialTableErrorWidth(targets, fullHeaders[11], baseWidths[11])
-	minWidths := []int{4, 8, 5, 4, 6, 7, 7, 7, 4, 4, 3, 8, 8}
-	maxWidths := []int{45, 60, 10, 10, 12, 12, 12, 12, 8, 8, 6, baseWidths[11], 18}
+	baseWidths := []int{6, 6, 4, 8, 7, 10, 10, 10, 10, 6, 6, 5, 30, 15}
+	baseWidths[12] = calcInitialTableErrorWidth(targets, fullHeaders[12], baseWidths[12])
+	minWidths := []int{4, 8, 4, 5, 4, 6, 7, 7, 7, 4, 4, 3, 8, 8}
+	maxWidths := []int{45, 60, 15, 10, 10, 12, 12, 12, 12, 8, 8, 6, baseWidths[12], 18}
 
 	headerColor := tcell.ColorYellow
 	rowColor := tcell.ColorWhite
@@ -69,7 +69,7 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 	// Recalculate dynamic column widths based on current output text.
 	calcColumnWidths := func() []int {
 		widths := append([]int(nil), baseWidths...)
-		for _, c := range []int{0, 1} {
+		for _, c := range []int{0, 1, 2} {
 			maxWidth := runewidth.StringWidth(fullHeaders[c])
 			for _, t := range targets {
 				view := t.GetView()
@@ -83,6 +83,8 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 					} else {
 						value = view.IP
 					}
+				case 2:
+					value = view.ASN
 				}
 				if w := runewidth.StringWidth(value); w > maxWidth {
 					maxWidth = w

@@ -48,6 +48,7 @@ func (r *PortCheckResult) GetResult() (status string, rtt time.Duration, openCou
 type TargetStats struct {
 	Host              string
 	IP                string
+	ASN               string
 	IfaceMTU          int
 	PMTU              int
 	PMTUBottleneckIP  string
@@ -90,6 +91,7 @@ type PortCheckView struct {
 type TargetView struct {
 	Host             string
 	IP               string
+	ASN              string
 	IfaceMTU         int
 	PMTU             int
 	PMTUBottleneckIP string
@@ -156,6 +158,7 @@ func (t *TargetStats) GetView() TargetView {
 	return TargetView{
 		Host:             t.Host,
 		IP:               t.IP,
+		ASN:              t.ASN,
 		IfaceMTU:         t.IfaceMTU,
 		PMTU:             t.PMTU,
 		PMTUBottleneckIP: t.PMTUBottleneckIP,
@@ -180,6 +183,12 @@ func (t *TargetStats) SetIP(ip string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.IP = ip
+}
+
+func (t *TargetStats) SetASN(asn string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.ASN = asn
 }
 
 func (t *TargetStats) SetTraceHops(hops []string) {

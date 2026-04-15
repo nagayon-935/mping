@@ -340,6 +340,7 @@ func TestBuildFullColumns(t *testing.T) {
 	view := stats.TargetView{
 		Host:   "example.com",
 		IP:     "1.1.1.1",
+		ASN:    "AS15169",
 		Recv:   10,
 		Loss:   2,
 		LastRTT: 12 * time.Millisecond,
@@ -355,12 +356,15 @@ func TestBuildFullColumns(t *testing.T) {
 	if rate <= 0 {
 		t.Fatalf("loss rate: got %v", rate)
 	}
-	if len(cols) != 13 {
+	if len(cols) != 14 {
 		t.Fatalf("cols len: got %d", len(cols))
 	}
 	// Dst IP should include hostname when host != IP
 	if cols[1] != "example.com (1.1.1.1)" {
 		t.Fatalf("dst ip: got %q", cols[1])
+	}
+	if cols[2] != "AS15169" {
+		t.Fatalf("asn: got %q", cols[2])
 	}
 }
 

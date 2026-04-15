@@ -213,6 +213,7 @@ func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, pack
 	cols := []string{
 		rowSourceIP,
 		dstDisplay, // Dst IP
+		view.ASN,   // ASN
 		fmt.Sprintf("%d", view.Recv),
 		fmt.Sprintf("%d", view.Loss),
 		fmt.Sprintf("%.1f%%", lossRate),
