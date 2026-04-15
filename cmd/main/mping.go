@@ -525,11 +525,13 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		fmt.Fprintf(errOut, "Error opening log file: %v\n", err)
 		return 1
 	}
+	var logWriter io.Writer
 	if logFile != nil {
 		defer logFile.Close()
+		logWriter = logFile
 	}
 
-	makePinger := makePingerFactory(targets, opts, cfg, bindIP, logFile)
+	makePinger := makePingerFactory(targets, opts, cfg, bindIP, logWriter)
 
 	packetSizeToUse, preLogs := setupPMTU(makePinger, cfg, ifaceMTU, targets, hosts[0], errOut)
 
