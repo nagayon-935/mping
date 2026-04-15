@@ -245,13 +245,6 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 		return
 	}
 
-	// Explicitly clear the inner rect to prevent rendering duplication
-	for row := y; row < y+height; row++ {
-		for col := x; col < x+width; col++ {
-			screen.SetContent(col, row, ' ', nil, tcell.StyleDefault.Background(tcell.ColorBlack))
-		}
-	}
-
 	numTargets := len(g.targets)
 	if numTargets == 0 {
 		return
@@ -298,7 +291,6 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 
 			// Draw Header: Hostname RTT
 			headerStr := fmt.Sprintf("% -20s %s", view.Host, formatRTT(view.LastRTT))
-			headerStr = truncateToDisplayWidth(headerStr, colWidth-2)
 
 			// Draw header string char by char
 			printX := baseX
