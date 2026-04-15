@@ -632,13 +632,13 @@ func buildFullRowCells(cols []string, widths []int, aligns []int, lossRate float
 			SetAlign(aligns[c])
 
 		switch c {
-		case 4: // Loss Ratio column index
+		case 5: // Loss Ratio column index
 			cell.SetTextColor(lossColor).SetAttributes(tcell.AttrBold)
-		case 5: // RTT column index
+		case 6: // RTT column index
 			cell.SetTextColor(rttColor)
-		case 7: // Jitter column index
+		case 8: // Jitter column index
 			cell.SetTextColor(jitterColor)
-		case 11: // Error column
+		case 12: // Error column
 			if text != "" {
 				cell.SetTextColor(vividRed)
 			}
