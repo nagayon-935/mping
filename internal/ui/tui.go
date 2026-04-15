@@ -177,8 +177,6 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 	stopRequested := false
 
 	updateTable := func() {
-		table.Clear()
-
 		_, _, availableTableWidth, _ := tablePane.GetInnerRect()
 		availableColumnsWidth := availableTableWidth - (len(fullHeaders) + 1)
 		if availableColumnsWidth < 0 {
@@ -221,10 +219,29 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			rowCount = len(compactRows) + 1
 		}
 
+		// Clear excess rows and columns
+		for r := table.GetRowCount() - 1; r >= rowCount; r-- {
+			table.RemoveRow(r)
+		}
+		for c := table.GetColumnCount() - 1; c >= len(activeHeaders); c-- {
+			table.RemoveColumn(c)
+		}
+
+		// Helper to get or create cell
+		getCell := func(row, col int) *tview.TableCell {
+			cell := table.GetCell(row, col)
+			if cell == nil {
+				cell = tview.NewTableCell("")
+				table.SetCell(row, col, cell)
+			}
+			return cell
+		}
+
 		// Header
 		for i, h := range activeHeaders {
 			text := formatCellText(h, widths[i], activeAligns[i])
-			cell := tview.NewTableCell(text).
+			cell := getCell(0, i)
+			cell.SetText(text).
 				SetBackgroundColor(tcell.ColorBlack).
 				SetTextColor(headerColor).
 				SetAttributes(tcell.AttrBold).
@@ -232,8 +249,9 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 				SetAlign(activeAligns[i])
 			if i == len(activeHeaders)-1 {
 				cell.SetExpansion(1)
+			} else {
+				cell.SetExpansion(0)
 			}
-			table.SetCell(0, i, cell)
 		}
 
 		pickCompact := func(right, left string) string {
@@ -252,8 +270,12 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 					pickCompact(r.errR, r.errL),
 				}
 				cells := buildCompactRowCells(values, widths, activeAligns, vividRed, rowColor)
-				for c, cell := range cells {
-					table.SetCell(row, c, cell)
+				for c, cellData := range cells {
+					cell := getCell(row, c)
+					cell.SetText(cellData.Text).
+						SetBackgroundColor(cellData.BackgroundColor).
+						SetTextColor(cellData.Color).
+						SetAlign(cellData.Align)
 				}
 			}
 		}
@@ -291,8 +313,13 @@ func Run(targets []*stats.TargetStats, interval time.Duration, doneCh chan struc
 			alertState[view.Host] = state
 
 			cells := buildFullRowCells(cols, widths, fullAligns, lossRate, view.LastRTT, view.Jitter, vividRed, rowColor)
-			for c, cell := range cells {
-				table.SetCell(row, c, cell)
+			for c, cellData := range cells {
+				cell := getCell(row, c)
+				cell.SetText(cellData.Text).
+					SetBackgroundColor(cellData.BackgroundColor).
+					SetTextColor(cellData.Color).
+					SetAttributes(cellData.Attributes).
+					SetAlign(cellData.Align)
 			}
 
 		}
