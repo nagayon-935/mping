@@ -239,7 +239,7 @@ func (g *GraphView) InputHandler() func(event *tcell.EventKey, setFocus func(p t
 
 // Draw implements tview.Primitive
 func (g *GraphView) Draw(screen tcell.Screen) {
-	g.Box.Draw(screen)
+	g.Box.DrawForSubclass(screen, g)
 	x, y, width, height := g.GetInnerRect()
 	if width <= 0 || height <= 0 {
 		return
