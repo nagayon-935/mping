@@ -254,6 +254,7 @@ func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh c
 		AddPage("settings", configFormContainer, true, false)
 
 	updateTickerCh := make(chan time.Duration, 1)
+	var updateTable func()
 
 	configForm.AddButton("Apply", func() {
 		newIntMs, _ := strconv.Atoi(intervalField.GetText())
@@ -287,6 +288,7 @@ func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh c
 		}
 		pages.SwitchToPage("footer")
 		app.SetFocus(table)
+		updateTable()
 	})
 
 	configForm.AddButton("Cancel", func() {
@@ -299,8 +301,6 @@ func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh c
 		app.SetFocus(table)
 	})
 
-	var updateTable func()
-
 	filterInput.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
 			filter = filterInput.GetText()
@@ -309,7 +309,7 @@ func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh c
 		}
 		pages.SwitchToPage("footer")
 		app.SetFocus(table)
-		app.QueueUpdateDraw(updateTable)
+		updateTable()
 	})
 
 	stopRequested := false
