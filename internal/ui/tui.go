@@ -221,8 +221,6 @@ func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh c
 	updateTickerCh := make(chan time.Duration, 1)
 	var updateTable func()
 
-	var updateTable func()
-
 	filterInput.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
 			filter = filterInput.GetText()
