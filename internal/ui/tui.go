@@ -22,10 +22,6 @@ const (
 var newApplication = tview.NewApplication
 
 func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, asnEnabled bool, onStop func(), onRestart func() error, onSettingsChange func(interval, timeout time.Duration, packetSize int) error, onResetTrace func(), onResetPort func()) error {
-	// Define vivid colors
-	vividRed := tcell.NewRGBColor(255, 0, 0)
-	vividCyan := tcell.NewRGBColor(0, 255, 255)
-
 	app := newApplication()
 	table := tview.NewTable().
 		SetBorders(true).
@@ -41,7 +37,7 @@ func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh c
 		SetDynamicColors(true).
 		SetScrollable(true).
 		SetWordWrap(true) // Ensure long messages wrap
-	errorView.SetBorder(true).SetTitle(" Log ").SetTitleColor(tcell.ColorRed).SetBorderColor(tcell.ColorRed)
+	errorView.SetBorder(true).SetTitle(" Log ").SetTitleColor(vividRed).SetBorderColor(vividRed)
 	errorView.SetBackgroundColor(tcell.ColorBlack)
 
 	// Set black background and darkgray borders
@@ -409,7 +405,7 @@ func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh c
 					pickCompact(r.statR, r.statL),
 					pickCompact(r.errR, r.errL),
 				}
-				cells := buildCompactRowCells(values, widths, activeAligns, vividRed, rowColor)
+				cells := buildCompactRowCells(values, widths, activeAligns, rowColor)
 				for c, cell := range cells {
 					table.SetCell(row, c, cell)
 				}
@@ -454,7 +450,7 @@ func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh c
 			}
 			alertState[view.Host] = state
 
-			cells := buildFullRowCells(cols, widths, fullAligns, lossRate, view.LastRTT, view.Jitter, vividRed, rowColor, asnEnabled)
+			cells := buildFullRowCells(cols, widths, fullAligns, lossRate, view.LastRTT, view.Jitter, rowColor, asnEnabled)
 			for c, cell := range cells {
 				table.SetCell(row, c, cell)
 			}

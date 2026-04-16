@@ -369,26 +369,26 @@ func TestBuildFullColumns(t *testing.T) {
 }
 
 func TestColorHelpers(t *testing.T) {
-	if lossColorForRate(10, tcell.ColorRed) != tcell.ColorGreen {
+	if lossColorForRate(10) != tcell.ColorGreen {
 		t.Fatal("expected green for low loss")
 	}
-	if lossColorForRate(50, tcell.ColorRed) != tcell.ColorOrange {
+	if lossColorForRate(50) != tcell.ColorOrange {
 		t.Fatal("expected orange for mid loss")
 	}
-	if lossColorForRate(90, tcell.ColorRed) != tcell.ColorRed {
+	if lossColorForRate(90) != vividRed {
 		t.Fatal("expected red for high loss")
 	}
 
-	if rttColorForRTT(0, tcell.ColorRed) != tcell.ColorWhite {
+	if rttColorForRTT(0) != tcell.ColorWhite {
 		t.Fatal("expected white for zero rtt")
 	}
-	if rttColorForRTT(10*time.Millisecond, tcell.ColorRed) != tcell.ColorGreen {
+	if rttColorForRTT(10*time.Millisecond) != tcell.ColorGreen {
 		t.Fatal("expected green for low rtt")
 	}
-	if jitterColorForJitter(0, tcell.ColorRed) != tcell.ColorWhite {
+	if jitterColorForJitter(0) != tcell.ColorWhite {
 		t.Fatal("expected white for zero jitter")
 	}
-	if jitterColorForJitter(20*time.Millisecond, tcell.ColorRed) != tcell.ColorOrange {
+	if jitterColorForJitter(20*time.Millisecond) != tcell.ColorOrange {
 		t.Fatal("expected orange for mid jitter")
 	}
 }
@@ -400,7 +400,7 @@ func TestBuildFullRowCells(t *testing.T) {
 		widths[i] = 5
 	}
 	aligns := make([]int, len(cols))
-	cells := buildFullRowCells(cols, widths, aligns, 90.0, 300*time.Millisecond, 60*time.Millisecond, tcell.ColorRed, tcell.ColorWhite, true)
+	cells := buildFullRowCells(cols, widths, aligns, 90.0, 300*time.Millisecond, 60*time.Millisecond, tcell.ColorWhite, true)
 	if len(cells) != len(cols) {
 		t.Fatalf("cells len mismatch")
 	}
@@ -413,7 +413,7 @@ func TestBuildCompactRowCells(t *testing.T) {
 	values := []string{"host", "path", "stat", "err"}
 	widths := []int{4, 4, 4, 4}
 	aligns := []int{tview.AlignLeft, tview.AlignLeft, tview.AlignLeft, tview.AlignLeft}
-	cells := buildCompactRowCells(values, widths, aligns, tcell.ColorRed, tcell.ColorWhite)
+	cells := buildCompactRowCells(values, widths, aligns, tcell.ColorWhite)
 	if len(cells) != 4 {
 		t.Fatalf("cells len mismatch")
 	}
@@ -769,7 +769,7 @@ func TestPortServiceName(t *testing.T) {
 
 func TestRttColorForRTT_Orange(t *testing.T) {
 	// 50ms < rtt <= 200ms → ColorOrange
-	got := rttColorForRTT(100*time.Millisecond, tcell.ColorRed)
+	got := rttColorForRTT(100 * time.Millisecond)
 	if got != tcell.ColorOrange {
 		t.Errorf("expected ColorOrange for 100ms rtt, got %v", got)
 	}
@@ -777,7 +777,7 @@ func TestRttColorForRTT_Orange(t *testing.T) {
 
 func TestJitterColorForJitter_Green(t *testing.T) {
 	// 0 < jitter <= 10ms → ColorGreen
-	got := jitterColorForJitter(5*time.Millisecond, tcell.ColorRed)
+	got := jitterColorForJitter(5 * time.Millisecond)
 	if got != tcell.ColorGreen {
 		t.Errorf("expected ColorGreen for 5ms jitter, got %v", got)
 	}
