@@ -219,6 +219,7 @@ func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh c
 		AddPage("filter", filterInput, true, false)
 
 	updateTickerCh := make(chan time.Duration, 1)
+	var updateTable func()
 
 	var updateTable func()
 
@@ -230,7 +231,7 @@ func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh c
 		}
 		pages.SwitchToPage("footer")
 		app.SetFocus(table)
-		app.QueueUpdateDraw(updateTable)
+		updateTable()
 	})
 
 	stopRequested := false
