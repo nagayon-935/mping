@@ -89,6 +89,7 @@ type Pinger struct {
 	resolveIPAddr resolveIPAddrFunc
 	now           func() time.Time
 	listenPacket  listenPacketFunc
+	lookupTXT     func(string) ([]string, error)
 }
 
 type resolveIPAddrFunc func(network, address string) (*net.IPAddr, error)
@@ -99,6 +100,7 @@ type Options struct {
 	ResolveIPAddr resolveIPAddrFunc
 	Now           func() time.Time
 	ListenPacket  listenPacketFunc
+	LookupTXT     func(string) ([]string, error)
 	AsnEnabled    bool
 }
 
@@ -119,6 +121,10 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 	if listen == nil {
 		listen = net.ListenPacket
 	}
+	lookup := opts.LookupTXT
+	if lookup == nil {
+		lookup = net.LookupTXT
+	}
 
 	return &Pinger{
 		Targets:         targets,
@@ -133,6 +139,7 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		resolveIPAddr:   resolve,
 		now:             now,
 		listenPacket:    listen,
+		lookupTXT:       lookup,
 	}
 }
 
@@ -473,7 +480,7 @@ func (p *Pinger) getASN(ipStr string) string {
 		query = sb.String()
 	}
 
-	txts, err := net.LookupTXT(query)
+	txts, err := p.lookupTXT(query)
 	if err != nil || len(txts) == 0 {
 		return ""
 	}

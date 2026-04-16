@@ -80,8 +80,13 @@ var newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerCo
 
 var uiRun = ui.Run
 
+var (
+	interfaceByName = net.InterfaceByName
+	netInterfaces   = net.Interfaces
+)
+
 func getInterfaceIP(ifaceName string, wantIPv6 bool) (string, error) {
-	iface, err := net.InterfaceByName(ifaceName)
+	iface, err := interfaceByName(ifaceName)
 	if err != nil {
 		return "", err
 	}
@@ -109,7 +114,7 @@ func getInterfaceIP(ifaceName string, wantIPv6 bool) (string, error) {
 
 func getInterfaceMTU(ifaceName, sourceIP, firstHost string) (int, error) {
 	if ifaceName != "" {
-		iface, err := net.InterfaceByName(ifaceName)
+		iface, err := interfaceByName(ifaceName)
 		if err != nil {
 			return 0, err
 		}
@@ -127,7 +132,7 @@ func getInterfaceMTU(ifaceName, sourceIP, firstHost string) (int, error) {
 		return 0, fmt.Errorf("no interface to infer MTU from")
 	}
 
-	ifaces, err := net.Interfaces()
+	ifaces, err := netInterfaces()
 	if err != nil {
 		return 0, err
 	}

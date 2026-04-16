@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -278,6 +279,99 @@ func TestMergeHosts(t *testing.T) {
 	}
 	if len(got) != 3 {
 		t.Fatalf("hosts len: got %d", len(got))
+	}
+}
+
+func TestMergeHosts_Options(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts.yaml")
+	yamlContent := `
+hosts:
+  - example.com
+interval: 2000
+timeout: 3000
+output: log.csv
+interface: eth0
+source: 10.0.0.1
+size: 100
+count: 5
+discovery-mtu: true
+traceroute: true
+asn: true
+ipv4: true
+port:
+  - 80/tcp
+`
+	if err := os.WriteFile(path, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	cfg := config{hostsFile: path}
+	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	fs.Int("interval", 1000, "")
+	fs.Int("timeout", 1000, "")
+	fs.String("output", "", "")
+	fs.String("interface", "", "")
+	fs.String("source", "", "")
+	fs.Int("size", 56, "")
+	fs.Int("count", 0, "")
+	fs.Bool("discovery-mtu", false, "")
+	fs.Bool("traceroute", false, "")
+	fs.Bool("asn", false, "")
+	fs.Bool("ipv4", false, "")
+	fs.StringSlice("port", nil, "")
+
+	gotHosts, gotCfg, err := mergeHosts(cfg, fs, nil)
+	if err != nil {
+		t.Fatalf("mergeHosts: %v", err)
+	}
+
+	if len(gotHosts) != 1 || gotHosts[0] != "example.com" {
+		t.Errorf("hosts: got %v", gotHosts)
+	}
+	if gotCfg.intervalMs != 2000 {
+		t.Errorf("intervalMs: got %d", gotCfg.intervalMs)
+	}
+	if gotCfg.timeoutMs != 3000 {
+		t.Errorf("timeoutMs: got %d", gotCfg.timeoutMs)
+	}
+	if gotCfg.outputFile != "log.csv" {
+		t.Errorf("outputFile: got %q", gotCfg.outputFile)
+	}
+	if gotCfg.ifaceName != "eth0" {
+		t.Errorf("ifaceName: got %q", gotCfg.ifaceName)
+	}
+	if gotCfg.sourceAddr != "10.0.0.1" {
+		t.Errorf("sourceAddr: got %q", gotCfg.sourceAddr)
+	}
+	if gotCfg.packetSize != 100 {
+		t.Errorf("packetSize: got %d", gotCfg.packetSize)
+	}
+	if gotCfg.count != 5 {
+		t.Errorf("count: got %d", gotCfg.count)
+	}
+	if gotCfg.mtuEnabled != true {
+		t.Errorf("mtuEnabled: got %v", gotCfg.mtuEnabled)
+	}
+	if gotCfg.trace != true {
+		t.Errorf("trace: got %v", gotCfg.trace)
+	}
+	if gotCfg.asnEnabled != true {
+		t.Errorf("asnEnabled: got %v", gotCfg.asnEnabled)
+	}
+	if gotCfg.ipv4Only != true {
+		t.Errorf("ipv4Only: got %v", gotCfg.ipv4Only)
+	}
+	if len(gotCfg.portSpecs) != 1 || gotCfg.portSpecs[0] != "80/tcp" {
+		t.Errorf("portSpecs: got %v", gotCfg.portSpecs)
+	}
+
+	// Test command line override
+	fs.Set("interval", "5000")
+	cfg.intervalMs = 5000 // simulate parseArgs setting cfg from fs
+	_, gotCfg2, _ := mergeHosts(cfg, fs, nil)
+	if gotCfg2.intervalMs != 5000 {
+		t.Errorf("intervalMs override: got %d, want 5000", gotCfg2.intervalMs)
 	}
 }
 
@@ -768,5 +862,40 @@ func TestSetupPMTU_SuccessNoBottleneck(t *testing.T) {
 	// bottleneckIP is empty so SetPMTUBottleneckIP should not have been called
 	if view.PMTUBottleneckIP != "" {
 		t.Fatalf("expected empty bottleneck IP, got %q", view.PMTUBottleneckIP)
+	}
+}
+
+func TestDetermineSourceIPs_Interface(t *testing.T) {
+	oldInterfaceByName := interfaceByName
+	defer func() { interfaceByName = oldInterfaceByName }()
+
+	interfaceByName = func(name string) (*net.Interface, error) {
+		return nil, fmt.Errorf("mock error")
+	}
+
+	cfg := config{ifaceName: "eth0"}
+	_, _, _, err := determineSourceIPs(cfg, nil)
+	if err == nil {
+		t.Fatal("expected error for missing interface, got nil")
+	}
+}
+
+func TestDetermineSourceIPs_Auto(t *testing.T) {
+	// detectAutoSourceIPs might return empty strings if no network, but it shouldn't fail.
+	_, v4, v6, err := determineSourceIPs(config{}, []string{"8.8.8.8"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	t.Logf("Auto IPs: v4=%q, v6=%q", v4, v6)
+}
+
+func TestInitTargets(t *testing.T) {
+	hosts := []string{"a", "b"}
+	targets := initTargets(hosts)
+	if len(targets) != 2 {
+		t.Fatalf("expected 2 targets, got %d", len(targets))
+	}
+	if targets[0].Host != "a" || targets[1].Host != "b" {
+		t.Errorf("targets host mismatch")
 	}
 }

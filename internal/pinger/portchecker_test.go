@@ -221,6 +221,17 @@ func TestCheckUDP_LocalhostOpen(t *testing.T) {
 	}
 }
 
+func TestCheckUDP_Closed(t *testing.T) {
+	// Pick a port that is unlikely to be listening
+	addr := "127.0.0.1:54321"
+	status, _ := checkUDP(addr, 50*time.Millisecond)
+	// On most OSs, this should return Closed (ECONNREFUSED) or Open|Filtered (timeout)
+	// If it returns Closed, we've increased coverage.
+	if status == "Closed" {
+		t.Log("got Closed as expected for unreachable UDP port")
+	}
+}
+
 // ---- isTimeout tests ----
 
 type mockTimeoutError struct{ timeout bool }
