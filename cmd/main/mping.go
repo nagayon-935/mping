@@ -196,6 +196,7 @@ type config struct {
 	count      int
 	mtuEnabled bool
 	trace      bool
+	asnEnabled bool
 	ipv4Only   bool
 	ipv6Only   bool
 	portSpecs  []string
@@ -212,6 +213,7 @@ type hostsFileYAML struct {
 	Count      *int     `yaml:"count"`
 	MtuEnabled *bool    `yaml:"discovery-mtu"`
 	Trace      *bool    `yaml:"traceroute"`
+	AsnEnabled *bool    `yaml:"asn"`
 	Ipv4Only   *bool    `yaml:"ipv4"`
 	Ipv6Only   *bool    `yaml:"ipv6"`
 	PortSpecs  []string `yaml:"port"`
@@ -261,6 +263,9 @@ func mergeHosts(cfg config, fs *pflag.FlagSet, hosts []string) ([]string, config
 	}
 	if !fs.Changed("traceroute") && doc.Trace != nil {
 		cfg.trace = *doc.Trace
+	}
+	if !fs.Changed("asn") && doc.AsnEnabled != nil {
+		cfg.asnEnabled = *doc.AsnEnabled
 	}
 	if !fs.Changed("ipv4") && doc.Ipv4Only != nil {
 		cfg.ipv4Only = *doc.Ipv4Only
@@ -353,6 +358,7 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 	fs.StringVarP(&cfg.hostsFile, "file", "f", "", "hosts list YAML file path")
 	fs.BoolVarP(&cfg.mtuEnabled, "discovery-mtu", "m", false, "discover maximum payload size using DF probes (IPv4 only)")
 	fs.BoolVarP(&cfg.trace, "traceroute", "T", false, "enable traceroute pane and run traceroute")
+	fs.BoolVarP(&cfg.asnEnabled, "asn", "a", false, "lookup and display AS numbers for target IPs")
 	fs.StringVarP(&cfg.ifaceName, "interface", "I", "", "interface name to bind to (e.g. eth0)")
 	fs.StringVarP(&cfg.sourceAddr, "source", "S", "", "source IP address to bind to")
 	fs.IntVarP(&cfg.packetSize, "size", "s", 56, "packet size in bytes (payload)")
@@ -509,6 +515,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {
 			return net.ResolveIPAddr(resNetwork, address)
 		},
+		AsnEnabled: cfg.asnEnabled,
 	}
 
 	// Determine interface MTU and set it for all targets
@@ -639,6 +646,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		preLogs,
 		cfg.trace,
 		len(portSpecs) > 0,
+		cfg.asnEnabled,
 		stopAll,
 		func() error {
 			stopAll()

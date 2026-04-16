@@ -214,6 +214,7 @@ port:
 
 * **Src IP** — Local IP address used for sending.
 * **Dst IP** — Resolved destination IP. Shown as `domain (IP)` when a hostname is given.
+* **ASN** — Autonomous System Number of the target IP (enabled with `-a`).
 * **Success** — Number of packets received successfully.
 * **Loss** — Number of lost packets.
 * **Loss Ratio** — Packet loss percentage.

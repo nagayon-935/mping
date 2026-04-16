@@ -247,7 +247,7 @@ func mtuString(mtu int) string {
 	return fmt.Sprintf("%d", mtu)
 }
 
-func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, packetSize int) ([]string, string, float64) {
+func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, packetSize int, asnEnabled bool) ([]string, string, float64) {
 	lossRate := calcLossRate(view)
 	lossStr := formatLossAgo(view.LastLossTime)
 	rttStr := formatRTT(view.LastRTT)
@@ -264,7 +264,11 @@ func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, pack
 	cols := []string{
 		rowSourceIP,
 		dstDisplay, // Dst IP
-		view.ASN,   // ASN
+	}
+	if asnEnabled {
+		cols = append(cols, view.ASN)
+	}
+	cols = append(cols,
 		fmt.Sprintf("%d", view.Recv),
 		fmt.Sprintf("%d", view.Loss),
 		fmt.Sprintf("%.1f%%", lossRate),
@@ -276,7 +280,7 @@ func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, pack
 		ttlString(view.LastTTL),
 		formatTableError(view.LastError),
 		lossStr,
-	}
+	)
 	return cols, rowSourceIP, lossRate
 }
 
@@ -618,7 +622,7 @@ func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, 
 	return state, msgs
 }
 
-func buildFullRowCells(cols []string, widths []int, aligns []int, lossRate float64, rtt time.Duration, jitter time.Duration, vividRed tcell.Color, rowColor tcell.Color) []*tview.TableCell {
+func buildFullRowCells(cols []string, widths []int, aligns []int, lossRate float64, rtt time.Duration, jitter time.Duration, vividRed tcell.Color, rowColor tcell.Color, asnEnabled bool) []*tview.TableCell {
 	cells := make([]*tview.TableCell, len(cols))
 	lossColor := lossColorForRate(lossRate, vividRed)
 	rttColor := rttColorForRTT(rtt, vividRed)
@@ -631,14 +635,23 @@ func buildFullRowCells(cols []string, widths []int, aligns []int, lossRate float
 			SetTextColor(rowColor).
 			SetAlign(aligns[c])
 
+		offset := 0
+		if asnEnabled {
+			offset = 1
+		}
+
 		switch c {
-		case 5: // Loss Ratio column index
+		case 2 + offset: // Success column index
+			// no special color
+		case 3 + offset: // Loss column index
+			// no special color
+		case 4 + offset: // Loss Ratio column index
 			cell.SetTextColor(lossColor).SetAttributes(tcell.AttrBold)
-		case 6: // RTT column index
+		case 5 + offset: // RTT column index
 			cell.SetTextColor(rttColor)
-		case 8: // Jitter column index
+		case 7 + offset: // Jitter column index
 			cell.SetTextColor(jitterColor)
-		case 12: // Error column
+		case len(cols) - 2: // Error column
 			if text != "" {
 				cell.SetTextColor(vividRed)
 			}
@@ -678,6 +691,14 @@ func appendErrorLog(errorLogs *[]string, errorView *tview.TextView, msg string) 
 // paddedCell returns text with a leading space, right-padded to fill colW.
 func paddedCell(text string, colW int) string {
 	return formatCellText(" "+text, colW, tview.AlignLeft)
+}
+
+// rightPaddedCell returns text with a trailing space, left-padded to fill colW.
+func rightPaddedCell(text string, colW int) string {
+	if text == "" {
+		return formatCellText("", colW, tview.AlignRight)
+	}
+	return formatCellText(text+" ", colW, tview.AlignRight)
 }
 
 // statusColorTag returns a tview color tag for the given port status.
@@ -732,21 +753,23 @@ func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
 
 		fmt.Fprintf(&sb, "[white]┌%s┬%s┐[-]\n", h, r)
 		fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
-			paddedCell("Host", hostColW), paddedCell("Route", routeColW))
+			rightPaddedCell("Host", hostColW), paddedCell("Route", routeColW))
 		fmt.Fprintf(&sb, "[white]├%s┼%s┤[-]\n", h, r)
 
-		emptyHost := paddedCell("", hostColW)
 		for i, t := range dataTargets {
 			view := t.GetView()
 			routeLines := wrapHops(view.TraceHops, routeContentW)
 			if len(routeLines) == 0 {
 				routeLines = []string{""}
 			}
-			fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[-]\n",
-				paddedCell(view.Host, hostColW), paddedCell(routeLines[0], routeColW))
-			for _, rl := range routeLines[1:] {
+			midIdx := 0
+			for j, rl := range routeLines {
+				hostStr := ""
+				if j == midIdx {
+					hostStr = view.Host
+				}
 				fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[-]\n",
-					emptyHost, paddedCell(rl, routeColW))
+					rightPaddedCell(hostStr, hostColW), paddedCell(rl, routeColW))
 			}
 			if i < len(dataTargets)-1 {
 				fmt.Fprintf(&sb, "[white]├%s┼%s┤[-]\n", h, r)
@@ -762,25 +785,29 @@ func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
 
 		fmt.Fprintf(&sb, "[white]┌%s┬%s┬%s┬%s┐[-]\n", h, ho, it, r)
 		fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
-			paddedCell("Host", hostColW), paddedCell("Hops", hopsColW), paddedCell("Init TTL", initTTLColW), paddedCell("Route", routeColW))
+			rightPaddedCell("Host", hostColW), rightPaddedCell("Hops", hopsColW), rightPaddedCell("Init TTL", initTTLColW), paddedCell("Route", routeColW))
 		fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┤[-]\n", h, ho, it, r)
 
-		emptyHost := paddedCell("", hostColW)
-		emptyHops := paddedCell("", hopsColW)
-		emptyInitTTL := paddedCell("", initTTLColW)
 		for i, t := range dataTargets {
 			view := t.GetView()
-			hopsStr := hopCountString(view.TraceHops)
-			initTTLStr := inferInitialTTL(view.LastTTL)
+			hopsStrVal := hopCountString(view.TraceHops)
+			initTTLStrVal := inferInitialTTL(view.LastTTL)
 			routeLines := wrapHops(view.TraceHops, routeContentW)
 			if len(routeLines) == 0 {
 				routeLines = []string{""}
 			}
-			fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[-]\n",
-				paddedCell(view.Host, hostColW), paddedCell(hopsStr, hopsColW), paddedCell(initTTLStr, initTTLColW), paddedCell(routeLines[0], routeColW))
-			for _, rl := range routeLines[1:] {
+			midIdx := 0
+			for j, rl := range routeLines {
+				hostStr := ""
+				hopsStr := ""
+				initTTLStr := ""
+				if j == midIdx {
+					hostStr = view.Host
+					hopsStr = hopsStrVal
+					initTTLStr = initTTLStrVal
+				}
 				fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[-]\n",
-					emptyHost, emptyHops, emptyInitTTL, paddedCell(rl, routeColW))
+					rightPaddedCell(hostStr, hostColW), rightPaddedCell(hopsStr, hopsColW), rightPaddedCell(initTTLStr, initTTLColW), paddedCell(rl, routeColW))
 			}
 			if i < len(dataTargets)-1 {
 				fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┤[-]\n", h, ho, it, r)

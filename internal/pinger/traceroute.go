@@ -176,6 +176,10 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 					if accepted {
 						if srcIP == "" {
 							srcIP = "*"
+						} else if srcIP != "*" && p.AsnEnabled {
+							if asn := p.getASN(srcIP); asn != "" {
+								srcIP = fmt.Sprintf("%s(%s)", srcIP, asn)
+							}
 						}
 						hops = append(hops, srcIP)
 						found = true
@@ -219,6 +223,10 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 				if accepted {
 					if srcIP == "" {
 						srcIP = "*"
+					} else if srcIP != "*" && p.AsnEnabled {
+						if asn := p.getASN(srcIP); asn != "" {
+							srcIP = fmt.Sprintf("%s(%s)", srcIP, asn)
+						}
 					}
 					hops = append(hops, srcIP)
 					found = true

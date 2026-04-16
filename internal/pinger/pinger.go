@@ -65,6 +65,7 @@ type Pinger struct {
 	Count  int    // Stop after sending Count packets (0 = infinite)
 
 	ResolveInterval time.Duration // Interval to re-resolve DNS
+	AsnEnabled      bool          // Enable ASN lookups
 
 	connV4      PacketConnV4
 	connV6      PacketConnV6
@@ -98,6 +99,7 @@ type Options struct {
 	ResolveIPAddr resolveIPAddrFunc
 	Now           func() time.Time
 	ListenPacket  listenPacketFunc
+	AsnEnabled    bool
 }
 
 func NewPinger(targets []*stats.TargetStats) *Pinger {
@@ -126,6 +128,7 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		baseID:          os.Getpid() & 0xffff,
 		Size:            56, // Default payload size (like standard ping)
 		ResolveInterval: 60 * time.Second,
+		AsnEnabled:      opts.AsnEnabled,
 		done:            make(chan struct{}),
 		resolveIPAddr:   resolve,
 		now:             now,
@@ -426,35 +429,40 @@ func (p *Pinger) resolveTarget(t *stats.TargetStats) *net.IPAddr {
 	}
 	ipStr := addr.String()
 	t.SetIP(ipStr)
-	go p.lookupASN(t, ipStr)
+	if p.AsnEnabled {
+		go p.lookupASN(t, ipStr)
+	}
 	return addr
 }
 
 func (p *Pinger) lookupASN(t *stats.TargetStats, ipStr string) {
+	asn := p.getASN(ipStr)
+	if asn != "" {
+		t.SetASN(asn)
+	}
+}
+
+func (p *Pinger) getASN(ipStr string) string {
 	p.asnMu.RLock()
 	asn, found := p.asnCache[ipStr]
 	p.asnMu.RUnlock()
 
 	if found {
-		t.SetASN(asn)
-		return
+		return asn
 	}
 
 	// Reverse IP for cymru DNS lookup
 	var query string
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
-		return
+		return ""
 	}
-	
+
 	if ip4 := ip.To4(); ip4 != nil {
 		query = fmt.Sprintf("%d.%d.%d.%d.origin.asn.cymru.com", ip4[3], ip4[2], ip4[1], ip4[0])
 	} else {
 		// IPv6 reverse lookup
-		query = "origin6.asn.cymru.com"
-		// The v6 format requires nybbles, but cymru handles v6 origin lookups as:
-		// nybbles reversed .origin6.asn.cymru.com
-		// Actually cymru ipv6 is a bit complex, let's just do v4 for simplicity or implement v6 if needed.
+		// cymru ipv6 is a bit complex, let's just do v4 for simplicity or implement v6 if needed.
 		// For now, let's implement standard IPv6 cymru format.
 		// Ex: 2001:4860:4860::8888 -> 8.8.8.8.0...1.0.0.2.origin6.asn.cymru.com
 		var sb strings.Builder
@@ -467,21 +475,25 @@ func (p *Pinger) lookupASN(t *stats.TargetStats, ipStr string) {
 
 	txts, err := net.LookupTXT(query)
 	if err != nil || len(txts) == 0 {
-		return
+		return ""
 	}
 
 	// Response example: "15169 | 8.8.8.0/24 | US | arin | 1992-12-01"
 	parts := strings.Split(txts[0], "|")
 	if len(parts) > 0 {
 		asn = strings.TrimSpace(parts[0])
+		if asn == "NA" || asn == "" {
+			return ""
+		}
 		if !strings.HasPrefix(asn, "AS") {
 			asn = "AS" + asn
 		}
 		p.asnMu.Lock()
 		p.asnCache[ipStr] = asn
 		p.asnMu.Unlock()
-		t.SetASN(asn)
+		return asn
 	}
+	return ""
 }
 
 // getWriteFunc returns the appropriate ICMP message type and write function

@@ -21,7 +21,7 @@ const (
 
 var newApplication = tview.NewApplication
 
-func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, onStop func(), onRestart func() error, onSettingsChange func(interval, timeout time.Duration, packetSize int) error, onResetTrace func(), onResetPort func()) error {
+func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, asnEnabled bool, onStop func(), onRestart func() error, onSettingsChange func(interval, timeout time.Duration, packetSize int) error, onResetTrace func(), onResetPort func()) error {
 	// Define vivid colors
 	vividRed := tcell.NewRGBColor(255, 0, 0)
 	vividCyan := tcell.NewRGBColor(0, 255, 255)
@@ -51,18 +51,32 @@ func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh c
 
 
 	// Columns: Src IP, Dst IP, ASN, Success, Loss, Loss Ratio, RTT, Avg, Jitter, Size, MTU, TTL, Error, Last Loss
-	fullHeaders := []string{"Src IP", "Dst IP", "ASN", "Success", "Loss", "Loss Ratio", "RTT", "Avg", "Jitter", "Size", "MTU", "TTL", "Error", "Last Loss"}
-	fullAligns := []int{
-		tview.AlignLeft, tview.AlignLeft, tview.AlignLeft, tview.AlignRight, tview.AlignRight, tview.AlignRight,
-		tview.AlignRight, tview.AlignRight, tview.AlignRight, // RTTs
-		tview.AlignRight, tview.AlignRight, tview.AlignRight, tview.AlignLeft, tview.AlignLeft,
+	fullHeaders := []string{"Src IP", "Dst IP"}
+	fullAligns := []int{tview.AlignLeft, tview.AlignLeft}
+	baseWidths := []int{6, 6}
+	minWidths := []int{4, 8}
+	maxWidths := []int{45, 60}
+
+	if asnEnabled {
+		fullHeaders = append(fullHeaders, "ASN")
+		fullAligns = append(fullAligns, tview.AlignRight)
+		baseWidths = append(baseWidths, 4)
+		minWidths = append(minWidths, 4)
+		maxWidths = append(maxWidths, 15)
 	}
-	// Src IP / Dst IP / ASN are dynamically resized from the rendered content.
-	// Error width is fixed at startup to prevent table size jumps when new errors arrive.
-	baseWidths := []int{6, 6, 4, 8, 7, 10, 10, 10, 10, 6, 6, 5, 30, 15}
-	baseWidths[12] = calcInitialTableErrorWidth(targets, fullHeaders[12], baseWidths[12])
-	minWidths := []int{4, 8, 4, 5, 4, 6, 7, 7, 7, 4, 4, 3, 8, 8}
-	maxWidths := []int{45, 60, 15, 10, 10, 12, 12, 12, 12, 8, 8, 6, baseWidths[12], 18}
+
+	fullHeaders = append(fullHeaders, "Success", "Loss", "Loss Ratio", "RTT", "Avg", "Jitter", "Size", "MTU", "TTL", "Error", "Last Loss")
+	fullAligns = append(fullAligns, tview.AlignRight, tview.AlignRight, tview.AlignRight,
+		tview.AlignRight, tview.AlignRight, tview.AlignRight, // RTTs
+		tview.AlignRight, tview.AlignRight, tview.AlignRight, tview.AlignLeft, tview.AlignLeft)
+	baseWidths = append(baseWidths, 8, 7, 10, 10, 10, 10, 6, 6, 5, 30, 15)
+	minWidths = append(minWidths, 5, 4, 6, 7, 7, 7, 4, 4, 3, 8, 8)
+	maxWidths = append(maxWidths, 10, 10, 12, 12, 12, 12, 8, 8, 6, 30, 18)
+
+	// Update error width index
+	errorIdx := len(fullHeaders) - 2
+	baseWidths[errorIdx] = calcInitialTableErrorWidth(targets, fullHeaders[errorIdx], baseWidths[errorIdx])
+	maxWidths[errorIdx] = baseWidths[errorIdx]
 
 	headerColor := tcell.ColorYellow
 	rowColor := tcell.ColorWhite
@@ -70,7 +84,11 @@ func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh c
 	// Recalculate dynamic column widths based on current output text.
 	calcColumnWidths := func() []int {
 		widths := append([]int(nil), baseWidths...)
-		for _, c := range []int{0, 1, 2} {
+		dynamicCols := []int{0, 1}
+		if asnEnabled {
+			dynamicCols = append(dynamicCols, 2)
+		}
+		for _, c := range dynamicCols {
 			maxWidth := runewidth.StringWidth(fullHeaders[c])
 			for _, t := range targets {
 				view := t.GetView()
@@ -85,7 +103,9 @@ func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh c
 						value = view.IP
 					}
 				case 2:
-					value = view.ASN
+					if asnEnabled {
+						value = view.ASN
+					}
 				}
 				if w := runewidth.StringWidth(value); w > maxWidth {
 					maxWidth = w
@@ -321,14 +341,18 @@ func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh c
 
 		updatedWidths := calcColumnWidthsCached()
 		dynamicMaxWidths := append([]int(nil), maxWidths...)
-		for _, c := range []int{0, 1, 2} {
+		dynamicCols := []int{0, 1}
+		if asnEnabled {
+			dynamicCols = append(dynamicCols, 2)
+		}
+		for _, c := range dynamicCols {
 			if updatedWidths[c] > dynamicMaxWidths[c] {
 				dynamicMaxWidths[c] = updatedWidths[c]
 			}
 		}
 		fitted, ok := fitWidthsToAvailable(updatedWidths, minWidths, dynamicMaxWidths, availableColumnsWidth)
 
-		compact := buildCompactLayout(filteredTargets, packetSize, sourceIPv4, sourceIPv6, baseWidths[12])
+		compact := buildCompactLayout(filteredTargets, packetSize, sourceIPv4, sourceIPv6, baseWidths[errorIdx+1])
 		compactRows := compact.rows
 		compactDesired := compact.desired
 		compactHeaders := compact.headers
@@ -419,7 +443,7 @@ func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh c
 
 			row := displayIdx
 			displayIdx++
-			cols, rowSourceIP, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize)
+			cols, rowSourceIP, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize, asnEnabled)
 
 			// Alert logs on red thresholds
 			state := alertState[view.Host]
@@ -430,7 +454,7 @@ func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh c
 			}
 			alertState[view.Host] = state
 
-			cells := buildFullRowCells(cols, widths, fullAligns, lossRate, view.LastRTT, view.Jitter, vividRed, rowColor)
+			cells := buildFullRowCells(cols, widths, fullAligns, lossRate, view.LastRTT, view.Jitter, vividRed, rowColor, asnEnabled)
 			for c, cell := range cells {
 				table.SetCell(row, c, cell)
 			}
