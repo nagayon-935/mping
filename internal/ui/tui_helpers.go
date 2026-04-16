@@ -22,6 +22,13 @@ const (
 	lossOrangeThreshold   = 20.0
 	lossRedThreshold      = 80.0
 	errorLogMaxSize       = 1000 // maximum number of lines kept in the error log pane
+	minRouteContentWidth  = 20
+	minPortContentWidth   = 20
+)
+
+var (
+	vividRed  = tcell.NewRGBColor(255, 0, 0)
+	vividCyan = tcell.NewRGBColor(0, 255, 255)
 )
 
 var tableErrorCandidates = []string{
@@ -284,7 +291,7 @@ func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, pack
 	return cols, rowSourceIP, lossRate
 }
 
-func lossColorForRate(lossRate float64, vividRed tcell.Color) tcell.Color {
+func lossColorForRate(lossRate float64) tcell.Color {
 	if lossRate > lossRedThreshold {
 		return vividRed
 	}
@@ -294,7 +301,7 @@ func lossColorForRate(lossRate float64, vividRed tcell.Color) tcell.Color {
 	return tcell.ColorGreen
 }
 
-func rttColorForRTT(rtt time.Duration, vividRed tcell.Color) tcell.Color {
+func rttColorForRTT(rtt time.Duration) tcell.Color {
 	if rtt > rttRedThreshold {
 		return vividRed
 	}
@@ -307,7 +314,7 @@ func rttColorForRTT(rtt time.Duration, vividRed tcell.Color) tcell.Color {
 	return tcell.ColorWhite
 }
 
-func jitterColorForJitter(jitter time.Duration, vividRed tcell.Color) tcell.Color {
+func jitterColorForJitter(jitter time.Duration) tcell.Color {
 	if jitter > jitterRedThreshold {
 		return vividRed
 	}
@@ -622,11 +629,11 @@ func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, 
 	return state, msgs
 }
 
-func buildFullRowCells(cols []string, widths []int, aligns []int, lossRate float64, rtt time.Duration, jitter time.Duration, vividRed tcell.Color, rowColor tcell.Color, asnEnabled bool) []*tview.TableCell {
+func buildFullRowCells(cols []string, widths []int, aligns []int, lossRate float64, rtt time.Duration, jitter time.Duration, rowColor tcell.Color, asnEnabled bool) []*tview.TableCell {
 	cells := make([]*tview.TableCell, len(cols))
-	lossColor := lossColorForRate(lossRate, vividRed)
-	rttColor := rttColorForRTT(rtt, vividRed)
-	jitterColor := jitterColorForJitter(jitter, vividRed)
+	lossColor := lossColorForRate(lossRate)
+	rttColor := rttColorForRTT(rtt)
+	jitterColor := jitterColorForJitter(jitter)
 
 	for c, col := range cols {
 		text := formatCellText(col, widths[c], aligns[c])
@@ -662,7 +669,7 @@ func buildFullRowCells(cols []string, widths []int, aligns []int, lossRate float
 	return cells
 }
 
-func buildCompactRowCells(values []string, widths []int, aligns []int, vividRed tcell.Color, rowColor tcell.Color) []*tview.TableCell {
+func buildCompactRowCells(values []string, widths []int, aligns []int, rowColor tcell.Color) []*tview.TableCell {
 	cells := make([]*tview.TableCell, len(values))
 	for c, v := range values {
 		cell := tview.NewTableCell(formatCellText(v, widths[c], aligns[c])).
@@ -715,23 +722,25 @@ func statusColorTag(status string) string {
 	}
 }
 
-// renderTracerouteTable builds the traceroute monitor table string.
-func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
-	const minRouteContentW = 20
-
-	hostColW := runewidth.StringWidth("Host")
+func maxHostWidth(header string, targets []*stats.TargetStats) int {
+	w := runewidth.StringWidth(header)
 	for _, t := range targets {
-		if w := runewidth.StringWidth(t.GetView().Host); w > hostColW {
-			hostColW = w
+		if cur := runewidth.StringWidth(t.GetView().Host); cur > w {
+			w = cur
 		}
 	}
-	hostColW += 2
+	return w + 2
+}
+
+// renderTracerouteTable builds the traceroute monitor table string.
+func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
+	hostColW := maxHostWidth("Host", targets)
 
 	hopsColW := runewidth.StringWidth("Hops") + 2
 	initTTLColW := runewidth.StringWidth("Init TTL") + 2
 
 	fullRouteContentW := availW - hostColW - hopsColW - initTTLColW - 5
-	traceCompact := fullRouteContentW < minRouteContentW
+	traceCompact := fullRouteContentW < minRouteContentWidth
 
 	dataTargets := make([]*stats.TargetStats, 0, len(targets))
 	for _, t := range targets {
@@ -745,8 +754,8 @@ func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
 
 	if traceCompact {
 		routeColW := availW - hostColW - 3
-		if routeColW < minRouteContentW {
-			routeColW = minRouteContentW
+		if routeColW < minRouteContentWidth {
+			routeColW = minRouteContentWidth
 		}
 		routeContentW := routeColW - 1
 		r := strings.Repeat("─", routeColW)
@@ -819,53 +828,42 @@ func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
 	return sb.String()
 }
 
+func maxPortColumnWidth(header string, targets []*stats.TargetStats, extractor func(stats.PortCheckView) string) int {
+	w := runewidth.StringWidth(header)
+	for _, t := range targets {
+		for _, pr := range t.GetView().PortResults {
+			if cur := runewidth.StringWidth(extractor(pr)); cur > w {
+				w = cur
+			}
+		}
+	}
+	return w + 2
+}
+
 // renderPortMonitorTable builds the port monitor table string.
 // It also detects status changes and appends log messages.
 func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortStatuses map[string]string, errorLogs *[]string, errorView *tview.TextView) string {
-	targetColW := runewidth.StringWidth("Target")
-	for _, t := range targets {
-		if w := runewidth.StringWidth(t.GetView().Host); w > targetColW {
-			targetColW = w
-		}
-	}
-	targetColW += 2
+	targetColW := maxHostWidth("Target", targets)
 
-	portColW := runewidth.StringWidth("Port")
-	for _, t := range targets {
-		for _, pr := range t.GetView().PortResults {
-			if w := runewidth.StringWidth(fmt.Sprintf("%d/%s", pr.Port, pr.Protocol)); w > portColW {
-				portColW = w
-			}
-		}
-	}
-	portColW += 2
+	portColW := maxPortColumnWidth("Port", targets, func(pr stats.PortCheckView) string {
+		return fmt.Sprintf("%d/%s", pr.Port, pr.Protocol)
+	})
 
-	serviceColW := runewidth.StringWidth("Service")
-	for _, t := range targets {
-		for _, pr := range t.GetView().PortResults {
-			if w := runewidth.StringWidth(portServiceName(pr.Port, pr.Protocol)); w > serviceColW {
-				serviceColW = w
-			}
-		}
-	}
-	serviceColW += 2
+	serviceColW := maxPortColumnWidth("Service", targets, func(pr stats.PortCheckView) string {
+		return portServiceName(pr.Port, pr.Protocol)
+	})
 
 	statusColW := runewidth.StringWidth("Open|Filtered") + 2
-	rttColW := runewidth.StringWidth("RTT")
-	for _, t := range targets {
-		for _, pr := range t.GetView().PortResults {
-			if w := runewidth.StringWidth(formatRTT(pr.RTT)); w > rttColW {
-				rttColW = w
-			}
-		}
-	}
-	rttColW += 2
+
+	rttColW := maxPortColumnWidth("RTT", targets, func(pr stats.PortCheckView) string {
+		return formatRTT(pr.RTT)
+	})
+
 	countColW := runewidth.StringWidth("Open/Closed") + 2
 	changeColW := runewidth.StringWidth("Last Change") + 2
 
 	usedFull := targetColW + portColW + serviceColW + statusColW + rttColW + countColW + changeColW + 8
-	const minPortContentW = 20
-	portCompact := availW-targetColW-portColW-statusColW-rttColW-5 < minPortContentW
+	portCompact := availW-targetColW-portColW-statusColW-rttColW-5 < minPortContentWidth
 
 	// Collect targets that have results; detect status changes
 	dataTargets := make([]*stats.TargetStats, 0, len(targets))

@@ -243,3 +243,28 @@ func TestTargetStatsFailureAndReset(t *testing.T) {
 		t.Fatalf("Reset did not clear error state: lastLoss=%v lastError=%q", view.LastLossTime, view.LastError)
 	}
 }
+
+func TestTargetStats_SetASN(t *testing.T) {
+	tgt := NewTargetStats("example.com")
+	tgt.SetASN("AS12345")
+	view := tgt.GetView()
+	if view.ASN != "AS12345" {
+		t.Errorf("ASN: got %q, want %q", view.ASN, "AS12345")
+	}
+}
+
+func TestTargetStats_SetPortResults(t *testing.T) {
+	tgt := NewTargetStats("example.com")
+	results := []*PortCheckResult{
+		{Port: 80, Protocol: "tcp", Status: "Open"},
+		{Port: 443, Protocol: "tcp", Status: "Closed"},
+	}
+	tgt.SetPortResults(results)
+	view := tgt.GetView()
+	if len(view.PortResults) != 2 {
+		t.Fatalf("PortResults len: got %d, want 2", len(view.PortResults))
+	}
+	if view.PortResults[0].Port != 80 || view.PortResults[0].Status != "Open" {
+		t.Errorf("PortResults[0]: got %v, want Port 80 Open", view.PortResults[0])
+	}
+}
