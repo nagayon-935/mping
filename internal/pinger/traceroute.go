@@ -3,7 +3,6 @@ package pinger
 import (
 	"fmt"
 	"net"
-	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/icmp"
@@ -63,7 +62,7 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 		}
 		c, err := p.listenPacket("ip4:icmp", bindAddr)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("open traceroute send socket (v4): %w", err)
 		}
 		sendConn = c
 		sendV4 = ipv4.NewPacketConn(c)
@@ -74,15 +73,18 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 		}
 		c, err := p.listenPacket("ip6:ipv6-icmp", bindAddr)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("open traceroute send socket (v6): %w", err)
 		}
 		sendConn = c
 		sendV6 = ipv6.NewPacketConn(c)
-		sendV6.SetControlMessage(ipv6.FlagHopLimit, true)
+		if err := sendV6.SetControlMessage(ipv6.FlagHopLimit, true); err != nil {
+			// Non-fatal: hop limit control message may not be available on all platforms.
+			_ = err
+		}
 	}
 	defer sendConn.Close()
 
-	traceID := (p.baseID + 0x1234 + int(atomic.AddUint32(&p.traceCounter, 1))) & 0xffff
+	traceID := (p.baseID + 0x1234 + int(p.traceCounter.Add(1))) & 0xffff
 	hops := make([]string, 0, maxHops)
 
 	// acceptPacket checks whether a received message is a valid reply to the

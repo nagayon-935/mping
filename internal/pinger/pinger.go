@@ -1,12 +1,14 @@
 package pinger
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/stats"
@@ -44,7 +46,7 @@ type PacketConnV6 interface {
 	SetControlMessage(cf ipv6.ControlFlags, on bool) error
 }
 
-// Reply represents a received ICMP echo reply.
+// Reply represents a single received ICMP echo reply or error from the receiver loop.
 type Reply struct {
 	RTT time.Duration
 	TTL int
@@ -79,7 +81,7 @@ type Pinger struct {
 
 	traceChans   []chan traceMsg // one per concurrent TraceRoute call
 	traceChansMu sync.RWMutex
-	traceCounter uint32 // atomic counter for unique traceID per concurrent call
+	traceCounter atomic.Uint32 // unique traceID per concurrent call
 
 	LogWriter io.Writer // Optional logger
 
@@ -104,10 +106,12 @@ type Options struct {
 	AsnEnabled    bool
 }
 
+// NewPinger creates a Pinger with default options for the given targets.
 func NewPinger(targets []*stats.TargetStats) *Pinger {
 	return NewPingerWithOptions(targets, Options{})
 }
 
+// NewPingerWithOptions creates a Pinger with the provided options.
 func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 	resolve := opts.ResolveIPAddr
 	if resolve == nil {
@@ -357,7 +361,8 @@ func (p *Pinger) runReceiver(
 			setDeadline(time.Now().Add(receiverReadTimeout))
 			n, ttl, src, err := readFrom(buf)
 			if err != nil {
-				if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
+				var opErr *net.OpError
+			if errors.As(err, &opErr) && opErr.Timeout() {
 					continue
 				}
 				return
