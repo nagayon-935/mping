@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,7 +13,7 @@ import (
 
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
-	"github.com/nagayon-935/mping/internal/ui"
+	ui "github.com/nagayon-935/mping/internal/ui"
 	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
 )
@@ -78,7 +79,7 @@ var newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerCo
 	return &pingerAdapter{Pinger: pinger.NewPingerWithOptions(targets, opts)}
 }
 
-var uiRun = ui.Run
+var uiRun = func(opts ui.RunOptions) error { return ui.Run(opts) }
 
 var (
 	interfaceByName = net.InterfaceByName
@@ -88,11 +89,11 @@ var (
 func getInterfaceIP(ifaceName string, wantIPv6 bool) (string, error) {
 	iface, err := interfaceByName(ifaceName)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("lookup interface %q: %w", ifaceName, err)
 	}
 	addrs, err := iface.Addrs()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("get addresses for interface %q: %w", ifaceName, err)
 	}
 	for _, addr := range addrs {
 		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
@@ -478,7 +479,7 @@ func setupPortChecker(targets []*stats.TargetStats, portSpecs []pinger.PortSpec,
 func run(args []string, out io.Writer, errOut io.Writer) int {
 	cfg, hosts, fs, usage, err := parseArgs(args)
 	if err != nil {
-		if err == pflag.ErrHelp {
+		if errors.Is(err, pflag.ErrHelp) {
 			fmt.Fprint(out, usage)
 			return 0
 		}
@@ -552,6 +553,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		p           pingerController
 		traceCtx    context.Context
 		traceCancel context.CancelFunc
+		portChecker *pinger.PortChecker
 	)
 
 	startPinger := func() error {
@@ -559,16 +561,14 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		if err := next.Start(interval, timeout); err != nil {
 			return err
 		}
+		pMu.Lock()
 		if cfg.trace {
-			pMu.Lock()
 			if traceCancel != nil {
 				traceCancel()
 			}
 			traceCtx, traceCancel = context.WithCancel(context.Background())
 			go runTraceroutes(traceCtx, next, targets)
-			pMu.Unlock()
 		}
-		pMu.Lock()
 		p = next
 		pMu.Unlock()
 		return nil
@@ -603,16 +603,17 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		}
 		portSpecs = append(portSpecs, spec)
 	}
-	portChecker := setupPortChecker(targets, portSpecs, interval, timeout)
-
-	if cfg.trace {
-		// Traceroute info can be added to logs if needed
-	}
+	pMu.Lock()
+	portChecker = setupPortChecker(targets, portSpecs, interval, timeout)
+	pMu.Unlock()
 
 	stopAll := func() {
 		stopPinger()
-		if portChecker != nil {
-			portChecker.Stop()
+		pMu.Lock()
+		cur := portChecker
+		pMu.Unlock()
+		if cur != nil {
+			cur.Stop()
 		}
 	}
 
@@ -632,40 +633,62 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	var resetPort func()
 	if len(portSpecs) > 0 {
 		resetPort = func() {
-			if portChecker != nil {
-				portChecker.Stop()
+			pMu.Lock()
+			cur := portChecker
+			portChecker = nil
+			pMu.Unlock()
+			if cur != nil {
+				cur.Stop()
 			}
-			portChecker = setupPortChecker(targets, portSpecs, interval, timeout)
+			next := setupPortChecker(targets, portSpecs, interval, timeout)
+			pMu.Lock()
+			portChecker = next
+			pMu.Unlock()
 		}
 	}
 
+	// doneCh is closed when the pinger finishes (count-limited mode).
+	var doneCh chan struct{}
+	if cfg.count > 0 {
+		doneCh = make(chan struct{})
+		go func() {
+			pMu.Lock()
+			cur := p
+			pMu.Unlock()
+			if cur != nil {
+				cur.Wait()
+			}
+			close(doneCh)
+		}()
+	}
+
 	// Start TUI
-	if err := uiRun(
-		targets,
-		interval,
-		timeout,
-		nil,
-		displaySourceIPv4,
-		displaySourceIPv6,
-		packetSizeToUse,
-		preLogs,
-		cfg.trace,
-		len(portSpecs) > 0,
-		cfg.asnEnabled,
-		stopAll,
-		func() error {
+	if err := uiRun(ui.RunOptions{
+		Targets:      targets,
+		Interval:     interval,
+		Timeout:      timeout,
+		DoneCh:       doneCh,
+		SourceIPv4:   displaySourceIPv4,
+		SourceIPv6:   displaySourceIPv6,
+		PacketSize:   packetSizeToUse,
+		InitialLogs:  preLogs,
+		TraceEnabled: cfg.trace,
+		PortEnabled:  len(portSpecs) > 0,
+		ASNEnabled:   cfg.asnEnabled,
+		OnStop:       stopAll,
+		OnRestart: func() error {
 			stopAll()
 			if err := startPinger(); err != nil {
 				return err
 			}
-			if portChecker != nil {
-				portChecker = setupPortChecker(targets, portSpecs, interval, timeout)
-			}
+			pMu.Lock()
+			portChecker = setupPortChecker(targets, portSpecs, interval, timeout)
+			pMu.Unlock()
 			return nil
 		},
-		resetTrace,
-		resetPort,
-	); err != nil {
+		OnResetTrace: resetTrace,
+		OnResetPort:  resetPort,
+	}); err != nil {
 		fmt.Fprintf(errOut, "Error running application: %v\n", err)
 		stopAll()
 		return 1

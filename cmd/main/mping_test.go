@@ -14,6 +14,7 @@ import (
 
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
+	"github.com/nagayon-935/mping/internal/ui"
 	"github.com/spf13/pflag"
 )
 
@@ -209,9 +210,9 @@ func TestRunStopRestart(t *testing.T) {
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return fp
 	}
-	uiRun = func(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, asnEnabled bool, onStop func(), onRestart func() error, onResetTrace func(), onResetPort func()) error {
-		onStop()
-		if err := onRestart(); err != nil {
+	uiRun = func(opts ui.RunOptions) error {
+		opts.OnStop()
+		if err := opts.OnRestart(); err != nil {
 			t.Fatalf("restart failed: %v", err)
 		}
 		return nil
@@ -239,7 +240,7 @@ func TestRunStartError(t *testing.T) {
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return fp
 	}
-	uiRun = func(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, asnEnabled bool, onStop func(), onRestart func() error, onResetTrace func(), onResetPort func()) error {
+	uiRun = func(opts ui.RunOptions) error {
 		return nil
 	}
 
@@ -592,7 +593,7 @@ func TestRunInvalidPortSpec(t *testing.T) {
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return &fakePinger{}
 	}
-	uiRun = func(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, asnEnabled bool, onStop func(), onRestart func() error, onResetTrace func(), onResetPort func()) error {
+	uiRun = func(opts ui.RunOptions) error {
 		return nil
 	}
 	var out, errOut bytes.Buffer
@@ -616,7 +617,7 @@ func TestRunWithPortSpec(t *testing.T) {
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return fp
 	}
-	uiRun = func(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, asnEnabled bool, onStop func(), onRestart func() error, onResetTrace func(), onResetPort func()) error {
+	uiRun = func(opts ui.RunOptions) error {
 		return nil
 	}
 	var out, errOut bytes.Buffer
@@ -637,7 +638,7 @@ func TestRunWithTrace(t *testing.T) {
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return fp
 	}
-	uiRun = func(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, asnEnabled bool, onStop func(), onRestart func() error, onResetTrace func(), onResetPort func()) error {
+	uiRun = func(opts ui.RunOptions) error {
 		return nil
 	}
 	var out, errOut bytes.Buffer
@@ -662,26 +663,26 @@ func TestRunResetTrace(t *testing.T) {
 		return fp
 	}
 
-	uiRun = func(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, asnEnabled bool, onStop func(), onRestart func() error, onResetTrace func(), onResetPort func()) error {
-		if onResetTrace == nil {
-			t.Error("onResetTrace must not be nil when traceEnabled=true")
+	uiRun = func(opts ui.RunOptions) error {
+		if opts.OnResetTrace == nil {
+			t.Error("OnResetTrace must not be nil when TraceEnabled=true")
 			return nil
 		}
-		// Simulate the UI clearing TraceHops before calling onResetTrace (as 'R' does).
-		for _, tg := range targets {
+		// Simulate the UI clearing TraceHops before calling OnResetTrace (as 'R' does).
+		for _, tg := range opts.Targets {
 			tg.SetTraceHops(nil)
 		}
-		onResetTrace()
+		opts.OnResetTrace()
 		// Wait for the re-run to populate TraceHops.
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
-			if len(targets[0].GetView().TraceHops) > 0 {
+			if len(opts.Targets[0].GetView().TraceHops) > 0 {
 				break
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-		if hops := targets[0].GetView().TraceHops; len(hops) == 0 {
-			t.Error("TraceHops not repopulated after onResetTrace()")
+		if hops := opts.Targets[0].GetView().TraceHops; len(hops) == 0 {
+			t.Error("TraceHops not repopulated after OnResetTrace()")
 		}
 		return nil
 	}
@@ -708,17 +709,17 @@ func TestRunResetPort(t *testing.T) {
 		return fp
 	}
 
-	uiRun = func(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, asnEnabled bool, onStop func(), onRestart func() error, onResetTrace func(), onResetPort func()) error {
-		if !portEnabled {
-			t.Error("portEnabled should be true when port specs given")
+	uiRun = func(opts ui.RunOptions) error {
+		if !opts.PortEnabled {
+			t.Error("PortEnabled should be true when port specs given")
 			return nil
 		}
-		if onResetPort == nil {
-			t.Error("onResetPort must not be nil when port specs are provided")
+		if opts.OnResetPort == nil {
+			t.Error("OnResetPort must not be nil when port specs are provided")
 			return nil
 		}
 		// Calling it must not panic
-		onResetPort()
+		opts.OnResetPort()
 		return nil
 	}
 
@@ -739,7 +740,7 @@ func TestRunWithMTUIPv6Warning(t *testing.T) {
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return &fakePinger{}
 	}
-	uiRun = func(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, asnEnabled bool, onStop func(), onRestart func() error, onResetTrace func(), onResetPort func()) error {
+	uiRun = func(opts ui.RunOptions) error {
 		return nil
 	}
 	var out, errOut bytes.Buffer

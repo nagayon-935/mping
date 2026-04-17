@@ -131,7 +131,10 @@ func matchesFilter(view stats.TargetView, filter string) bool {
 		if len(parts) == 2 {
 			key := strings.TrimSpace(parts[0])
 			valStr := strings.TrimSpace(parts[1])
-			val, _ := strconv.ParseFloat(valStr, 64)
+			val, err := strconv.ParseFloat(valStr, 64)
+			if err != nil {
+				return false
+			}
 			switch key {
 			case "loss":
 				return calcLossRate(view) > val
@@ -148,7 +151,10 @@ func matchesFilter(view stats.TargetView, filter string) bool {
 		if len(parts) == 2 {
 			key := strings.TrimSpace(parts[0])
 			valStr := strings.TrimSpace(parts[1])
-			val, _ := strconv.ParseFloat(valStr, 64)
+			val, err := strconv.ParseFloat(valStr, 64)
+			if err != nil {
+				return false
+			}
 			switch key {
 			case "loss":
 				return calcLossRate(view) < val
@@ -689,9 +695,13 @@ func buildCompactRowCells(values []string, widths []int, aligns []int, rowColor 
 func appendErrorLog(errorLogs *[]string, errorView *tview.TextView, msg string) {
 	*errorLogs = append(*errorLogs, msg)
 	if len(*errorLogs) > errorLogMaxSize {
+		// Rebuild once on eviction instead of every call.
 		*errorLogs = (*errorLogs)[1:]
+		errorView.SetText(strings.Join(*errorLogs, "\n") + "\n")
+		errorView.ScrollToEnd()
+		return
 	}
-	errorView.SetText(strings.Join(*errorLogs, "\n") + "\n")
+	fmt.Fprintf(errorView, "%s\n", msg)
 	errorView.ScrollToEnd()
 }
 

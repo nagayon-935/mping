@@ -1,6 +1,7 @@
 package pinger
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -143,8 +144,12 @@ func checkUDP(addr string, timeout time.Duration) (string, time.Duration) {
 	defer conn.Close()
 
 	start := time.Now()
-	conn.SetDeadline(time.Now().Add(timeout))
-	conn.Write([]byte{})
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return "Error", 0
+	}
+	if _, err := conn.Write([]byte{}); err != nil {
+		return "Error", 0
+	}
 
 	buf := make([]byte, 1)
 	_, err = conn.Read(buf)
@@ -161,8 +166,6 @@ func checkUDP(addr string, timeout time.Duration) (string, time.Duration) {
 }
 
 func isTimeout(err error) bool {
-	if netErr, ok := err.(net.Error); ok {
-		return netErr.Timeout()
-	}
-	return false
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }

@@ -20,7 +20,42 @@ const (
 
 var newApplication = tview.NewApplication
 
-func Run(targets []*stats.TargetStats, interval, timeout time.Duration, doneCh chan struct{}, sourceIPv4, sourceIPv6 string, packetSize int, initialLogs []string, traceEnabled bool, portEnabled bool, asnEnabled bool, onStop func(), onRestart func() error, onResetTrace func(), onResetPort func()) error {
+// RunOptions contains all parameters for the Run function.
+type RunOptions struct {
+	Targets      []*stats.TargetStats
+	Interval     time.Duration
+	Timeout      time.Duration
+	DoneCh       chan struct{} // closed when pinger finishes (count-limited mode); nil means unlimited
+	SourceIPv4   string
+	SourceIPv6   string
+	PacketSize   int
+	InitialLogs  []string
+	TraceEnabled bool
+	PortEnabled  bool
+	ASNEnabled   bool
+	OnStop       func()
+	OnRestart    func() error
+	OnResetTrace func()
+	OnResetPort  func()
+}
+
+// Run starts the TUI application with the given options.
+func Run(opts RunOptions) error {
+	targets := opts.Targets
+	interval := opts.Interval
+	doneCh := opts.DoneCh
+	sourceIPv4 := opts.SourceIPv4
+	sourceIPv6 := opts.SourceIPv6
+	packetSize := opts.PacketSize
+	initialLogs := opts.InitialLogs
+	traceEnabled := opts.TraceEnabled
+	portEnabled := opts.PortEnabled
+	asnEnabled := opts.ASNEnabled
+	onStop := opts.OnStop
+	onRestart := opts.OnRestart
+	onResetTrace := opts.OnResetTrace
+	onResetPort := opts.OnResetPort
+
 	app := newApplication()
 	table := tview.NewTable().
 		SetBorders(true).
