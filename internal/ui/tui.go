@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	tableMaxRows  = 10                      // max ping targets shown without scrolling; keeps UI readable at typical terminal heights
-	minUIRefresh  = 200 * time.Millisecond  // minimum refresh to avoid flicker at very short ping intervals
-	fastUIRefresh = 100 * time.Millisecond  // UI refresh rate when ping interval < minUIRefresh
+	tableMaxRows  = 10                     // max ping targets shown without scrolling; keeps UI readable at typical terminal heights
+	minUIRefresh  = 200 * time.Millisecond // minimum refresh to avoid flicker at very short ping intervals
+	fastUIRefresh = 100 * time.Millisecond // UI refresh rate when ping interval < minUIRefresh
 )
 
 var newApplication = tview.NewApplication
@@ -33,10 +33,17 @@ type RunOptions struct {
 	TraceEnabled bool
 	PortEnabled  bool
 	ASNEnabled   bool
-	OnStop       func()
-	OnRestart    func() error
-	OnResetTrace func()
-	OnResetPort  func()
+	// ExternalCloseCh, when closed, causes the TUI to display a reload message
+	// and stop. Nil disables this behaviour (normal mode).
+	ExternalCloseCh <-chan struct{}
+	// ExternalLogCh delivers messages to the Log pane from outside the TUI.
+	// Each received string is appended as-is (tview colour tags are supported).
+	// Nil disables this channel.
+	ExternalLogCh <-chan string
+	OnStop        func()
+	OnRestart     func() error
+	OnResetTrace  func()
+	OnResetPort   func()
 }
 
 // Run starts the TUI application with the given options.
@@ -55,6 +62,9 @@ func Run(opts RunOptions) error {
 	onRestart := opts.OnRestart
 	onResetTrace := opts.OnResetTrace
 	onResetPort := opts.OnResetPort
+
+	externalCloseCh := opts.ExternalCloseCh
+	externalLogCh := opts.ExternalLogCh
 
 	app := newApplication()
 	table := tview.NewTable().
@@ -78,7 +88,6 @@ func Run(opts RunOptions) error {
 	table.SetBackgroundColor(tcell.ColorBlack)
 	table.SetBorderColor(tcell.ColorWhite)
 	table.SetBordersColor(tcell.ColorWhite)
-
 
 	// Columns: Src IP, Dst IP, ASN, Success, Loss, Loss Ratio, RTT, Avg, Jitter, Size, MTU, TTL, Error, Last Loss
 	fullHeaders := []string{"Src IP", "Dst IP"}
@@ -599,6 +608,22 @@ func Run(opts RunOptions) error {
 				}
 			case <-ticker.C:
 				app.QueueUpdateDraw(updateTable)
+			case msg := <-externalLogCh:
+				// Deliver external log messages (e.g. watcher validation errors)
+				// immediately to the Log pane without waiting for the next tick.
+				app.QueueUpdateDraw(func() {
+					appendErrorLog(&errorLogs, errorView, msg)
+				})
+			case <-externalCloseCh:
+				// External reload requested (e.g. YAML file changed).
+				app.QueueUpdateDraw(func() {
+					appendErrorLog(&errorLogs, errorView,
+						fmt.Sprintf("[yellow][%s] Reloading configuration...[-]",
+							time.Now().Format("15:04:05")))
+				})
+				closeAppStop()
+				app.Stop()
+				return
 			case <-doneCh:
 				// Pinger finished (count limit reached)
 				app.QueueUpdateDraw(func() {
