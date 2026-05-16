@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -19,15 +20,15 @@ import (
 )
 
 type fakePinger struct {
-	startErr           error
-	started            bool
-	closed             bool
-	waited             bool
-	discoverMTU        int
+	startErr             error
+	started              bool
+	closed               bool
+	waited               bool
+	discoverMTU          int
 	discoverBottleneckIP string
-	discoverErr        error
-	traceErr           error
-	logWriterSet       bool
+	discoverErr          error
+	traceErr             error
+	logWriterSet         bool
 }
 
 func (f *fakePinger) Start(interval, timeout time.Duration) error {
@@ -63,12 +64,12 @@ func (f *fakePinger) TraceRoute(dest string, maxHops int, timeout time.Duration)
 	return []string{"hop1", "hop2"}, nil
 }
 
-func (f *fakePinger) SetSource(ip string) {}
-func (f *fakePinger) SetSize(size int)  {}
-func (f *fakePinger) SetCount(count int) {}
+func (f *fakePinger) SetSource(ip string)                       {}
+func (f *fakePinger) SetSize(size int)                          {}
+func (f *fakePinger) SetCount(count int)                        {}
 func (f *fakePinger) SetResolveInterval(interval time.Duration) {}
-func (f *fakePinger) Stop()                    { f.closed = true }
-func (f *fakePinger) SetLogWriter(w io.Writer) { f.logWriterSet = true }
+func (f *fakePinger) Stop()                                     { f.closed = true }
+func (f *fakePinger) SetLogWriter(w io.Writer)                  { f.logWriterSet = true }
 
 func TestGetPreferredOutboundIP_Localhost(t *testing.T) {
 	ip := getPreferredOutboundIP("127.0.0.1", "udp4")
@@ -898,5 +899,249 @@ func TestInitTargets(t *testing.T) {
 	}
 	if targets[0].Host != "a" || targets[1].Host != "b" {
 		t.Errorf("targets host mismatch")
+	}
+}
+
+// ---- validateHostsDoc tests ----
+
+func TestValidateHostsDoc_Valid(t *testing.T) {
+	ms := func(v int) *int { return &v }
+	doc := hostsFileYAML{
+		Hosts:      []string{"a.com", "b.com"},
+		IntervalMs: ms(500),
+		TimeoutMs:  ms(1000),
+		PacketSize: ms(56),
+		Count:      ms(0),
+	}
+	if err := validateHostsDoc(doc); err != nil {
+		t.Errorf("expected valid doc, got: %v", err)
+	}
+}
+
+func TestValidateHostsDoc_EmptyHosts(t *testing.T) {
+	doc := hostsFileYAML{Hosts: []string{}}
+	if err := validateHostsDoc(doc); err == nil {
+		t.Fatal("expected error for empty hosts")
+	}
+}
+
+func TestValidateHostsDoc_NilHosts(t *testing.T) {
+	if err := validateHostsDoc(hostsFileYAML{}); err == nil {
+		t.Fatal("expected error for nil hosts")
+	}
+}
+
+func TestValidateHostsDoc_EmptyHostEntry(t *testing.T) {
+	doc := hostsFileYAML{Hosts: []string{"a.com", "  "}}
+	if err := validateHostsDoc(doc); err == nil {
+		t.Fatal("expected error for blank host entry")
+	}
+}
+
+func TestValidateHostsDoc_InvalidInterval(t *testing.T) {
+	v := 50 // below minimum 100
+	doc := hostsFileYAML{Hosts: []string{"a.com"}, IntervalMs: &v}
+	if err := validateHostsDoc(doc); err == nil {
+		t.Fatal("expected error for interval=50")
+	}
+	v = 99999 // above maximum
+	if err := validateHostsDoc(doc); err == nil {
+		t.Fatal("expected error for interval=99999")
+	}
+}
+
+func TestValidateHostsDoc_InvalidTimeout(t *testing.T) {
+	v := 5 // below minimum 10
+	doc := hostsFileYAML{Hosts: []string{"a.com"}, TimeoutMs: &v}
+	if err := validateHostsDoc(doc); err == nil {
+		t.Fatal("expected error for timeout=5")
+	}
+}
+
+func TestValidateHostsDoc_InvalidSize(t *testing.T) {
+	v := 0 // below minimum 1
+	doc := hostsFileYAML{Hosts: []string{"a.com"}, PacketSize: &v}
+	if err := validateHostsDoc(doc); err == nil {
+		t.Fatal("expected error for size=0")
+	}
+}
+
+func TestValidateHostsDoc_NegativeCount(t *testing.T) {
+	v := -1
+	doc := hostsFileYAML{Hosts: []string{"a.com"}, Count: &v}
+	if err := validateHostsDoc(doc); err == nil {
+		t.Fatal("expected error for count=-1")
+	}
+}
+
+func TestValidateHostsDoc_IPv4IPv6Conflict(t *testing.T) {
+	tr := true
+	doc := hostsFileYAML{Hosts: []string{"a.com"}, Ipv4Only: &tr, Ipv6Only: &tr}
+	if err := validateHostsDoc(doc); err == nil {
+		t.Fatal("expected error for ipv4+ipv6 both true")
+	}
+}
+
+// ---- parseArgs -j/--json-output flag tests ----
+
+func TestParseArgs_JSONOutputShortFlag(t *testing.T) {
+	cfg, _, _, _, err := parseArgs([]string{"-j", "/tmp/stats.json", "example.com"})
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if cfg.jsonOutputFile != "/tmp/stats.json" {
+		t.Errorf("jsonOutputFile = %q, want %q", cfg.jsonOutputFile, "/tmp/stats.json")
+	}
+}
+
+func TestParseArgs_JSONOutputLongFlag(t *testing.T) {
+	cfg, _, _, _, err := parseArgs([]string{"--json-output", "/tmp/out.json", "example.com"})
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if cfg.jsonOutputFile != "/tmp/out.json" {
+		t.Errorf("jsonOutputFile = %q, want %q", cfg.jsonOutputFile, "/tmp/out.json")
+	}
+}
+
+// ---- writeJSONSnapshot tests ----
+
+func TestWriteJSONSnapshot_CreatesValidJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "stats.json")
+
+	targets := []*stats.TargetStats{stats.NewTargetStats("example.com")}
+	targets[0].SetIP("1.2.3.4")
+
+	if err := writeJSONSnapshot(path, targets); err != nil {
+		t.Fatalf("writeJSONSnapshot: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if _, ok := out["timestamp"]; !ok {
+		t.Error("missing 'timestamp' in JSON")
+	}
+	if _, ok := out["targets"]; !ok {
+		t.Error("missing 'targets' in JSON")
+	}
+}
+
+func TestWriteJSONSnapshot_Atomic(t *testing.T) {
+	// Verify that the .tmp file is cleaned up and only the final file exists.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "stats.json")
+
+	if err := writeJSONSnapshot(path, nil); err != nil {
+		t.Fatalf("writeJSONSnapshot: %v", err)
+	}
+
+	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
+		t.Error("expected .tmp file to be removed after rename")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("expected final file to exist: %v", err)
+	}
+}
+
+// ---- run() with -j flag ----
+
+// TestRunJSONOutput_FinalWrite verifies that a valid JSON snapshot file is
+// written when the TUI exits (final snapshot path, no ticker dependency).
+func TestRunJSONOutput_FinalWrite(t *testing.T) {
+	origPinger := newPinger
+	origUI := uiRun
+	t.Cleanup(func() {
+		newPinger = origPinger
+		uiRun = origUI
+	})
+
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		return &fakePinger{}
+	}
+
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "stats.json")
+
+	// Return immediately to trigger only the final snapshot write.
+	uiRun = func(opts ui.RunOptions) error { return nil }
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"-j", jsonPath, "-S", "127.0.0.1", "example.com"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
+	}
+
+	data, err := os.ReadFile(jsonPath)
+	if err != nil {
+		t.Fatalf("JSON file not created: %v", err)
+	}
+	var snap map[string]any
+	if err := json.Unmarshal(data, &snap); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if _, ok := snap["timestamp"]; !ok {
+		t.Error("missing 'timestamp' in JSON output")
+	}
+	if _, ok := snap["targets"]; !ok {
+		t.Error("missing 'targets' in JSON output")
+	}
+}
+
+// ---- YAML auto-reload integration test ----
+
+func TestRunYAMLReload(t *testing.T) {
+	origPinger := newPinger
+	origUI := uiRun
+	t.Cleanup(func() {
+		newPinger = origPinger
+		uiRun = origUI
+	})
+
+	fp := &fakePinger{}
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		return fp
+	}
+
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "hosts.yaml")
+	if err := os.WriteFile(yamlPath, []byte("hosts:\n  - example.com\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	callCount := 0
+	uiRun = func(opts ui.RunOptions) error {
+		callCount++
+		if callCount == 1 {
+			// Write a new hosts file while the TUI is "running".
+			// The watcher should detect this and close ExternalCloseCh.
+			time.Sleep(100 * time.Millisecond)
+			if err := os.WriteFile(yamlPath,
+				[]byte("hosts:\n  - example.com\n  - 1.1.1.1\n"), 0644); err != nil {
+				t.Errorf("write yaml: %v", err)
+			}
+			// Wait for watcher debounce + processing.
+			time.Sleep(600 * time.Millisecond)
+		}
+		// Return nil (simulates user quit or ExternalCloseCh-driven stop).
+		return nil
+	}
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"-f", yamlPath, "-S", "127.0.0.1"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
+	}
+
+	// uiRun should have been called twice: once for initial, once after reload.
+	if callCount < 2 {
+		t.Errorf("expected uiRun to be called >=2 times (reload), got %d", callCount)
 	}
 }

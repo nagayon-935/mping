@@ -3,23 +3,26 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 	ui "github.com/nagayon-935/mping/internal/ui"
+	"github.com/nagayon-935/mping/internal/watcher"
 	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
 )
 
 const (
-	pmtuMaxPayload       = 9872              // max ICMP payload for 9900-byte jumbo frames (9900 - 20 IP - 8 ICMP)
+	pmtuMaxPayload       = 9872             // max ICMP payload for 9900-byte jumbo frames (9900 - 20 IP - 8 ICMP)
 	pmtuHeaderBytes      = 20 + 8           // IPv4 header (20) + ICMP header (8) subtracted from MTU to get max payload
 	dnsResolveInterval   = 60 * time.Second // how often each worker re-resolves the target hostname
 	tracerouteInterval   = 10 * time.Minute // how often the background traceroute is re-run
@@ -192,20 +195,21 @@ func detectAutoSourceIPs(hosts []string) (string, string) {
 }
 
 type config struct {
-	intervalMs int
-	timeoutMs  int
-	outputFile string
-	hostsFile  string
-	ifaceName  string
-	sourceAddr string
-	packetSize int
-	count      int
-	mtuEnabled bool
-	trace      bool
-	asnEnabled bool
-	ipv4Only   bool
-	ipv6Only   bool
-	portSpecs  []string
+	intervalMs     int
+	timeoutMs      int
+	outputFile     string
+	hostsFile      string
+	ifaceName      string
+	sourceAddr     string
+	packetSize     int
+	count          int
+	mtuEnabled     bool
+	trace          bool
+	asnEnabled     bool
+	ipv4Only       bool
+	ipv6Only       bool
+	portSpecs      []string
+	jsonOutputFile string
 }
 
 type hostsFileYAML struct {
@@ -223,6 +227,7 @@ type hostsFileYAML struct {
 	Ipv4Only   *bool    `yaml:"ipv4"`
 	Ipv6Only   *bool    `yaml:"ipv6"`
 	PortSpecs  []string `yaml:"port"`
+	JsonOutput *string  `yaml:"json-output"`
 }
 
 func resolveNetwork(cfg config) string {
@@ -235,14 +240,10 @@ func resolveNetwork(cfg config) string {
 	return "ip"
 }
 
-func mergeHosts(cfg config, fs *pflag.FlagSet, hosts []string) ([]string, config, error) {
-	if cfg.hostsFile == "" {
-		return hosts, cfg, nil
-	}
-	doc, err := parseHostsFile(cfg.hostsFile)
-	if err != nil {
-		return nil, cfg, err
-	}
+// applyDocToCfg applies YAML document fields to cfg, respecting CLI flag
+// overrides (a field is only applied when the CLI flag was not explicitly set).
+// Returns the hosts listed in the document and the updated cfg.
+func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]string, config, error) {
 	if !fs.Changed("interval") && doc.IntervalMs != nil {
 		cfg.intervalMs = *doc.IntervalMs
 	}
@@ -282,10 +283,77 @@ func mergeHosts(cfg config, fs *pflag.FlagSet, hosts []string) ([]string, config
 	if !fs.Changed("port") && len(doc.PortSpecs) > 0 {
 		cfg.portSpecs = doc.PortSpecs
 	}
+	if !fs.Changed("json-output") && doc.JsonOutput != nil {
+		cfg.jsonOutputFile = *doc.JsonOutput
+	}
 	if cfg.ipv4Only && cfg.ipv6Only {
 		return nil, cfg, fmt.Errorf("cannot use both -4 and -6")
 	}
-	return append(doc.Hosts, hosts...), cfg, nil
+	return doc.Hosts, cfg, nil
+}
+
+func mergeHosts(cfg config, fs *pflag.FlagSet, hosts []string) ([]string, config, error) {
+	if cfg.hostsFile == "" {
+		return hosts, cfg, nil
+	}
+	doc, err := parseHostsFile(cfg.hostsFile)
+	if err != nil {
+		return nil, cfg, err
+	}
+	docHosts, merged, err := applyDocToCfg(cfg, fs, doc)
+	if err != nil {
+		return nil, cfg, err
+	}
+	return append(docHosts, hosts...), merged, nil
+}
+
+// validateHostsDoc checks a hostsFileYAML for semantic errors.
+// Returns a non-nil error if any field is out of range or logically invalid.
+func validateHostsDoc(doc hostsFileYAML) error {
+	if len(doc.Hosts) == 0 {
+		return fmt.Errorf("hosts: at least one entry required")
+	}
+	for i, h := range doc.Hosts {
+		if strings.TrimSpace(h) == "" {
+			return fmt.Errorf("hosts[%d]: empty host entry", i)
+		}
+	}
+	if doc.IntervalMs != nil && (*doc.IntervalMs < 100 || *doc.IntervalMs > 60000) {
+		return fmt.Errorf("interval: must be 100–60000 ms, got %d", *doc.IntervalMs)
+	}
+	if doc.TimeoutMs != nil && (*doc.TimeoutMs < 10 || *doc.TimeoutMs > 30000) {
+		return fmt.Errorf("timeout: must be 10–30000 ms, got %d", *doc.TimeoutMs)
+	}
+	if doc.PacketSize != nil && (*doc.PacketSize < 1 || *doc.PacketSize > pmtuMaxPayload) {
+		return fmt.Errorf("size: must be 1–%d bytes, got %d", pmtuMaxPayload, *doc.PacketSize)
+	}
+	if doc.Count != nil && *doc.Count < 0 {
+		return fmt.Errorf("count: must be >= 0, got %d", *doc.Count)
+	}
+	if doc.Ipv4Only != nil && doc.Ipv6Only != nil && *doc.Ipv4Only && *doc.Ipv6Only {
+		return fmt.Errorf("ipv4 and ipv6 cannot both be true")
+	}
+	return nil
+}
+
+// writeJSONSnapshot serialises a statistics snapshot to path atomically.
+// It writes to a temporary file first, then renames it to path, so readers
+// always see a complete file.
+func writeJSONSnapshot(path string, targets []*stats.TargetStats) error {
+	snap := stats.BuildSnapshot(targets)
+	data, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal snapshot: %w", err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return fmt.Errorf("write snapshot: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("rename snapshot: %w", err)
+	}
+	return nil
 }
 
 func determineSourceIPs(cfg config, hosts []string) (string, string, string, error) {
@@ -372,6 +440,7 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 	fs.BoolVarP(&cfg.ipv4Only, "ipv4", "4", false, "force IPv4 only")
 	fs.BoolVarP(&cfg.ipv6Only, "ipv6", "6", false, "force IPv6 only")
 	fs.StringSliceVarP(&cfg.portSpecs, "port", "p", nil, "port(s) to check, e.g. 443/tcp,53/udp or 443 (defaults to tcp)")
+	fs.StringVarP(&cfg.jsonOutputFile, "json-output", "j", "", "write JSON statistics snapshot to this file (updated every 5s)")
 
 	fs.Usage = func() {
 		fmt.Fprintln(&usageBuf, "Usage: mping [options] host1 host2 ...")
@@ -477,6 +546,7 @@ func setupPortChecker(targets []*stats.TargetStats, portSpecs []pinger.PortSpec,
 }
 
 func run(args []string, out io.Writer, errOut io.Writer) int {
+	// ── 1. Parse command-line arguments ──────────────────────────────────────
 	cfg, hosts, fs, usage, err := parseArgs(args)
 	if err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -487,6 +557,11 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		return 1
 	}
 
+	// Save CLI-only values so reloads can apply fresh YAML over them.
+	cliCfg := cfg
+	cliHosts := append([]string(nil), hosts...)
+
+	// ── 2. Initial YAML merge ────────────────────────────────────────────────
 	hosts, cfg, err = mergeHosts(cfg, fs, hosts)
 	if err != nil {
 		fmt.Fprintf(errOut, "Error reading hosts file: %v\n", err)
@@ -497,13 +572,9 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		return 1
 	}
 
-	interval := time.Duration(cfg.intervalMs) * time.Millisecond
-	timeout := time.Duration(cfg.timeoutMs) * time.Millisecond
-
-	// Determine resolution network
+	// ── 3. One-time setup ────────────────────────────────────────────────────
 	resNetwork := resolveNetwork(cfg)
 
-	// Determine source IP for binding and display
 	bindIP, displaySourceIPv4, displaySourceIPv6, err := determineSourceIPs(cfg, hosts)
 	if err != nil {
 		fmt.Fprintf(errOut, "Error resolving interface %s: %v\n", cfg.ifaceName, err)
@@ -513,26 +584,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		fmt.Fprintf(out, "Binding to interface %s (%s)\n", cfg.ifaceName, bindIP)
 	}
 
-	// Initialize targets
-	targets := initTargets(hosts)
-
-	// Resolve settings used by all pinger instances (initial start / restart).
-	opts := pinger.Options{
-		ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {
-			return net.ResolveIPAddr(resNetwork, address)
-		},
-		AsnEnabled: cfg.asnEnabled,
-	}
-
-	// Determine interface MTU and set it for all targets
-	ifaceMTU, err := getInterfaceMTU(cfg.ifaceName, bindIP, hosts[0])
-	if err == nil {
-		for _, t := range targets {
-			t.SetIfaceMTU(ifaceMTU)
-		}
-	}
-
-	// Setup logger if requested
+	// Setup logger once; reloads reuse the same file handle.
 	logFile, err := setupLogger(cfg.outputFile)
 	if err != nil {
 		fmt.Fprintf(errOut, "Error opening log file: %v\n", err)
@@ -544,56 +596,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		logWriter = logFile
 	}
 
-	makePinger := makePingerFactory(targets, opts, cfg, bindIP, logWriter)
-
-	packetSizeToUse, preLogs := setupPMTU(makePinger, cfg, ifaceMTU, targets, hosts[0], errOut)
-
-	var (
-		pMu         sync.Mutex
-		p           pingerController
-		traceCtx    context.Context
-		traceCancel context.CancelFunc
-		portChecker *pinger.PortChecker
-	)
-
-	startPinger := func() error {
-		next := makePinger(packetSizeToUse)
-		if err := next.Start(interval, timeout); err != nil {
-			return err
-		}
-		pMu.Lock()
-		if cfg.trace {
-			if traceCancel != nil {
-				traceCancel()
-			}
-			traceCtx, traceCancel = context.WithCancel(context.Background())
-			go runTraceroutes(traceCtx, next, targets)
-		}
-		p = next
-		pMu.Unlock()
-		return nil
-	}
-
-	stopPinger := func() {
-		pMu.Lock()
-		if traceCancel != nil {
-			traceCancel()
-		}
-		cur := p
-		pMu.Unlock()
-		if cur != nil {
-			cur.Stop()
-			cur.Wait()
-		}
-	}
-
-	if err := startPinger(); err != nil {
-		fmt.Fprintf(errOut, "Error starting pinger: %v\n", err)
-		fmt.Fprintln(errOut, "This program requires root privileges (sudo) for raw ICMP sockets.")
-		return 1
-	}
-
-	// Parse port specs and start port checker if any ports specified.
+	// Parse port specs once; port changes require a process restart.
 	var portSpecs []pinger.PortSpec
 	for _, raw := range cfg.portSpecs {
 		spec, err := pinger.ParsePortSpec(raw)
@@ -603,99 +606,294 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		}
 		portSpecs = append(portSpecs, spec)
 	}
-	pMu.Lock()
-	portChecker = setupPortChecker(targets, portSpecs, interval, timeout)
-	pMu.Unlock()
 
-	stopAll := func() {
-		stopPinger()
-		pMu.Lock()
-		cur := portChecker
-		pMu.Unlock()
-		if cur != nil {
-			cur.Stop()
+	// ── 4. Reload state ──────────────────────────────────────────────────────
+	var (
+		reloadMu        sync.Mutex
+		reloadRequested bool
+		reloadDoc       hostsFileYAML
+	)
+
+	currentCfg := cfg
+	currentHosts := hosts
+
+	// targets is declared outside the loop so the exit summary can read it.
+	var targets []*stats.TargetStats
+
+	// ── 5. Main run loop (re-entered on YAML reload) ──────────────────────────
+	for {
+		interval := time.Duration(currentCfg.intervalMs) * time.Millisecond
+		timeout := time.Duration(currentCfg.timeoutMs) * time.Millisecond
+
+		targets = initTargets(currentHosts)
+
+		opts := pinger.Options{
+			ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {
+				return net.ResolveIPAddr(resNetwork, address)
+			},
+			AsnEnabled: currentCfg.asnEnabled,
 		}
-	}
 
-	// resetTrace clears TraceHops and re-runs traceroute immediately.
-	resetTrace := func() {
-		pMu.Lock()
-		cur := p
-		if traceCancel != nil {
-			traceCancel()
+		ifaceMTU, mtuErr := getInterfaceMTU(currentCfg.ifaceName, bindIP, currentHosts[0])
+		if mtuErr == nil {
+			for _, t := range targets {
+				t.SetIfaceMTU(ifaceMTU)
+			}
 		}
-		traceCtx, traceCancel = context.WithCancel(context.Background())
-		go runTraceroutes(traceCtx, cur, targets)
-		pMu.Unlock()
-	}
 
-	// resetPort stops and restarts the port checker for an immediate re-check.
-	var resetPort func()
-	if len(portSpecs) > 0 {
-		resetPort = func() {
+		makePinger := makePingerFactory(targets, opts, currentCfg, bindIP, logWriter)
+		packetSizeToUse, preLogs := setupPMTU(makePinger, currentCfg, ifaceMTU, targets, currentHosts[0], errOut)
+
+		var (
+			pMu         sync.Mutex
+			p           pingerController
+			traceCtx    context.Context
+			traceCancel context.CancelFunc
+			portChecker *pinger.PortChecker
+		)
+
+		startPinger := func() error {
+			next := makePinger(packetSizeToUse)
+			if err := next.Start(interval, timeout); err != nil {
+				return err
+			}
+			pMu.Lock()
+			if currentCfg.trace {
+				if traceCancel != nil {
+					traceCancel()
+				}
+				traceCtx, traceCancel = context.WithCancel(context.Background())
+				go runTraceroutes(traceCtx, next, targets)
+			}
+			p = next
+			pMu.Unlock()
+			return nil
+		}
+
+		stopPinger := func() {
+			pMu.Lock()
+			if traceCancel != nil {
+				traceCancel()
+			}
+			cur := p
+			pMu.Unlock()
+			if cur != nil {
+				cur.Stop()
+				cur.Wait()
+			}
+		}
+
+		if err := startPinger(); err != nil {
+			fmt.Fprintf(errOut, "Error starting pinger: %v\n", err)
+			fmt.Fprintln(errOut, "This program requires root privileges (sudo) for raw ICMP sockets.")
+			return 1
+		}
+
+		pMu.Lock()
+		portChecker = setupPortChecker(targets, portSpecs, interval, timeout)
+		pMu.Unlock()
+
+		stopAll := func() {
+			stopPinger()
 			pMu.Lock()
 			cur := portChecker
-			portChecker = nil
 			pMu.Unlock()
 			if cur != nil {
 				cur.Stop()
 			}
-			next := setupPortChecker(targets, portSpecs, interval, timeout)
-			pMu.Lock()
-			portChecker = next
-			pMu.Unlock()
 		}
-	}
 
-	// doneCh is closed when the pinger finishes (count-limited mode).
-	var doneCh chan struct{}
-	if cfg.count > 0 {
-		doneCh = make(chan struct{})
-		go func() {
+		resetTrace := func() {
 			pMu.Lock()
 			cur := p
-			pMu.Unlock()
-			if cur != nil {
-				cur.Wait()
+			if traceCancel != nil {
+				traceCancel()
 			}
-			close(doneCh)
-		}()
-	}
+			traceCtx, traceCancel = context.WithCancel(context.Background())
+			go runTraceroutes(traceCtx, cur, targets)
+			pMu.Unlock()
+		}
 
-	// Start TUI
-	if err := uiRun(ui.RunOptions{
-		Targets:      targets,
-		Interval:     interval,
-		Timeout:      timeout,
-		DoneCh:       doneCh,
-		SourceIPv4:   displaySourceIPv4,
-		SourceIPv6:   displaySourceIPv6,
-		PacketSize:   packetSizeToUse,
-		InitialLogs:  preLogs,
-		TraceEnabled: cfg.trace,
-		PortEnabled:  len(portSpecs) > 0,
-		ASNEnabled:   cfg.asnEnabled,
-		OnStop:       stopAll,
-		OnRestart: func() error {
+		var resetPort func()
+		if len(portSpecs) > 0 {
+			resetPort = func() {
+				pMu.Lock()
+				cur := portChecker
+				portChecker = nil
+				pMu.Unlock()
+				if cur != nil {
+					cur.Stop()
+				}
+				next := setupPortChecker(targets, portSpecs, interval, timeout)
+				pMu.Lock()
+				portChecker = next
+				pMu.Unlock()
+			}
+		}
+
+		// doneCh is closed when the pinger finishes (count-limited mode).
+		var doneCh chan struct{}
+		if currentCfg.count > 0 {
+			doneCh = make(chan struct{})
+			go func() {
+				pMu.Lock()
+				cur := p
+				pMu.Unlock()
+				if cur != nil {
+					cur.Wait()
+				}
+				close(doneCh)
+			}()
+		}
+
+		// reloadCh is closed by the YAML watcher to signal TUI shutdown.
+		reloadCh := make(chan struct{})
+		var reloadCloseOnce sync.Once
+
+		// logCh carries messages from the watcher to the TUI Log pane.
+		logCh := make(chan string, 16)
+
+		// onFileChange is the callback invoked by the watcher after debounce.
+		onFileChange := func() {
+			doc, err := parseHostsFile(currentCfg.hostsFile)
+			if err != nil {
+				select {
+				case logCh <- fmt.Sprintf("[red][%s] Reload error: %v[-]",
+					time.Now().Format("15:04:05"), err):
+				default:
+				}
+				return
+			}
+			if err := validateHostsDoc(doc); err != nil {
+				select {
+				case logCh <- fmt.Sprintf("[red][%s] Reload validation error: %v[-]",
+					time.Now().Format("15:04:05"), err):
+				default:
+				}
+				return
+			}
+			reloadMu.Lock()
+			reloadRequested = true
+			reloadDoc = doc
+			reloadMu.Unlock()
+			reloadCloseOnce.Do(func() { close(reloadCh) })
+		}
+
+		// Start the YAML file watcher (only when -f is specified).
+		watchCancel := func() {}
+		watchDone := make(chan struct{})
+		close(watchDone) // pre-closed: no watcher needed
+		if currentCfg.hostsFile != "" {
+			innerDone := make(chan struct{})
+			watchDone = innerDone
+			watchCtx, cancel := context.WithCancel(context.Background())
+			watchCancel = cancel
+			go func() {
+				defer close(innerDone)
+				if err := watcher.Watch(watchCtx, currentCfg.hostsFile, onFileChange); err != nil {
+					select {
+					case logCh <- fmt.Sprintf("[red][%s] Watcher error: %v[-]",
+						time.Now().Format("15:04:05"), err):
+					default:
+					}
+				}
+			}()
+		}
+
+		// Start the JSON periodic writer (only when -j is specified).
+		jsonCtx, jsonCancel := context.WithCancel(context.Background())
+		if currentCfg.jsonOutputFile != "" {
+			go func() {
+				ticker := time.NewTicker(5 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ticker.C:
+						if err := writeJSONSnapshot(currentCfg.jsonOutputFile, targets); err != nil {
+							fmt.Fprintf(errOut, "Warning: JSON snapshot write failed: %v\n", err)
+						}
+					case <-jsonCtx.Done():
+						return
+					}
+				}
+			}()
+		}
+
+		// ── Run TUI ──────────────────────────────────────────────────────────
+		if err := uiRun(ui.RunOptions{
+			Targets:         targets,
+			Interval:        interval,
+			Timeout:         timeout,
+			DoneCh:          doneCh,
+			SourceIPv4:      displaySourceIPv4,
+			SourceIPv6:      displaySourceIPv6,
+			PacketSize:      packetSizeToUse,
+			InitialLogs:     preLogs,
+			TraceEnabled:    currentCfg.trace,
+			PortEnabled:     len(portSpecs) > 0,
+			ASNEnabled:      currentCfg.asnEnabled,
+			ExternalCloseCh: reloadCh,
+			ExternalLogCh:   logCh,
+			OnStop:          stopAll,
+			OnRestart: func() error {
+				stopAll()
+				if err := startPinger(); err != nil {
+					return err
+				}
+				pMu.Lock()
+				portChecker = setupPortChecker(targets, portSpecs, interval, timeout)
+				pMu.Unlock()
+				return nil
+			},
+			OnResetTrace: resetTrace,
+			OnResetPort:  resetPort,
+		}); err != nil {
+			fmt.Fprintf(errOut, "Error running application: %v\n", err)
+			jsonCancel()
+			watchCancel()
 			stopAll()
-			if err := startPinger(); err != nil {
-				return err
-			}
-			pMu.Lock()
-			portChecker = setupPortChecker(targets, portSpecs, interval, timeout)
-			pMu.Unlock()
-			return nil
-		},
-		OnResetTrace: resetTrace,
-		OnResetPort:  resetPort,
-	}); err != nil {
-		fmt.Fprintf(errOut, "Error running application: %v\n", err)
-		stopAll()
-		return 1
-	}
-	stopAll()
+			return 1
+		}
 
-	// Print summary on exit
+		// ── Cleanup after TUI exits ───────────────────────────────────────────
+		// 1. Stop JSON writer, write final snapshot.
+		jsonCancel()
+		if currentCfg.jsonOutputFile != "" {
+			if err := writeJSONSnapshot(currentCfg.jsonOutputFile, targets); err != nil {
+				fmt.Fprintf(errOut, "Warning: Final JSON snapshot write failed: %v\n", err)
+			}
+		}
+		// 2. Stop pinger and port checker.
+		stopAll()
+		// 3. Stop file watcher and wait for the goroutine to exit before
+		//    reading the shared reload state.
+		watchCancel()
+		<-watchDone
+
+		// ── Check if a reload was requested ──────────────────────────────────
+		reloadMu.Lock()
+		reload := reloadRequested
+		if reload {
+			docHosts, newCfg, applyErr := applyDocToCfg(cliCfg, fs, reloadDoc)
+			if applyErr != nil {
+				// Shouldn't happen (validateHostsDoc passed), but be safe.
+				reload = false
+			} else {
+				currentHosts = append(append([]string(nil), docHosts...), cliHosts...)
+				currentCfg = newCfg
+			}
+			reloadRequested = false
+			reloadDoc = hostsFileYAML{}
+		}
+		reloadMu.Unlock()
+
+		if !reload {
+			break
+		}
+		// Loop continues: targets are re-initialised with the new currentHosts.
+	}
+
+	// ── Print exit summary ────────────────────────────────────────────────────
 	fmt.Fprintln(out, "\n--- mping statistics ---")
 	for _, t := range targets {
 		v := t.GetView()
