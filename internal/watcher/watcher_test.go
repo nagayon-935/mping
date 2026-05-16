@@ -31,7 +31,7 @@ func TestWatch_CallsOnChange(t *testing.T) {
 	// Give watcher time to start.
 	time.Sleep(50 * time.Millisecond)
 
-	// Trigger a change.
+	// Trigger a direct write (no rename).
 	if err := os.WriteFile(path, []byte("hosts:\n  - b.com\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,48 @@ func TestWatch_CallsOnChange(t *testing.T) {
 	time.Sleep(debounceDelay + 150*time.Millisecond)
 
 	if n := called.Load(); n < 1 {
-		t.Errorf("onChange not called after write; called %d times", n)
+		t.Errorf("onChange not called after direct write; called %d times", n)
+	}
+
+	cancel()
+	<-done
+}
+
+// TestWatch_AtomicRename verifies that the watcher detects saves done via an
+// atomic rename (write-to-tmp then rename-over), which is what vim, nano, and
+// many other editors do.
+func TestWatch_AtomicRename(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts.yaml")
+	if err := os.WriteFile(path, []byte("hosts:\n  - a.com\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var called atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = Watch(ctx, path, func() { called.Add(1) })
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Simulate vim-style atomic save: write to tmp, then rename over original.
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte("hosts:\n  - b.com\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(debounceDelay + 150*time.Millisecond)
+
+	if n := called.Load(); n < 1 {
+		t.Errorf("onChange not called after atomic rename; called %d times", n)
 	}
 
 	cancel()
@@ -110,9 +151,52 @@ func TestWatch_CancelExits(t *testing.T) {
 	}
 }
 
-func TestWatch_NonExistentFile(t *testing.T) {
-	err := Watch(t.Context(), "/tmp/does-not-exist-mping-test.yaml", func() {})
+// TestWatch_OtherFilesIgnored verifies that changes to sibling files in the
+// same directory do not trigger onChange.
+func TestWatch_OtherFilesIgnored(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "hosts.yaml")
+	other := filepath.Join(dir, "other.yaml")
+
+	if err := os.WriteFile(target, []byte("target\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(other, []byte("other\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var called atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = Watch(ctx, target, func() { called.Add(1) })
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Modify the sibling file — should NOT trigger onChange.
+	if err := os.WriteFile(other, []byte("changed\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(debounceDelay + 150*time.Millisecond)
+
+	if n := called.Load(); n != 0 {
+		t.Errorf("onChange triggered by sibling file change; called %d times", n)
+	}
+
+	cancel()
+	<-done
+}
+
+// TestWatch_NonExistentDirectory verifies that Watch returns an error when the
+// parent directory of path does not exist.
+func TestWatch_NonExistentDirectory(t *testing.T) {
+	err := Watch(t.Context(), "/nonexistent-dir-mping-test/hosts.yaml", func() {})
 	if err == nil {
-		t.Error("expected error for non-existent file, got nil")
+		t.Error("expected error for non-existent parent directory, got nil")
 	}
 }
