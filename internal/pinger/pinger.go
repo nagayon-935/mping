@@ -18,14 +18,14 @@ import (
 )
 
 const (
-	receiverBufferSize  = 65535                      // max IPv4 packet size; large enough for any ICMP message
-	probeBufferSize     = 1500                       // typical Ethernet MTU; sufficient for PMTU probe responses
-	replyChanBuffer     = 100                        // allow burst of replies without blocking the receiver
-	traceChanBuffer     = 200                        // larger buffer for concurrent TraceRoute calls
-	receiverReadTimeout = 1 * time.Second            // poll interval for checking done channel in receiver loop
-	pmtuProbeTimeout    = 300 * time.Millisecond     // generous enough for WAN RTTs, short enough for interactive use
-	payloadSignature    = "MPING"                    // identifies our probes in packet captures
-	traceSignature      = "TRC-"                     // 4-byte prefix distinguishing traceroute probes from ping probes
+	receiverBufferSize  = 65535                  // max IPv4 packet size; large enough for any ICMP message
+	probeBufferSize     = 1500                   // typical Ethernet MTU; sufficient for PMTU probe responses
+	replyChanBuffer     = 100                    // allow burst of replies without blocking the receiver
+	traceChanBuffer     = 200                    // larger buffer for concurrent TraceRoute calls
+	receiverReadTimeout = 1 * time.Second        // poll interval for checking done channel in receiver loop
+	pmtuProbeTimeout    = 300 * time.Millisecond // generous enough for WAN RTTs, short enough for interactive use
+	payloadSignature    = "MPING"                // identifies our probes in packet captures
+	traceSignature      = "TRC-"                 // 4-byte prefix distinguishing traceroute probes from ping probes
 )
 
 // PacketConnV4 interface matches *ipv4.PacketConn methods we use
@@ -192,12 +192,12 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 		if p.Source != "" {
 			bindAddr = p.Source
 		}
-		
+
 		c, err := p.listenPacket(network, bindAddr)
 		if err == nil {
 			p.connV4 = ipv4.NewPacketConn(c)
 			if err := p.connV4.SetControlMessage(ipv4.FlagTTL, true); err != nil {
-				// Non-fatal
+				_ = err // Non-fatal: TTL control message may not be available on all platforms.
 			}
 		} else {
 			errV4 = err
@@ -216,7 +216,7 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 		if err == nil {
 			p.connV6 = ipv6.NewPacketConn(c)
 			if err := p.connV6.SetControlMessage(ipv6.FlagHopLimit, true); err != nil {
-				// Non-fatal
+				_ = err // Non-fatal: hop limit control message may not be available on all platforms.
 			}
 		} else {
 			errV6 = err
@@ -286,23 +286,23 @@ func (p *Pinger) broadcastTrace(msg *icmp.Message, src net.Addr) {
 
 // receiverConfig holds IP-version-specific parameters for the unified receiver loop.
 type receiverConfig struct {
-	protocol     int        // ICMP protocol number (1 for v4, 58 for v6)
-	echoReply    icmp.Type  // ICMPTypeEchoReply or ICMPTypeEchoReply (v6)
-	errorTypes   []icmp.Type // Destination Unreachable, Time Exceeded, Parameter Problem
+	protocol      int         // ICMP protocol number (1 for v4, 58 for v6)
+	echoReply     icmp.Type   // ICMPTypeEchoReply or ICMPTypeEchoReply (v6)
+	errorTypes    []icmp.Type // Destination Unreachable, Time Exceeded, Parameter Problem
 	errorStringFn func(icmp.Type, int) string
 }
 
 var receiverV4Config = receiverConfig{
-	protocol:     1,
-	echoReply:    ipv4.ICMPTypeEchoReply,
-	errorTypes:   []icmp.Type{ipv4.ICMPTypeDestinationUnreachable, ipv4.ICMPTypeTimeExceeded, ipv4.ICMPTypeParameterProblem},
+	protocol:      1,
+	echoReply:     ipv4.ICMPTypeEchoReply,
+	errorTypes:    []icmp.Type{ipv4.ICMPTypeDestinationUnreachable, ipv4.ICMPTypeTimeExceeded, ipv4.ICMPTypeParameterProblem},
 	errorStringFn: icmpErrorString,
 }
 
 var receiverV6Config = receiverConfig{
-	protocol:     58,
-	echoReply:    ipv6.ICMPTypeEchoReply,
-	errorTypes:   []icmp.Type{ipv6.ICMPTypeDestinationUnreachable, ipv6.ICMPTypeTimeExceeded, ipv6.ICMPTypeParameterProblem},
+	protocol:      58,
+	echoReply:     ipv6.ICMPTypeEchoReply,
+	errorTypes:    []icmp.Type{ipv6.ICMPTypeDestinationUnreachable, ipv6.ICMPTypeTimeExceeded, ipv6.ICMPTypeParameterProblem},
 	errorStringFn: icmpV6ErrorString,
 }
 
@@ -362,7 +362,7 @@ func (p *Pinger) runReceiver(
 			n, ttl, src, err := readFrom(buf)
 			if err != nil {
 				var opErr *net.OpError
-			if errors.As(err, &opErr) && opErr.Timeout() {
+				if errors.As(err, &opErr) && opErr.Timeout() {
 					continue
 				}
 				return
