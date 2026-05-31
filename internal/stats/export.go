@@ -25,9 +25,25 @@ type TargetSummary struct {
 	LastTTL      int           `json:"last_ttl"`
 	LastError    string        `json:"last_error,omitempty"`
 	LastLossTime *time.Time    `json:"last_loss_time,omitempty"`
-	TraceHops    []string      `json:"trace_hops,omitempty"`
-	PortResults  []PortSummary `json:"port_results,omitempty"`
-	PMTU         int           `json:"pmtu,omitempty"`
+	TraceHops   []string      `json:"trace_hops,omitempty"`
+	PortResults []PortSummary `json:"port_results,omitempty"`
+	PMTU        int           `json:"pmtu,omitempty"`
+	MTRHops     []HopSummary  `json:"mtr_hops,omitempty"`
+}
+
+// HopSummary is a JSON-serialisable summary for a single MTR hop.
+type HopSummary struct {
+	TTL       int     `json:"ttl"`
+	IP        string  `json:"ip"` // "" when hop never responded
+	ASN       string  `json:"asn,omitempty"`
+	Sent      int     `json:"sent"`
+	Recv      int     `json:"recv"`
+	LossPct   float64 `json:"loss_pct"`
+	LastRTTMs float64 `json:"last_rtt_ms"`
+	AvgRTTMs  float64 `json:"avg_rtt_ms"`
+	MinRTTMs  float64 `json:"min_rtt_ms"`
+	MaxRTTMs  float64 `json:"max_rtt_ms"`
+	JitterMs  float64 `json:"jitter_ms"`
 }
 
 // PortSummary is a JSON-serialisable summary for a single port check result.
@@ -85,6 +101,23 @@ func BuildSnapshot(targets []*TargetStats) ExportSnapshot {
 			traceHops = v.TraceHops
 		}
 
+		var mtrHops []HopSummary
+		for _, h := range v.MTRHops {
+			mtrHops = append(mtrHops, HopSummary{
+				TTL:       h.TTL,
+				IP:        h.IP,
+				ASN:       h.ASN,
+				Sent:      h.Sent,
+				Recv:      h.Recv,
+				LossPct:   h.LossPct,
+				LastRTTMs: durationMs(h.LastRTT),
+				AvgRTTMs:  durationMs(h.AvgRTT),
+				MinRTTMs:  durationMs(h.MinRTT),
+				MaxRTTMs:  durationMs(h.MaxRTT),
+				JitterMs:  durationMs(h.Jitter),
+			})
+		}
+
 		snap.Targets = append(snap.Targets, TargetSummary{
 			Host:         v.Host,
 			IP:           v.IP,
@@ -104,6 +137,7 @@ func BuildSnapshot(targets []*TargetStats) ExportSnapshot {
 			TraceHops:    traceHops,
 			PortResults:  portResults,
 			PMTU:         v.PMTU,
+			MTRHops:      mtrHops,
 		})
 	}
 	return snap

@@ -54,6 +54,7 @@ type TargetStats struct {
 	PMTUBottleneckIP  string
 	TraceHops         []string
 	PortResults       []*PortCheckResult
+	mtrStats          *MTRStats
 	Sent         int
 	Recv         int
 	Loss         int
@@ -97,6 +98,7 @@ type TargetView struct {
 	PMTUBottleneckIP string
 	TraceHops        []string
 	PortResults  []PortCheckView
+	MTRHops      []HopView
 	Sent         int
 	Recv         int
 	Loss         int
@@ -155,6 +157,13 @@ func (t *TargetStats) GetView() TargetView {
 		}
 	}
 
+	// MTR snapshot is taken outside TargetStats.mu to avoid lock ordering issues;
+	// MTRStats carries its own lock.
+	var mtrHops []HopView
+	if t.mtrStats != nil {
+		mtrHops = t.mtrStats.View()
+	}
+
 	return TargetView{
 		Host:             t.Host,
 		IP:               t.IP,
@@ -163,20 +172,31 @@ func (t *TargetStats) GetView() TargetView {
 		PMTU:             t.PMTU,
 		PMTUBottleneckIP: t.PMTUBottleneckIP,
 		TraceHops:        traceCopy,
-		PortResults:  portCopy,
-		Sent:         t.Sent,
-		Recv:         t.Recv,
-		Loss:         t.Loss,
-		LastRTT:      t.LastRTT,
-		MinRTT:       t.MinRTT,
-		MaxRTT:       t.MaxRTT,
-		AvgRTT:       avg,
-		Jitter:       time.Duration(t.jitter),
-		History:      histCopy,
-		LastTTL:      t.LastTTL,
-		LastLossTime: t.LastLossTime,
-		LastError:    t.LastError,
+		PortResults:      portCopy,
+		MTRHops:          mtrHops,
+		Sent:             t.Sent,
+		Recv:             t.Recv,
+		Loss:             t.Loss,
+		LastRTT:          t.LastRTT,
+		MinRTT:           t.MinRTT,
+		MaxRTT:           t.MaxRTT,
+		AvgRTT:           avg,
+		Jitter:           time.Duration(t.jitter),
+		History:          histCopy,
+		LastTTL:          t.LastTTL,
+		LastLossTime:     t.LastLossTime,
+		LastError:        t.LastError,
 	}
+}
+
+// MTR returns the MTRStats for this target, creating it lazily on first call.
+func (t *TargetStats) MTR() *MTRStats {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.mtrStats == nil {
+		t.mtrStats = NewMTRStats()
+	}
+	return t.mtrStats
 }
 
 func (t *TargetStats) SetIP(ip string) {
@@ -293,4 +313,7 @@ func (t *TargetStats) Reset() {
 	t.rttHistory = make([]time.Duration, historySize)
 	t.historyIdx = 0
 	t.historyLen = 0
+	if t.mtrStats != nil {
+		t.mtrStats.Reset()
+	}
 }
