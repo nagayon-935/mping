@@ -34,20 +34,8 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 	// continuous ReadFrom consumes Time Exceeded replies before our socket can see them.
 	var traceCh chan traceMsg
 	if (isV4 && p.connV4 != nil) || (!isV4 && p.connV6 != nil) {
-		traceCh = make(chan traceMsg, traceChanBuffer)
-		p.traceChansMu.Lock()
-		p.traceChans = append(p.traceChans, traceCh)
-		p.traceChansMu.Unlock()
-		defer func() {
-			p.traceChansMu.Lock()
-			for i, ch := range p.traceChans {
-				if ch == traceCh {
-					p.traceChans = append(p.traceChans[:i], p.traceChans[i+1:]...)
-					break
-				}
-			}
-			p.traceChansMu.Unlock()
-		}()
+		traceCh = p.RegisterTraceChan()
+		defer p.UnregisterTraceChan(traceCh)
 	}
 
 	// Open a socket solely for sending TTL-limited probes.
