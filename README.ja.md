@@ -15,11 +15,13 @@
 * **詳細な設定**: インターフェイス、ソースIP、パケットサイズ、送信回数などの柔軟な指定が可能です。
 * **YAML ホストリスト**: ホスト一覧をファイルで管理できます。
 * **Traceroute ペイン**: `-T` オプション指定時に Host/Route の 2 カラムテーブル形式で経路を表示します。複数ターゲットを同時に traceroute し、それぞれの結果を行で区切って一覧表示します。
+* **MTR Monitor ペイン**: `-M` オプション指定時に、経路上の各ホップに対してリアルタイムでロス率/レイテンシ統計を計測・表示します。`mtr` コマンドと同様の Hop / Host / Loss% / Snt / Recv / Last / Avg / Min / Max / Jitter カラムを表示。`-T` と同時使用可能です。
 * **Port Monitor ペイン**: `-p` オプション指定時に TCP/UDP ポートの疎通状況をリアルタイムで監視します。ポート番号から推定されるサービス名、Open/Closed の累計回数、最終ステータス変化時刻を表示します。
 * **PMTU 探索**: DF 付きのパケットサイズ探索を実行できます。
 * **自動ソースIP検出**: 指定がない場合でも、実際に通信に使用されているローカルIPを自動的に表示します。
 * **RTT グラフ**: 各グラフは縦軸 0〜100ms、横軸 30 秒の固定レンジで表示されます。
 * **CSV ログ出力**: 実行結果を統計情報とともにファイルに保存できます。
+* **JSON 統計エクスポート**: `-j` オプションで 5 秒ごとに全統計情報の JSON スナップショットをファイルへ出力します。
 
 ## 対応プラットフォーム
 
@@ -156,8 +158,17 @@ mping -p 443/tcp google.com
 # 複数ポートをカンマ区切りで指定
 mping -p 443/tcp,53/udp google.com 8.8.8.8
 
+# MTR 風の経路別ロス/レイテンシ監視
+mping -M google.com
+
+# MTR + Traceroute を同時に表示
+mping -T -M google.com
+
 # Traceroute と Port Monitor を同時に表示
 mping -T -p 443/tcp google.com
+
+# 統計情報を JSON ファイルへリアルタイム出力 (5 秒ごとに更新)
+mping -j stats.json google.com 1.1.1.1
 ```
 
 > インストールせずに実行する場合 (`setcap`/`setuid` なし) は `sudo` を付けてください:
@@ -176,9 +187,11 @@ hosts:
 interval: 500
 timeout: 2000
 traceroute: true
+mtr: true
 port:
   - 443/tcp
   - 53/udp
+json-output: stats.json
 ```
 
 ### オプション
@@ -189,6 +202,7 @@ port:
 | `--timeout` | `-t` | Ping のタイムアウト (ミリ秒) | `1000` |
 | `--file` | `-f` | ホスト一覧の YAML ファイルパス | `""` |
 | `--traceroute` | `-T` | Traceroute ペインを表示する | `false` |
+| `--mtr` | `-M` | MTR Monitor ペインを表示する (経路別ロス/レイテンシの継続計測) | `false` |
 | `--discovery-mtu` | `-m` | 最大 payload サイズを DF で探索する | `false` |
 | `--interface` | `-I` | 使用するネットワークインターフェイス名 (例: `eth0`, `en0`) | `""` |
 | `--source` | `-S` | 送信元 IPv4 アドレスの指定 | `""` (自動検出) |
@@ -198,6 +212,7 @@ port:
 | `--ipv6` | `-6` | IPv6 のみを使用する | `false` |
 | `--output` | `-o` | CSV 形式でのログ出力ファイルパス | `""` |
 | `--port` | `-p` | 疎通確認するポート (例: `443/tcp`, `53/udp`, `443`)。カンマ区切りで複数指定可 | `""` |
+| `--json-output` | `-j` | 統計情報の JSON スナップショットを出力するファイルパス (5 秒ごとに更新) | `""` |
 
 ### キー操作
 
@@ -207,7 +222,7 @@ port:
 | **s** | Ping 送信を一時停止する |
 | **S** | Ping 送信を再開する (**s** で一時停止した後のみ有効) |
 | **R** | 全ての統計情報とログをリセットする |
-| **Tab** | フォーカスを切り替える: Ping Monitor → Traceroute Monitor → Port Monitor → RTT Graphs → Log |
+| **Tab** | フォーカスを切り替える: Ping Monitor → Traceroute Monitor → MTR Monitor → Port Monitor → RTT Graphs → Log |
 | **↑ / ↓ / PgUp / PgDn** | フォーカス中のペインをスクロール (Table / Traceroute / RTT Graphs) |
 
 ## 表示項目 (TUI カラム)
@@ -235,6 +250,28 @@ port:
 * 複数ターゲット指定時は行で区切って一覧表示します。
 * 起動後に一度 traceroute を実行し、その後 10 分ごとに自動更新します。
 
+## MTR Monitor ペイン
+
+* `-M` / `--mtr` 指定時のみ表示されます。
+* 各ターゲットへの経路を発見した後、全ホップに対して毎秒 TTL-limited ICMP プローブを送り続け、ホップ単位のロス率・レイテンシを集計します。
+* ホップ発見は起動時に行い、10 分ごとに自動再発見してルート変化に追従します。
+* 応答のないホップ (`*`) は 100% ロスとしてカウントされます。
+* ヘッダ行には `SrcIP -> DstIP`（ホスト名指定時は `hostname (SrcIP -> DstIP)`）を表示します。
+* `-T` (Traceroute ペイン) と同時使用可能で、両ペインが並列表示されます。
+* 表示カラム:
+  * **Hop** — TTL ホップ番号
+  * **Host** — ホップの IP アドレス (`-a` 指定時は ASN も表示)。応答なし時は `*`
+  * **Loss%** — このホップのパケットロス率 (緑 / オレンジ / 赤)
+  * **Snt** — 送信プローブ数の累計
+  * **Recv** — 受信成功数の累計
+  * **Last** — 直近プローブの RTT
+  * **Avg** — RTT の平均値
+  * **Min** — RTT の最小値
+  * **Max** — RTT の最大値
+  * **Jitter** — パケット遅延変動 (RFC 1889 スムージング)
+* 端末幅が狭い場合、**Recv** / **Min** / **Max** / **Jitter** カラムは自動的に省略されます (コンパクトモード)。
+* MTR 統計は `-j` JSON エクスポートに `mtr_hops` フィールドとして含まれます。
+
 ## Port Monitor ペイン
 
 * `-p` / `--port` 指定時のみ表示されます。
@@ -256,8 +293,5 @@ port:
 * 探索結果は **Size** カラムに反映されます。
 
 ## ライセンス
-
-MIT
-ンス
 
 MIT

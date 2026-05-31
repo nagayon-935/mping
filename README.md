@@ -15,11 +15,13 @@
 * **Flexible configuration** — specify interface, source IP, packet size, send count, and more.
 * **YAML host list** — manage target hosts in a file.
 * **Traceroute pane** — show the route to each target in a Host/Route table when `-T` is given. Multiple targets are traced concurrently and displayed together.
+* **MTR Monitor pane** — continuous per-hop loss/latency statistics when `-M` is given. Each hop is probed every second and displays Hop, Host, Loss%, Snt, Recv, Last, Avg, Min, Max, Jitter — the same columns as `mtr`. Can be used simultaneously with `-T`.
 * **Port Monitor pane** — monitor TCP/UDP port reachability in real time with `-p`. Displays the estimated service name, cumulative Open/Closed counts, and time since last status change.
 * **PMTU discovery** — probe maximum payload size using DF-bit ICMP packets.
 * **Auto source IP detection** — automatically detects and displays the local IP used for each destination.
 * **RTT graph** — fixed range of 0–100 ms (Y-axis) × 30 seconds (X-axis) per target.
 * **CSV log output** — save results with statistics to a file.
+* **JSON statistics export** — write a live snapshot of all statistics to a JSON file every 5 seconds with `-j`.
 
 ## Supported platforms
 
@@ -156,8 +158,17 @@ mping -p 443/tcp google.com
 # Multiple ports (comma-separated)
 mping -p 443/tcp,53/udp google.com 8.8.8.8
 
+# MTR-style per-hop monitor
+mping -M google.com
+
+# MTR + Traceroute simultaneously
+mping -T -M google.com
+
 # Traceroute + Port Monitor simultaneously
 mping -T -p 443/tcp google.com
+
+# Export live statistics to a JSON file (updated every 5 s)
+mping -j stats.json google.com 1.1.1.1
 ```
 
 > If you run mping **without** installing (i.e. without `setcap`/`setuid`), prepend `sudo`:
@@ -176,9 +187,11 @@ hosts:
 interval: 500
 timeout: 2000
 traceroute: true
+mtr: true
 port:
   - 443/tcp
   - 53/udp
+json-output: stats.json
 ```
 
 ### Options
@@ -189,6 +202,7 @@ port:
 | `--timeout` | `-t` | Ping timeout (ms) | `1000` |
 | `--file` | `-f` | Path to YAML host list file | `""` |
 | `--traceroute` | `-T` | Show Traceroute pane | `false` |
+| `--mtr` | `-M` | Show MTR Monitor pane (continuous per-hop loss/latency) | `false` |
 | `--discovery-mtu` | `-m` | Discover max payload size with DF bit | `false` |
 | `--interface` | `-I` | Network interface name (e.g. `eth0`, `en0`) | `""` |
 | `--source` | `-S` | Source IPv4 address | `""` (auto-detect) |
@@ -198,6 +212,7 @@ port:
 | `--ipv6` | `-6` | Use IPv6 only | `false` |
 | `--output` | `-o` | CSV log output file path | `""` |
 | `--port` | `-p` | Ports to check (e.g. `443/tcp`, `53/udp`, `443`). Comma-separated for multiple. | `""` |
+| `--json-output` | `-j` | Write a JSON statistics snapshot to this file every 5 seconds | `""` |
 
 ### Key bindings
 
@@ -207,7 +222,7 @@ port:
 | **s** | Pause ping |
 | **S** | Resume ping (only valid after **s**) |
 | **R** | Reset all statistics and logs |
-| **Tab** | Cycle focus: Ping Monitor → Traceroute Monitor → Port Monitor → RTT Graphs → Log |
+| **Tab** | Cycle focus: Ping Monitor → Traceroute Monitor → MTR Monitor → Port Monitor → RTT Graphs → Log |
 | **↑ / ↓ / PgUp / PgDn** | Scroll focused pane (Table / Traceroute / RTT Graphs) |
 
 ## TUI columns
@@ -234,6 +249,28 @@ port:
 * Probes up to 30 hops and displays results in a Host / Route two-column table.
 * Multiple targets are traced concurrently and separated by divider rows.
 * One traceroute is run at startup, then automatically refreshed every 10 minutes.
+
+## MTR Monitor pane
+
+* Shown only when `-M` / `--mtr` is given.
+* Performs continuous TTL-limited ICMP probing to every hop on the path to each target.
+* The hop path is discovered at startup and re-discovered every 10 minutes to track route changes.
+* Each hop is probed once per second. Unresponsive hops (`*`) accumulate 100% loss.
+* The header row shows `SrcIP -> DstIP` (or `hostname (SrcIP -> DstIP)` for hostname targets).
+* Can be combined with `-T` (both panes are displayed side by side).
+* Columns:
+  * **Hop** — TTL hop number
+  * **Host** — Responder IP (and ASN when `-a` is given). `*` when no response.
+  * **Loss%** — Packet loss percentage for this hop (green / orange / red)
+  * **Snt** — Total probes sent
+  * **Recv** — Total replies received
+  * **Last** — RTT of the most recent probe
+  * **Avg** — Average RTT
+  * **Min** — Minimum RTT
+  * **Max** — Maximum RTT
+  * **Jitter** — Smoothed inter-packet delay variation (RFC 1889)
+* On narrow terminals, **Min**, **Max**, **Recv**, and **Jitter** columns are hidden automatically (compact mode).
+* MTR statistics are included in the `-j` JSON export as `mtr_hops` per target.
 
 ## Port Monitor pane
 
