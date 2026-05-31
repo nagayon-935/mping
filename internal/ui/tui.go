@@ -34,6 +34,9 @@ type RunOptions struct {
 	MTREnabled   bool
 	PortEnabled  bool
 	ASNEnabled   bool
+	// Thresholds overrides the colour-coding / alert boundaries. Nil keeps the
+	// built-in defaults.
+	Thresholds *Thresholds
 	// ExternalCloseCh, when closed, causes the TUI to display a reload message
 	// and stop. Nil is safe: a nil receive channel blocks forever in select,
 	// effectively disabling the case (normal mode).
@@ -52,6 +55,9 @@ type RunOptions struct {
 
 // Run starts the TUI application with the given options.
 func Run(opts RunOptions) error {
+	if opts.Thresholds != nil {
+		activeThresholds = *opts.Thresholds
+	}
 	targets := opts.Targets
 	interval := opts.Interval
 	doneCh := opts.DoneCh
@@ -521,8 +527,8 @@ func Run(opts RunOptions) error {
 			}
 			// Build ordered focus cycle: table → [trace] → [mtr] → [port] → graph → error → table
 			type focusEntry struct {
-				enabled bool
-				view    tview.Primitive
+				enabled  bool
+				view     tview.Primitive
 				setColor func(tcell.Color)
 			}
 			focusCycle := []focusEntry{

@@ -12,17 +12,17 @@ import (
 )
 
 const (
-	mtrHopColW  = 5  // " Hop " — "  1. " fits exactly
-	mtrLossColW = 8  // " 100.0% "
-	mtrSntColW  = 6  // "  Snt  "
-	mtrRecvColW = 6  // " Recv  "
-	mtrLatColW  = 9  // " 12.1ms  "
+	mtrHopColW  = 5 // " Hop " — "  1. " fits exactly
+	mtrLossColW = 8 // " 100.0% "
+	mtrSntColW  = 6 // "  Snt  "
+	mtrRecvColW = 6 // " Recv  "
+	mtrLatColW  = 9 // " 12.1ms  "
 	minMTRHostW = 16
 )
 
 // mtrLossColorTag returns a tview color tag string based on loss percentage.
 func mtrLossColorTag(pct float64) string {
-	if pct >= lossRedThreshold {
+	if pct >= activeThresholds.LossCrit {
 		return "[red::b]"
 	}
 	if pct > 0 {
@@ -36,10 +36,10 @@ func mtrRTTColorTag(rtt time.Duration) string {
 	if rtt == 0 {
 		return "[white]"
 	}
-	if rtt > rttRedThreshold {
+	if rtt > activeThresholds.RTTCrit {
 		return "[red]"
 	}
-	if rtt > rttOrangeThreshold {
+	if rtt > activeThresholds.RTTWarn {
 		return "[orange]"
 	}
 	return "[green]"

@@ -169,6 +169,9 @@ mping -T -p 443/tcp google.com
 
 # 統計情報を JSON ファイルへリアルタイム出力 (5 秒ごとに更新)
 mping -j stats.json google.com 1.1.1.1
+
+# 色分けの閾値をカスタマイズする (warn = オレンジ, crit = 赤)
+mping --rtt-warn 30 --rtt-crit 100 --loss-warn 10 --loss-crit 50 google.com
 ```
 
 > インストールせずに実行する場合 (`setcap`/`setuid` なし) は `sudo` を付けてください:
@@ -192,6 +195,13 @@ port:
   - 443/tcp
   - 53/udp
 json-output: stats.json
+thresholds:
+  rtt-warn: 50      # ミリ秒 (オレンジ)
+  rtt-crit: 200     # ミリ秒 (赤)
+  jitter-warn: 10   # ミリ秒 (オレンジ)
+  jitter-crit: 50   # ミリ秒 (赤)
+  loss-warn: 20     # パーセント (オレンジ)
+  loss-crit: 80     # パーセント (赤)
 ```
 
 ### オプション
@@ -213,6 +223,14 @@ json-output: stats.json
 | `--output` | `-o` | CSV 形式でのログ出力ファイルパス | `""` |
 | `--port` | `-p` | 疎通確認するポート (例: `443/tcp`, `53/udp`, `443`)。カンマ区切りで複数指定可 | `""` |
 | `--json-output` | `-j` | 統計情報の JSON スナップショットを出力するファイルパス (5 秒ごとに更新) | `""` |
+| `--rtt-warn` | | RTT の warn 閾値 (ミリ秒・オレンジ) | `50` |
+| `--rtt-crit` | | RTT の crit 閾値 (ミリ秒・赤) | `200` |
+| `--jitter-warn` | | Jitter の warn 閾値 (ミリ秒・オレンジ) | `10` |
+| `--jitter-crit` | | Jitter の crit 閾値 (ミリ秒・赤) | `50` |
+| `--loss-warn` | | ロス率の warn 閾値 (パーセント・オレンジ) | `20` |
+| `--loss-crit` | | ロス率の crit 閾値 (パーセント・赤) | `80` |
+
+> **閾値 (Thresholds)** — `warn` がオレンジ、`crit` が赤の境界値で、Loss Ratio / RTT / Jitter カラムの色分け (および Log ペインのアラート記録) に使われます。各メトリクスで `warn` は `crit` より小さい必要があります。YAML の `thresholds:` ブロックでも設定できます。
 
 ### キー操作
 
@@ -232,11 +250,12 @@ json-output: stats.json
 * **ASN**: ターゲット IP の AS 番号 (`-a` 指定時のみ表示)。
 * **Success**: 受信に成功したパケット数。
 * **Loss**: 損失したパケット数。
-* **Loss Ratio**: パケット損失率。
+* **Loss Ratio**: パケット損失率。色の境界値は設定可能 (以下はデフォルト)。
   * **緑**: 0%〜20% &nbsp;|&nbsp; **オレンジ**: 20%〜80% &nbsp;|&nbsp; **鮮やかな赤**: >80%
-* **RTT / Avg / Jitter**: 往復時間 (Round Trip Time) の最新/平均/ジッタ値。
+* **RTT / Avg / Jitter**: 往復時間 (Round Trip Time) の最新/平均/ジッタ値。色の境界値は設定可能 (以下はデフォルト)。
   * **RTT**: 緑 (≤50ms) / オレンジ (≤200ms) / 赤 (>200ms)
   * **Jitter**: 緑 (≤10ms) / オレンジ (≤50ms) / 赤 (>50ms)
+  * `--rtt-warn/--rtt-crit`、`--jitter-warn/--jitter-crit`、`--loss-warn/--loss-crit`、または YAML の `thresholds:` ブロックで上書きできます。
 * **Size**: 送信パケットのペイロードサイズ。
 * **MTU**: 送信に使用されているインターフェイスの MTU。
 * **TTL**: 最後のパケットの生存時間 (Time To Live)。
