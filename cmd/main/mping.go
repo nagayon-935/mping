@@ -120,7 +120,7 @@ func getInterfaceMTU(ifaceName, sourceIP, firstHost string) (int, error) {
 	if ifaceName != "" {
 		iface, err := interfaceByName(ifaceName)
 		if err != nil {
-			return 0, err
+			return 0, fmt.Errorf("get interface %q: %w", ifaceName, err)
 		}
 		return iface.MTU, nil
 	}
@@ -138,7 +138,7 @@ func getInterfaceMTU(ifaceName, sourceIP, firstHost string) (int, error) {
 
 	ifaces, err := netInterfaces()
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("list interfaces: %w", err)
 	}
 	for _, iface := range ifaces {
 		addrs, err := iface.Addrs()
@@ -346,7 +346,7 @@ func writeJSONSnapshot(path string, targets []*stats.TargetStats) error {
 		return fmt.Errorf("marshal snapshot: %w", err)
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return fmt.Errorf("write snapshot: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
@@ -400,15 +400,15 @@ func setupLogger(path string) (*os.File, error) {
 	if path == "" {
 		return nil, nil
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open log file %q: %w", path, err)
 	}
 	// Write CSV header only when the file is new (empty).
 	info, err := f.Stat()
 	if err != nil {
 		f.Close()
-		return nil, err
+		return nil, fmt.Errorf("stat log file %q: %w", path, err)
 	}
 	if info.Size() == 0 {
 		if _, err := f.Write([]byte("Timestamp,Host,IP,Seq,Status,RTT(ms),TTL,Error\n")); err != nil {
@@ -469,12 +469,12 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 func parseHostsFile(path string) (hostsFileYAML, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return hostsFileYAML{}, err
+		return hostsFileYAML{}, fmt.Errorf("read hosts file %q: %w", path, err)
 	}
 
 	var doc hostsFileYAML
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return hostsFileYAML{}, err
+		return hostsFileYAML{}, fmt.Errorf("parse hosts file %q: %w", path, err)
 	}
 	return doc, nil
 }
@@ -693,6 +693,10 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		portChecker = setupPortChecker(targets, portSpecs, interval, timeout)
 		pMu.Unlock()
 
+		// stopAll is called from multiple sites (OnStop, OnRestart, error path,
+		// normal cleanup) and must be idempotent. Pinger.Stop uses a select-guarded
+		// close(done) and PortChecker.Stop uses sync.Once, so both are safe to call
+		// multiple times.
 		stopAll := func() {
 			stopPinger()
 			pMu.Lock()
@@ -802,8 +806,10 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 
 		// Start the JSON periodic writer (only when -j is specified).
 		jsonCtx, jsonCancel := context.WithCancel(context.Background())
+		jsonDone := make(chan struct{})
 		if currentCfg.jsonOutputFile != "" {
 			go func() {
+				defer close(jsonDone)
 				ticker := time.NewTicker(5 * time.Second)
 				defer ticker.Stop()
 				for {
@@ -817,6 +823,8 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 					}
 				}
 			}()
+		} else {
+			close(jsonDone)
 		}
 
 		// ── Run TUI ──────────────────────────────────────────────────────────
@@ -850,14 +858,17 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		}); err != nil {
 			fmt.Fprintf(errOut, "Error running application: %v\n", err)
 			jsonCancel()
+			<-jsonDone
 			watchCancel()
 			stopAll()
 			return 1
 		}
 
 		// ── Cleanup after TUI exits ───────────────────────────────────────────
-		// 1. Stop JSON writer, write final snapshot.
+		// 1. Stop JSON writer, then write final snapshot once the goroutine has
+		//    exited to avoid concurrent writes to the same .tmp file.
 		jsonCancel()
+		<-jsonDone
 		if currentCfg.jsonOutputFile != "" {
 			if err := writeJSONSnapshot(currentCfg.jsonOutputFile, targets); err != nil {
 				fmt.Fprintf(errOut, "Warning: Final JSON snapshot write failed: %v\n", err)

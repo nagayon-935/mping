@@ -196,9 +196,8 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 		c, err := p.listenPacket(network, bindAddr)
 		if err == nil {
 			p.connV4 = ipv4.NewPacketConn(c)
-			if err := p.connV4.SetControlMessage(ipv4.FlagTTL, true); err != nil {
-				_ = err // Non-fatal: TTL control message may not be available on all platforms.
-			}
+			// Non-fatal: TTL control message may not be available on all platforms.
+			_ = p.connV4.SetControlMessage(ipv4.FlagTTL, true)
 		} else {
 			errV4 = err
 		}
@@ -215,9 +214,8 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 		c, err := p.listenPacket(network, bindAddr)
 		if err == nil {
 			p.connV6 = ipv6.NewPacketConn(c)
-			if err := p.connV6.SetControlMessage(ipv6.FlagHopLimit, true); err != nil {
-				_ = err // Non-fatal: hop limit control message may not be available on all platforms.
-			}
+			// Non-fatal: hop limit control message may not be available on all platforms.
+			_ = p.connV6.SetControlMessage(ipv6.FlagHopLimit, true)
 		} else {
 			errV6 = err
 		}

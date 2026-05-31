@@ -22,8 +22,9 @@ const debounceDelay = 200 * time.Millisecond
 // onChange call.
 //
 // Watch blocks until ctx is cancelled, then returns nil.
-// A non-nil error is returned only for setup failures (e.g. fsnotify init,
-// unreadable directory).
+// A non-nil error is returned for setup failures (e.g. fsnotify init,
+// unreadable directory) or for runtime fsnotify errors (e.g. ENOSPC, EBADF)
+// that would leave auto-reload silently broken if ignored.
 func Watch(ctx context.Context, path string, onChange func()) error {
 	// Resolve to an absolute path so we can compare event paths correctly
 	// regardless of how the caller expressed path (relative vs absolute).
@@ -76,11 +77,14 @@ func Watch(ctx context.Context, path string, onChange func()) error {
 				timer.Reset(debounceDelay)
 			}
 
-		case _, ok := <-w.Errors:
+		case err, ok := <-w.Errors:
 			if !ok {
 				return nil
 			}
-			// Non-fatal watcher errors (e.g. EINTR): ignore and continue.
+			// Surface the error; the caller decides whether to restart the
+			// watcher. Silently swallowing ENOSPC or EBADF would leave
+			// auto-reload silently broken.
+			return fmt.Errorf("fsnotify: %w", err)
 
 		case <-timer.C:
 			onChange()
