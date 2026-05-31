@@ -47,6 +47,8 @@ func durationMs(d time.Duration) float64 {
 
 // BuildSnapshot builds an ExportSnapshot from the given targets.
 // GetView is called once per target for a consistent, thread-safe snapshot.
+// If targets is nil or empty, Targets in the returned snapshot is a non-nil,
+// empty slice (JSON encodes as [] rather than null).
 func BuildSnapshot(targets []*TargetStats) ExportSnapshot {
 	snap := ExportSnapshot{
 		Timestamp: time.Now().UTC(),

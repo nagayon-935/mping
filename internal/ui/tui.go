@@ -34,11 +34,13 @@ type RunOptions struct {
 	PortEnabled  bool
 	ASNEnabled   bool
 	// ExternalCloseCh, when closed, causes the TUI to display a reload message
-	// and stop. Nil disables this behaviour (normal mode).
+	// and stop. Nil is safe: a nil receive channel blocks forever in select,
+	// effectively disabling the case (normal mode).
 	ExternalCloseCh <-chan struct{}
 	// ExternalLogCh delivers messages to the Log pane from outside the TUI.
 	// Each received string is appended as-is (tview colour tags are supported).
-	// Nil disables this channel.
+	// Nil is safe: a nil receive channel blocks forever in select, disabling
+	// the case.
 	ExternalLogCh <-chan string
 	OnStop        func()
 	OnRestart     func() error
