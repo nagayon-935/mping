@@ -31,6 +31,7 @@ type RunOptions struct {
 	PacketSize   int
 	InitialLogs  []string
 	TraceEnabled bool
+	MTREnabled   bool
 	PortEnabled  bool
 	ASNEnabled   bool
 	// ExternalCloseCh, when closed, causes the TUI to display a reload message
@@ -45,6 +46,7 @@ type RunOptions struct {
 	OnStop        func()
 	OnRestart     func() error
 	OnResetTrace  func()
+	OnResetMTR    func()
 	OnResetPort   func()
 }
 
