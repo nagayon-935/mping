@@ -15,15 +15,9 @@ import (
 )
 
 const (
-	rttOrangeThreshold    = 50 * time.Millisecond
-	rttRedThreshold       = 200 * time.Millisecond
-	jitterOrangeThreshold = 10 * time.Millisecond
-	jitterRedThreshold    = 50 * time.Millisecond
-	lossOrangeThreshold   = 20.0
-	lossRedThreshold      = 80.0
-	errorLogMaxSize       = 1000 // maximum number of lines kept in the error log pane
-	minRouteContentWidth  = 20
-	minPortContentWidth   = 20
+	errorLogMaxSize      = 1000 // maximum number of lines kept in the error log pane
+	minRouteContentWidth = 20
+	minPortContentWidth  = 20
 )
 
 var (
@@ -298,20 +292,20 @@ func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, pack
 }
 
 func lossColorForRate(lossRate float64) tcell.Color {
-	if lossRate > lossRedThreshold {
+	if lossRate > activeThresholds.LossCrit {
 		return vividRed
 	}
-	if lossRate > lossOrangeThreshold {
+	if lossRate > activeThresholds.LossWarn {
 		return tcell.ColorOrange
 	}
 	return tcell.ColorGreen
 }
 
 func rttColorForRTT(rtt time.Duration) tcell.Color {
-	if rtt > rttRedThreshold {
+	if rtt > activeThresholds.RTTCrit {
 		return vividRed
 	}
-	if rtt > rttOrangeThreshold {
+	if rtt > activeThresholds.RTTWarn {
 		return tcell.ColorOrange
 	}
 	if rtt > 0 {
@@ -321,10 +315,10 @@ func rttColorForRTT(rtt time.Duration) tcell.Color {
 }
 
 func jitterColorForJitter(jitter time.Duration) tcell.Color {
-	if jitter > jitterRedThreshold {
+	if jitter > activeThresholds.JitterCrit {
 		return vividRed
 	}
-	if jitter > jitterOrangeThreshold {
+	if jitter > activeThresholds.JitterWarn {
 		return tcell.ColorOrange
 	}
 	if jitter > 0 {
@@ -605,7 +599,7 @@ func buildErrorLogMessage(view stats.TargetView, sourceIP string, errMsg string,
 
 func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, now time.Time, state alertFlags) (alertFlags, []string) {
 	var msgs []string
-	if lossRate > lossRedThreshold {
+	if lossRate > activeThresholds.LossCrit {
 		if !state.lossRed {
 			msgs = append(msgs, fmt.Sprintf("[red][%s] %s (%s): Loss Ratio %.1f%%[-]", now.Format("15:04:05"), view.Host, sourceIP, lossRate))
 		}
@@ -614,7 +608,7 @@ func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, 
 		state.lossRed = false
 	}
 
-	if view.LastRTT > rttRedThreshold {
+	if view.LastRTT > activeThresholds.RTTCrit {
 		if !state.rttRed {
 			msgs = append(msgs, fmt.Sprintf("[red][%s] %s (%s): RTT %v[-]", now.Format("15:04:05"), view.Host, sourceIP, view.LastRTT.Round(time.Microsecond)))
 		}
@@ -623,7 +617,7 @@ func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, 
 		state.rttRed = false
 	}
 
-	if view.Jitter > jitterRedThreshold {
+	if view.Jitter > activeThresholds.JitterCrit {
 		if !state.jitterRed {
 			msgs = append(msgs, fmt.Sprintf("[red][%s] %s (%s): Jitter %v[-]", now.Format("15:04:05"), view.Host, sourceIP, view.Jitter.Round(time.Microsecond)))
 		}
@@ -1028,4 +1022,3 @@ func makeDoubleBorderDrawFunc(title string, borderColor *tcell.Color) func(scree
 		return x + 1, y + 1, width - 2, height - 2
 	}
 }
-

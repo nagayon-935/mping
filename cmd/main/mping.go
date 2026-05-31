@@ -96,8 +96,8 @@ func (a *pingerMTRAdapter) ProbeHop(ctx context.Context, sock mtr.HopSocket, des
 	return a.p.ProbeHop(ctx, hopSock, dest, ttl, traceID, timeout)
 }
 
-func (a *pingerMTRAdapter) NextTraceID() int         { return a.p.NextTraceID() }
-func (a *pingerMTRAdapter) ASNFor(ip string) string  { return a.p.GetASNFor(ip) }
+func (a *pingerMTRAdapter) NextTraceID() int        { return a.p.NextTraceID() }
+func (a *pingerMTRAdapter) ASNFor(ip string) string { return a.p.GetASNFor(ip) }
 
 var newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 	return &pingerAdapter{Pinger: pinger.NewPingerWithOptions(targets, opts)}
@@ -232,25 +232,58 @@ type config struct {
 	portSpecs      []string
 	jsonOutputFile string
 	mtr            bool
+
+	// Colour-coding / alert thresholds (warn = orange, crit = red).
+	rttWarnMs    int
+	rttCritMs    int
+	jitterWarnMs int
+	jitterCritMs int
+	lossWarnPct  float64
+	lossCritPct  float64
 }
 
 type hostsFileYAML struct {
-	Hosts      []string `yaml:"hosts"`
-	IntervalMs *int     `yaml:"interval"`
-	TimeoutMs  *int     `yaml:"timeout"`
-	OutputFile *string  `yaml:"output"`
-	IfaceName  *string  `yaml:"interface"`
-	SourceAddr *string  `yaml:"source"`
-	PacketSize *int     `yaml:"size"`
-	Count      *int     `yaml:"count"`
-	MtuEnabled *bool    `yaml:"discovery-mtu"`
-	Trace      *bool    `yaml:"traceroute"`
-	AsnEnabled *bool    `yaml:"asn"`
-	Ipv4Only   *bool    `yaml:"ipv4"`
-	Ipv6Only   *bool    `yaml:"ipv6"`
-	PortSpecs  []string `yaml:"port"`
-	JsonOutput *string  `yaml:"json-output"`
-	Mtr        *bool    `yaml:"mtr"`
+	Hosts      []string        `yaml:"hosts"`
+	IntervalMs *int            `yaml:"interval"`
+	TimeoutMs  *int            `yaml:"timeout"`
+	OutputFile *string         `yaml:"output"`
+	IfaceName  *string         `yaml:"interface"`
+	SourceAddr *string         `yaml:"source"`
+	PacketSize *int            `yaml:"size"`
+	Count      *int            `yaml:"count"`
+	MtuEnabled *bool           `yaml:"discovery-mtu"`
+	Trace      *bool           `yaml:"traceroute"`
+	AsnEnabled *bool           `yaml:"asn"`
+	Ipv4Only   *bool           `yaml:"ipv4"`
+	Ipv6Only   *bool           `yaml:"ipv6"`
+	PortSpecs  []string        `yaml:"port"`
+	JsonOutput *string         `yaml:"json-output"`
+	Mtr        *bool           `yaml:"mtr"`
+	Thresholds *thresholdsYAML `yaml:"thresholds"`
+}
+
+// thresholdsYAML mirrors the ui.Thresholds boundaries in the YAML config.
+// RTT/Jitter values are milliseconds; loss values are percentages.
+type thresholdsYAML struct {
+	RTTWarn    *int     `yaml:"rtt-warn"`
+	RTTCrit    *int     `yaml:"rtt-crit"`
+	JitterWarn *int     `yaml:"jitter-warn"`
+	JitterCrit *int     `yaml:"jitter-crit"`
+	LossWarn   *float64 `yaml:"loss-warn"`
+	LossCrit   *float64 `yaml:"loss-crit"`
+}
+
+// thresholdsFromCfg builds a ui.Thresholds from the merged config. RTT/Jitter
+// values are interpreted as milliseconds; loss values as percentages.
+func thresholdsFromCfg(cfg config) ui.Thresholds {
+	return ui.Thresholds{
+		RTTWarn:    time.Duration(cfg.rttWarnMs) * time.Millisecond,
+		RTTCrit:    time.Duration(cfg.rttCritMs) * time.Millisecond,
+		JitterWarn: time.Duration(cfg.jitterWarnMs) * time.Millisecond,
+		JitterCrit: time.Duration(cfg.jitterCritMs) * time.Millisecond,
+		LossWarn:   cfg.lossWarnPct,
+		LossCrit:   cfg.lossCritPct,
+	}
 }
 
 func resolveNetwork(cfg config) string {
@@ -312,10 +345,37 @@ func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]string, 
 	if !fs.Changed("mtr") && doc.Mtr != nil {
 		cfg.mtr = *doc.Mtr
 	}
+	applyThresholdsDoc(&cfg, fs, doc.Thresholds)
 	if cfg.ipv4Only && cfg.ipv6Only {
 		return nil, cfg, fmt.Errorf("cannot use both -4 and -6")
 	}
 	return doc.Hosts, cfg, nil
+}
+
+// applyThresholdsDoc applies the YAML thresholds block to cfg, respecting CLI
+// flag overrides (a value is only applied when its flag was not set).
+func applyThresholdsDoc(cfg *config, fs *pflag.FlagSet, th *thresholdsYAML) {
+	if th == nil {
+		return
+	}
+	if !fs.Changed("rtt-warn") && th.RTTWarn != nil {
+		cfg.rttWarnMs = *th.RTTWarn
+	}
+	if !fs.Changed("rtt-crit") && th.RTTCrit != nil {
+		cfg.rttCritMs = *th.RTTCrit
+	}
+	if !fs.Changed("jitter-warn") && th.JitterWarn != nil {
+		cfg.jitterWarnMs = *th.JitterWarn
+	}
+	if !fs.Changed("jitter-crit") && th.JitterCrit != nil {
+		cfg.jitterCritMs = *th.JitterCrit
+	}
+	if !fs.Changed("loss-warn") && th.LossWarn != nil {
+		cfg.lossWarnPct = *th.LossWarn
+	}
+	if !fs.Changed("loss-crit") && th.LossCrit != nil {
+		cfg.lossCritPct = *th.LossCrit
+	}
 }
 
 func mergeHosts(cfg config, fs *pflag.FlagSet, hosts []string) ([]string, config, error) {
@@ -359,7 +419,40 @@ func validateHostsDoc(doc hostsFileYAML) error {
 	if doc.Ipv4Only != nil && doc.Ipv6Only != nil && *doc.Ipv4Only && *doc.Ipv6Only {
 		return fmt.Errorf("ipv4 and ipv6 cannot both be true")
 	}
+	if doc.Thresholds != nil {
+		th := overlayThresholds(ui.DefaultThresholds(), doc.Thresholds)
+		if err := th.Validate(); err != nil {
+			return fmt.Errorf("thresholds: %w", err)
+		}
+	}
 	return nil
+}
+
+// overlayThresholds returns base with any non-nil fields from the YAML block
+// applied. RTT/Jitter values are milliseconds; loss values are percentages.
+func overlayThresholds(base ui.Thresholds, th *thresholdsYAML) ui.Thresholds {
+	if th == nil {
+		return base
+	}
+	if th.RTTWarn != nil {
+		base.RTTWarn = time.Duration(*th.RTTWarn) * time.Millisecond
+	}
+	if th.RTTCrit != nil {
+		base.RTTCrit = time.Duration(*th.RTTCrit) * time.Millisecond
+	}
+	if th.JitterWarn != nil {
+		base.JitterWarn = time.Duration(*th.JitterWarn) * time.Millisecond
+	}
+	if th.JitterCrit != nil {
+		base.JitterCrit = time.Duration(*th.JitterCrit) * time.Millisecond
+	}
+	if th.LossWarn != nil {
+		base.LossWarn = *th.LossWarn
+	}
+	if th.LossCrit != nil {
+		base.LossCrit = *th.LossCrit
+	}
+	return base
 }
 
 // writeJSONSnapshot serialises a statistics snapshot to path atomically.
@@ -468,6 +561,14 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 	fs.StringSliceVarP(&cfg.portSpecs, "port", "p", nil, "port(s) to check, e.g. 443/tcp,53/udp or 443 (defaults to tcp)")
 	fs.StringVarP(&cfg.jsonOutputFile, "json-output", "j", "", "write JSON statistics snapshot to this file (updated every 5s)")
 	fs.BoolVarP(&cfg.mtr, "mtr", "M", false, "enable MTR-style per-hop monitor pane")
+
+	// Colour-coding / alert thresholds (warn = orange, crit = red).
+	fs.IntVar(&cfg.rttWarnMs, "rtt-warn", 50, "RTT warn threshold in ms (orange)")
+	fs.IntVar(&cfg.rttCritMs, "rtt-crit", 200, "RTT crit threshold in ms (red)")
+	fs.IntVar(&cfg.jitterWarnMs, "jitter-warn", 10, "jitter warn threshold in ms (orange)")
+	fs.IntVar(&cfg.jitterCritMs, "jitter-crit", 50, "jitter crit threshold in ms (red)")
+	fs.Float64Var(&cfg.lossWarnPct, "loss-warn", 20, "loss warn threshold in percent (orange)")
+	fs.Float64Var(&cfg.lossCritPct, "loss-crit", 80, "loss crit threshold in percent (red)")
 
 	fs.Usage = func() {
 		fmt.Fprintln(&usageBuf, "Usage: mping [options] host1 host2 ...")
@@ -596,6 +697,10 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	}
 	if len(hosts) == 0 {
 		fmt.Fprint(errOut, usage)
+		return 1
+	}
+	if err := thresholdsFromCfg(cfg).Validate(); err != nil {
+		fmt.Fprintf(errOut, "Invalid thresholds: %v\n", err)
 		return 1
 	}
 
@@ -887,6 +992,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		}
 
 		// ── Run TUI ──────────────────────────────────────────────────────────
+		uiThresholds := thresholdsFromCfg(currentCfg)
 		if err := uiRun(ui.RunOptions{
 			Targets:         targets,
 			Interval:        interval,
@@ -900,6 +1006,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			MTREnabled:      currentCfg.mtr,
 			PortEnabled:     len(portSpecs) > 0,
 			ASNEnabled:      currentCfg.asnEnabled,
+			Thresholds:      &uiThresholds,
 			ExternalCloseCh: reloadCh,
 			ExternalLogCh:   logCh,
 			OnStop:          stopAll,

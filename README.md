@@ -169,6 +169,9 @@ mping -T -p 443/tcp google.com
 
 # Export live statistics to a JSON file (updated every 5 s)
 mping -j stats.json google.com 1.1.1.1
+
+# Customise colour-coding thresholds (warn = orange, crit = red)
+mping --rtt-warn 30 --rtt-crit 100 --loss-warn 10 --loss-crit 50 google.com
 ```
 
 > If you run mping **without** installing (i.e. without `setcap`/`setuid`), prepend `sudo`:
@@ -192,6 +195,13 @@ port:
   - 443/tcp
   - 53/udp
 json-output: stats.json
+thresholds:
+  rtt-warn: 50      # ms (orange)
+  rtt-crit: 200     # ms (red)
+  jitter-warn: 10   # ms (orange)
+  jitter-crit: 50   # ms (red)
+  loss-warn: 20     # percent (orange)
+  loss-crit: 80     # percent (red)
 ```
 
 ### Options
@@ -213,6 +223,14 @@ json-output: stats.json
 | `--output` | `-o` | CSV log output file path | `""` |
 | `--port` | `-p` | Ports to check (e.g. `443/tcp`, `53/udp`, `443`). Comma-separated for multiple. | `""` |
 | `--json-output` | `-j` | Write a JSON statistics snapshot to this file every 5 seconds | `""` |
+| `--rtt-warn` | | RTT warn threshold in ms (orange) | `50` |
+| `--rtt-crit` | | RTT crit threshold in ms (red) | `200` |
+| `--jitter-warn` | | Jitter warn threshold in ms (orange) | `10` |
+| `--jitter-crit` | | Jitter crit threshold in ms (red) | `50` |
+| `--loss-warn` | | Loss warn threshold in percent (orange) | `20` |
+| `--loss-crit` | | Loss crit threshold in percent (red) | `80` |
+
+> **Thresholds** — `warn` is the orange boundary and `crit` the red boundary for colour-coding the Loss Ratio, RTT, and Jitter columns (and for triggering alert log entries). For each metric `warn` must be less than `crit`. These can also be set in the `thresholds:` block of the YAML file.
 
 ### Key bindings
 
@@ -232,11 +250,12 @@ json-output: stats.json
 * **ASN** — Autonomous System Number of the target IP (enabled with `-a`).
 * **Success** — Number of packets received successfully.
 * **Loss** — Number of lost packets.
-* **Loss Ratio** — Packet loss percentage.
+* **Loss Ratio** — Packet loss percentage. Colour boundaries are configurable (defaults shown).
   * **Green**: 0%–20% &nbsp;|&nbsp; **Orange**: 20%–80% &nbsp;|&nbsp; **Vivid red**: >80%
-* **RTT / Avg / Jitter** — Latest / average / jitter round-trip time.
+* **RTT / Avg / Jitter** — Latest / average / jitter round-trip time. Colour boundaries are configurable (defaults shown).
   * **RTT**: Green (≤50 ms) / Orange (≤200 ms) / Red (>200 ms)
   * **Jitter**: Green (≤10 ms) / Orange (≤50 ms) / Red (>50 ms)
+  * Override with `--rtt-warn/--rtt-crit`, `--jitter-warn/--jitter-crit`, `--loss-warn/--loss-crit`, or the `thresholds:` YAML block.
 * **Size** — Payload size of sent packets.
 * **MTU** — MTU of the outbound interface.
 * **TTL** — Time To Live of the last received packet.

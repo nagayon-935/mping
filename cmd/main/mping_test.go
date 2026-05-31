@@ -1145,3 +1145,116 @@ func TestRunYAMLReload(t *testing.T) {
 		t.Errorf("expected uiRun to be called >=2 times (reload), got %d", callCount)
 	}
 }
+
+// ---- threshold configuration tests ----
+
+func TestParseArgs_ThresholdDefaults(t *testing.T) {
+	cfg, _, _, _, err := parseArgs([]string{"example.com"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if cfg.rttWarnMs != 50 || cfg.rttCritMs != 200 {
+		t.Errorf("rtt defaults: got warn=%d crit=%d, want 50/200", cfg.rttWarnMs, cfg.rttCritMs)
+	}
+	if cfg.jitterWarnMs != 10 || cfg.jitterCritMs != 50 {
+		t.Errorf("jitter defaults: got warn=%d crit=%d, want 10/50", cfg.jitterWarnMs, cfg.jitterCritMs)
+	}
+	if cfg.lossWarnPct != 20 || cfg.lossCritPct != 80 {
+		t.Errorf("loss defaults: got warn=%g crit=%g, want 20/80", cfg.lossWarnPct, cfg.lossCritPct)
+	}
+	if err := thresholdsFromCfg(cfg).Validate(); err != nil {
+		t.Errorf("default thresholds should validate: %v", err)
+	}
+}
+
+func TestParseArgs_ThresholdFlags(t *testing.T) {
+	cfg, _, _, _, err := parseArgs([]string{
+		"--rtt-warn", "30", "--rtt-crit", "100",
+		"--jitter-warn", "5", "--jitter-crit", "20",
+		"--loss-warn", "10", "--loss-crit", "50",
+		"example.com",
+	})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	th := thresholdsFromCfg(cfg)
+	if th.RTTWarn != 30*time.Millisecond || th.RTTCrit != 100*time.Millisecond {
+		t.Errorf("rtt: got %v/%v, want 30ms/100ms", th.RTTWarn, th.RTTCrit)
+	}
+	if th.LossWarn != 10 || th.LossCrit != 50 {
+		t.Errorf("loss: got %g/%g, want 10/50", th.LossWarn, th.LossCrit)
+	}
+	if err := th.Validate(); err != nil {
+		t.Errorf("custom thresholds should validate: %v", err)
+	}
+}
+
+func TestApplyThresholdsDoc_YAMLApplied(t *testing.T) {
+	// No threshold flags set → YAML values apply.
+	cfg, _, fs, _, err := parseArgs([]string{"example.com"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	mi := func(v int) *int { return &v }
+	mf := func(v float64) *float64 { return &v }
+	applyThresholdsDoc(&cfg, fs, &thresholdsYAML{
+		RTTWarn: mi(25), RTTCrit: mi(90),
+		LossWarn: mf(15), LossCrit: mf(60),
+	})
+	if cfg.rttWarnMs != 25 || cfg.rttCritMs != 90 {
+		t.Errorf("rtt from YAML: got %d/%d, want 25/90", cfg.rttWarnMs, cfg.rttCritMs)
+	}
+	if cfg.lossWarnPct != 15 || cfg.lossCritPct != 60 {
+		t.Errorf("loss from YAML: got %g/%g, want 15/60", cfg.lossWarnPct, cfg.lossCritPct)
+	}
+	// Untouched fields keep flag defaults.
+	if cfg.jitterWarnMs != 10 || cfg.jitterCritMs != 50 {
+		t.Errorf("jitter should keep defaults: got %d/%d", cfg.jitterWarnMs, cfg.jitterCritMs)
+	}
+}
+
+func TestApplyThresholdsDoc_FlagOverridesYAML(t *testing.T) {
+	// rtt-warn set on CLI → YAML rtt-warn ignored, others apply.
+	cfg, _, fs, _, err := parseArgs([]string{"--rtt-warn", "40", "example.com"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	mi := func(v int) *int { return &v }
+	applyThresholdsDoc(&cfg, fs, &thresholdsYAML{
+		RTTWarn: mi(25), RTTCrit: mi(90),
+	})
+	if cfg.rttWarnMs != 40 {
+		t.Errorf("CLI rtt-warn should win: got %d, want 40", cfg.rttWarnMs)
+	}
+	if cfg.rttCritMs != 90 {
+		t.Errorf("YAML rtt-crit should apply: got %d, want 90", cfg.rttCritMs)
+	}
+}
+
+func TestValidateHostsDoc_ThresholdsInvalid(t *testing.T) {
+	mi := func(v int) *int { return &v }
+	doc := hostsFileYAML{
+		Hosts: []string{"a.com"},
+		Thresholds: &thresholdsYAML{
+			RTTWarn: mi(200), RTTCrit: mi(100), // warn >= crit
+		},
+	}
+	if err := validateHostsDoc(doc); err == nil {
+		t.Fatal("expected error for rtt-warn >= rtt-crit")
+	}
+}
+
+func TestValidateHostsDoc_ThresholdsValid(t *testing.T) {
+	mi := func(v int) *int { return &v }
+	mf := func(v float64) *float64 { return &v }
+	doc := hostsFileYAML{
+		Hosts: []string{"a.com"},
+		Thresholds: &thresholdsYAML{
+			RTTWarn: mi(30), RTTCrit: mi(120),
+			LossWarn: mf(10), LossCrit: mf(70),
+		},
+	}
+	if err := validateHostsDoc(doc); err != nil {
+		t.Errorf("expected valid thresholds, got: %v", err)
+	}
+}
