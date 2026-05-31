@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nagayon-935/mping/internal/mtr"
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 	ui "github.com/nagayon-935/mping/internal/ui"
@@ -77,6 +78,26 @@ func (p *pingerAdapter) SetLogWriter(w io.Writer) {
 func (p *pingerAdapter) Close() {
 	p.Pinger.Close()
 }
+
+// pingerMTRAdapter wraps *pinger.Pinger to satisfy mtr.HopProber.
+type pingerMTRAdapter struct {
+	p *pinger.Pinger
+}
+
+func (a *pingerMTRAdapter) OpenHopSocket(dest string) (mtr.HopSocket, error) {
+	return a.p.OpenHopSocket(dest)
+}
+
+func (a *pingerMTRAdapter) ProbeHop(ctx context.Context, sock mtr.HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error) {
+	hopSock, ok := sock.(*pinger.HopSocket)
+	if !ok {
+		return pinger.HopReply{}, fmt.Errorf("unexpected socket type in ProbeHop")
+	}
+	return a.p.ProbeHop(ctx, hopSock, dest, ttl, traceID, timeout)
+}
+
+func (a *pingerMTRAdapter) NextTraceID() int         { return a.p.NextTraceID() }
+func (a *pingerMTRAdapter) ASNFor(ip string) string  { return a.p.GetASNFor(ip) }
 
 var newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 	return &pingerAdapter{Pinger: pinger.NewPingerWithOptions(targets, opts)}
@@ -210,6 +231,7 @@ type config struct {
 	ipv6Only       bool
 	portSpecs      []string
 	jsonOutputFile string
+	mtr            bool
 }
 
 type hostsFileYAML struct {
@@ -228,6 +250,7 @@ type hostsFileYAML struct {
 	Ipv6Only   *bool    `yaml:"ipv6"`
 	PortSpecs  []string `yaml:"port"`
 	JsonOutput *string  `yaml:"json-output"`
+	Mtr        *bool    `yaml:"mtr"`
 }
 
 func resolveNetwork(cfg config) string {
@@ -285,6 +308,9 @@ func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]string, 
 	}
 	if !fs.Changed("json-output") && doc.JsonOutput != nil {
 		cfg.jsonOutputFile = *doc.JsonOutput
+	}
+	if !fs.Changed("mtr") && doc.Mtr != nil {
+		cfg.mtr = *doc.Mtr
 	}
 	if cfg.ipv4Only && cfg.ipv6Only {
 		return nil, cfg, fmt.Errorf("cannot use both -4 and -6")
@@ -441,6 +467,7 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 	fs.BoolVarP(&cfg.ipv6Only, "ipv6", "6", false, "force IPv6 only")
 	fs.StringSliceVarP(&cfg.portSpecs, "port", "p", nil, "port(s) to check, e.g. 443/tcp,53/udp or 443 (defaults to tcp)")
 	fs.StringVarP(&cfg.jsonOutputFile, "json-output", "j", "", "write JSON statistics snapshot to this file (updated every 5s)")
+	fs.BoolVarP(&cfg.mtr, "mtr", "M", false, "enable MTR-style per-hop monitor pane")
 
 	fs.Usage = func() {
 		fmt.Fprintln(&usageBuf, "Usage: mping [options] host1 host2 ...")
@@ -650,6 +677,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			traceCtx    context.Context
 			traceCancel context.CancelFunc
 			portChecker *pinger.PortChecker
+			mtrEngine   *mtr.Engine
 		)
 
 		startPinger := func() error {
@@ -665,6 +693,14 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 				traceCtx, traceCancel = context.WithCancel(context.Background())
 				go runTraceroutes(traceCtx, next, targets)
 			}
+			if currentCfg.mtr {
+				if mtrEngine != nil {
+					mtrEngine.Stop()
+				}
+				adapter := &pingerMTRAdapter{p: next.(*pingerAdapter).Pinger}
+				mtrEngine = mtr.NewEngine(adapter, targets, mtr.Config{})
+				mtrEngine.Start()
+			}
 			p = next
 			pMu.Unlock()
 			return nil
@@ -675,8 +711,12 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			if traceCancel != nil {
 				traceCancel()
 			}
+			curEngine := mtrEngine
 			cur := p
 			pMu.Unlock()
+			if curEngine != nil {
+				curEngine.Stop()
+			}
 			if cur != nil {
 				cur.Stop()
 				cur.Wait()
@@ -716,6 +756,25 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			traceCtx, traceCancel = context.WithCancel(context.Background())
 			go runTraceroutes(traceCtx, cur, targets)
 			pMu.Unlock()
+		}
+
+		var resetMTR func()
+		if currentCfg.mtr {
+			resetMTR = func() {
+				for _, t := range targets {
+					t.Reset()
+				}
+				pMu.Lock()
+				curEngine := mtrEngine
+				if curEngine != nil {
+					curEngine.Stop()
+				}
+				cur := p
+				adapter := &pingerMTRAdapter{p: cur.(*pingerAdapter).Pinger}
+				mtrEngine = mtr.NewEngine(adapter, targets, mtr.Config{})
+				mtrEngine.Start()
+				pMu.Unlock()
+			}
 		}
 
 		var resetPort func()
@@ -838,6 +897,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			PacketSize:      packetSizeToUse,
 			InitialLogs:     preLogs,
 			TraceEnabled:    currentCfg.trace,
+			MTREnabled:      currentCfg.mtr,
 			PortEnabled:     len(portSpecs) > 0,
 			ASNEnabled:      currentCfg.asnEnabled,
 			ExternalCloseCh: reloadCh,
@@ -854,6 +914,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 				return nil
 			},
 			OnResetTrace: resetTrace,
+			OnResetMTR:   resetMTR,
 			OnResetPort:  resetPort,
 		}); err != nil {
 			fmt.Fprintf(errOut, "Error running application: %v\n", err)

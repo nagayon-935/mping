@@ -31,6 +31,7 @@ type RunOptions struct {
 	PacketSize   int
 	InitialLogs  []string
 	TraceEnabled bool
+	MTREnabled   bool
 	PortEnabled  bool
 	ASNEnabled   bool
 	// ExternalCloseCh, when closed, causes the TUI to display a reload message
@@ -45,6 +46,7 @@ type RunOptions struct {
 	OnStop        func()
 	OnRestart     func() error
 	OnResetTrace  func()
+	OnResetMTR    func()
 	OnResetPort   func()
 }
 
@@ -58,11 +60,13 @@ func Run(opts RunOptions) error {
 	packetSize := opts.PacketSize
 	initialLogs := opts.InitialLogs
 	traceEnabled := opts.TraceEnabled
+	mtrEnabled := opts.MTREnabled
 	portEnabled := opts.PortEnabled
 	asnEnabled := opts.ASNEnabled
 	onStop := opts.OnStop
 	onRestart := opts.OnRestart
 	onResetTrace := opts.OnResetTrace
+	onResetMTR := opts.OnResetMTR
 	onResetPort := opts.OnResetPort
 
 	externalCloseCh := opts.ExternalCloseCh
@@ -209,6 +213,30 @@ func Run(opts RunOptions) error {
 			tracePane.SetBorderColor(c)
 		}
 		tracePane.SetDrawFunc(makeDoubleBorderDrawFunc(" Traceroute Monitor ", &traceBorderColor))
+	}
+
+	// MTR Monitor pane
+	var mtrView *tview.TextView
+	var mtrPane *tview.Flex
+	setMTRBorderColor := func(_ tcell.Color) {}
+
+	if mtrEnabled {
+		mtrView = tview.NewTextView().
+			SetDynamicColors(true).
+			SetScrollable(true).
+			SetWrap(false)
+		mtrView.SetBackgroundColor(tcell.ColorBlack)
+
+		mtrPane = tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(mtrView, 0, 1, true)
+		mtrPane.SetBorder(true).SetBorderColor(tcell.ColorWhite)
+
+		mtrBorderColor := tcell.ColorWhite
+		setMTRBorderColor = func(c tcell.Color) {
+			mtrBorderColor = c
+			mtrPane.SetBorderColor(c)
+		}
+		mtrPane.SetDrawFunc(makeDoubleBorderDrawFunc(" MTR Monitor ", &mtrBorderColor))
 	}
 
 	// Port Monitor pane
@@ -427,6 +455,11 @@ func Run(opts RunOptions) error {
 			traceView.SetText(renderTracerouteTable(targets, availW))
 		}
 
+		if mtrEnabled && mtrView != nil {
+			_, _, availW, _ := mtrView.GetInnerRect()
+			mtrView.SetText(renderMTRTable(targets, availW, sourceIPv4, sourceIPv6))
+		}
+
 		if portEnabled && portView != nil {
 			_, _, availW, _ := portView.GetInnerRect()
 			portView.SetText(renderPortMonitorTable(targets, availW, lastPortStatuses, &errorLogs, errorView))
@@ -483,45 +516,42 @@ func Run(opts RunOptions) error {
 				errorView.SetBorderColor(tcell.ColorRed)
 				graphView.SetBorderColor(vividCyan)
 				setTraceBorderColor(tcell.ColorWhite)
+				setMTRBorderColor(tcell.ColorWhite)
 				setPortBorderColor(tcell.ColorWhite)
 			}
-			if app.GetFocus() == table {
-				if traceEnabled && traceView != nil {
-					resetAll()
-					app.SetFocus(traceView)
-					setTraceBorderColor(tcell.ColorGreen)
-				} else if portEnabled && portView != nil {
-					resetAll()
-					app.SetFocus(portView)
-					setPortBorderColor(tcell.ColorGreen)
-				} else {
-					resetAll()
-					app.SetFocus(graphView)
-					graphView.SetBorderColor(tcell.ColorGreen)
-				}
-			} else if traceEnabled && traceView != nil && app.GetFocus() == traceView {
-				if portEnabled && portView != nil {
-					resetAll()
-					app.SetFocus(portView)
-					setPortBorderColor(tcell.ColorGreen)
-				} else {
-					resetAll()
-					app.SetFocus(graphView)
-					graphView.SetBorderColor(tcell.ColorGreen)
-				}
-			} else if portEnabled && portView != nil && app.GetFocus() == portView {
-				resetAll()
-				app.SetFocus(graphView)
-				graphView.SetBorderColor(tcell.ColorGreen)
-			} else if app.GetFocus() == graphView {
-				resetAll()
-				app.SetFocus(errorView)
-				errorView.SetBorderColor(tcell.ColorGreen)
-			} else {
-				resetAll()
-				app.SetFocus(table)
-				table.SetBorderColor(tcell.ColorGreen)
+			// Build ordered focus cycle: table → [trace] → [mtr] → [port] → graph → error → table
+			type focusEntry struct {
+				enabled bool
+				view    tview.Primitive
+				setColor func(tcell.Color)
 			}
+			focusCycle := []focusEntry{
+				{true, table, func(c tcell.Color) { table.SetBorderColor(c) }},
+				{traceEnabled && traceView != nil, traceView, setTraceBorderColor},
+				{mtrEnabled && mtrView != nil, mtrView, setMTRBorderColor},
+				{portEnabled && portView != nil, portView, setPortBorderColor},
+				{true, graphView, func(c tcell.Color) { graphView.SetBorderColor(c) }},
+				{true, errorView, func(c tcell.Color) { errorView.SetBorderColor(c) }},
+			}
+			focused := app.GetFocus()
+			for i, entry := range focusCycle {
+				if entry.enabled && entry.view == focused {
+					resetAll()
+					for j := 1; j <= len(focusCycle); j++ {
+						next := focusCycle[(i+j)%len(focusCycle)]
+						if next.enabled {
+							app.SetFocus(next.view)
+							next.setColor(tcell.ColorGreen)
+							break
+						}
+					}
+					return nil
+				}
+			}
+			// Fallback: focus table
+			resetAll()
+			app.SetFocus(table)
+			table.SetBorderColor(tcell.ColorGreen)
 			return nil
 		}
 
@@ -585,6 +615,9 @@ func Run(opts RunOptions) error {
 						go onResetTrace()
 					}
 				}
+				if mtrEnabled && onResetMTR != nil {
+					go onResetMTR()
+				}
 				if portEnabled && onResetPort != nil {
 					go onResetPort()
 				}
@@ -641,39 +674,33 @@ func Run(opts RunOptions) error {
 		}
 	}()
 
+	// Build layout dynamically: append enabled monitor panes (trace, mtr, port)
+	// with weight 3 when alone, 2 when multiple.
 	flex := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(header, 2, 0, false).
-		AddItem(tablePane, 0, 3, true).  // Table: 3 parts
-		AddItem(graphView, 0, 3, false). // Graph: 3 parts
-		AddItem(errorView, 0, 2, false). // Logs: 2 parts
-		AddItem(pages, 1, 0, false)
+		AddItem(tablePane, 0, 3, true)
 
-	if traceEnabled && tracePane != nil && portEnabled && portPane != nil {
-		flex = tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(header, 2, 0, false).
-			AddItem(tablePane, 0, 3, true).  // Table: 3 parts
-			AddItem(tracePane, 0, 2, false). // Trace: 2 parts
-			AddItem(portPane, 0, 2, false).  // Port: 2 parts
-			AddItem(graphView, 0, 3, false). // Graph: 3 parts
-			AddItem(errorView, 0, 2, false). // Logs: 2 parts
-			AddItem(pages, 1, 0, false)
-	} else if traceEnabled && tracePane != nil {
-		flex = tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(header, 2, 0, false).
-			AddItem(tablePane, 0, 3, true).  // Table: 3 parts
-			AddItem(tracePane, 0, 3, false). // Trace: 3 parts
-			AddItem(graphView, 0, 3, false). // Graph: 3 parts
-			AddItem(errorView, 0, 2, false). // Logs: 2 parts
-			AddItem(pages, 1, 0, false)
-	} else if portEnabled && portPane != nil {
-		flex = tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(header, 2, 0, false).
-			AddItem(tablePane, 0, 3, true).  // Table: 3 parts
-			AddItem(portPane, 0, 3, false).  // Port: 3 parts
-			AddItem(graphView, 0, 3, false). // Graph: 3 parts
-			AddItem(errorView, 0, 2, false). // Logs: 2 parts
-			AddItem(pages, 1, 0, false)
+	type monitorPane struct{ pane *tview.Flex }
+	var monitorPanes []monitorPane
+	if traceEnabled && tracePane != nil {
+		monitorPanes = append(monitorPanes, monitorPane{tracePane})
 	}
+	if mtrEnabled && mtrPane != nil {
+		monitorPanes = append(monitorPanes, monitorPane{mtrPane})
+	}
+	if portEnabled && portPane != nil {
+		monitorPanes = append(monitorPanes, monitorPane{portPane})
+	}
+	monitorWeight := 3
+	if len(monitorPanes) > 1 {
+		monitorWeight = 2
+	}
+	for _, mp := range monitorPanes {
+		flex.AddItem(mp.pane, 0, monitorWeight, false)
+	}
+	flex.AddItem(graphView, 0, 3, false).
+		AddItem(errorView, 0, 2, false).
+		AddItem(pages, 1, 0, false)
 
 	flex.SetBackgroundColor(tcell.ColorBlack)
 
