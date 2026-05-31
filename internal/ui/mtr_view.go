@@ -66,7 +66,7 @@ func mtrHostColW(availW int, compact bool) int {
 // renderMTRTable builds the MTR monitor pane string.
 // One table per target, separated by a blank line.
 // Columns: Hop, Host(ASN), Loss%, Snt, [Recv,] Last, Avg, [Min, Max, Jitter]
-func renderMTRTable(targets []*stats.TargetStats, availW int) string {
+func renderMTRTable(targets []*stats.TargetStats, availW int, srcIPv4, srcIPv6 string) string {
 	// Compact mode: drop Recv/Min/Max/Jitter columns when screen is narrow.
 	// Threshold: minimum width to fit all columns with minMTRHostW host column.
 	fullFixed := mtrHopColW + mtrLossColW + mtrSntColW + mtrRecvColW + mtrLatColW*5 + minMTRHostW + 10
@@ -76,7 +76,7 @@ func renderMTRTable(targets []*stats.TargetStats, availW int) string {
 
 	var sb strings.Builder
 	for ti, t := range targets {
-		renderMTRTargetTable(&sb, t, hostW, compact)
+		renderMTRTargetTable(&sb, t, hostW, compact, srcIPv4, srcIPv6)
 		if ti < len(targets)-1 {
 			sb.WriteString("\n")
 		}
@@ -85,7 +85,7 @@ func renderMTRTable(targets []*stats.TargetStats, availW int) string {
 }
 
 // renderMTRTargetTable renders one target's hop table.
-func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, compact bool) {
+func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, compact bool, srcIPv4, srcIPv6 string) {
 	view := t.GetView()
 	hops := view.MTRHops
 
@@ -97,10 +97,15 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, 
 	hr := strings.Repeat("─", mtrRecvColW)
 	hlat := strings.Repeat("─", mtrLatColW)
 
-	// Target label in header
-	label := view.Host
-	if view.IP != "" && view.IP != view.Host {
-		label = fmt.Sprintf("%s (%s)", view.Host, view.IP)
+	// Target label: "SrcIP -> DstIP" (with hostname prefix when applicable)
+	srcIP := displaySourceIPForDst(view.IP, srcIPv4, srcIPv6)
+	dstIP := view.IP
+	if dstIP == "" {
+		dstIP = view.Host
+	}
+	label := fmt.Sprintf("%s -> %s", srcIP, dstIP)
+	if view.Host != "" && view.Host != view.IP {
+		label = fmt.Sprintf("%s (%s -> %s)", view.Host, srcIP, dstIP)
 	}
 
 	if compact {

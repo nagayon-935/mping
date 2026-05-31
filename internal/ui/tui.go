@@ -457,7 +457,7 @@ func Run(opts RunOptions) error {
 
 		if mtrEnabled && mtrView != nil {
 			_, _, availW, _ := mtrView.GetInnerRect()
-			mtrView.SetText(renderMTRTable(targets, availW))
+			mtrView.SetText(renderMTRTable(targets, availW, sourceIPv4, sourceIPv6))
 		}
 
 		if portEnabled && portView != nil {

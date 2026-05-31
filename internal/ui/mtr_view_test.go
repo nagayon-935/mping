@@ -37,7 +37,7 @@ func TestRenderMTRTable_BasicStructure(t *testing.T) {
 		{TTL: 3, IP: "8.8.8.8", Sent: 10, Recv: 10, AvgRTT: 12 * time.Millisecond},
 	})
 
-	out := renderMTRTable([]*stats.TargetStats{target}, 120)
+	out := renderMTRTable([]*stats.TargetStats{target}, 120, "192.168.1.1", "")
 
 	// Must have box-drawing borders
 	if !strings.Contains(out, "┌") {
@@ -86,7 +86,7 @@ func TestRenderMTRTable_NoHops_ShowsDiscovering(t *testing.T) {
 	target := stats.NewTargetStats("1.1.1.1")
 	target.SetIP("1.1.1.1")
 
-	out := renderMTRTable([]*stats.TargetStats{target}, 120)
+	out := renderMTRTable([]*stats.TargetStats{target}, 120, "192.168.1.1", "")
 	if !strings.Contains(out, "Discovering") {
 		t.Error("expected 'Discovering...' when no hops available")
 	}
@@ -97,8 +97,8 @@ func TestRenderMTRTable_CompactVsFull(t *testing.T) {
 		{TTL: 1, IP: "10.0.0.1", Sent: 5, Recv: 5, AvgRTT: 1 * time.Millisecond},
 	})
 
-	fullOut := renderMTRTable([]*stats.TargetStats{target}, 200)
-	compactOut := renderMTRTable([]*stats.TargetStats{target}, 80)
+	fullOut := renderMTRTable([]*stats.TargetStats{target}, 200, "10.0.0.1", "")
+	compactOut := renderMTRTable([]*stats.TargetStats{target}, 80, "10.0.0.1", "")
 
 	// Full mode must have Min/Max/Jitter columns
 	if !strings.Contains(fullOut, "Min") {
@@ -125,7 +125,7 @@ func TestRenderMTRTable_MultipleTargets(t *testing.T) {
 		{TTL: 1, IP: "10.0.0.1", Sent: 5, Recv: 5, AvgRTT: 1 * time.Millisecond},
 	})
 
-	out := renderMTRTable([]*stats.TargetStats{t1, t2}, 120)
+	out := renderMTRTable([]*stats.TargetStats{t1, t2}, 120, "10.0.0.1", "")
 
 	// Both target labels must appear
 	if !strings.Contains(out, "8.8.8.8") {
@@ -144,7 +144,7 @@ func TestRenderMTRTable_HopNumberNeverTruncated(t *testing.T) {
 	}
 	target := buildMTRTarget("dest", "1.2.3.4", hops)
 
-	out := renderMTRTable([]*stats.TargetStats{target}, 160)
+	out := renderMTRTable([]*stats.TargetStats{target}, 160, "10.0.0.1", "")
 
 	if strings.Contains(out, "...") {
 		// Find the offending line
