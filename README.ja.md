@@ -172,6 +172,9 @@ mping -j stats.json google.com 1.1.1.1
 
 # 色分けの閾値をカスタマイズする (warn = オレンジ, crit = 赤)
 mping --rtt-warn 30 --rtt-crit 100 --loss-warn 10 --loss-crit 50 google.com
+
+# ターゲット IP の AS 番号を表示する
+mping -a google.com 1.1.1.1
 ```
 
 > インストールせずに実行する場合 (`setcap`/`setuid` なし) は `sudo` を付けてください:
@@ -191,6 +194,7 @@ interval: 500
 timeout: 2000
 traceroute: true
 mtr: true
+asn: true
 port:
   - 443/tcp
   - 53/udp
@@ -223,6 +227,7 @@ thresholds:
 | `--output` | `-o` | CSV 形式でのログ出力ファイルパス | `""` |
 | `--port` | `-p` | 疎通確認するポート (例: `443/tcp`, `53/udp`, `443`)。カンマ区切りで複数指定可 | `""` |
 | `--json-output` | `-j` | 統計情報の JSON スナップショットを出力するファイルパス (5 秒ごとに更新) | `""` |
+| `--asn` | `-a` | ターゲット IP の AS 番号を検索して表示する | `false` |
 | `--rtt-warn` | | RTT の warn 閾値 (ミリ秒・オレンジ) | `50` |
 | `--rtt-crit` | | RTT の crit 閾値 (ミリ秒・赤) | `200` |
 | `--jitter-warn` | | Jitter の warn 閾値 (ミリ秒・オレンジ) | `10` |

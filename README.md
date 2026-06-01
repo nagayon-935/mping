@@ -172,6 +172,9 @@ mping -j stats.json google.com 1.1.1.1
 
 # Customise colour-coding thresholds (warn = orange, crit = red)
 mping --rtt-warn 30 --rtt-crit 100 --loss-warn 10 --loss-crit 50 google.com
+
+# Display AS numbers for target IPs
+mping -a google.com 1.1.1.1
 ```
 
 > If you run mping **without** installing (i.e. without `setcap`/`setuid`), prepend `sudo`:
@@ -191,6 +194,7 @@ interval: 500
 timeout: 2000
 traceroute: true
 mtr: true
+asn: true
 port:
   - 443/tcp
   - 53/udp
@@ -223,6 +227,7 @@ thresholds:
 | `--output` | `-o` | CSV log output file path | `""` |
 | `--port` | `-p` | Ports to check (e.g. `443/tcp`, `53/udp`, `443`). Comma-separated for multiple. | `""` |
 | `--json-output` | `-j` | Write a JSON statistics snapshot to this file every 5 seconds | `""` |
+| `--asn` | `-a` | Look up and display AS numbers for target IPs | `false` |
 | `--rtt-warn` | | RTT warn threshold in ms (orange) | `50` |
 | `--rtt-crit` | | RTT crit threshold in ms (red) | `200` |
 | `--jitter-warn` | | Jitter warn threshold in ms (orange) | `10` |
