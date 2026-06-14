@@ -15,8 +15,11 @@ import (
 type fakePacketConnV4 struct {
 	PacketConnV4
 }
+
 func (f *fakePacketConnV4) Close() error { return nil }
-func (f *fakePacketConnV4) WriteTo(b []byte, cm *ipv4.ControlMessage, dst net.Addr) (int, error) { return len(b), nil }
+func (f *fakePacketConnV4) WriteTo(b []byte, cm *ipv4.ControlMessage, dst net.Addr) (int, error) {
+	return len(b), nil
+}
 
 func TestPinger_ASNLookupDirect(t *testing.T) {
 	mockLookup := func(query string) ([]string, error) {
@@ -62,7 +65,7 @@ func TestPinger_ASNLookupDirect(t *testing.T) {
 	if p.getASN("invalid") != "" {
 		t.Error("expected empty string for invalid IP")
 	}
-	
+
 	// Test error from LookupTXT
 	if p.getASN("0.0.0.0") != "" {
 		t.Error("expected empty string on lookup error")
@@ -88,16 +91,16 @@ type traceFakePacketConn struct {
 	net.PacketConn
 }
 
-func (f *traceFakePacketConn) Close() error                       { return nil }
-func (f *traceFakePacketConn) SetReadDeadline(t time.Time) error  { return nil }
+func (f *traceFakePacketConn) Close() error                      { return nil }
+func (f *traceFakePacketConn) SetReadDeadline(t time.Time) error { return nil }
 func (f *traceFakePacketConn) ReadFrom(b []byte) (int, net.Addr, error) {
 	return 0, nil, fmt.Errorf("timeout")
 }
 func (f *traceFakePacketConn) WriteTo(b []byte, addr net.Addr) (int, error) {
 	return len(b), nil
 }
-func (f *traceFakePacketConn) Read(b []byte) (int, error)       { return 0, fmt.Errorf("not implemented") }
-func (f *traceFakePacketConn) Write(b []byte) (int, error)      { return len(b), nil }
+func (f *traceFakePacketConn) Read(b []byte) (int, error)         { return 0, fmt.Errorf("not implemented") }
+func (f *traceFakePacketConn) Write(b []byte) (int, error)        { return len(b), nil }
 func (f *traceFakePacketConn) LocalAddr() net.Addr                { return &net.IPAddr{IP: net.IPv4zero} }
 func (f *traceFakePacketConn) RemoteAddr() net.Addr               { return &net.IPAddr{IP: net.IPv4zero} }
 func (f *traceFakePacketConn) SetDeadline(t time.Time) error      { return nil }
@@ -120,18 +123,18 @@ func TestPinger_TraceRoute_AsnEnabled(t *testing.T) {
 		},
 	})
 	p.Source = "127.0.0.1"
-	
+
 	p.connV4 = &fakePacketConnV4{}
 
 	done := make(chan struct{})
 	var hops []string
 	var err error
-	
+
 	go func() {
 		hops, err = p.TraceRoute("1.1.1.1", 1, 200*time.Millisecond)
 		close(done)
 	}()
-	
+
 	var traceCh chan traceMsg
 	start := time.Now()
 	for time.Since(start) < 2*time.Second {
@@ -152,16 +155,16 @@ func TestPinger_TraceRoute_AsnEnabled(t *testing.T) {
 		default:
 		}
 	}
-	
+
 	if traceCh == nil {
 		t.Fatal("traceCh not registered")
 	}
 
 	time.Sleep(50 * time.Millisecond)
-	
+
 	baseID := p.baseID
 	traceID := (baseID + 0x1234 + 1) & 0xffff
-	
+
 	innerIP := make([]byte, 28)
 	innerIP[0] = 0x45
 	innerIP[9] = 1
@@ -180,21 +183,21 @@ func TestPinger_TraceRoute_AsnEnabled(t *testing.T) {
 		},
 		src: &net.IPAddr{IP: net.ParseIP("1.1.1.1")},
 	}
-	
+
 	select {
 	case <-done:
 	case <-time.After(1 * time.Second):
 		t.Fatal("TraceRoute timed out")
 	}
-	
+
 	if err != nil {
 		t.Fatalf("TraceRoute error: %v", err)
 	}
-	
+
 	if len(hops) == 0 {
 		t.Fatal("expected 1 hop")
 	}
-	
+
 	if !strings.Contains(hops[0], "AS12345") {
 		t.Errorf("expected ASN in hop output, got %q", hops[0])
 	}
@@ -210,7 +213,7 @@ func TestPinger_TraceRoute_MaxHops(t *testing.T) {
 		},
 	})
 	p.connV4 = &fakePacketConnV4{}
-    
+
 	hops, err := p.TraceRoute("1.1.1.1", 2, 10*time.Millisecond)
 	if err != nil {
 		t.Fatalf("TraceRoute error: %v", err)

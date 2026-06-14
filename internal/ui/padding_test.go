@@ -11,7 +11,7 @@ func TestRightPaddedCell(t *testing.T) {
 		want string
 	}{
 		{"abc", 5, " abc "}, // right-aligned "abc " in 5 chars: " abc "
-		{"", 3, "   "},    // empty string
+		{"", 3, "   "},      // empty string
 	}
 
 	for _, tt := range tests {

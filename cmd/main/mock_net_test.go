@@ -38,9 +38,9 @@ func TestGetInterfaceIP(t *testing.T) {
 	// But in mping.go we do:
 	// iface, err := interfaceByName(ifaceName)
 	// addrs, err := iface.Addrs()
-	
+
 	// Wait, I can't mock Addrs() on *net.Interface because it's a method on a struct, not an interface.
-	
+
 	// Let's refactor mping.go to use an interface for net.Interface if we really want to test this.
 	// Or, just skip this for now as it's a small part of coverage.
 }
@@ -59,12 +59,12 @@ func TestGetInterfaceMTU(t *testing.T) {
 		}
 		return nil, fmt.Errorf("not found")
 	}
-	
+
 	mtu, err := getInterfaceMTU("eth0", "", "")
 	if err != nil || mtu != 1400 {
 		t.Errorf("expected 1400, got %d (err: %v)", mtu, err)
 	}
-	
+
 	netInterfaces = func() ([]net.Interface, error) {
 		return []net.Interface{
 			{Name: "eth1", MTU: 1300},

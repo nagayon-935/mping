@@ -7,9 +7,9 @@ import (
 
 // HopStats accumulates per-hop probe statistics for one TTL position.
 type HopStats struct {
-	TTL     int           // hop number (1-based)
-	IP      string        // last-seen responder IP ("" if never responded)
-	ASN     string        // cached ASN annotation
+	TTL     int    // hop number (1-based)
+	IP      string // last-seen responder IP ("" if never responded)
+	ASN     string // cached ASN annotation
 	Sent    int
 	Recv    int
 	LastRTT time.Duration

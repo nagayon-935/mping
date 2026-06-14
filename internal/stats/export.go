@@ -25,10 +25,10 @@ type TargetSummary struct {
 	LastTTL      int           `json:"last_ttl"`
 	LastError    string        `json:"last_error,omitempty"`
 	LastLossTime *time.Time    `json:"last_loss_time,omitempty"`
-	TraceHops   []string      `json:"trace_hops,omitempty"`
-	PortResults []PortSummary `json:"port_results,omitempty"`
-	PMTU        int           `json:"pmtu,omitempty"`
-	MTRHops     []HopSummary  `json:"mtr_hops,omitempty"`
+	TraceHops    []string      `json:"trace_hops,omitempty"`
+	PortResults  []PortSummary `json:"port_results,omitempty"`
+	PMTU         int           `json:"pmtu,omitempty"`
+	MTRHops      []HopSummary  `json:"mtr_hops,omitempty"`
 }
 
 // HopSummary is a JSON-serialisable summary for a single MTR hop.

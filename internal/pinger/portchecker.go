@@ -43,8 +43,8 @@ func ParsePortSpec(s string) (PortSpec, error) {
 
 // PortChecker runs TCP/UDP port checks for a set of targets.
 type PortChecker struct {
-	targets  []*stats.TargetStats
-	specs    []PortSpec
+	targets []*stats.TargetStats
+	specs   []PortSpec
 	// results[i][j] is the PortCheckResult for targets[i] × specs[j].
 	// Stored here so Start() never reads t.PortResults directly, eliminating
 	// the data race between NewPortChecker and concurrent GetView() calls.
