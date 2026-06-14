@@ -16,10 +16,10 @@
 * **YAML host list** — manage target hosts in a file.
 * **Traceroute pane** — show the route to each target in a Host/Route table when `-T` is given. Multiple targets are traced concurrently and displayed together.
 * **MTR Monitor pane** — continuous per-hop loss/latency statistics when `-M` is given. Each hop is probed every second and displays Hop, Host, Loss%, Snt, Recv, Last, Avg, Min, Max, Jitter — the same columns as `mtr`. Can be used simultaneously with `-T`.
-* **Port Monitor pane** — monitor TCP/UDP port reachability in real time with `-p`. Displays the estimated service name, cumulative Open/Closed counts, and time since last status change.
+* **Port Monitor pane** — monitor TCP/UDP port reachability in real time with `-p`. Displays the estimated service name, **Last / Min / Avg / Max RTT** (measured from TCP connect or UDP round-trip), cumulative Open/Closed counts, and time since last status change. RTT statistics are collected for `Open` responses only.
 * **PMTU discovery** — probe maximum payload size using DF-bit ICMP packets.
 * **Auto source IP detection** — automatically detects and displays the local IP used for each destination.
-* **RTT graph** — fixed range of 0–100 ms (Y-axis) × 30 seconds (X-axis) per target.
+* **RTT graph** — auto-scaling Y-axis (expands immediately on spike, shrinks after a hold period) × 30 seconds (X-axis) per target. Supports both ICMP and TCP/UDP port series.
 * **CSV log output** — save results with statistics to a file.
 * **JSON statistics export** — write a live snapshot of all statistics to a JSON file every 5 seconds with `-j`.
 

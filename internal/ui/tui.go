@@ -85,7 +85,7 @@ func Run(opts RunOptions) error {
 		SetFixed(1, 1)
 
 	// Use custom GraphView
-	graphView := NewGraphView(targets, interval)
+	graphView := NewGraphView(targets, interval, false)
 	graphView.SetBorder(true).SetTitle(" RTT Graphs ").SetTitleColor(vividCyan).SetBorderColor(vividCyan)
 	graphView.SetBackgroundColor(tcell.ColorBlack)
 

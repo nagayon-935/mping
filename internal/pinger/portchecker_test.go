@@ -13,8 +13,8 @@ import (
 
 func TestParsePortSpec_ValidFormats(t *testing.T) {
 	tests := []struct {
-		input    string
-		wantPort int
+		input     string
+		wantPort  int
 		wantProto string
 	}{
 		{"443", 443, "tcp"},

@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	defaultMaxHops        = 30
-	defaultProbeInterval  = 1 * time.Second
-	defaultHopTimeout     = 1 * time.Second
+	defaultMaxHops         = 30
+	defaultProbeInterval   = 1 * time.Second
+	defaultHopTimeout      = 1 * time.Second
 	defaultRediscoverEvery = 10 * time.Minute
 )
 

@@ -859,15 +859,24 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 
 	statusColW := runewidth.StringWidth("Open|Filtered") + 2
 
-	rttColW := maxPortColumnWidth("RTT", targets, func(pr stats.PortCheckView) string {
+	lastColW := maxPortColumnWidth("Last", targets, func(pr stats.PortCheckView) string {
 		return formatRTT(pr.RTT)
+	})
+	minColW := maxPortColumnWidth("Min", targets, func(pr stats.PortCheckView) string {
+		return formatRTT(pr.MinRTT)
+	})
+	avgColW := maxPortColumnWidth("Avg", targets, func(pr stats.PortCheckView) string {
+		return formatRTT(pr.AvgRTT)
+	})
+	maxColW := maxPortColumnWidth("Max", targets, func(pr stats.PortCheckView) string {
+		return formatRTT(pr.MaxRTT)
 	})
 
 	countColW := runewidth.StringWidth("Open/Closed") + 2
 	changeColW := runewidth.StringWidth("Last Change") + 2
 
-	usedFull := targetColW + portColW + serviceColW + statusColW + rttColW + countColW + changeColW + 8
-	portCompact := availW-targetColW-portColW-statusColW-rttColW-5 < minPortContentWidth
+	usedFull := targetColW + portColW + serviceColW + statusColW + lastColW + minColW + avgColW + maxColW + countColW + changeColW + 11
+	portCompact := availW-targetColW-portColW-statusColW-lastColW-5 < minPortContentWidth
 
 	// Collect targets that have results; detect status changes
 	dataTargets := make([]*stats.TargetStats, 0, len(targets))
@@ -904,13 +913,13 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 		th := strings.Repeat("─", targetColW)
 		ph := strings.Repeat("─", portColW)
 		sh := strings.Repeat("─", statusColW)
-		rh := strings.Repeat("─", rttColW)
+		lh := strings.Repeat("─", lastColW)
 
-		fmt.Fprintf(&sb, "[white]┌%s┬%s┬%s┬%s┐[-]\n", th, ph, sh, rh)
+		fmt.Fprintf(&sb, "[white]┌%s┬%s┬%s┬%s┐[-]\n", th, ph, sh, lh)
 		fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
 			paddedCell("Target", targetColW), paddedCell("Port", portColW),
-			paddedCell("Status", statusColW), paddedCell("RTT", rttColW))
-		fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┤[-]\n", th, ph, sh, rh)
+			paddedCell("Status", statusColW), paddedCell("Last", lastColW))
+		fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┤[-]\n", th, ph, sh, lh)
 
 		rowCount := 0
 		for ti, t := range dataTargets {
@@ -924,19 +933,19 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 					paddedCell(targetName, targetColW),
 					paddedCell(fmt.Sprintf("%d/%s", pr.Port, pr.Protocol), portColW),
 					statusColorTag(pr.Status), paddedCell(pr.Status, statusColW),
-					paddedCell(formatRTT(pr.RTT), rttColW))
+					paddedCell(formatRTT(pr.RTT), lastColW))
 				rowCount++
 			}
 			if ti < len(dataTargets)-1 {
-				fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┤[-]\n", th, ph, sh, rh)
+				fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┤[-]\n", th, ph, sh, lh)
 			}
 		}
 		if rowCount == 0 {
-			total := targetColW + portColW + statusColW + rttColW + 3
+			total := targetColW + portColW + statusColW + lastColW + 3
 			fmt.Fprintf(&sb, "[white]│[darkgray]%s[white]│[-]\n",
 				formatCellText(" Waiting for results...", total, tview.AlignLeft))
 		}
-		fmt.Fprintf(&sb, "[white]└%s┴%s┴%s┴%s┘[-]\n", th, ph, sh, rh)
+		fmt.Fprintf(&sb, "[white]└%s┴%s┴%s┴%s┘[-]\n", th, ph, sh, lh)
 	} else {
 		if availW > usedFull {
 			changeColW += availW - usedFull
@@ -946,16 +955,20 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 		ph := strings.Repeat("─", portColW)
 		svh := strings.Repeat("─", serviceColW)
 		sh := strings.Repeat("─", statusColW)
-		rh := strings.Repeat("─", rttColW)
+		lah := strings.Repeat("─", lastColW)
+		mih := strings.Repeat("─", minColW)
+		avh := strings.Repeat("─", avgColW)
+		mxh := strings.Repeat("─", maxColW)
 		cch := strings.Repeat("─", countColW)
-		lh := strings.Repeat("─", changeColW)
+		chh := strings.Repeat("─", changeColW)
 
-		fmt.Fprintf(&sb, "[white]┌%s┬%s┬%s┬%s┬%s┬%s┬%s┐[-]\n", th, ph, svh, sh, rh, cch, lh)
-		fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
+		fmt.Fprintf(&sb, "[white]┌%s┬%s┬%s┬%s┬%s┬%s┬%s┬%s┬%s┬%s┐[-]\n", th, ph, svh, sh, lah, mih, avh, mxh, cch, chh)
+		fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
 			paddedCell("Target", targetColW), paddedCell("Port", portColW), paddedCell("Service", serviceColW),
-			paddedCell("Status", statusColW), paddedCell("RTT", rttColW),
+			paddedCell("Status", statusColW),
+			paddedCell("Last", lastColW), paddedCell("Min", minColW), paddedCell("Avg", avgColW), paddedCell("Max", maxColW),
 			paddedCell("Open/Closed", countColW), paddedCell("Last Change", changeColW))
-		fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┼%s┼%s┼%s┤[-]\n", th, ph, svh, sh, rh, cch, lh)
+		fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┼%s┼%s┼%s┼%s┼%s┼%s┤[-]\n", th, ph, svh, sh, lah, mih, avh, mxh, cch, chh)
 
 		rowCount := 0
 		for ti, t := range dataTargets {
@@ -970,26 +983,29 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 				if i == 0 {
 					targetName = view.Host
 				}
-				fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│%s%s[-][white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[-]\n",
+				fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│%s%s[-][white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[-]\n",
 					paddedCell(targetName, targetColW),
 					paddedCell(fmt.Sprintf("%d/%s", pr.Port, pr.Protocol), portColW),
 					paddedCell(portServiceName(pr.Port, pr.Protocol), serviceColW),
 					statusColorTag(pr.Status), paddedCell(pr.Status, statusColW),
-					paddedCell(formatRTT(pr.RTT), rttColW),
+					paddedCell(formatRTT(pr.RTT), lastColW),
+					paddedCell(formatRTT(pr.MinRTT), minColW),
+					paddedCell(formatRTT(pr.AvgRTT), avgColW),
+					paddedCell(formatRTT(pr.MaxRTT), maxColW),
 					paddedCell(countStr, countColW),
 					paddedCell(changeStr, changeColW))
 				rowCount++
 			}
 			if ti < len(dataTargets)-1 {
-				fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┼%s┼%s┼%s┤[-]\n", th, ph, svh, sh, rh, cch, lh)
+				fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┼%s┼%s┼%s┼%s┼%s┼%s┤[-]\n", th, ph, svh, sh, lah, mih, avh, mxh, cch, chh)
 			}
 		}
 		if rowCount == 0 {
-			total := targetColW + portColW + serviceColW + statusColW + rttColW + countColW + changeColW + 6
+			total := targetColW + portColW + serviceColW + statusColW + lastColW + minColW + avgColW + maxColW + countColW + changeColW + 9
 			fmt.Fprintf(&sb, "[white]│[darkgray]%s[white]│[-]\n",
 				formatCellText(" Waiting for results...", total, tview.AlignLeft))
 		}
-		fmt.Fprintf(&sb, "[white]└%s┴%s┴%s┴%s┴%s┴%s┴%s┘[-]\n", th, ph, svh, sh, rh, cch, lh)
+		fmt.Fprintf(&sb, "[white]└%s┴%s┴%s┴%s┴%s┴%s┴%s┴%s┴%s┴%s┘[-]\n", th, ph, svh, sh, lah, mih, avh, mxh, cch, chh)
 	}
 
 	return sb.String()

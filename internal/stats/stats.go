@@ -19,7 +19,19 @@ type PortCheckResult struct {
 	OpenCount   int
 	ClosedCount int
 	LastChange  time.Time
-	mu          sync.RWMutex
+
+	// RTT statistics for Open responses only.
+	minRTT     time.Duration
+	maxRTT     time.Duration
+	sumRTT     time.Duration
+	rttSamples int
+
+	// Ring buffer for RTT graph (same layout as TargetStats.rttHistory).
+	rttHistory []time.Duration
+	historyIdx int
+	historyLen int
+
+	mu sync.RWMutex
 }
 
 func (r *PortCheckResult) SetResult(status string, rtt time.Duration) {
@@ -33,8 +45,32 @@ func (r *PortCheckResult) SetResult(status string, rtt time.Duration) {
 	switch status {
 	case "Open":
 		r.OpenCount++
+		r.recordRTT(rtt)
 	case "Closed", "Filtered", "Open|Filtered":
 		r.ClosedCount++
+	}
+}
+
+// recordRTT updates RTT statistics and the ring buffer. Must be called with mu held.
+func (r *PortCheckResult) recordRTT(rtt time.Duration) {
+	if rtt <= 0 {
+		return
+	}
+	r.rttSamples++
+	r.sumRTT += rtt
+	if r.minRTT == 0 || rtt < r.minRTT {
+		r.minRTT = rtt
+	}
+	if rtt > r.maxRTT {
+		r.maxRTT = rtt
+	}
+	if r.rttHistory == nil {
+		r.rttHistory = make([]time.Duration, historySize)
+	}
+	r.rttHistory[r.historyIdx%historySize] = rtt
+	r.historyIdx++
+	if r.historyLen < historySize {
+		r.historyLen++
 	}
 }
 
@@ -44,27 +80,50 @@ func (r *PortCheckResult) GetResult() (status string, rtt time.Duration, openCou
 	return r.Status, r.RTT, r.OpenCount, r.ClosedCount, r.LastChange
 }
 
+// GetView returns a thread-safe snapshot including RTT statistics and history.
+func (r *PortCheckResult) GetView() PortCheckView {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var avg time.Duration
+	if r.rttSamples > 0 {
+		avg = r.sumRTT / time.Duration(r.rttSamples)
+	}
+	return PortCheckView{
+		Port:        r.Port,
+		Protocol:    r.Protocol,
+		Status:      r.Status,
+		RTT:         r.RTT,
+		MinRTT:      r.minRTT,
+		AvgRTT:      avg,
+		MaxRTT:      r.maxRTT,
+		History:     reconstructHistory(r.rttHistory, r.historyIdx, r.historyLen),
+		OpenCount:   r.OpenCount,
+		ClosedCount: r.ClosedCount,
+		LastChange:  r.LastChange,
+	}
+}
+
 // TargetStats holds the statistics for a single ping target.
 type TargetStats struct {
-	Host              string
-	IP                string
-	ASN               string
-	IfaceMTU          int
-	PMTU              int
-	PMTUBottleneckIP  string
-	TraceHops         []string
-	PortResults       []*PortCheckResult
-	mtrStats          *MTRStats
-	Sent         int
-	Recv         int
-	Loss         int
-	LastRTT      time.Duration
-	MinRTT       time.Duration
-	MaxRTT       time.Duration
-	SumRTT       time.Duration
-	LastTTL      int
-	LastLossTime time.Time
-	LastError    string
+	Host             string
+	IP               string
+	ASN              string
+	IfaceMTU         int
+	PMTU             int
+	PMTUBottleneckIP string
+	TraceHops        []string
+	PortResults      []*PortCheckResult
+	mtrStats         *MTRStats
+	Sent             int
+	Recv             int
+	Loss             int
+	LastRTT          time.Duration
+	MinRTT           time.Duration
+	MaxRTT           time.Duration
+	SumRTT           time.Duration
+	LastTTL          int
+	LastLossTime     time.Time
+	LastError        string
 
 	// Jitter (RFC 1889)
 	jitter int64 // Stored as nanoseconds for smooth calculation
@@ -82,10 +141,33 @@ type PortCheckView struct {
 	Port        int
 	Protocol    string
 	Status      string
-	RTT         time.Duration
+	RTT         time.Duration // Last RTT value
+	MinRTT      time.Duration
+	AvgRTT      time.Duration
+	MaxRTT      time.Duration
+	History     []time.Duration // ordered ring buffer snapshot for RTT graph
 	OpenCount   int
 	ClosedCount int
 	LastChange  time.Time
+}
+
+// reconstructHistory rebuilds an ordered slice from a ring buffer.
+// buf is the raw buffer, idx is the write pointer, length is the count of valid entries.
+func reconstructHistory(buf []time.Duration, idx, length int) []time.Duration {
+	if length == 0 || buf == nil {
+		return nil
+	}
+	size := len(buf)
+	if length < size {
+		out := make([]time.Duration, length)
+		copy(out, buf[:length])
+		return out
+	}
+	start := idx % size
+	out := make([]time.Duration, size)
+	copy(out, buf[start:])
+	copy(out[size-start:], buf[:start])
+	return out
 }
 
 // TargetView represents a read-only snapshot of the stats for UI rendering.
@@ -97,23 +179,21 @@ type TargetView struct {
 	PMTU             int
 	PMTUBottleneckIP string
 	TraceHops        []string
-	PortResults  []PortCheckView
-	MTRHops      []HopView
-	Sent         int
-	Recv         int
-	Loss         int
-	LastRTT      time.Duration
-	MinRTT       time.Duration
-	MaxRTT       time.Duration
-	AvgRTT       time.Duration // Calculated
-	Jitter       time.Duration // From RFC 1889 state
-	History      []time.Duration
-	LastTTL      int
-	LastLossTime time.Time
-	LastError    string
+	PortResults      []PortCheckView
+	MTRHops          []HopView
+	Sent             int
+	Recv             int
+	Loss             int
+	LastRTT          time.Duration
+	MinRTT           time.Duration
+	MaxRTT           time.Duration
+	AvgRTT           time.Duration // Calculated
+	Jitter           time.Duration // From RFC 1889 state
+	History          []time.Duration
+	LastTTL          int
+	LastLossTime     time.Time
+	LastError        string
 }
-
-
 
 func NewTargetStats(host string) *TargetStats {
 	return &TargetStats{
@@ -121,8 +201,6 @@ func NewTargetStats(host string) *TargetStats {
 		rttHistory: make([]time.Duration, historySize),
 	}
 }
-
-
 
 // GetView returns a thread-safe snapshot of the current statistics.
 func (t *TargetStats) GetView() TargetView {
@@ -134,27 +212,12 @@ func (t *TargetStats) GetView() TargetView {
 		avg = t.SumRTT / time.Duration(t.Recv)
 	}
 
-	// Reconstruct ordered history from ring buffer
-	var histCopy []time.Duration
-	if t.historyLen < historySize {
-		histCopy = make([]time.Duration, t.historyLen)
-		copy(histCopy, t.rttHistory[:t.historyLen])
-	} else {
-		start := t.historyIdx % historySize
-		histCopy = make([]time.Duration, historySize)
-		copy(histCopy, t.rttHistory[start:])
-		copy(histCopy[historySize-start:], t.rttHistory[:start])
-	}
+	histCopy := reconstructHistory(t.rttHistory, t.historyIdx, t.historyLen)
 	traceCopy := make([]string, len(t.TraceHops))
 	copy(traceCopy, t.TraceHops)
 	portCopy := make([]PortCheckView, len(t.PortResults))
 	for i, r := range t.PortResults {
-		status, rtt, openCount, closedCount, lastChange := r.GetResult()
-		portCopy[i] = PortCheckView{
-			Port: r.Port, Protocol: r.Protocol,
-			Status: status, RTT: rtt,
-			OpenCount: openCount, ClosedCount: closedCount, LastChange: lastChange,
-		}
+		portCopy[i] = r.GetView()
 	}
 
 	// MTR snapshot is taken outside TargetStats.mu to avoid lock ordering issues;

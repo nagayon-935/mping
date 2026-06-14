@@ -269,5 +269,5 @@ func (c *callCountingProber) ProbeHop(ctx context.Context, sock HopSocket, dest 
 	c.mu.Unlock()
 	return c.delegate.ProbeHop(ctx, sock, dest, ttl, traceID, timeout)
 }
-func (c *callCountingProber) NextTraceID() int { return c.delegate.NextTraceID() }
+func (c *callCountingProber) NextTraceID() int        { return c.delegate.NextTraceID() }
 func (c *callCountingProber) ASNFor(ip string) string { return "" }

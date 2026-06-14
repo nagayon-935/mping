@@ -66,7 +66,7 @@ func (f *fakeErrPacketConn) WriteTo(b []byte, cm *ipv4.ControlMessage, dst net.A
 }
 
 func (f *fakeErrPacketConn) SetReadDeadline(t time.Time) error { return nil }
-func (f *fakeErrPacketConn) Close() error                     { return nil }
+func (f *fakeErrPacketConn) Close() error                      { return nil }
 func (f *fakeErrPacketConn) SetControlMessage(cf ipv4.ControlFlags, on bool) error {
 	return nil
 }
@@ -84,9 +84,9 @@ func (f *fakeNetPacketConn) WriteTo(b []byte, addr net.Addr) (int, error) {
 func (f *fakeNetPacketConn) Read(b []byte) (int, error)  { return 0, timeoutOpError() }
 func (f *fakeNetPacketConn) Write(b []byte) (int, error) { return len(b), nil }
 
-func (f *fakeNetPacketConn) Close() error                 { return nil }
-func (f *fakeNetPacketConn) LocalAddr() net.Addr          { return &net.IPAddr{IP: net.IPv4(127, 0, 0, 1)} }
-func (f *fakeNetPacketConn) RemoteAddr() net.Addr         { return &net.IPAddr{IP: net.IPv4(127, 0, 0, 1)} }
+func (f *fakeNetPacketConn) Close() error                       { return nil }
+func (f *fakeNetPacketConn) LocalAddr() net.Addr                { return &net.IPAddr{IP: net.IPv4(127, 0, 0, 1)} }
+func (f *fakeNetPacketConn) RemoteAddr() net.Addr               { return &net.IPAddr{IP: net.IPv4(127, 0, 0, 1)} }
 func (f *fakeNetPacketConn) SetDeadline(t time.Time) error      { return nil }
 func (f *fakeNetPacketConn) SetReadDeadline(t time.Time) error  { return nil }
 func (f *fakeNetPacketConn) SetWriteDeadline(t time.Time) error { return nil }
@@ -161,11 +161,11 @@ func (f *fakeTracePacketConn) WriteTo(b []byte, addr net.Addr) (int, error) {
 	return len(b), nil
 }
 
-func (f *fakeTracePacketConn) Read(b []byte) (int, error)  { return 0, timeoutOpError() }
-func (f *fakeTracePacketConn) Write(b []byte) (int, error) { return len(b), nil }
-func (f *fakeTracePacketConn) Close() error                { return nil }
-func (f *fakeTracePacketConn) LocalAddr() net.Addr         { return &net.IPAddr{IP: net.IPv4(127, 0, 0, 1)} }
-func (f *fakeTracePacketConn) RemoteAddr() net.Addr        { return &net.IPAddr{IP: net.IPv4(127, 0, 0, 1)} }
+func (f *fakeTracePacketConn) Read(b []byte) (int, error)         { return 0, timeoutOpError() }
+func (f *fakeTracePacketConn) Write(b []byte) (int, error)        { return len(b), nil }
+func (f *fakeTracePacketConn) Close() error                       { return nil }
+func (f *fakeTracePacketConn) LocalAddr() net.Addr                { return &net.IPAddr{IP: net.IPv4(127, 0, 0, 1)} }
+func (f *fakeTracePacketConn) RemoteAddr() net.Addr               { return &net.IPAddr{IP: net.IPv4(127, 0, 0, 1)} }
 func (f *fakeTracePacketConn) SetDeadline(t time.Time) error      { return nil }
 func (f *fakeTracePacketConn) SetReadDeadline(t time.Time) error  { return nil }
 func (f *fakeTracePacketConn) SetWriteDeadline(t time.Time) error { return nil }
@@ -185,6 +185,7 @@ func buildInnerEchoDataV4(id, seq int) []byte {
 	ipHeader[9] = 1 // ICMP
 	return append(ipHeader, inner...)
 }
+
 type fakePacketConnV6 struct {
 	readQueue []readResultV6
 }
@@ -796,7 +797,6 @@ func TestLogWritesCSV(t *testing.T) {
 	}
 }
 
-
 func TestParseInnerEchoIDSeqShortData(t *testing.T) {
 	if _, _, ok := parseInnerEchoIDSeq([]byte{0x40}); ok {
 		t.Fatal("expected false for short data")
@@ -1383,9 +1383,9 @@ func TestLookupICMPCode(t *testing.T) {
 
 func TestICMPErrorBodyData(t *testing.T) {
 	tests := []struct {
-		name    string
-		msg     *icmp.Message
-		wantOK  bool
+		name   string
+		msg    *icmp.Message
+		wantOK bool
 	}{
 		{
 			name:   "DstUnreach",
@@ -2466,8 +2466,8 @@ func (f *fakeErrOnReadPacketConn) ReadFrom(b []byte) (int, *ipv4.ControlMessage,
 func (f *fakeErrOnReadPacketConn) WriteTo(b []byte, cm *ipv4.ControlMessage, dst net.Addr) (int, error) {
 	return len(b), nil
 }
-func (f *fakeErrOnReadPacketConn) SetReadDeadline(t time.Time) error  { return nil }
-func (f *fakeErrOnReadPacketConn) Close() error                       { return nil }
+func (f *fakeErrOnReadPacketConn) SetReadDeadline(t time.Time) error { return nil }
+func (f *fakeErrOnReadPacketConn) Close() error                      { return nil }
 func (f *fakeErrOnReadPacketConn) SetControlMessage(cf ipv4.ControlFlags, on bool) error {
 	return nil
 }
@@ -2509,8 +2509,8 @@ func (f *fakeShortDataPacketConn) ReadFrom(b []byte) (int, *ipv4.ControlMessage,
 func (f *fakeShortDataPacketConn) WriteTo(b []byte, cm *ipv4.ControlMessage, dst net.Addr) (int, error) {
 	return len(b), nil
 }
-func (f *fakeShortDataPacketConn) SetReadDeadline(t time.Time) error  { return nil }
-func (f *fakeShortDataPacketConn) Close() error                       { return nil }
+func (f *fakeShortDataPacketConn) SetReadDeadline(t time.Time) error { return nil }
+func (f *fakeShortDataPacketConn) Close() error                      { return nil }
 func (f *fakeShortDataPacketConn) SetControlMessage(cf ipv4.ControlFlags, on bool) error {
 	return nil
 }

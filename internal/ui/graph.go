@@ -12,32 +12,129 @@ import (
 
 const (
 	graphMaxVisibleRows = 3
-	graphLabelWidth     = 6 // e.g. "100ms"
+	graphLabelWidth     = 7 // e.g. "1000ms"
 	graphMinWidth       = 10
 	graphWindowSeconds  = 30
-	graphYMax           = 100 * time.Millisecond
+	graphScaleFloorMs   = 100.0 // minimum Y-axis upper bound in ms
+	graphScaleHoldSecs  = 5     // seconds before scale is allowed to shrink
 )
 
-var graphGridValues = []int{25, 50, 75, 100}
+// graphSeries abstracts a single RTT data series for the graph.
+// Both ICMP targets and TCP/UDP port checks implement this interface.
+type graphSeries interface {
+	seriesLabel() string
+	seriesSnapshot() (history []time.Duration, lastRTT time.Duration)
+}
+
+type icmpSeries struct{ t *stats.TargetStats }
+
+func (s icmpSeries) seriesLabel() string {
+	return s.t.GetView().Host
+}
+func (s icmpSeries) seriesSnapshot() ([]time.Duration, time.Duration) {
+	v := s.t.GetView()
+	return v.History, v.LastRTT
+}
+
+type portSeries struct {
+	host string
+	t    *stats.TargetStats
+	idx  int // index into PortResults
+}
+
+func (s portSeries) seriesLabel() string {
+	v := s.t.GetView()
+	if s.idx >= len(v.PortResults) {
+		return s.host
+	}
+	pr := v.PortResults[s.idx]
+	return fmt.Sprintf("%s:%d/%s", s.host, pr.Port, pr.Protocol)
+}
+func (s portSeries) seriesSnapshot() ([]time.Duration, time.Duration) {
+	v := s.t.GetView()
+	if s.idx >= len(v.PortResults) {
+		return nil, 0
+	}
+	pr := v.PortResults[s.idx]
+	return pr.History, pr.RTT
+}
 
 // GraphView is a custom primitive for rendering RTT graphs
 type GraphView struct {
 	*tview.Box
 	targets   []*stats.TargetStats
+	showPorts bool
 	interval  time.Duration
 	vividCyan tcell.Color
 	vividRed  tcell.Color
 	scrollRow int
 	showZero  bool
+
+	// Auto-scale state (accessed from Draw only — no additional lock needed).
+	currentScale   yScale
+	scaleHoldUntil time.Time
 }
 
-func NewGraphView(targets []*stats.TargetStats, interval time.Duration) *GraphView {
+func NewGraphView(targets []*stats.TargetStats, interval time.Duration, showPorts bool) *GraphView {
 	return &GraphView{
-		Box:       tview.NewBox(),
-		targets:   targets,
-		interval:  interval,
-		vividCyan: tcell.NewRGBColor(0, 255, 255),
-		vividRed:  tcell.NewRGBColor(255, 0, 0),
+		Box:          tview.NewBox(),
+		targets:      targets,
+		showPorts:    showPorts,
+		interval:     interval,
+		vividCyan:    tcell.NewRGBColor(0, 255, 255),
+		vividRed:     tcell.NewRGBColor(255, 0, 0),
+		currentScale: computeYScale(0, graphScaleFloorMs),
+	}
+}
+
+// buildSeries constructs the list of graphSeries from current target state.
+// Called at the start of each Draw so that dynamically added port results appear.
+func (g *GraphView) buildSeries() []graphSeries {
+	var out []graphSeries
+	for _, t := range g.targets {
+		out = append(out, icmpSeries{t: t})
+		if g.showPorts {
+			v := t.GetView()
+			for i := range v.PortResults {
+				out = append(out, portSeries{host: v.Host, t: t, idx: i})
+			}
+		}
+	}
+	return out
+}
+
+// windowMax returns the largest RTT value across all series within the current window.
+func windowMax(series []graphSeries, windowPoints int) time.Duration {
+	var max time.Duration
+	for _, s := range series {
+		hist, _ := s.seriesSnapshot()
+		if len(hist) == 0 {
+			continue
+		}
+		data := hist
+		if len(data) > windowPoints {
+			data = data[len(data)-windowPoints:]
+		}
+		for _, v := range data {
+			if v > max {
+				max = v
+			}
+		}
+	}
+	return max
+}
+
+// updateScale recalculates the auto-scale, applying hysteresis on shrink.
+func (g *GraphView) updateScale(dataMax time.Duration, now time.Time) {
+	newScale := computeYScale(dataMax, graphScaleFloorMs)
+	if newScale.maxMs > g.currentScale.maxMs {
+		// Expand immediately.
+		g.currentScale = newScale
+		g.scaleHoldUntil = now.Add(graphScaleHoldSecs * time.Second)
+	} else if newScale.maxMs < g.currentScale.maxMs && now.After(g.scaleHoldUntil) {
+		// Shrink only after hold period.
+		g.currentScale = newScale
+		g.scaleHoldUntil = now.Add(graphScaleHoldSecs * time.Second)
 	}
 }
 
@@ -159,7 +256,7 @@ func gridStepsForHeight(plotHeight int) (totalSteps, gy25, gy50, gy75, gy100 int
 }
 
 func (g *GraphView) layout(width, height int) (numCols, numRowsTotal, visibleRows, colWidth, rowHeight int) {
-	numTargets := len(g.targets)
+	numTargets := len(g.buildSeries())
 	if numTargets == 0 || width <= 0 || height <= 0 {
 		return 1, 0, 0, 0, 0
 	}
@@ -252,10 +349,20 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 		}
 	}
 
-	numTargets := len(g.targets)
-	if numTargets == 0 {
+	series := g.buildSeries()
+	if len(series) == 0 {
 		return
 	}
+
+	// Compute time-based window width once (shared across all cells).
+	timeBasedWidth := int(graphWindowSeconds * time.Second / g.interval)
+	if timeBasedWidth < 1 {
+		timeBasedWidth = 1
+	}
+
+	// Update auto-scale from current window maximum across all series.
+	g.updateScale(windowMax(series, timeBasedWidth), time.Now())
+	yMaxDur := time.Duration(g.currentScale.maxMs * float64(time.Millisecond))
 
 	numCols, numRowsTotal, visibleRows, colWidth, rowHeight := g.layout(width, height)
 	if visibleRows == 0 {
@@ -266,176 +373,120 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 	// Draw loop
 	for r := 0; r < visibleRows; r++ {
 		rowIndex := g.scrollRow + r
-		// Y position for this row
 		baseY := y + (r * rowHeight)
 		if baseY >= y+height {
 			break
 		}
 
-		// Max height for graph in this row block
-		// Reserve 1 line for header text and 1 blank line between blocks.
 		graphHeight := rowHeight - 2
 		if graphHeight < 1 {
 			graphHeight = 1
 		}
-		// Cap graphHeight to not overflow view
 		if baseY+1+graphHeight > y+height {
 			graphHeight = (y + height) - (baseY + 1)
 		}
 
 		for c := 0; c < numCols; c++ {
 			idx := rowIndex*numCols + c
-			if idx >= numTargets {
+			if idx >= len(series) {
 				break
 			}
 
-			// X position for this column
 			baseX := x + (c * colWidth)
+			s := series[idx]
+			hist, lastRTT := s.seriesSnapshot()
 
-			// Target data
-			t := g.targets[idx]
-			view := t.GetView()
-
-			// Draw Header: Hostname RTT
-			headerStr := fmt.Sprintf("% -20s %s", view.Host, formatRTT(view.LastRTT))
+			// Header: label + last RTT
+			headerStr := fmt.Sprintf("% -20s %s", s.seriesLabel(), formatRTT(lastRTT))
 			headerStr = truncateToDisplayWidth(headerStr, colWidth-2)
+			tview.Print(screen, headerStr, baseX, baseY, colWidth-2, tview.AlignLeft, tcell.ColorYellow)
 
-			// Draw header string char by char
-			printX := baseX
-			tview.Print(screen, headerStr, printX, baseY, colWidth-2, tview.AlignLeft, tcell.ColorYellow)
-
-			// Draw Graph
-			// Calculate graph area
 			graphX := baseX
 			graphY := baseY + 1
 			labelWidth := graphLabelWidth
-			// graphWidth: reserve space for labels on the right
 			graphWidth := colWidth - labelWidth - 2
 			if graphWidth < graphMinWidth {
 				graphWidth = graphMinWidth
 			}
 
-			// Time based limit (0-60s window)
-			timeBasedWidth := int(graphWindowSeconds * time.Second / g.interval)
-			if timeBasedWidth < 1 {
-				timeBasedWidth = 1
-			}
-
-			// Render graph data for a fixed 30s window and project it onto current width.
-			data, hasData := projectDurationsToGraph(view.History, timeBasedWidth, graphWidth)
-
-			// Y-Axis fixed to 0-graphYMax
-			const yMax = graphYMax
-			const yMin = 0
-			const yMaxMs = 100.0
+			data, hasData := projectDurationsToGraph(hist, timeBasedWidth, graphWidth)
 
 			plotY, plotHeight := adjustPlotArea(graphY, graphHeight)
-
-			rangeVal := float64(yMax - yMin)
-
-			// Draw Grid Lines (25, 50, 75, 100 ms) with equal spacing for any height.
-			gridYPos := make(map[int]bool)
+			rangeVal := g.currentScale.maxMs // ms
 
 			totalSteps, gy25, gy50, gy75, gy100 := gridStepsForHeight(plotHeight)
+			gridSteps := [4]int{gy25, gy50, gy75, gy100}
 
-			for _, val := range graphGridValues {
-				gy := 0
-				switch val {
-				case 25:
-					gy = gy25
-				case 50:
-					gy = gy50
-				case 75:
-					gy = gy75
-				case 100:
-					gy = gy100
-				default:
-					gy = int(float64(val) / 100.0 * float64(totalSteps))
-				}
-
-				// Calculate screen Y (py)
-				// gy=0 is bottom. py = graphY + height - 1 - gy
+			gridYPos := make(map[int]bool)
+			for i, val := range g.currentScale.grid {
+				gy := gridSteps[i]
 				py := plotY + (plotHeight - 1 - gy)
-
 				if py >= plotY && py < plotY+plotHeight {
 					gridYPos[gy] = true
-
-					// Draw grid line
 					for gx := 0; gx < graphWidth; gx++ {
 						screen.SetContent(graphX+gx, py, '·', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
 					}
-					// Draw label
 					tview.Print(screen, fmt.Sprintf("%dms", val), graphX+graphWidth+1, py, labelWidth, tview.AlignLeft, tcell.ColorGray)
 				}
 			}
+			_ = gy100 // used via gridSteps
+			_ = totalSteps
 
-			// Label for 0ms (Bottom)
-			bottomY := plotY + plotHeight - 1
-			tview.Print(screen, "0ms", graphX+graphWidth+1, bottomY, labelWidth, tview.AlignLeft, tcell.ColorGray)
+			// 0ms label at bottom
+			tview.Print(screen, "0ms", graphX+graphWidth+1, plotY+plotHeight-1, labelWidth, tview.AlignLeft, tcell.ColorGray)
 
 			if len(data) > 0 {
-				// Plot columns
 				chars := []rune{' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 				for i, val := range data {
 					if !hasData[i] {
 						continue
 					}
 					px := graphX + i
-					// Cap value to yMax
 					v := val
-					if v > yMax {
-						v = yMax
+					if v > yMaxDur {
+						v = yMaxDur
 					}
-
-					ratio := float64(v-yMin) / rangeVal
+					ratio := float64(v.Milliseconds()) / rangeVal
 					if v > 0 && ratio < 0.05 {
 						ratio = 0.05
 					}
-
 					totalLevels := int(ratio * float64(plotHeight*8))
 					if v > 0 && totalLevels == 0 {
 						totalLevels = 1
 					}
-
 					for gy := 0; gy < plotHeight; gy++ {
-						py := plotY + (plotHeight - 1 - gy) // Draw from bottom up
+						py := plotY + (plotHeight - 1 - gy)
 						level := totalLevels - (gy * 8)
-
-						var r rune
+						var ch rune
 						if level <= 0 {
-							// If empty, check if it's a grid line position
 							if gridYPos[gy] {
-								r = '·' // Grid line char
+								ch = '·'
 							} else {
-								r = ' '
+								ch = ' '
 							}
 						} else if level >= 8 {
-							r = '█'
+							ch = '█'
 						} else {
-							r = chars[level]
+							ch = chars[level]
 						}
-
-						// Draw on screen
-						if r != ' ' {
+						if ch != ' ' {
 							color := g.vividCyan
-							if r == '·' {
+							if ch == '·' {
 								color = tcell.ColorGray
 							}
-							screen.SetContent(px, py, r, nil, tcell.StyleDefault.Foreground(color))
+							screen.SetContent(px, py, ch, nil, tcell.StyleDefault.Foreground(color))
 						}
 					}
 				}
 			}
 
-			// Separator line between host graph blocks
+			// Separator line between graph cells
 			sepY := baseY + rowHeight - 1
 			if sepY > graphY && sepY < y+height {
 				for sx := 0; sx < colWidth; sx++ {
 					screen.SetContent(baseX+sx, sepY, '─', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
 				}
 			}
-
 		}
 	}
 }
-

@@ -13,11 +13,15 @@ import (
 // fakeHopConn implements hopSendConnV4 for tests.
 type fakeHopConn struct{}
 
-func (f *fakeHopConn) SetTTL(ttl int) error                                                    { return nil }
-func (f *fakeHopConn) WriteTo(b []byte, cm *ipv4.ControlMessage, dst net.Addr) (int, error)   { return len(b), nil }
-func (f *fakeHopConn) SetReadDeadline(t time.Time) error                                       { return nil }
-func (f *fakeHopConn) ReadFrom(b []byte) (int, *ipv4.ControlMessage, net.Addr, error)         { return 0, nil, nil, timeoutOpError() }
-func (f *fakeHopConn) Close() error                                                            { return nil }
+func (f *fakeHopConn) SetTTL(ttl int) error { return nil }
+func (f *fakeHopConn) WriteTo(b []byte, cm *ipv4.ControlMessage, dst net.Addr) (int, error) {
+	return len(b), nil
+}
+func (f *fakeHopConn) SetReadDeadline(t time.Time) error { return nil }
+func (f *fakeHopConn) ReadFrom(b []byte) (int, *ipv4.ControlMessage, net.Addr, error) {
+	return 0, nil, nil, timeoutOpError()
+}
+func (f *fakeHopConn) Close() error { return nil }
 
 // buildTimeExceededMsg builds an ICMPv4 Time Exceeded message wrapping an Echo
 // with the given id and seq — mirrors what a real router returns.

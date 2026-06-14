@@ -253,6 +253,183 @@ func TestTargetStats_SetASN(t *testing.T) {
 	}
 }
 
+func TestPortCheckResult_RTTStats(t *testing.T) {
+	tests := []struct {
+		name   string
+		inputs []struct {
+			status string
+			rtt    time.Duration
+		}
+		wantMin     time.Duration
+		wantAvg     time.Duration
+		wantMax     time.Duration
+		wantSamples int
+	}{
+		{
+			name: "open only accumulates stats",
+			inputs: []struct {
+				status string
+				rtt    time.Duration
+			}{
+				{"Open", 10 * time.Millisecond},
+				{"Open", 20 * time.Millisecond},
+				{"Open", 30 * time.Millisecond},
+			},
+			wantMin: 10 * time.Millisecond, wantAvg: 20 * time.Millisecond, wantMax: 30 * time.Millisecond, wantSamples: 3,
+		},
+		{
+			name: "closed and filtered do not affect stats",
+			inputs: []struct {
+				status string
+				rtt    time.Duration
+			}{
+				{"Open", 50 * time.Millisecond},
+				{"Closed", 5 * time.Millisecond},
+				{"Filtered", 5 * time.Millisecond},
+				{"Open|Filtered", 999 * time.Millisecond},
+			},
+			wantMin: 50 * time.Millisecond, wantAvg: 50 * time.Millisecond, wantMax: 50 * time.Millisecond, wantSamples: 1,
+		},
+		{
+			name: "zero rtt is ignored",
+			inputs: []struct {
+				status string
+				rtt    time.Duration
+			}{
+				{"Open", 0},
+				{"Open", 100 * time.Millisecond},
+			},
+			wantMin: 100 * time.Millisecond, wantAvg: 100 * time.Millisecond, wantMax: 100 * time.Millisecond, wantSamples: 1,
+		},
+		{
+			name: "no open results: all zeros",
+			inputs: []struct {
+				status string
+				rtt    time.Duration
+			}{
+				{"Closed", 5 * time.Millisecond},
+				{"Filtered", 5 * time.Millisecond},
+			},
+			wantMin: 0, wantAvg: 0, wantMax: 0, wantSamples: 0,
+		},
+		{
+			name: "single open result: min == avg == max",
+			inputs: []struct {
+				status string
+				rtt    time.Duration
+			}{
+				{"Open", 42 * time.Millisecond},
+			},
+			wantMin: 42 * time.Millisecond, wantAvg: 42 * time.Millisecond, wantMax: 42 * time.Millisecond, wantSamples: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &PortCheckResult{Port: 443, Protocol: "tcp", Status: "Checking..."}
+			for _, inp := range tt.inputs {
+				r.SetResult(inp.status, inp.rtt)
+			}
+			view := r.GetView()
+			if view.MinRTT != tt.wantMin {
+				t.Errorf("MinRTT: got %v, want %v", view.MinRTT, tt.wantMin)
+			}
+			if view.AvgRTT != tt.wantAvg {
+				t.Errorf("AvgRTT: got %v, want %v", view.AvgRTT, tt.wantAvg)
+			}
+			if view.MaxRTT != tt.wantMax {
+				t.Errorf("MaxRTT: got %v, want %v", view.MaxRTT, tt.wantMax)
+			}
+		})
+	}
+}
+
+func TestPortCheckResult_GetView_History(t *testing.T) {
+	t.Run("history under capacity", func(t *testing.T) {
+		r := &PortCheckResult{Port: 80, Protocol: "tcp", Status: "Checking..."}
+		rtts := []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 30 * time.Millisecond}
+		for _, rtt := range rtts {
+			r.SetResult("Open", rtt)
+		}
+		view := r.GetView()
+		if len(view.History) != 3 {
+			t.Fatalf("History len: got %d, want 3", len(view.History))
+		}
+		for i, want := range rtts {
+			if view.History[i] != want {
+				t.Errorf("History[%d]: got %v, want %v", i, view.History[i], want)
+			}
+		}
+	})
+
+	t.Run("history wraps at historySize", func(t *testing.T) {
+		r := &PortCheckResult{Port: 80, Protocol: "tcp", Status: "Checking..."}
+		for i := 1; i <= historySize+1; i++ {
+			r.SetResult("Open", time.Duration(i)*time.Millisecond)
+		}
+		view := r.GetView()
+		if len(view.History) != historySize {
+			t.Fatalf("History len: got %d, want %d", len(view.History), historySize)
+		}
+		if view.History[0] != 2*time.Millisecond {
+			t.Errorf("History[0] after wrap: got %v, want 2ms", view.History[0])
+		}
+		if view.History[historySize-1] != time.Duration(historySize+1)*time.Millisecond {
+			t.Errorf("History[last] after wrap: got %v, want %v", view.History[historySize-1], time.Duration(historySize+1)*time.Millisecond)
+		}
+	})
+
+	t.Run("non-open results not added to history", func(t *testing.T) {
+		r := &PortCheckResult{Port: 443, Protocol: "tcp", Status: "Checking..."}
+		r.SetResult("Closed", 5*time.Millisecond)
+		r.SetResult("Filtered", 5*time.Millisecond)
+		view := r.GetView()
+		if len(view.History) != 0 {
+			t.Errorf("History should be empty for non-open, got len %d", len(view.History))
+		}
+	})
+}
+
+func TestPortCheckResult_GetView_BackwardCompat(t *testing.T) {
+	r := &PortCheckResult{Port: 443, Protocol: "tcp", Status: "Checking..."}
+	r.SetResult("Open", 10*time.Millisecond)
+	r.SetResult("Closed", 5*time.Millisecond)
+
+	view := r.GetView()
+	if view.Port != 443 {
+		t.Errorf("Port: got %d, want 443", view.Port)
+	}
+	if view.Protocol != "tcp" {
+		t.Errorf("Protocol: got %q, want tcp", view.Protocol)
+	}
+	if view.Status != "Closed" {
+		t.Errorf("Status: got %q, want Closed", view.Status)
+	}
+	if view.RTT != 5*time.Millisecond {
+		t.Errorf("RTT (last): got %v, want 5ms", view.RTT)
+	}
+	if view.OpenCount != 1 {
+		t.Errorf("OpenCount: got %d, want 1", view.OpenCount)
+	}
+	if view.ClosedCount != 1 {
+		t.Errorf("ClosedCount: got %d, want 1", view.ClosedCount)
+	}
+}
+
+func TestPortCheckResult_ConcurrentAccess(t *testing.T) {
+	r := &PortCheckResult{Port: 80, Protocol: "tcp", Status: "Checking..."}
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 1000; i++ {
+			r.SetResult("Open", time.Duration(i)*time.Millisecond)
+		}
+		close(done)
+	}()
+	for i := 0; i < 1000; i++ {
+		_ = r.GetView()
+	}
+	<-done
+}
+
 func TestTargetStats_SetPortResults(t *testing.T) {
 	tgt := NewTargetStats("example.com")
 	results := []*PortCheckResult{
