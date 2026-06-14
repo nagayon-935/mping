@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mattn/go-runewidth"
 	"github.com/rivo/tview"
 
 	"github.com/nagayon-935/mping/internal/stats"
@@ -200,17 +199,17 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, 
 	}
 }
 
-// mtrIPStr returns the display string for a hop's IP/ASN.
+// mtrIPStr returns the display string for a hop's IP/ASN/country.
 func mtrIPStr(h stats.HopView) string {
 	if h.IP == "" {
 		return "*"
 	}
 	if h.ASN != "" {
-		s := fmt.Sprintf("%s (%s)", h.IP, h.ASN)
-		if runewidth.StringWidth(s) > minMTRHostW {
-			return s
+		annotation := h.ASN
+		if h.Country != "" {
+			annotation += " " + h.Country
 		}
-		return s
+		return fmt.Sprintf("%s (%s)", h.IP, annotation)
 	}
 	return h.IP
 }

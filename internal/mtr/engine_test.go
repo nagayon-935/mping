@@ -46,7 +46,7 @@ func (f *fakeProber) NextTraceID() int {
 	return f.idSeq
 }
 
-func (f *fakeProber) ASNFor(ip string) string { return "" }
+func (f *fakeProber) ASNInfoFor(ip string) pinger.ASNInfo { return pinger.ASNInfo{} }
 
 // waitForHops blocks until MTRStats has at least n hops or timeout.
 func waitForHops(t *testing.T, ts *stats.TargetStats, n int, timeout time.Duration) {
@@ -269,5 +269,5 @@ func (c *callCountingProber) ProbeHop(ctx context.Context, sock HopSocket, dest 
 	c.mu.Unlock()
 	return c.delegate.ProbeHop(ctx, sock, dest, ttl, traceID, timeout)
 }
-func (c *callCountingProber) NextTraceID() int        { return c.delegate.NextTraceID() }
-func (c *callCountingProber) ASNFor(ip string) string { return "" }
+func (c *callCountingProber) NextTraceID() int                    { return c.delegate.NextTraceID() }
+func (c *callCountingProber) ASNInfoFor(ip string) pinger.ASNInfo { return pinger.ASNInfo{} }

@@ -29,7 +29,7 @@ type HopProber interface {
 	OpenHopSocket(dest string) (HopSocket, error)
 	ProbeHop(ctx context.Context, sock HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error)
 	NextTraceID() int
-	ASNFor(ip string) string
+	ASNInfoFor(ip string) pinger.ASNInfo
 }
 
 // Config holds tunable parameters for the MTR engine.
@@ -151,8 +151,8 @@ func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.
 		}
 		mtr.EnsureLen(ttl)
 		if reply.Responded && reply.SrcIP != "" {
-			asn := prober.ASNFor(reply.SrcIP)
-			mtr.SetIP(ttl, reply.SrcIP, asn)
+			info := prober.ASNInfoFor(reply.SrcIP)
+			mtr.SetIP(ttl, reply.SrcIP, info.Number, info.Country, info.Org)
 		}
 		if reply.ReachedDest {
 			hopCount = ttl
@@ -174,8 +174,8 @@ func probe(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTR
 			return
 		}
 		if reply.Responded {
-			asn := prober.ASNFor(reply.SrcIP)
-			mtr.RecordReply(ttl, reply.SrcIP, asn, reply.RTT)
+			info := prober.ASNInfoFor(reply.SrcIP)
+			mtr.RecordReply(ttl, reply.SrcIP, info.Number, info.Country, info.Org, reply.RTT)
 		} else {
 			mtr.RecordLoss(ttl)
 		}

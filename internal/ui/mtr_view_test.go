@@ -17,14 +17,14 @@ func buildMTRTarget(host, ip string, hops []stats.HopView) *stats.TargetStats {
 	for _, h := range hops {
 		if h.Recv > 0 {
 			for i := 0; i < h.Recv; i++ {
-				m.RecordReply(h.TTL, h.IP, h.ASN, h.AvgRTT)
+				m.RecordReply(h.TTL, h.IP, h.ASN, h.Country, h.Org, h.AvgRTT)
 			}
 		}
 		for i := 0; i < h.Sent-h.Recv; i++ {
 			m.RecordLoss(h.TTL)
 		}
 		if h.IP != "" {
-			m.SetIP(h.TTL, h.IP, h.ASN)
+			m.SetIP(h.TTL, h.IP, h.ASN, h.Country, h.Org)
 		}
 	}
 	return t
