@@ -252,7 +252,7 @@ thresholds:
 
 * **Src IP** — Local IP address used for sending.
 * **Dst IP** — Resolved destination IP. Shown as `domain (IP)` when a hostname is given.
-* **ASN** — Autonomous System Number of the target IP (enabled with `-a`).
+* **ASN** — Autonomous System Number, country code, and organization name of the target IP (enabled with `-a`). Example: `AS15169 US Google LLC`.
 * **Success** — Number of packets received successfully.
 * **Loss** — Number of lost packets.
 * **Loss Ratio** — Packet loss percentage. Colour boundaries are configurable (defaults shown).
@@ -284,7 +284,7 @@ thresholds:
 * Can be combined with `-T` (both panes are displayed side by side).
 * Columns:
   * **Hop** — TTL hop number
-  * **Host** — Responder IP (and ASN when `-a` is given). `*` when no response.
+  * **Host** — Responder IP with ASN and country code when `-a` is given (e.g., `1.2.3.4 (AS15169 US)`). `*` when no response.
   * **Loss%** — Packet loss percentage for this hop (green / orange / red)
   * **Snt** — Total probes sent
   * **Recv** — Total replies received

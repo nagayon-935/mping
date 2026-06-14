@@ -23,8 +23,11 @@ func (f *fakePacketConnV4) WriteTo(b []byte, cm *ipv4.ControlMessage, dst net.Ad
 
 func TestPinger_ASNLookupDirect(t *testing.T) {
 	mockLookup := func(query string) ([]string, error) {
-		if strings.Contains(query, "8.8.8.8") {
-			return []string{"15169 | 8.8.8.0/24 | US | arin | 1992-12-01"}, nil
+		if strings.Contains(query, "8.8.8.8") || strings.Contains(query, "15169.asn") {
+			if strings.Contains(query, "origin") {
+				return []string{"15169 | 8.8.8.0/24 | US | arin | 1992-12-01"}, nil
+			}
+			return []string{"15169 | GOOGLE - Google LLC, US | 1992-12-01"}, nil
 		}
 		if strings.Contains(query, "1.1.1.1") {
 			return []string{"NA | 1.1.1.0/24 | US | arin | 1992-12-01"}, nil
@@ -40,7 +43,7 @@ func TestPinger_ASNLookupDirect(t *testing.T) {
 		LookupTXT:  mockLookup,
 	})
 
-	// Test IPv4 lookup
+	// Test IPv4 lookup — backward-compat string method
 	asn := p.getASN("8.8.8.8")
 	if asn != "AS15169" {
 		t.Errorf("expected AS15169, got %q", asn)
@@ -69,6 +72,82 @@ func TestPinger_ASNLookupDirect(t *testing.T) {
 	// Test error from LookupTXT
 	if p.getASN("0.0.0.0") != "" {
 		t.Error("expected empty string on lookup error")
+	}
+}
+
+func TestGetASNInfo_ExtractsCountryAndOrg(t *testing.T) {
+	mockLookup := func(query string) ([]string, error) {
+		switch {
+		case strings.Contains(query, "origin"):
+			return []string{"15169 | 8.8.8.0/24 | US | arin | 1992-12-01"}, nil
+		case strings.Contains(query, "15169.asn"):
+			return []string{"15169 | GOOGLE - Google LLC, US | 1992-12-01"}, nil
+		}
+		return nil, fmt.Errorf("not found")
+	}
+	p := NewPingerWithOptions(nil, Options{AsnEnabled: true, LookupTXT: mockLookup})
+
+	info := p.getASNInfo("8.8.8.8")
+	if info.Number != "AS15169" {
+		t.Errorf("Number: want AS15169, got %q", info.Number)
+	}
+	if info.Country != "US" {
+		t.Errorf("Country: want US, got %q", info.Country)
+	}
+	if info.Org != "Google LLC" {
+		t.Errorf("Org: want Google LLC, got %q", info.Org)
+	}
+}
+
+func TestGetASNInfo_OrgLookupFails_StillReturnsCountry(t *testing.T) {
+	mockLookup := func(query string) ([]string, error) {
+		if strings.Contains(query, "origin") {
+			return []string{"15169 | 8.8.8.0/24 | JP | arin | 1992-12-01"}, nil
+		}
+		return nil, fmt.Errorf("asn lookup fail")
+	}
+	p := NewPingerWithOptions(nil, Options{AsnEnabled: true, LookupTXT: mockLookup})
+
+	info := p.getASNInfo("8.8.8.8")
+	if info.Number != "AS15169" {
+		t.Errorf("Number: want AS15169, got %q", info.Number)
+	}
+	if info.Country != "JP" {
+		t.Errorf("Country: want JP, got %q", info.Country)
+	}
+	if info.Org != "" {
+		t.Errorf("Org: want empty on lookup failure, got %q", info.Org)
+	}
+}
+
+func TestGetASNInfo_CachesFullInfo(t *testing.T) {
+	callCount := 0
+	mockLookup := func(query string) ([]string, error) {
+		callCount++
+		if strings.Contains(query, "origin") {
+			return []string{"64512 | 10.0.0.0/8 | DE | ripe | 2000-01-01"}, nil
+		}
+		return []string{"64512 | EXAMPLE - Example Corp, DE | 2000-01-01"}, nil
+	}
+	p := NewPingerWithOptions(nil, Options{AsnEnabled: true, LookupTXT: mockLookup})
+
+	_ = p.getASNInfo("10.0.0.1")
+	countAfterFirst := callCount
+	_ = p.getASNInfo("10.0.0.1") // should hit cache
+	if callCount != countAfterFirst {
+		t.Errorf("second call should use cache; want %d calls, got %d", countAfterFirst, callCount)
+	}
+}
+
+func TestGetASNInfo_NA_ReturnsEmpty(t *testing.T) {
+	mockLookup := func(query string) ([]string, error) {
+		return []string{"NA | 1.1.1.0/24 | US | arin | 1992-12-01"}, nil
+	}
+	p := NewPingerWithOptions(nil, Options{AsnEnabled: true, LookupTXT: mockLookup})
+
+	info := p.getASNInfo("1.1.1.1")
+	if info.Number != "" || info.Country != "" || info.Org != "" {
+		t.Errorf("NA response should return empty ASNInfo, got %+v", info)
 	}
 }
 

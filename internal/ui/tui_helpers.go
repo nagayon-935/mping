@@ -273,7 +273,14 @@ func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, pack
 		dstDisplay, // Dst IP
 	}
 	if asnEnabled {
-		cols = append(cols, view.ASN)
+		asnCol := view.ASN
+		if view.Country != "" {
+			asnCol += " " + view.Country
+		}
+		if view.Org != "" {
+			asnCol += " " + view.Org
+		}
+		cols = append(cols, asnCol)
 	}
 	cols = append(cols,
 		fmt.Sprintf("%d", view.Recv),

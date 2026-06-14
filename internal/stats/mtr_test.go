@@ -10,8 +10,8 @@ func TestMTRStats_RecordReplyAndLoss(t *testing.T) {
 	m := NewMTRStats()
 	m.EnsureLen(3)
 
-	m.RecordReply(1, "10.0.0.1", "", 10*time.Millisecond)
-	m.RecordReply(1, "10.0.0.1", "", 20*time.Millisecond)
+	m.RecordReply(1, "10.0.0.1", "", "", "", 10*time.Millisecond)
+	m.RecordReply(1, "10.0.0.1", "", "", "", 20*time.Millisecond)
 	m.RecordLoss(1)
 
 	hops := m.View()
@@ -78,7 +78,7 @@ func TestMTRStats_StarHop(t *testing.T) {
 func TestMTRStats_EnsureLenGrowsAndPreserves(t *testing.T) {
 	m := NewMTRStats()
 	m.EnsureLen(2)
-	m.RecordReply(1, "10.0.0.1", "AS1234", 5*time.Millisecond)
+	m.RecordReply(1, "10.0.0.1", "AS1234", "", "", 5*time.Millisecond)
 
 	// Grow: existing hop data must be preserved
 	m.EnsureLen(4)
@@ -97,7 +97,7 @@ func TestMTRStats_EnsureLenGrowsAndPreserves(t *testing.T) {
 func TestMTRStats_EnsureLenShrinks(t *testing.T) {
 	m := NewMTRStats()
 	m.EnsureLen(5)
-	m.RecordReply(5, "10.0.0.5", "", 50*time.Millisecond)
+	m.RecordReply(5, "10.0.0.5", "", "", "", 50*time.Millisecond)
 
 	// Shrink: EnsureLen with smaller n is a no-op (don't discard data)
 	m.EnsureLen(3)
@@ -110,7 +110,7 @@ func TestMTRStats_EnsureLenShrinks(t *testing.T) {
 func TestMTRStats_SetIP(t *testing.T) {
 	m := NewMTRStats()
 	m.EnsureLen(1)
-	m.SetIP(1, "192.168.1.1", "AS64512")
+	m.SetIP(1, "192.168.1.1", "AS64512", "", "")
 
 	hops := m.View()
 	if hops[0].IP != "192.168.1.1" {
@@ -121,10 +121,33 @@ func TestMTRStats_SetIP(t *testing.T) {
 	}
 }
 
+func TestMTRStats_CountryOrgStored(t *testing.T) {
+	m := NewMTRStats()
+	m.EnsureLen(2)
+
+	m.RecordReply(1, "8.8.8.8", "AS15169", "US", "Google LLC", 10*time.Millisecond)
+	m.SetIP(2, "1.1.1.1", "AS13335", "AU", "Cloudflare")
+
+	hops := m.View()
+
+	if hops[0].Country != "US" {
+		t.Errorf("hop1 Country: want US, got %q", hops[0].Country)
+	}
+	if hops[0].Org != "Google LLC" {
+		t.Errorf("hop1 Org: want Google LLC, got %q", hops[0].Org)
+	}
+	if hops[1].Country != "AU" {
+		t.Errorf("hop2 Country: want AU, got %q", hops[1].Country)
+	}
+	if hops[1].Org != "Cloudflare" {
+		t.Errorf("hop2 Org: want Cloudflare, got %q", hops[1].Org)
+	}
+}
+
 func TestMTRStats_Reset(t *testing.T) {
 	m := NewMTRStats()
 	m.EnsureLen(2)
-	m.RecordReply(1, "10.0.0.1", "", 5*time.Millisecond)
+	m.RecordReply(1, "10.0.0.1", "", "", "", 5*time.Millisecond)
 	m.Reset()
 
 	hops := m.View()
@@ -146,7 +169,7 @@ func TestMTRStats_ConcurrentAccess(t *testing.T) {
 			if n%3 == 0 {
 				m.RecordLoss(ttl)
 			} else {
-				m.RecordReply(ttl, "10.0.0.1", "", time.Duration(n)*time.Millisecond)
+				m.RecordReply(ttl, "10.0.0.1", "", "", "", time.Duration(n)*time.Millisecond)
 			}
 		}(i)
 	}
@@ -174,7 +197,7 @@ func TestTargetStats_MTRIntegration(t *testing.T) {
 	}
 
 	m.EnsureLen(2)
-	m.RecordReply(1, "10.0.0.1", "", 10*time.Millisecond)
+	m.RecordReply(1, "10.0.0.1", "", "", "", 10*time.Millisecond)
 
 	// GetView should include MTR snapshot
 	v := ts.GetView()
@@ -190,7 +213,7 @@ func TestTargetStats_ResetClearsMTR(t *testing.T) {
 	ts := NewTargetStats("example.com")
 	m := ts.MTR()
 	m.EnsureLen(3)
-	m.RecordReply(1, "10.0.0.1", "", 5*time.Millisecond)
+	m.RecordReply(1, "10.0.0.1", "", "", "", 5*time.Millisecond)
 
 	ts.Reset()
 	hops := m.View()

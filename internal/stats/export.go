@@ -13,6 +13,8 @@ type TargetSummary struct {
 	Host         string        `json:"host"`
 	IP           string        `json:"ip"`
 	ASN          string        `json:"asn,omitempty"`
+	Country      string        `json:"country,omitempty"`
+	Org          string        `json:"org,omitempty"`
 	Sent         int           `json:"sent"`
 	Recv         int           `json:"recv"`
 	Loss         int           `json:"loss"`
@@ -36,6 +38,8 @@ type HopSummary struct {
 	TTL       int     `json:"ttl"`
 	IP        string  `json:"ip"` // "" when hop never responded
 	ASN       string  `json:"asn,omitempty"`
+	Country   string  `json:"country,omitempty"`
+	Org       string  `json:"org,omitempty"`
 	Sent      int     `json:"sent"`
 	Recv      int     `json:"recv"`
 	LossPct   float64 `json:"loss_pct"`
@@ -107,6 +111,8 @@ func BuildSnapshot(targets []*TargetStats) ExportSnapshot {
 				TTL:       h.TTL,
 				IP:        h.IP,
 				ASN:       h.ASN,
+				Country:   h.Country,
+				Org:       h.Org,
 				Sent:      h.Sent,
 				Recv:      h.Recv,
 				LossPct:   h.LossPct,
@@ -122,6 +128,8 @@ func BuildSnapshot(targets []*TargetStats) ExportSnapshot {
 			Host:         v.Host,
 			IP:           v.IP,
 			ASN:          v.ASN,
+			Country:      v.Country,
+			Org:          v.Org,
 			Sent:         v.Sent,
 			Recv:         v.Recv,
 			Loss:         v.Loss,

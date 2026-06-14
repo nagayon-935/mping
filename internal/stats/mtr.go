@@ -10,6 +10,8 @@ type HopStats struct {
 	TTL     int    // hop number (1-based)
 	IP      string // last-seen responder IP ("" if never responded)
 	ASN     string // cached ASN annotation
+	Country string // two-letter country code (from Cymru)
+	Org     string // organization name (from Cymru)
 	Sent    int
 	Recv    int
 	LastRTT time.Duration
@@ -24,6 +26,8 @@ type HopView struct {
 	TTL     int
 	IP      string // "" when no responder has ever answered (rendered as "*")
 	ASN     string
+	Country string
+	Org     string
 	Sent    int
 	Recv    int
 	LossPct float64
@@ -59,7 +63,7 @@ func (m *MTRStats) EnsureLen(n int) {
 
 // RecordReply records a successful probe response for the hop at ttl.
 // ttl is 1-based.
-func (m *MTRStats) RecordReply(ttl int, ip, asn string, rtt time.Duration) {
+func (m *MTRStats) RecordReply(ttl int, ip, asn, country, org string, rtt time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	h := m.hopAt(ttl)
@@ -73,6 +77,12 @@ func (m *MTRStats) RecordReply(ttl int, ip, asn string, rtt time.Duration) {
 	}
 	if asn != "" {
 		h.ASN = asn
+	}
+	if country != "" {
+		h.Country = country
+	}
+	if org != "" {
+		h.Org = org
 	}
 	// RFC 1889 jitter
 	if h.Recv > 1 {
@@ -107,7 +117,7 @@ func (m *MTRStats) RecordLoss(ttl int) {
 // SetIP updates the responder identity for the hop at ttl without a sample.
 // Used during discovery when no RTT measurement was taken.
 // ttl is 1-based.
-func (m *MTRStats) SetIP(ttl int, ip, asn string) {
+func (m *MTRStats) SetIP(ttl int, ip, asn, country, org string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	h := m.hopAt(ttl)
@@ -119,6 +129,12 @@ func (m *MTRStats) SetIP(ttl int, ip, asn string) {
 	}
 	if asn != "" {
 		h.ASN = asn
+	}
+	if country != "" {
+		h.Country = country
+	}
+	if org != "" {
+		h.Org = org
 	}
 }
 
@@ -140,6 +156,8 @@ func (m *MTRStats) View() []HopView {
 			TTL:     h.TTL,
 			IP:      h.IP,
 			ASN:     h.ASN,
+			Country: h.Country,
+			Org:     h.Org,
 			Sent:    h.Sent,
 			Recv:    h.Recv,
 			LossPct: lossPct,

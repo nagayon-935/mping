@@ -76,7 +76,7 @@ type Pinger struct {
 	mapMu       sync.RWMutex
 	baseID      int
 
-	asnCache map[string]string
+	asnCache map[string]ASNInfo
 	asnMu    sync.RWMutex
 
 	traceChans   []chan traceMsg // one per concurrent TraceRoute call
@@ -134,7 +134,7 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		Targets:         targets,
 		targetMap:       make(map[int]*stats.TargetStats),
 		targetChans:     make(map[int]chan Reply),
-		asnCache:        make(map[string]string),
+		asnCache:        make(map[string]ASNInfo),
 		baseID:          os.Getpid() & 0xffff,
 		Size:            56, // Default payload size (like standard ping)
 		ResolveInterval: 60 * time.Second,
@@ -445,65 +445,104 @@ func (p *Pinger) resolveTarget(t *stats.TargetStats) *net.IPAddr {
 	return addr
 }
 
+// ASNInfo holds the full result of a Team Cymru ASN lookup.
+type ASNInfo struct {
+	Number  string // "AS15169"
+	Country string // "US"
+	Org     string // "Google LLC"
+}
+
 func (p *Pinger) lookupASN(t *stats.TargetStats, ipStr string) {
-	asn := p.getASN(ipStr)
-	if asn != "" {
-		t.SetASN(asn)
+	info := p.getASNInfo(ipStr)
+	if info.Number != "" {
+		t.SetASNInfo(info.Number, info.Country, info.Org)
 	}
 }
 
 func (p *Pinger) getASN(ipStr string) string {
-	p.asnMu.RLock()
-	asn, found := p.asnCache[ipStr]
-	p.asnMu.RUnlock()
+	return p.getASNInfo(ipStr).Number
+}
 
+func (p *Pinger) getASNInfo(ipStr string) ASNInfo {
+	p.asnMu.RLock()
+	info, found := p.asnCache[ipStr]
+	p.asnMu.RUnlock()
 	if found {
-		return asn
+		return info
 	}
 
-	// Reverse IP for cymru DNS lookup
-	var query string
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
-		return ""
+		return ASNInfo{}
 	}
 
+	var originQuery string
 	if ip4 := ip.To4(); ip4 != nil {
-		query = fmt.Sprintf("%d.%d.%d.%d.origin.asn.cymru.com", ip4[3], ip4[2], ip4[1], ip4[0])
+		originQuery = fmt.Sprintf("%d.%d.%d.%d.origin.asn.cymru.com", ip4[3], ip4[2], ip4[1], ip4[0])
 	} else {
-		// IPv6 reverse lookup
-		// cymru ipv6 is a bit complex, let's just do v4 for simplicity or implement v6 if needed.
-		// For now, let's implement standard IPv6 cymru format.
-		// Ex: 2001:4860:4860::8888 -> 8.8.8.8.0...1.0.0.2.origin6.asn.cymru.com
 		var sb strings.Builder
 		for i := 15; i >= 0; i-- {
 			sb.WriteString(fmt.Sprintf("%x.%x.", ip[i]&0xf, ip[i]>>4))
 		}
 		sb.WriteString("origin6.asn.cymru.com")
-		query = sb.String()
+		originQuery = sb.String()
 	}
 
-	txts, err := p.lookupTXT(query)
+	txts, err := p.lookupTXT(originQuery)
 	if err != nil || len(txts) == 0 {
-		return ""
+		return ASNInfo{}
 	}
 
 	// Response example: "15169 | 8.8.8.0/24 | US | arin | 1992-12-01"
 	parts := strings.Split(txts[0], "|")
-	if len(parts) > 0 {
-		asn = strings.TrimSpace(parts[0])
-		if asn == "NA" || asn == "" {
-			return ""
-		}
-		if !strings.HasPrefix(asn, "AS") {
-			asn = "AS" + asn
-		}
-		p.asnMu.Lock()
-		p.asnCache[ipStr] = asn
-		p.asnMu.Unlock()
-		return asn
+	if len(parts) == 0 {
+		return ASNInfo{}
 	}
-	return ""
+
+	asnRaw := strings.TrimSpace(parts[0])
+	if asnRaw == "NA" || asnRaw == "" {
+		return ASNInfo{}
+	}
+	if !strings.HasPrefix(asnRaw, "AS") {
+		asnRaw = "AS" + asnRaw
+	}
+
+	var country string
+	if len(parts) >= 3 {
+		country = strings.TrimSpace(parts[2])
+	}
+
+	// Second lookup: <asn-number>.asn.cymru.com for org name
+	// Response: "15169 | GOOGLE - Google LLC, US | 1992-12-01"
+	org := p.lookupOrg(strings.TrimPrefix(asnRaw, "AS"))
+
+	info = ASNInfo{Number: asnRaw, Country: country, Org: org}
+	p.asnMu.Lock()
+	p.asnCache[ipStr] = info
+	p.asnMu.Unlock()
+	return info
+}
+
+func (p *Pinger) lookupOrg(asnNumber string) string {
+	txts, err := p.lookupTXT(asnNumber + ".asn.cymru.com")
+	if err != nil || len(txts) == 0 {
+		return ""
+	}
+	// Response: "15169 | GOOGLE - Google LLC, US | 1992-12-01"
+	parts := strings.Split(txts[0], "|")
+	if len(parts) < 2 {
+		return ""
+	}
+	desc := strings.TrimSpace(parts[1]) // "GOOGLE - Google LLC, US"
+	// Strip "HANDLE - " prefix if present
+	if idx := strings.Index(desc, " - "); idx >= 0 {
+		desc = strings.TrimSpace(desc[idx+3:]) // "Google LLC, US"
+	}
+	// Strip trailing ", CC" country suffix
+	if idx := strings.LastIndex(desc, ", "); idx >= 0 {
+		desc = strings.TrimSpace(desc[:idx]) // "Google LLC"
+	}
+	return desc
 }
 
 // getWriteFunc returns the appropriate ICMP message type and write function
