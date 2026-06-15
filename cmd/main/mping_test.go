@@ -1416,3 +1416,156 @@ func TestParseHostsFile_GroupsYAML(t *testing.T) {
 		t.Errorf("Groups[0].Hosts: want 2, got %d", len(doc.Groups[0].Hosts))
 	}
 }
+
+func TestRunOnAddHost_AddsHostAndReloads(t *testing.T) {
+	origPinger := newPinger
+	origUI := uiRun
+	t.Cleanup(func() {
+		newPinger = origPinger
+		uiRun = origUI
+	})
+
+	fp := &fakePinger{}
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		return fp
+	}
+
+	reloadCount := 0
+	uiRun = func(opts ui.RunOptions) error {
+		reloadCount++
+		if reloadCount == 1 {
+			// First run: call OnAddHost to add a new host
+			if err := opts.OnAddHost("newhost.example.com"); err != nil {
+				t.Errorf("OnAddHost: unexpected error: %v", err)
+			}
+		}
+		return nil
+	}
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"-S", "10.0.0.2", "example.com"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected 0, got %d; stderr: %s", code, errOut.String())
+	}
+	if reloadCount != 2 {
+		t.Fatalf("expected 2 UI runs (initial + reload), got %d", reloadCount)
+	}
+}
+
+func TestRunOnAddHost_DuplicateReturnsError(t *testing.T) {
+	origPinger := newPinger
+	origUI := uiRun
+	t.Cleanup(func() {
+		newPinger = origPinger
+		uiRun = origUI
+	})
+
+	fp := &fakePinger{}
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		return fp
+	}
+
+	uiRun = func(opts ui.RunOptions) error {
+		// Try to add the same host that already exists
+		if err := opts.OnAddHost("example.com"); err == nil {
+			t.Error("OnAddHost with duplicate host should return error")
+		}
+		return nil
+	}
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"-S", "10.0.0.2", "example.com"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected 0, got %d", code)
+	}
+}
+
+func TestRunOnDeleteHost_RemovesHostAndReloads(t *testing.T) {
+	origPinger := newPinger
+	origUI := uiRun
+	t.Cleanup(func() {
+		newPinger = origPinger
+		uiRun = origUI
+	})
+
+	fp := &fakePinger{}
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		return fp
+	}
+
+	reloadCount := 0
+	uiRun = func(opts ui.RunOptions) error {
+		reloadCount++
+		if reloadCount == 1 {
+			// Delete the second host (keep "host-a")
+			if err := opts.OnDeleteHost("host-b"); err != nil {
+				t.Errorf("OnDeleteHost: unexpected error: %v", err)
+			}
+		}
+		return nil
+	}
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"-S", "10.0.0.2", "host-a", "host-b"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected 0, got %d; stderr: %s", code, errOut.String())
+	}
+	if reloadCount != 2 {
+		t.Fatalf("expected 2 UI runs (initial + reload), got %d", reloadCount)
+	}
+}
+
+func TestRunOnDeleteHost_LastHostReturnsError(t *testing.T) {
+	origPinger := newPinger
+	origUI := uiRun
+	t.Cleanup(func() {
+		newPinger = origPinger
+		uiRun = origUI
+	})
+
+	fp := &fakePinger{}
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		return fp
+	}
+
+	uiRun = func(opts ui.RunOptions) error {
+		// Try to delete the only host
+		if err := opts.OnDeleteHost("example.com"); err == nil {
+			t.Error("OnDeleteHost of last host should return error")
+		}
+		return nil
+	}
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"-S", "10.0.0.2", "example.com"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected 0, got %d", code)
+	}
+}
+
+func TestRunOnDeleteHost_NotFoundReturnsError(t *testing.T) {
+	origPinger := newPinger
+	origUI := uiRun
+	t.Cleanup(func() {
+		newPinger = origPinger
+		uiRun = origUI
+	})
+
+	fp := &fakePinger{}
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		return fp
+	}
+
+	uiRun = func(opts ui.RunOptions) error {
+		if err := opts.OnDeleteHost("nonexistent.host"); err == nil {
+			t.Error("OnDeleteHost of nonexistent host should return error")
+		}
+		return nil
+	}
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"-S", "10.0.0.2", "example.com"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected 0, got %d", code)
+	}
+}

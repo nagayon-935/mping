@@ -816,6 +816,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		reloadMu        sync.Mutex
 		reloadRequested bool
 		reloadDoc       hostsFileYAML
+		reloadNewHosts  []string // non-nil when triggered by add/delete (skips applyDocToCfg)
 	)
 
 	currentCfg := cfg
@@ -1155,7 +1156,47 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			OnResetMTR:   resetMTR,
 			OnResetPort:  resetPort,
 			OnResetHTTP:  resetHTTP,
-			Groups:       currentGroups,
+			OnAddHost: func(host string) error {
+				host = strings.TrimSpace(host)
+				if host == "" {
+					return fmt.Errorf("host cannot be empty")
+				}
+				for _, h := range currentHosts {
+					if h == host {
+						return fmt.Errorf("host %q is already in the list", host)
+					}
+				}
+				newHosts := make([]string, len(currentHosts)+1)
+				copy(newHosts, currentHosts)
+				newHosts[len(currentHosts)] = host
+				reloadMu.Lock()
+				reloadRequested = true
+				reloadNewHosts = newHosts
+				reloadMu.Unlock()
+				reloadCloseOnce.Do(func() { close(reloadCh) })
+				return nil
+			},
+			OnDeleteHost: func(host string) error {
+				newHosts := make([]string, 0, len(currentHosts))
+				for _, h := range currentHosts {
+					if h != host {
+						newHosts = append(newHosts, h)
+					}
+				}
+				if len(newHosts) == len(currentHosts) {
+					return fmt.Errorf("host %q not found", host)
+				}
+				if len(newHosts) == 0 {
+					return fmt.Errorf("cannot delete the last host")
+				}
+				reloadMu.Lock()
+				reloadRequested = true
+				reloadNewHosts = newHosts
+				reloadMu.Unlock()
+				reloadCloseOnce.Do(func() { close(reloadCh) })
+				return nil
+			},
+			Groups: currentGroups,
 		}); err != nil {
 			fmt.Fprintf(errOut, "Error running application: %v\n", err)
 			jsonCancel()
@@ -1192,17 +1233,25 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		// ── Check if a reload was requested ──────────────────────────────────
 		reloadMu.Lock()
 		reload := reloadRequested
+		newHosts := reloadNewHosts
 		if reload {
-			docHosts, docGroups, newCfg, applyErr := applyDocToCfg(cliCfg, fs, reloadDoc)
-			if applyErr != nil {
-				// Shouldn't happen (validateHostsDoc passed), but be safe.
-				reload = false
+			if newHosts != nil {
+				// In-memory add/delete: use the updated host list directly.
+				currentHosts = newHosts
 			} else {
-				currentHosts, currentGroups = buildHostsAndGroups(docHosts, docGroups, cliHosts)
-				currentCfg = newCfg
+				// File-based reload: re-apply YAML doc.
+				docHosts, docGroups, newCfg, applyErr := applyDocToCfg(cliCfg, fs, reloadDoc)
+				if applyErr != nil {
+					// Shouldn't happen (validateHostsDoc passed), but be safe.
+					reload = false
+				} else {
+					currentHosts, currentGroups = buildHostsAndGroups(docHosts, docGroups, cliHosts)
+					currentCfg = newCfg
+				}
 			}
 			reloadRequested = false
 			reloadDoc = hostsFileYAML{}
+			reloadNewHosts = nil
 		}
 		reloadMu.Unlock()
 

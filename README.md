@@ -282,8 +282,12 @@ groups:
 | **s** | Pause ping |
 | **S** | Resume ping (only valid after **s**) |
 | **R** | Reset all statistics and logs |
+| **a** | Open "Add host" dialog — type a hostname or IP and press Enter to add it at runtime |
+| **d** | Open "Delete host" dialog — select a host with ↑/↓ and press Enter to remove it at runtime |
 | **Tab** | Cycle focus: Ping Monitor → Traceroute Monitor → MTR Monitor → Port Monitor → RTT Graphs → Log |
 | **↑ / ↓ / PgUp / PgDn** | Scroll focused pane (Table / Traceroute / RTT Graphs) |
+
+> **Note:** Adding or deleting a host resets all statistics for all targets, equivalent to a YAML configuration reload.
 
 ## TUI columns
 
