@@ -64,7 +64,7 @@ func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
 			for j, rl := range routeLines {
 				hostStr := ""
 				if j == midIdx {
-					hostStr = view.Host
+					hostStr = tview.Escape(view.Host)
 				}
 				fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[-]\n",
 					rightPaddedCell(hostStr, hostColW), paddedCell(rl, routeColW))
@@ -99,7 +99,7 @@ func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
 				hopsStr := ""
 				initTTLStr := ""
 				if j == midIdx {
-					hostStr = view.Host
+					hostStr = tview.Escape(view.Host)
 					hopsStr = hopsStrVal
 					initTTLStr = initTTLStrVal
 				}
@@ -182,8 +182,8 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 					color = "[green]"
 				}
 				now := time.Now()
-				msg := fmt.Sprintf("[darkgray]%s[-] %s%s[-] [white]%d/%s:[white] %s → %s%s[-]",
-					now.Format("15:04:05"), "[white]", view.Host, pr.Port, pr.Protocol,
+				msg := fmt.Sprintf("[darkgray]%s[-] [white]%s[-] [white]%d/%s:[white] %s → %s%s[-]",
+					now.Format("15:04:05"), tview.Escape(view.Host), pr.Port, pr.Protocol,
 					prev, color, pr.Status)
 				appendErrorLog(errorLogs, errorView, msg)
 			}
@@ -206,7 +206,7 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 			for i, pr := range view.PortResults {
 				targetName := ""
 				if i == 0 {
-					targetName = view.Host
+					targetName = tview.Escape(view.Host)
 				}
 				fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│%s%s[-][white]│[white]%s[white]│[-]\n",
 					paddedCell(targetName, targetColW),
@@ -248,7 +248,7 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 				}
 				targetName := ""
 				if i == 0 {
-					targetName = view.Host
+					targetName = tview.Escape(view.Host)
 				}
 				fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│%s%s[-][white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[-]\n",
 					paddedCell(targetName, targetColW),
