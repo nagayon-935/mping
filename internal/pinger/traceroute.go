@@ -186,9 +186,15 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 			// Fallback: read directly from our send socket (pinger not running).
 			deadline := time.Now().Add(timeout)
 			if isV4 {
-				sendV4.SetReadDeadline(deadline)
+				if err = sendV4.SetReadDeadline(deadline); err != nil {
+					hops = append(hops, "*")
+					continue
+				}
 			} else {
-				sendV6.SetReadDeadline(deadline)
+				if err = sendV6.SetReadDeadline(deadline); err != nil {
+					hops = append(hops, "*")
+					continue
+				}
 			}
 			for {
 				var n int

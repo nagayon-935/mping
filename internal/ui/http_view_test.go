@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -107,5 +108,78 @@ func TestRenderHTTPMonitorTable_HeadersPresent(t *testing.T) {
 		if !strings.Contains(out, hdr) {
 			t.Errorf("Header %q not found in output:\n%s", hdr, out)
 		}
+	}
+}
+
+// ---- httpCodeColorTag ----
+
+func TestHTTPCodeColorTag(t *testing.T) {
+	tests := []struct {
+		code int
+		want string
+	}{
+		{0, "[darkgray]"},
+		{200, "[green]"},
+		{204, "[green]"},
+		{301, "[orange]"},
+		{302, "[orange]"},
+		{404, "[orange]"},
+		{500, "[red::b]"},
+		{503, "[red::b]"},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("code_%d", tt.code), func(t *testing.T) {
+			if got := httpCodeColorTag(tt.code); got != tt.want {
+				t.Errorf("httpCodeColorTag(%d) = %q, want %q", tt.code, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---- appendErrorLogRaw ----
+
+func TestAppendErrorLogRaw(t *testing.T) {
+	var buf strings.Builder
+	var logs []string
+
+	appendErrorLogRaw(&logs, &buf, "first message")
+	if len(logs) != 1 || logs[0] != "first message" {
+		t.Errorf("logs = %v, want [\"first message\"]", logs)
+	}
+	if !strings.Contains(buf.String(), "first message") {
+		t.Errorf("writer did not receive message: %q", buf.String())
+	}
+
+	appendErrorLogRaw(&logs, &buf, "second message")
+	if len(logs) != 2 {
+		t.Errorf("expected 2 log entries, got %d", len(logs))
+	}
+}
+
+// ---- renderHTTPMonitorTable status-change log path ----
+
+func TestRenderHTTPMonitorTable_StatusChangeLogsToWriter(t *testing.T) {
+	r := makeHTTPResult("https://example.com/health", "Up", 200, 10*time.Millisecond)
+
+	lastStatuses := map[string]string{
+		"https://example.com/health": "Down", // pretend it was Down before
+	}
+	var logBuf strings.Builder
+	var logs []string
+
+	out := renderHTTPMonitorTable([]*stats.HTTPCheckResult{r}, 200, lastStatuses, &logs, &logBuf)
+
+	if out == "" {
+		t.Error("expected non-empty output")
+	}
+	if len(logs) == 0 {
+		t.Error("expected at least one log entry on status change")
+	}
+	if !strings.Contains(logBuf.String(), "example.com") {
+		t.Errorf("log writer missing URL, got: %q", logBuf.String())
+	}
+	// After the call the status should be updated in lastStatuses.
+	if lastStatuses["https://example.com/health"] != "Up" {
+		t.Errorf("lastStatuses not updated, got %q", lastStatuses["https://example.com/health"])
 	}
 }

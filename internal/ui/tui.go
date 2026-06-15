@@ -72,7 +72,7 @@ type RunOptions struct {
 // Run starts the TUI application with the given options.
 func Run(opts RunOptions) error {
 	if opts.Thresholds != nil {
-		activeThresholds = *opts.Thresholds
+		setActiveThresholds(*opts.Thresholds)
 	}
 	targets := opts.Targets
 	interval := opts.Interval

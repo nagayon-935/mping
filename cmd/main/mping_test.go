@@ -1569,3 +1569,99 @@ func TestRunOnDeleteHost_NotFoundReturnsError(t *testing.T) {
 		t.Fatalf("expected 0, got %d", code)
 	}
 }
+
+// ---- setupLogger additional coverage ----
+
+func TestSetupLogger_EmptyPath(t *testing.T) {
+	f, err := setupLogger("")
+	if err != nil {
+		t.Fatalf("setupLogger(\"\") unexpected error: %v", err)
+	}
+	if f != nil {
+		t.Error("expected nil file handle for empty path")
+	}
+}
+
+func TestSetupLogger_InvalidPath(t *testing.T) {
+	_, err := setupLogger("/nonexistent-dir-mping-test/out.csv")
+	if err == nil {
+		t.Error("expected error for invalid path")
+	}
+}
+
+// ---- writeJSONSnapshot error path ----
+
+func TestWriteJSONSnapshot_WriteError(t *testing.T) {
+	err := writeJSONSnapshot("/nonexistent-dir-mping-test/stats.json", nil, nil)
+	if err == nil {
+		t.Error("expected error when parent directory does not exist")
+	}
+}
+
+// ---- setupHTTPChecker ----
+
+func TestSetupHTTPChecker_NoURLs(t *testing.T) {
+	hc := setupHTTPChecker(nil, time.Second, time.Second)
+	if hc != nil {
+		t.Error("expected nil HTTPChecker for empty URL list")
+	}
+}
+
+func TestSetupHTTPChecker_WithURLs(t *testing.T) {
+	srv := &localHTTPServer{}
+	srv.start(t)
+	hc := setupHTTPChecker([]string{srv.url()}, 100*time.Millisecond, 100*time.Millisecond)
+	if hc == nil {
+		t.Fatal("expected non-nil HTTPChecker for non-empty URL list")
+	}
+	hc.Stop()
+}
+
+// localHTTPServer is a minimal test HTTP server.
+type localHTTPServer struct {
+	l net.Listener
+}
+
+func (s *localHTTPServer) start(t *testing.T) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	s.l = ln
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// Respond with minimal HTTP 200.
+			_, _ = fmt.Fprintf(c, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+			c.Close()
+		}
+	}()
+	t.Cleanup(func() { ln.Close() })
+}
+
+func (s *localHTTPServer) url() string {
+	return "http://" + s.l.Addr().String()
+}
+
+// ---- printExitSummary additional coverage ----
+
+func TestPrintExitSummary_WithRecv(t *testing.T) {
+	tgt := stats.NewTargetStats("example.com")
+	tgt.SetIP("1.2.3.4")
+	tgt.IncSent()
+	tgt.OnSuccess(10*time.Millisecond, 64)
+
+	var out bytes.Buffer
+	printExitSummary(&out, []*stats.TargetStats{tgt})
+	s := out.String()
+	if !strings.Contains(s, "example.com") {
+		t.Errorf("missing host in summary: %q", s)
+	}
+	if !strings.Contains(s, "rtt min") {
+		t.Errorf("missing rtt line in summary: %q", s)
+	}
+}

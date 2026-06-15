@@ -242,20 +242,22 @@ func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, pack
 }
 
 func lossColorForRate(lossRate float64) tcell.Color {
-	if lossRate > activeThresholds.LossCrit {
+	th := getActiveThresholds()
+	if lossRate > th.LossCrit {
 		return vividRed
 	}
-	if lossRate > activeThresholds.LossWarn {
+	if lossRate > th.LossWarn {
 		return tcell.ColorOrange
 	}
 	return tcell.ColorGreen
 }
 
 func rttColorForRTT(rtt time.Duration) tcell.Color {
-	if rtt > activeThresholds.RTTCrit {
+	th := getActiveThresholds()
+	if rtt > th.RTTCrit {
 		return vividRed
 	}
-	if rtt > activeThresholds.RTTWarn {
+	if rtt > th.RTTWarn {
 		return tcell.ColorOrange
 	}
 	if rtt > 0 {
@@ -265,10 +267,11 @@ func rttColorForRTT(rtt time.Duration) tcell.Color {
 }
 
 func jitterColorForJitter(jitter time.Duration) tcell.Color {
-	if jitter > activeThresholds.JitterCrit {
+	th := getActiveThresholds()
+	if jitter > th.JitterCrit {
 		return vividRed
 	}
-	if jitter > activeThresholds.JitterWarn {
+	if jitter > th.JitterWarn {
 		return tcell.ColorOrange
 	}
 	if jitter > 0 {
@@ -548,8 +551,9 @@ func buildErrorLogMessage(view stats.TargetView, sourceIP string, errMsg string,
 }
 
 func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, now time.Time, state alertFlags) (alertFlags, []string) {
+	th := getActiveThresholds()
 	var msgs []string
-	if lossRate > activeThresholds.LossCrit {
+	if lossRate > th.LossCrit {
 		if !state.lossRed {
 			msgs = append(msgs, fmt.Sprintf("[red][%s] %s (%s): Loss Ratio %.1f%%[-]", now.Format("15:04:05"), view.Host, sourceIP, lossRate))
 		}
@@ -558,7 +562,7 @@ func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, 
 		state.lossRed = false
 	}
 
-	if view.LastRTT > activeThresholds.RTTCrit {
+	if view.LastRTT > th.RTTCrit {
 		if !state.rttRed {
 			msgs = append(msgs, fmt.Sprintf("[red][%s] %s (%s): RTT %v[-]", now.Format("15:04:05"), view.Host, sourceIP, view.LastRTT.Round(time.Microsecond)))
 		}
@@ -567,7 +571,7 @@ func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, 
 		state.rttRed = false
 	}
 
-	if view.Jitter > activeThresholds.JitterCrit {
+	if view.Jitter > th.JitterCrit {
 		if !state.jitterRed {
 			msgs = append(msgs, fmt.Sprintf("[red][%s] %s (%s): Jitter %v[-]", now.Format("15:04:05"), view.Host, sourceIP, view.Jitter.Round(time.Microsecond)))
 		}

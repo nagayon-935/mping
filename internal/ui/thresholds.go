@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -53,8 +54,23 @@ func (t Thresholds) Validate() error {
 	return nil
 }
 
-// activeThresholds holds the thresholds currently in effect for rendering.
-// It defaults to DefaultThresholds and is overwritten once at Run() startup
-// when RunOptions.Thresholds is provided. The TUI renders on a single
-// goroutine, so a package-level value needs no synchronisation.
-var activeThresholds = DefaultThresholds()
+var (
+	activeThresholdsMu sync.RWMutex
+	activeThresholds   = DefaultThresholds()
+)
+
+// getActiveThresholds returns a snapshot of the current rendering thresholds.
+// Safe to call from multiple goroutines.
+func getActiveThresholds() Thresholds {
+	activeThresholdsMu.RLock()
+	defer activeThresholdsMu.RUnlock()
+	return activeThresholds
+}
+
+// setActiveThresholds replaces the current rendering thresholds.
+// Called once at Run() startup; also used by tests via withThresholds.
+func setActiveThresholds(t Thresholds) {
+	activeThresholdsMu.Lock()
+	defer activeThresholdsMu.Unlock()
+	activeThresholds = t
+}

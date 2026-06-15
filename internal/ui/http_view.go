@@ -2,10 +2,12 @@ package ui
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
 	"github.com/mattn/go-runewidth"
+	"github.com/rivo/tview"
 
 	"github.com/nagayon-935/mping/internal/stats"
 )
@@ -114,9 +116,7 @@ func httpSinceStr(t time.Time) string {
 // renderHTTPMonitorTable builds the HTTP Monitor pane string.
 // It also detects status changes and appends log messages when errorLogs/errorView
 // are non-nil.
-func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastStatuses map[string]string, errorLogs *[]string, errorView interface {
-	Write(p []byte) (n int, err error)
-}) string {
+func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastStatuses map[string]string, errorLogs *[]string, errorView io.Writer) string {
 	// Compact: drop Min/Avg/Max/Since when screen is narrow.
 	// +2 accounts for the outer left/right border chars that consume available width.
 	fullFixed := minHTTPURLW + httpStatusColW + httpCodeColW + httpLatColW*4 + httpCountColW*2 + httpSinceColW + 9 + 2
@@ -138,11 +138,9 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 					color = "[green]"
 				}
 				msg := fmt.Sprintf("[darkgray]%s[-] [white]HTTP %s:[white] %s → %s%s[-]",
-					time.Now().Format("15:04:05"), v.URL, prev, color, v.Status)
-				if el, ok := errorView.(interface {
-					Write(p []byte) (n int, err error)
-				}); ok && el != nil {
-					appendErrorLogRaw(errorLogs, el, msg)
+					time.Now().Format("15:04:05"), tview.Escape(v.URL), prev, color, v.Status)
+				if errorView != nil {
+					appendErrorLogRaw(errorLogs, errorView, msg)
 				}
 			}
 			lastStatuses[v.URL] = v.Status
@@ -167,7 +165,7 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 			for i, r := range results {
 				v := r.GetView()
 				fmt.Fprintf(&sb, "[white]│[white]%s[white]│%s%s[-][white]│%s%s[-][white]│%s%s[-][white]│[white]%s[white]│[white]%s[white]│[-]\n",
-					paddedCell(v.URL, urlW),
+					paddedCell(tview.Escape(v.URL), urlW),
 					httpStatusColorTag(v.Status), paddedCell(v.Status, httpStatusColW),
 					httpCodeColorTag(v.StatusCode), paddedCell(httpCodeStr(v.StatusCode), httpCodeColW),
 					mtrRTTColorTag(v.RTT), paddedCell(formatHTTPRTT(v.RTT), httpLatColW),
@@ -197,7 +195,7 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 			for i, r := range results {
 				v := r.GetView()
 				fmt.Fprintf(&sb, "[white]│[white]%s[white]│%s%s[-][white]│%s%s[-][white]│%s%s[-][white]│%s%s[-][white]│%s%s[-][white]│%s%s[-][white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[-]\n",
-					paddedCell(v.URL, urlW),
+					paddedCell(tview.Escape(v.URL), urlW),
 					httpStatusColorTag(v.Status), paddedCell(v.Status, httpStatusColW),
 					httpCodeColorTag(v.StatusCode), paddedCell(httpCodeStr(v.StatusCode), httpCodeColW),
 					mtrRTTColorTag(v.RTT), paddedCell(formatHTTPRTT(v.RTT), httpLatColW),
@@ -219,9 +217,7 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 }
 
 // appendErrorLogRaw appends a pre-formatted message to the error log slice and view.
-func appendErrorLogRaw(logs *[]string, view interface {
-	Write(p []byte) (n int, err error)
-}, msg string) {
+func appendErrorLogRaw(logs *[]string, view io.Writer, msg string) {
 	*logs = append(*logs, msg)
 	if len(*logs) > errorLogMaxSize {
 		*logs = (*logs)[len(*logs)-errorLogMaxSize:]
