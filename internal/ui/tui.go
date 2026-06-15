@@ -56,6 +56,9 @@ type RunOptions struct {
 	OnResetMTR    func()
 	OnResetPort   func()
 	OnResetHTTP   func()
+	// Groups defines named groups of targets for grouped display.
+	// Nil means flat (ungrouped) layout — existing behaviour.
+	Groups []TargetGroup
 }
 
 // Run starts the TUI application with the given options.
@@ -82,6 +85,7 @@ func Run(opts RunOptions) error {
 	onResetMTR := opts.OnResetMTR
 	onResetPort := opts.OnResetPort
 	onResetHTTP := opts.OnResetHTTP
+	groups := opts.Groups
 
 	externalCloseCh := opts.ExternalCloseCh
 	externalLogCh := opts.ExternalLogCh
@@ -181,6 +185,10 @@ func Run(opts RunOptions) error {
 	rowCount := len(targets) + 1
 	compactLayout := false
 	filter := ""
+
+	// groupRowMap maps visible table data-row index to its logical row entry.
+	// Rebuilt on every updateTable call when groups are active.
+	var groupRowMap []groupTableRow
 
 	// Filter input
 	filterInput := tview.NewInputField().
@@ -408,6 +416,12 @@ func Run(opts RunOptions) error {
 			rowCount = len(compactRows) + 1
 		}
 
+		// When groups are active, override rowCount with the group layout.
+		if len(groups) > 0 && !compactLayout {
+			groupRowMap = buildGroupRows(targets, groups, nil)
+			rowCount = len(groupRowMap) + 1
+		}
+
 		// Header
 		for i, h := range activeHeaders {
 			text := formatCellText(h, widths[i], activeAligns[i])
@@ -445,47 +459,68 @@ func Run(opts RunOptions) error {
 			}
 		}
 
-		// Update table rows AND Error logs
-		displayIdx := 1
+		// Pass 1: check for new errors and alert state for all targets.
+		now := time.Now()
 		for _, t := range targets {
 			view := t.GetView()
-
-			// Check for new errors
 			if !view.LastLossTime.IsZero() {
 				lastTime, exists := lastLossTimes[view.Host]
 				if !exists || view.LastLossTime.After(lastTime) {
-					// New error detected
 					lastLossTimes[view.Host] = view.LastLossTime
 					rowSourceIP := displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
 					msg := buildErrorLogMessage(view, rowSourceIP, view.LastError, view.LastLossTime)
 					appendErrorLog(&errorLogs, errorView, msg)
 				}
 			}
-
-			if !matchesFilter(view, filter) {
-				continue
+			if !compactLayout {
+				cols, rowSourceIP, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize, asnEnabled)
+				state := alertState[view.Host]
+				state, msgs := updateAlertState(view, rowSourceIP, lossRate, now, state)
+				for _, msg := range msgs {
+					appendErrorLog(&errorLogs, errorView, msg)
+				}
+				alertState[view.Host] = state
+				_ = cols // cols used below in flat rendering
 			}
+		}
 
-			if compactLayout {
-				continue
+		// Pass 2: render table rows.
+		if len(groups) > 0 && !compactLayout {
+			// Group-aware rendering: header → [targets] per group.
+			for rowIdx, row := range groupRowMap {
+				tableRow := rowIdx + 1
+				switch row.kind {
+				case groupRowHeader:
+					memberCount := len(groups[row.groupIdx].Indices)
+					setGroupHeaderRow(table, tableRow, len(activeHeaders),
+						row.groupName, memberCount)
+				case groupRowUngrouped, groupRowTarget:
+					view := targets[row.targetIdx].GetView()
+					cols, _, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize, asnEnabled)
+					cells := buildFullRowCells(cols, widths, fullAligns, lossRate, view.LastRTT, view.Jitter, rowColor, asnEnabled)
+					for c, cell := range cells {
+						table.SetCell(tableRow, c, cell)
+					}
+				}
 			}
-
-			row := displayIdx
-			displayIdx++
-			cols, rowSourceIP, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize, asnEnabled)
-
-			// Alert logs on red thresholds
-			state := alertState[view.Host]
-			now := time.Now()
-			state, msgs := updateAlertState(view, rowSourceIP, lossRate, now, state)
-			for _, msg := range msgs {
-				appendErrorLog(&errorLogs, errorView, msg)
-			}
-			alertState[view.Host] = state
-
-			cells := buildFullRowCells(cols, widths, fullAligns, lossRate, view.LastRTT, view.Jitter, rowColor, asnEnabled)
-			for c, cell := range cells {
-				table.SetCell(row, c, cell)
+		} else {
+			// Flat rendering (no groups or compact layout).
+			displayIdx := 1
+			for _, t := range targets {
+				view := t.GetView()
+				if !matchesFilter(view, filter) {
+					continue
+				}
+				if compactLayout {
+					continue
+				}
+				row := displayIdx
+				displayIdx++
+				cols, _, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize, asnEnabled)
+				cells := buildFullRowCells(cols, widths, fullAligns, lossRate, view.LastRTT, view.Jitter, rowColor, asnEnabled)
+				for c, cell := range cells {
+					table.SetCell(row, c, cell)
+				}
 			}
 		}
 

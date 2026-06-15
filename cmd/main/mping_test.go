@@ -275,7 +275,7 @@ func TestMergeHosts(t *testing.T) {
 	}
 	cfg := config{hostsFile: path}
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	got, _, err := mergeHosts(cfg, fs, []string{"c"})
+	got, _, _, err := mergeHosts(cfg, fs, []string{"c"})
 	if err != nil {
 		t.Fatalf("mergeHosts: %v", err)
 	}
@@ -323,7 +323,7 @@ port:
 	fs.Bool("ipv4", false, "")
 	fs.StringSlice("port", nil, "")
 
-	gotHosts, gotCfg, err := mergeHosts(cfg, fs, nil)
+	gotHosts, _, gotCfg, err := mergeHosts(cfg, fs, nil)
 	if err != nil {
 		t.Fatalf("mergeHosts: %v", err)
 	}
@@ -371,7 +371,7 @@ port:
 	// Test command line override
 	fs.Set("interval", "5000")
 	cfg.intervalMs = 5000 // simulate parseArgs setting cfg from fs
-	_, gotCfg2, _ := mergeHosts(cfg, fs, nil)
+	_, _, gotCfg2, _ := mergeHosts(cfg, fs, nil)
 	if gotCfg2.intervalMs != 5000 {
 		t.Errorf("intervalMs override: got %d, want 5000", gotCfg2.intervalMs)
 	}
@@ -385,7 +385,7 @@ func TestMergeHosts_IPv4AndIPv6Conflict(t *testing.T) {
 	}
 	cfg := config{hostsFile: path}
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	_, _, err := mergeHosts(cfg, fs, nil)
+	_, _, _, err := mergeHosts(cfg, fs, nil)
 	if err == nil {
 		t.Fatal("expected error for ipv4+ipv6 conflict, got nil")
 	}
@@ -1256,5 +1256,159 @@ func TestValidateHostsDoc_ThresholdsValid(t *testing.T) {
 	}
 	if err := validateHostsDoc(doc); err != nil {
 		t.Errorf("expected valid thresholds, got: %v", err)
+	}
+}
+
+// ── Phase 5: YAML groups ──────────────────────────────────────────────────────
+
+func TestValidateHostsDoc_GroupsOnly(t *testing.T) {
+	// groups: alone (no hosts:) should be valid
+	doc := hostsFileYAML{
+		Groups: []groupYAML{
+			{Name: "DC1", Hosts: []string{"192.168.1.1", "192.168.1.2"}},
+		},
+	}
+	if err := validateHostsDoc(doc); err != nil {
+		t.Errorf("groups-only YAML should be valid, got: %v", err)
+	}
+}
+
+func TestValidateHostsDoc_GroupsAndHosts(t *testing.T) {
+	// mixing hosts: and groups: is allowed
+	doc := hostsFileYAML{
+		Hosts:  []string{"google.com"},
+		Groups: []groupYAML{{Name: "DC1", Hosts: []string{"192.168.1.1"}}},
+	}
+	if err := validateHostsDoc(doc); err != nil {
+		t.Errorf("mixed hosts+groups should be valid, got: %v", err)
+	}
+}
+
+func TestValidateHostsDoc_EmptyGroupName(t *testing.T) {
+	doc := hostsFileYAML{
+		Groups: []groupYAML{{Name: "", Hosts: []string{"192.168.1.1"}}},
+	}
+	if err := validateHostsDoc(doc); err == nil {
+		t.Fatal("expected error for empty group name")
+	}
+}
+
+func TestValidateHostsDoc_EmptyGroupHosts(t *testing.T) {
+	doc := hostsFileYAML{
+		Groups: []groupYAML{{Name: "DC1", Hosts: []string{}}},
+	}
+	if err := validateHostsDoc(doc); err == nil {
+		t.Fatal("expected error for group with no hosts")
+	}
+}
+
+func TestValidateHostsDoc_EmptyGroupHostEntry(t *testing.T) {
+	doc := hostsFileYAML{
+		Groups: []groupYAML{{Name: "DC1", Hosts: []string{"192.168.1.1", "  "}}},
+	}
+	if err := validateHostsDoc(doc); err == nil {
+		t.Fatal("expected error for blank host entry in group")
+	}
+}
+
+func TestMergeHosts_Groups(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts.yaml")
+	yaml := `hosts:
+  - google.com
+groups:
+  - name: DC1
+    hosts:
+      - 192.168.1.1
+      - 192.168.1.2
+  - name: DC2
+    hosts:
+      - 10.0.1.1
+`
+	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	cfg := config{hostsFile: path}
+	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	hosts, groups, _, err := mergeHosts(cfg, fs, nil)
+	if err != nil {
+		t.Fatalf("mergeHosts: %v", err)
+	}
+	// ungrouped first, then DC1, then DC2
+	want := []string{"google.com", "192.168.1.1", "192.168.1.2", "10.0.1.1"}
+	if len(hosts) != len(want) {
+		t.Fatalf("hosts: want %v, got %v", want, hosts)
+	}
+	for i, h := range want {
+		if hosts[i] != h {
+			t.Errorf("hosts[%d]: want %q, got %q", i, h, hosts[i])
+		}
+	}
+	if len(groups) != 2 {
+		t.Fatalf("groups: want 2, got %d", len(groups))
+	}
+	if groups[0].Name != "DC1" {
+		t.Errorf("groups[0].Name: want DC1, got %q", groups[0].Name)
+	}
+	if len(groups[0].Indices) != 2 || groups[0].Indices[0] != 1 || groups[0].Indices[1] != 2 {
+		t.Errorf("groups[0].Indices: want [1,2], got %v", groups[0].Indices)
+	}
+	if groups[1].Name != "DC2" {
+		t.Errorf("groups[1].Name: want DC2, got %q", groups[1].Name)
+	}
+	if len(groups[1].Indices) != 1 || groups[1].Indices[0] != 3 {
+		t.Errorf("groups[1].Indices: want [3], got %v", groups[1].Indices)
+	}
+}
+
+func TestMergeHosts_GroupsOnly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts.yaml")
+	yaml := `groups:
+  - name: DC1
+    hosts:
+      - 192.168.1.1
+`
+	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	cfg := config{hostsFile: path}
+	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	hosts, groups, _, err := mergeHosts(cfg, fs, nil)
+	if err != nil {
+		t.Fatalf("mergeHosts: %v", err)
+	}
+	if len(hosts) != 1 || hosts[0] != "192.168.1.1" {
+		t.Fatalf("hosts: want [192.168.1.1], got %v", hosts)
+	}
+	if len(groups) != 1 || groups[0].Indices[0] != 0 {
+		t.Fatalf("groups: want [{DC1 [0]}], got %v", groups)
+	}
+}
+
+func TestParseHostsFile_GroupsYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts.yaml")
+	yaml := `groups:
+  - name: "Site A"
+    hosts:
+      - 1.1.1.1
+      - 8.8.8.8
+`
+	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	doc, err := parseHostsFile(path)
+	if err != nil {
+		t.Fatalf("parseHostsFile: %v", err)
+	}
+	if len(doc.Groups) != 1 {
+		t.Fatalf("Groups: want 1, got %d", len(doc.Groups))
+	}
+	if doc.Groups[0].Name != "Site A" {
+		t.Errorf("Groups[0].Name: want %q, got %q", "Site A", doc.Groups[0].Name)
+	}
+	if len(doc.Groups[0].Hosts) != 2 {
+		t.Errorf("Groups[0].Hosts: want 2, got %d", len(doc.Groups[0].Hosts))
 	}
 }

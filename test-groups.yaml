@@ -1,0 +1,21 @@
+hosts:
+  - 8.8.8.8        # ungrouped — appears above all groups
+
+groups:
+  - name: Cloudflare
+    hosts:
+      - 1.1.1.1
+      - 1.0.0.1
+
+  - name: Google DNS
+    hosts:
+      - 8.8.4.4
+      - dns.google
+
+  - name: Japan
+    hosts:
+      - 210.130.0.1  # IIJ
+      - 203.137.20.1 # NTT
+
+interval: 1000
+timeout: 2000

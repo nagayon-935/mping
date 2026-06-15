@@ -14,6 +14,7 @@
 * **Color-coded alerts** — loss ratio, RTT, and Jitter are color-coded for instant status recognition. Alerts are recorded in the Log pane when thresholds are exceeded.
 * **Flexible configuration** — specify interface, source IP, packet size, send count, and more.
 * **YAML host list** — manage target hosts in a file.
+* **Host groups** — define named groups in the YAML file. Each group shows a header row with a member count, making it easy to visually separate sets of targets.
 * **Traceroute pane** — show the route to each target in a Host/Route table when `-T` is given. Multiple targets are traced concurrently and displayed together.
 * **MTR Monitor pane** — continuous per-hop loss/latency statistics when `-M` is given. Each hop is probed every second and displays Hop, Host, Loss%, Snt, Recv, Last, Avg, Min, Max, Jitter — the same columns as `mtr`. Can be used simultaneously with `-T`.
 * **HTTP(S) health check pane** — monitor HTTP/HTTPS endpoints when `-H` is given. Performs GET requests at the ping interval and tracks status code, response time (Last/Min/Avg/Max), and cumulative Up/Down counts. Status changes are logged to the Log pane.
@@ -214,6 +215,26 @@ thresholds:
   loss-warn: 20     # percent (orange)
   loss-crit: 80     # percent (red)
 ```
+
+### Host groups in YAML
+
+Use the `groups:` key to define named groups of hosts. Each group is rendered with a header row and a worst-case aggregate row. Groups can coexist with ungrouped `hosts:` entries; ungrouped hosts are displayed first.
+
+```yaml
+hosts:
+  - 8.8.8.8        # ungrouped — displayed above all groups
+
+groups:
+  - name: US DNS
+    hosts:
+      - 1.1.1.1
+      - 8.8.4.4
+  - name: Japan
+    hosts:
+      - dns.google
+      - dns.cloudflare.com
+```
+
 
 ### Options
 
