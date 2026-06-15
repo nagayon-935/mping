@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +32,7 @@ type RunOptions struct {
 	PacketSize   int
 	InitialLogs  []string
 	TraceEnabled bool
+	ParisTrace   bool
 	MTREnabled   bool
 	PortEnabled  bool
 	HTTPEnabled  bool
@@ -56,6 +58,12 @@ type RunOptions struct {
 	OnResetMTR    func()
 	OnResetPort   func()
 	OnResetHTTP   func()
+	// OnAddHost is called when the user adds a host via the 'a' key dialog.
+	// A non-nil error is displayed in the Log pane; nil triggers a reload.
+	OnAddHost func(host string) error
+	// OnDeleteHost is called when the user deletes a host via the 'd' key dialog.
+	// A non-nil error is displayed in the Log pane; nil triggers a reload.
+	OnDeleteHost func(host string) error
 	// Groups defines named groups of targets for grouped display.
 	// Nil means flat (ungrouped) layout — existing behaviour.
 	Groups []TargetGroup
@@ -74,6 +82,7 @@ func Run(opts RunOptions) error {
 	packetSize := opts.PacketSize
 	initialLogs := opts.InitialLogs
 	traceEnabled := opts.TraceEnabled
+	parisTrace := opts.ParisTrace
 	mtrEnabled := opts.MTREnabled
 	portEnabled := opts.PortEnabled
 	httpEnabled := opts.HTTPEnabled
@@ -85,6 +94,8 @@ func Run(opts RunOptions) error {
 	onResetMTR := opts.OnResetMTR
 	onResetPort := opts.OnResetPort
 	onResetHTTP := opts.OnResetHTTP
+	onAddHost := opts.OnAddHost
+	onDeleteHost := opts.OnDeleteHost
 	groups := opts.Groups
 
 	externalCloseCh := opts.ExternalCloseCh
@@ -234,7 +245,11 @@ func Run(opts RunOptions) error {
 			traceBorderColor = c
 			tracePane.SetBorderColor(c)
 		}
-		tracePane.SetDrawFunc(makeDoubleBorderDrawFunc(" Traceroute Monitor ", &traceBorderColor))
+		tracePaneTitle := " Traceroute Monitor "
+		if parisTrace {
+			tracePaneTitle = " Paris Traceroute Monitor "
+		}
+		tracePane.SetDrawFunc(makeDoubleBorderDrawFunc(tracePaneTitle, &traceBorderColor))
 	}
 
 	// MTR Monitor pane
@@ -329,15 +344,31 @@ func Run(opts RunOptions) error {
 
 	var footer *tview.TextView
 	footer = tview.NewTextView().
-		SetText("Tab: Switch Focus | /: Filter | q: Quit | s: Stop ping | R: Reset stats").
+		SetText("Tab: Focus | /: Filter | a: Add host | d: Del host | q: Quit | s: Stop | R: Reset").
 		SetTextAlign(tview.AlignCenter).
 		SetTextColor(tcell.ColorYellow).
 		SetWrap(false)
 	footer.SetBackgroundColor(tcell.ColorBlack)
 
+	// Add host input (shown in footer row)
+	addHostInput := tview.NewInputField().
+		SetLabel(" Add host: ").
+		SetFieldBackgroundColor(tcell.ColorBlack).
+		SetFieldTextColor(tcell.ColorWhite).
+		SetLabelColor(tcell.ColorYellow)
+
+	// Delete host input (shown in footer row, same pattern as addHostInput)
+	deleteHostInput := tview.NewInputField().
+		SetLabel(" Delete host: ").
+		SetFieldBackgroundColor(tcell.ColorBlack).
+		SetFieldTextColor(tcell.ColorWhite).
+		SetLabelColor(tcell.ColorRed)
+
 	pages := tview.NewPages().
 		AddPage("footer", footer, true, true).
-		AddPage("filter", filterInput, true, false)
+		AddPage("filter", filterInput, true, false).
+		AddPage("addHost", addHostInput, true, false).
+		AddPage("deleteHost", deleteHostInput, true, false)
 
 	updateTickerCh := make(chan time.Duration, 1)
 	var updateTable func()
@@ -351,6 +382,48 @@ func Run(opts RunOptions) error {
 		pages.SwitchToPage("footer")
 		app.SetFocus(table)
 		updateTable()
+	})
+
+	addHostInput.SetDoneFunc(func(key tcell.Key) {
+		if key == tcell.KeyEnter {
+			host := strings.TrimSpace(addHostInput.GetText())
+			addHostInput.SetText("")
+			if host != "" && onAddHost != nil {
+				go func() {
+					if err := onAddHost(host); err != nil {
+						app.QueueUpdateDraw(func() {
+							appendErrorLog(&errorLogs, errorView, fmt.Sprintf("[red][%s] Add host error: %v[-]",
+								time.Now().Format("15:04:05"), err))
+						})
+					}
+				}()
+			}
+		} else if key == tcell.KeyEscape {
+			addHostInput.SetText("")
+		}
+		pages.SwitchToPage("footer")
+		app.SetFocus(table)
+	})
+
+	deleteHostInput.SetDoneFunc(func(key tcell.Key) {
+		if key == tcell.KeyEnter {
+			host := strings.TrimSpace(deleteHostInput.GetText())
+			deleteHostInput.SetText("")
+			if host != "" && onDeleteHost != nil {
+				go func() {
+					if err := onDeleteHost(host); err != nil {
+						app.QueueUpdateDraw(func() {
+							appendErrorLog(&errorLogs, errorView, fmt.Sprintf("[red][%s] Delete host error: %v[-]",
+								time.Now().Format("15:04:05"), err))
+						})
+					}
+				}()
+			}
+		} else if key == tcell.KeyEscape {
+			deleteHostInput.SetText("")
+		}
+		pages.SwitchToPage("footer")
+		app.SetFocus(table)
 	})
 
 	stopRequested := false
@@ -551,7 +624,9 @@ func Run(opts RunOptions) error {
 
 	// Keys
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if app.GetFocus() == filterInput {
+		// Pass all events through when a text input or modal list is focused.
+		switch app.GetFocus() {
+		case filterInput, addHostInput, deleteHostInput:
 			return event
 		}
 		if app.GetFocus() == table {
@@ -641,6 +716,18 @@ func Run(opts RunOptions) error {
 			pages.SwitchToPage("filter")
 			app.SetFocus(filterInput)
 			return nil
+		case 'a':
+			if onAddHost != nil {
+				pages.SwitchToPage("addHost")
+				app.SetFocus(addHostInput)
+				return nil
+			}
+		case 'd':
+			if onDeleteHost != nil {
+				pages.SwitchToPage("deleteHost")
+				app.SetFocus(deleteHostInput)
+				return nil
+			}
 		case 'q':
 			closeAppStop() // stop refresh goroutine before screen teardown
 			app.Stop()

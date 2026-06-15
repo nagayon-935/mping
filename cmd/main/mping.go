@@ -44,6 +44,7 @@ type pingerController interface {
 	Close()
 	DiscoverMaxPayload(dest string, start int, min int, logf func(string)) (int, string, error)
 	TraceRoute(dest string, maxHops int, timeout time.Duration) ([]string, error)
+	ParisTraceRoute(dest string, maxHops int, timeout time.Duration) ([]string, error)
 	SetSource(ip string)
 	SetSize(size int)
 	SetCount(count int)
@@ -228,6 +229,7 @@ type config struct {
 	count          int
 	mtuEnabled     bool
 	trace          bool
+	paris          bool
 	asnEnabled     bool
 	ipv4Only       bool
 	ipv6Only       bool
@@ -605,6 +607,7 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 	fs.StringVarP(&cfg.hostsFile, "file", "f", "", "hosts list YAML file path")
 	fs.BoolVarP(&cfg.mtuEnabled, "discovery-mtu", "m", false, "discover maximum payload size using DF probes (IPv4 only)")
 	fs.BoolVarP(&cfg.trace, "traceroute", "T", false, "enable traceroute pane and run traceroute")
+	fs.BoolVarP(&cfg.paris, "paris", "P", false, "use Paris Traceroute algorithm (keeps all probes on the same ECMP path); implies -T")
 	fs.BoolVarP(&cfg.asnEnabled, "asn", "a", false, "lookup and display AS numbers for target IPs")
 	fs.StringVarP(&cfg.ifaceName, "interface", "I", "", "interface name to bind to (e.g. eth0)")
 	fs.StringVarP(&cfg.sourceAddr, "source", "S", "", "source IP address to bind to")
@@ -764,6 +767,10 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		fmt.Fprint(errOut, usage)
 		return 1
 	}
+	// --paris implies --traceroute: enable the trace pane automatically.
+	if cfg.paris {
+		cfg.trace = true
+	}
 	if err := thresholdsFromCfg(cfg).Validate(); err != nil {
 		fmt.Fprintf(errOut, "Invalid thresholds: %v\n", err)
 		return 1
@@ -809,6 +816,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		reloadMu        sync.Mutex
 		reloadRequested bool
 		reloadDoc       hostsFileYAML
+		reloadNewHosts  []string // non-nil when triggered by add/delete (skips applyDocToCfg)
 	)
 
 	currentCfg := cfg
@@ -864,7 +872,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 					traceCancel()
 				}
 				traceCtx, traceCancel = context.WithCancel(context.Background())
-				go runTraceroutes(traceCtx, next, targets)
+				go runTraceroutes(traceCtx, next, targets, currentCfg.paris)
 			}
 			if currentCfg.mtr {
 				if mtrEngine != nil {
@@ -940,7 +948,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 				traceCancel()
 			}
 			traceCtx, traceCancel = context.WithCancel(context.Background())
-			go runTraceroutes(traceCtx, cur, targets)
+			go runTraceroutes(traceCtx, cur, targets, currentCfg.paris)
 			pMu.Unlock()
 		}
 
@@ -1116,6 +1124,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			PacketSize:   packetSizeToUse,
 			InitialLogs:  preLogs,
 			TraceEnabled: currentCfg.trace,
+			ParisTrace:   currentCfg.paris,
 			MTREnabled:   currentCfg.mtr,
 			PortEnabled:  len(portSpecs) > 0,
 			HTTPEnabled:  len(currentCfg.httpURLs) > 0,
@@ -1147,7 +1156,47 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			OnResetMTR:   resetMTR,
 			OnResetPort:  resetPort,
 			OnResetHTTP:  resetHTTP,
-			Groups:       currentGroups,
+			OnAddHost: func(host string) error {
+				host = strings.TrimSpace(host)
+				if host == "" {
+					return fmt.Errorf("host cannot be empty")
+				}
+				for _, h := range currentHosts {
+					if h == host {
+						return fmt.Errorf("host %q is already in the list", host)
+					}
+				}
+				newHosts := make([]string, len(currentHosts)+1)
+				copy(newHosts, currentHosts)
+				newHosts[len(currentHosts)] = host
+				reloadMu.Lock()
+				reloadRequested = true
+				reloadNewHosts = newHosts
+				reloadMu.Unlock()
+				reloadCloseOnce.Do(func() { close(reloadCh) })
+				return nil
+			},
+			OnDeleteHost: func(host string) error {
+				newHosts := make([]string, 0, len(currentHosts))
+				for _, h := range currentHosts {
+					if h != host {
+						newHosts = append(newHosts, h)
+					}
+				}
+				if len(newHosts) == len(currentHosts) {
+					return fmt.Errorf("host %q not found", host)
+				}
+				if len(newHosts) == 0 {
+					return fmt.Errorf("cannot delete the last host")
+				}
+				reloadMu.Lock()
+				reloadRequested = true
+				reloadNewHosts = newHosts
+				reloadMu.Unlock()
+				reloadCloseOnce.Do(func() { close(reloadCh) })
+				return nil
+			},
+			Groups: currentGroups,
 		}); err != nil {
 			fmt.Fprintf(errOut, "Error running application: %v\n", err)
 			jsonCancel()
@@ -1184,17 +1233,25 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		// ── Check if a reload was requested ──────────────────────────────────
 		reloadMu.Lock()
 		reload := reloadRequested
+		newHosts := reloadNewHosts
 		if reload {
-			docHosts, docGroups, newCfg, applyErr := applyDocToCfg(cliCfg, fs, reloadDoc)
-			if applyErr != nil {
-				// Shouldn't happen (validateHostsDoc passed), but be safe.
-				reload = false
+			if newHosts != nil {
+				// In-memory add/delete: use the updated host list directly.
+				currentHosts = newHosts
 			} else {
-				currentHosts, currentGroups = buildHostsAndGroups(docHosts, docGroups, cliHosts)
-				currentCfg = newCfg
+				// File-based reload: re-apply YAML doc.
+				docHosts, docGroups, newCfg, applyErr := applyDocToCfg(cliCfg, fs, reloadDoc)
+				if applyErr != nil {
+					// Shouldn't happen (validateHostsDoc passed), but be safe.
+					reload = false
+				} else {
+					currentHosts, currentGroups = buildHostsAndGroups(docHosts, docGroups, cliHosts)
+					currentCfg = newCfg
+				}
 			}
 			reloadRequested = false
 			reloadDoc = hostsFileYAML{}
+			reloadNewHosts = nil
 		}
 		reloadMu.Unlock()
 
@@ -1227,9 +1284,10 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 
 type tracer interface {
 	TraceRoute(dest string, maxHops int, timeout time.Duration) ([]string, error)
+	ParisTraceRoute(dest string, maxHops int, timeout time.Duration) ([]string, error)
 }
 
-func runTraceroutes(ctx context.Context, p tracer, targets []*stats.TargetStats) {
+func runTraceroutes(ctx context.Context, p tracer, targets []*stats.TargetStats, paris bool) {
 	ticker := time.NewTicker(tracerouteInterval)
 	defer ticker.Stop()
 
@@ -1245,7 +1303,13 @@ func runTraceroutes(ctx context.Context, p tracer, targets []*stats.TargetStats)
 			wg.Add(1)
 			go func(t *stats.TargetStats) {
 				defer wg.Done()
-				hops, err := p.TraceRoute(t.Host, tracerouteMaxHops, tracerouteHopTimeout)
+				var hops []string
+				var err error
+				if paris {
+					hops, err = p.ParisTraceRoute(t.Host, tracerouteMaxHops, tracerouteHopTimeout)
+				} else {
+					hops, err = p.TraceRoute(t.Host, tracerouteMaxHops, tracerouteHopTimeout)
+				}
 				if err != nil {
 					t.SetTraceHops([]string{"error: " + err.Error()})
 					return

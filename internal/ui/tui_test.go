@@ -2575,3 +2575,195 @@ func TestMakeDoubleBorderDrawFunc(t *testing.T) {
 	borderColor = tcell.ColorRed
 	drawFunc(screen, 0, 0, 40, 10)
 }
+
+func newSimApp(t *testing.T) (*tview.Application, tcell.SimulationScreen) {
+	t.Helper()
+	app := tview.NewApplication()
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatalf("screen init: %v", err)
+	}
+	screen.SetSize(120, 40)
+	app.SetScreen(screen)
+	return app, screen
+}
+
+func TestRunOnAddHost_CallbackInvoked(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	addCh := make(chan string, 1)
+
+	newApplication = func() *tview.Application {
+		app, screen := newSimApp(t)
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			// Simulate 'a' key to open add dialog
+			screen.InjectKey(tcell.KeyRune, 'a', tcell.ModNone)
+			time.Sleep(20 * time.Millisecond)
+			// Type hostname (use IP to avoid triggering key shortcuts)
+			for _, r := range "1.2.3.4" {
+				screen.InjectKey(tcell.KeyRune, r, tcell.ModNone)
+			}
+			time.Sleep(20 * time.Millisecond)
+			// Press Enter to confirm
+			screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
+			time.Sleep(100 * time.Millisecond)
+			app.Stop()
+		}()
+		return app
+	}
+
+	target := stats.NewTargetStats("example.com")
+	err := Run(RunOptions{
+		Targets:  []*stats.TargetStats{target},
+		Interval: 50 * time.Millisecond,
+		Timeout:  50 * time.Millisecond,
+		OnAddHost: func(host string) error {
+			addCh <- host
+			return errors.New("test stop") // return error so TUI doesn't reload
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	var got string
+	select {
+	case got = <-addCh:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("OnAddHost was not called within timeout")
+	}
+	if got != "1.2.3.4" {
+		t.Fatalf("OnAddHost called with %q, want %q", got, "1.2.3.4")
+	}
+}
+
+func TestRunOnAddHost_EmptyHostIgnored(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	addCalled := false
+	newApplication = func() *tview.Application {
+		app, screen := newSimApp(t)
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			screen.InjectKey(tcell.KeyRune, 'a', tcell.ModNone)
+			time.Sleep(10 * time.Millisecond)
+			// Press Enter without typing anything
+			screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
+			time.Sleep(30 * time.Millisecond)
+			app.Stop()
+		}()
+		return app
+	}
+
+	target := stats.NewTargetStats("example.com")
+	err := Run(RunOptions{
+		Targets:  []*stats.TargetStats{target},
+		Interval: 50 * time.Millisecond,
+		Timeout:  50 * time.Millisecond,
+		OnAddHost: func(host string) error {
+			addCalled = true
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if addCalled {
+		t.Fatal("OnAddHost should not be called for empty host")
+	}
+}
+
+func TestRunOnDeleteHost_CallbackInvoked(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	deleteCh := make(chan string, 1)
+
+	newApplication = func() *tview.Application {
+		app, screen := newSimApp(t)
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			// Simulate 'd' key to open delete dialog
+			screen.InjectKey(tcell.KeyRune, 'd', tcell.ModNone)
+			time.Sleep(20 * time.Millisecond)
+			// Type the hostname to delete
+			for _, r := range "8.8.8.8" {
+				screen.InjectKey(tcell.KeyRune, r, tcell.ModNone)
+			}
+			time.Sleep(20 * time.Millisecond)
+			// Press Enter to confirm
+			screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
+			time.Sleep(100 * time.Millisecond)
+			app.Stop()
+		}()
+		return app
+	}
+
+	target := stats.NewTargetStats("8.8.8.8")
+	err := Run(RunOptions{
+		Targets:  []*stats.TargetStats{target},
+		Interval: 50 * time.Millisecond,
+		Timeout:  50 * time.Millisecond,
+		OnDeleteHost: func(host string) error {
+			deleteCh <- host
+			return errors.New("test stop")
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	var got string
+	select {
+	case got = <-deleteCh:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("OnDeleteHost was not called within timeout")
+	}
+	if got != "8.8.8.8" {
+		t.Fatalf("OnDeleteHost called with %q, want %q", got, "8.8.8.8")
+	}
+}
+
+func TestRunOnDeleteHost_EscapeAborts(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	deleteCalled := false
+	newApplication = func() *tview.Application {
+		app, screen := newSimApp(t)
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			screen.InjectKey(tcell.KeyRune, 'd', tcell.ModNone)
+			time.Sleep(20 * time.Millisecond)
+			// Type something then press Escape to cancel
+			for _, r := range "8.8.8.8" {
+				screen.InjectKey(tcell.KeyRune, r, tcell.ModNone)
+			}
+			time.Sleep(10 * time.Millisecond)
+			screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
+			time.Sleep(50 * time.Millisecond)
+			app.Stop()
+		}()
+		return app
+	}
+
+	target := stats.NewTargetStats("8.8.8.8")
+	err := Run(RunOptions{
+		Targets:  []*stats.TargetStats{target},
+		Interval: 50 * time.Millisecond,
+		Timeout:  50 * time.Millisecond,
+		OnDeleteHost: func(host string) error {
+			deleteCalled = true
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if deleteCalled {
+		t.Fatal("OnDeleteHost should not be called after Escape")
+	}
+}
