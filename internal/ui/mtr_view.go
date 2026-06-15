@@ -5,8 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rivo/tview"
-
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
@@ -88,14 +86,6 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, 
 	view := t.GetView()
 	hops := view.MTRHops
 
-	// ── Column separator strings ──────────────────────────────────────────
-	hh := strings.Repeat("─", mtrHopColW)
-	hs := strings.Repeat("─", hostW)
-	hl := strings.Repeat("─", mtrLossColW)
-	hst := strings.Repeat("─", mtrSntColW)
-	hr := strings.Repeat("─", mtrRecvColW)
-	hlat := strings.Repeat("─", mtrLatColW)
-
 	// Target label: "SrcIP -> DstIP" (with hostname prefix when applicable)
 	srcIP := displaySourceIPForDst(view.IP, srcIPv4, srcIPv6)
 	dstIP := view.IP
@@ -112,27 +102,19 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, 
 
 	if compact {
 		// ── Compact: Hop | Host | Loss% | Snt | Last | Avg ──────────────
+		cols := []int{mtrHopColW, hostW, mtrLossColW, mtrSntColW, mtrLatColW, mtrLatColW}
 		// innerW = sum of all column widths + internal separators (5 for 6 cols)
 		innerW := mtrHopColW + hostW + mtrLossColW + mtrSntColW + mtrLatColW*2 + 5
-		top := strings.Repeat("─", innerW)
 
 		// Full-width top border → label row → ├─┬─┤ introduces columns
-		fmt.Fprintf(sb, "[white]┌%s┐[-]\n", top)
-		fmt.Fprintf(sb, "[white]│[yellow::b]%s[white]│[-]\n",
-			formatCellText(" "+label, innerW, tview.AlignLeft))
-		fmt.Fprintf(sb, "[white]├%s┬%s┬%s┬%s┬%s┬%s┤[-]\n", hh, hs, hl, hst, hlat, hlat)
-		fmt.Fprintf(sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
-			paddedCell("Hop", mtrHopColW),
-			paddedCell("Host", hostW),
-			paddedCell("Loss%", mtrLossColW),
-			paddedCell("Snt", mtrSntColW),
-			paddedCell("Last", mtrLatColW),
-			paddedCell("Avg", mtrLatColW))
-		fmt.Fprintf(sb, "[white]├%s┼%s┼%s┼%s┼%s┼%s┤[-]\n", hh, hs, hl, hst, hlat, hlat)
+		fmt.Fprintln(sb, boxBorder([]int{innerW}, borderTop))
+		fmt.Fprintln(sb, boxSpanRow(" "+label, innerW, "[yellow::b]"))
+		fmt.Fprintln(sb, boxBorder(cols, borderIntro))
+		fmt.Fprintln(sb, boxHeaderRow([]string{"Hop", "Host", "Loss%", "Snt", "Last", "Avg"}, cols))
+		fmt.Fprintln(sb, boxBorder(cols, borderMid))
 
 		if len(hops) == 0 {
-			fmt.Fprintf(sb, "[white]│[darkgray]%s[white]│[-]\n",
-				formatCellText(" Discovering...", innerW, tview.AlignLeft))
+			fmt.Fprintln(sb, boxSpanRow(" Discovering...", innerW, "[darkgray]"))
 		} else {
 			for _, h := range hops {
 				hopStr := fmt.Sprintf("%3d.", h.TTL)
@@ -147,38 +129,25 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, 
 					mtrRTTColorTag(h.AvgRTT), paddedCell(formatRTT(h.AvgRTT), mtrLatColW))
 			}
 		}
-		fmt.Fprintf(sb, "[white]└%s┴%s┴%s┴%s┴%s┴%s┘[-]\n", hh, hs, hl, hst, hlat, hlat)
+		fmt.Fprintln(sb, boxBorder(cols, borderBottom))
 
 	} else {
 		// ── Full: Hop | Host | Loss% | Snt | Recv | Last | Avg | Min | Max | Jitter ──
+		cols := []int{mtrHopColW, hostW, mtrLossColW, mtrSntColW, mtrRecvColW,
+			mtrLatColW, mtrLatColW, mtrLatColW, mtrLatColW, mtrLatColW}
 		// innerW = sum of all column widths + internal separators (9 for 10 cols)
 		innerW := mtrHopColW + hostW + mtrLossColW + mtrSntColW + mtrRecvColW + mtrLatColW*5 + 9
-		top := strings.Repeat("─", innerW)
 
 		// Full-width top border → label row → ├─┬─┤ introduces columns
-		fmt.Fprintf(sb, "[white]┌%s┐[-]\n", top)
-		fmt.Fprintf(sb, "[white]│[yellow::b]%s[white]│[-]\n",
-			formatCellText(" "+label, innerW, tview.AlignLeft))
-		fmt.Fprintf(sb, "[white]├%s┬%s┬%s┬%s┬%s┬%s┬%s┬%s┬%s┬%s┤[-]\n",
-			hh, hs, hl, hst, hr, hlat, hlat, hlat, hlat, hlat)
-		fmt.Fprintf(sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
-			paddedCell("Hop", mtrHopColW),
-			paddedCell("Host", hostW),
-			paddedCell("Loss%", mtrLossColW),
-			paddedCell("Snt", mtrSntColW),
-			paddedCell("Recv", mtrRecvColW),
-			paddedCell("Last", mtrLatColW),
-			paddedCell("Avg", mtrLatColW),
-			paddedCell("Min", mtrLatColW),
-			paddedCell("Max", mtrLatColW),
-			paddedCell("Jitter", mtrLatColW))
-		fmt.Fprintf(sb, "[white]├%s┼%s┼%s┼%s┼%s┼%s┼%s┼%s┼%s┼%s┤[-]\n",
-			hh, hs, hl, hst, hr, hlat, hlat, hlat, hlat, hlat)
+		fmt.Fprintln(sb, boxBorder([]int{innerW}, borderTop))
+		fmt.Fprintln(sb, boxSpanRow(" "+label, innerW, "[yellow::b]"))
+		fmt.Fprintln(sb, boxBorder(cols, borderIntro))
+		fmt.Fprintln(sb, boxHeaderRow([]string{"Hop", "Host", "Loss%", "Snt", "Recv",
+			"Last", "Avg", "Min", "Max", "Jitter"}, cols))
+		fmt.Fprintln(sb, boxBorder(cols, borderMid))
 
 		if len(hops) == 0 {
-			total := innerW
-			fmt.Fprintf(sb, "[white]│[darkgray]%s[white]│[-]\n",
-				formatCellText(" Discovering...", total, tview.AlignLeft))
+			fmt.Fprintln(sb, boxSpanRow(" Discovering...", innerW, "[darkgray]"))
 		} else {
 			for _, h := range hops {
 				hopStr := fmt.Sprintf("%3d.", h.TTL)
@@ -197,8 +166,7 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, 
 					mtrRTTColorTag(h.Jitter), paddedCell(formatRTT(h.Jitter), mtrLatColW))
 			}
 		}
-		fmt.Fprintf(sb, "[white]└%s┴%s┴%s┴%s┴%s┴%s┴%s┴%s┴%s┴%s┘[-]\n",
-			hh, hs, hl, hst, hr, hlat, hlat, hlat, hlat, hlat)
+		fmt.Fprintln(sb, boxBorder(cols, borderBottom))
 	}
 }
 

@@ -195,18 +195,10 @@ func Run(opts RunOptions) error {
 	activeAligns := append([]int(nil), fullAligns...)
 	rowCount := len(targets) + 1
 	compactLayout := false
-	filter := ""
 
 	// groupRowMap maps visible table data-row index to its logical row entry.
 	// Rebuilt on every updateTable call when groups are active.
 	var groupRowMap []groupTableRow
-
-	// Filter input
-	filterInput := tview.NewInputField().
-		SetLabel(" Filter: ").
-		SetFieldBackgroundColor(tcell.ColorBlack).
-		SetFieldTextColor(tcell.ColorWhite).
-		SetLabelColor(tcell.ColorYellow)
 
 	tablePane := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(table, 0, 1, true)
@@ -344,7 +336,7 @@ func Run(opts RunOptions) error {
 
 	var footer *tview.TextView
 	footer = tview.NewTextView().
-		SetText("Tab: Focus | /: Filter | a: Add host | d: Del host | q: Quit | s: Stop | R: Reset").
+		SetText("Tab: Focus | a: Add host | d: Del host | q: Quit | s: Stop | R: Reset").
 		SetTextAlign(tview.AlignCenter).
 		SetTextColor(tcell.ColorYellow).
 		SetWrap(false)
@@ -366,23 +358,11 @@ func Run(opts RunOptions) error {
 
 	pages := tview.NewPages().
 		AddPage("footer", footer, true, true).
-		AddPage("filter", filterInput, true, false).
 		AddPage("addHost", addHostInput, true, false).
 		AddPage("deleteHost", deleteHostInput, true, false)
 
 	updateTickerCh := make(chan time.Duration, 1)
 	var updateTable func()
-
-	filterInput.SetDoneFunc(func(key tcell.Key) {
-		if key == tcell.KeyEnter {
-			filter = filterInput.GetText()
-		} else if key == tcell.KeyEscape {
-			filterInput.SetText(filter) // Restore previous filter
-		}
-		pages.SwitchToPage("footer")
-		app.SetFocus(table)
-		updateTable()
-	})
 
 	addHostInput.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
@@ -430,18 +410,7 @@ func Run(opts RunOptions) error {
 	updateTable = func() {
 		table.Clear()
 
-		var filteredTargets []*stats.TargetStats
-		for _, t := range targets {
-			if matchesFilter(t.GetView(), filter) {
-				filteredTargets = append(filteredTargets, t)
-			}
-		}
-
-		title := " Ping Monitor "
-		if filter != "" {
-			title = fmt.Sprintf(" Ping Monitor (Filter: %q, showing %d/%d) ", filter, len(filteredTargets), len(targets))
-		}
-		tablePane.SetTitle(title)
+		tablePane.SetTitle(" Ping Monitor ")
 
 		_, _, availableTableWidth, _ := tablePane.GetInnerRect()
 		availableColumnsWidth := availableTableWidth - (len(fullHeaders) + 1)
@@ -462,7 +431,7 @@ func Run(opts RunOptions) error {
 		}
 		fitted, ok := fitWidthsToAvailable(updatedWidths, minWidths, dynamicMaxWidths, availableColumnsWidth)
 
-		compact := buildCompactLayout(filteredTargets, packetSize, sourceIPv4, sourceIPv6, baseWidths[errorIdx+1])
+		compact := buildCompactLayout(targets, packetSize, sourceIPv4, sourceIPv6, baseWidths[errorIdx+1])
 		compactRows := compact.rows
 		compactDesired := compact.desired
 		compactHeaders := compact.headers
@@ -480,7 +449,7 @@ func Run(opts RunOptions) error {
 			widths = fitted
 			activeHeaders = append([]string(nil), fullHeaders...)
 			activeAligns = append([]int(nil), fullAligns...)
-			rowCount = len(filteredTargets) + 1
+			rowCount = len(targets) + 1
 		} else if compactOK {
 			compactLayout = true
 			widths = compactWidths
@@ -491,7 +460,7 @@ func Run(opts RunOptions) error {
 
 		// When groups are active, override rowCount with the group layout.
 		if len(groups) > 0 && !compactLayout {
-			groupRowMap = buildGroupRows(targets, groups, nil)
+			groupRowMap = buildGroupRows(targets, groups)
 			rowCount = len(groupRowMap) + 1
 		}
 
@@ -581,9 +550,6 @@ func Run(opts RunOptions) error {
 			displayIdx := 1
 			for _, t := range targets {
 				view := t.GetView()
-				if !matchesFilter(view, filter) {
-					continue
-				}
 				if compactLayout {
 					continue
 				}
@@ -626,7 +592,7 @@ func Run(opts RunOptions) error {
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		// Pass all events through when a text input or modal list is focused.
 		switch app.GetFocus() {
-		case filterInput, addHostInput, deleteHostInput:
+		case addHostInput, deleteHostInput:
 			return event
 		}
 		if app.GetFocus() == table {
@@ -712,10 +678,6 @@ func Run(opts RunOptions) error {
 		}
 
 		switch event.Rune() {
-		case '/':
-			pages.SwitchToPage("filter")
-			app.SetFocus(filterInput)
-			return nil
 		case 'a':
 			if onAddHost != nil {
 				pages.SwitchToPage("addHost")

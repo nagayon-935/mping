@@ -258,6 +258,7 @@ groups:
 | `--port` | `-p` | 疎通確認するポート (例: `443/tcp`, `53/udp`, `443`)。カンマ区切りで複数指定可 | `""` |
 | `--json-output` | `-j` | 統計情報の JSON スナップショットを出力するファイルパス (5 秒ごとに更新) | `""` |
 | `--asn` | `-a` | ターゲット IP の AS 番号を検索して表示する | `false` |
+| `--http` | `-H` | ヘルスチェックする URL (例: `https://example.com/health`)。カンマ区切りまたは繰り返し指定で複数可 | `""` |
 | `--rtt-warn` | | RTT の warn 閾値 (ミリ秒・オレンジ) | `50` |
 | `--rtt-crit` | | RTT の crit 閾値 (ミリ秒・赤) | `200` |
 | `--jitter-warn` | | Jitter の warn 閾値 (ミリ秒・オレンジ) | `10` |
@@ -277,7 +278,7 @@ groups:
 | **R** | 全ての統計情報とログをリセットする |
 | **a** | 「ホスト追加」ダイアログを開く — ホスト名または IP を入力して Enter で実行時に追加 |
 | **d** | 「ホスト削除」入力を開く — Ping Monitor テーブルに表示されているホスト名または IP を入力して Enter で実行時に削除 |
-| **Tab** | フォーカスを切り替える: Ping Monitor → Traceroute Monitor → MTR Monitor → Port Monitor → RTT Graphs → Log |
+| **Tab** | フォーカスを切り替える: Ping Monitor → Traceroute Monitor → MTR Monitor → Port Monitor → HTTP Monitor → RTT Graphs → Log |
 | **↑ / ↓ / PgUp / PgDn** | フォーカス中のペインをスクロール (Table / Traceroute / RTT Graphs) |
 
 > **注意:** ホストの追加・削除を行うと、全ターゲットの統計情報がリセットされます (YAML 設定リロードと同等の動作)。

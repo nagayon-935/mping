@@ -1261,7 +1261,12 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		// Loop continues: targets are re-initialised with the new currentHosts.
 	}
 
-	// ── Print exit summary ────────────────────────────────────────────────────
+	printExitSummary(out, targets)
+	return 0
+}
+
+// printExitSummary writes the per-target ping statistics shown after the TUI exits.
+func printExitSummary(out io.Writer, targets []*stats.TargetStats) {
 	fmt.Fprintln(out, "\n--- mping statistics ---")
 	for _, t := range targets {
 		v := t.GetView()
@@ -1279,7 +1284,6 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		}
 		fmt.Fprintln(out)
 	}
-	return 0
 }
 
 type tracer interface {

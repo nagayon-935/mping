@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/mattn/go-runewidth"
-	"github.com/rivo/tview"
 
 	"github.com/nagayon-935/mping/internal/stats"
 )
@@ -154,28 +153,16 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 
 	if compact {
 		// Compact: URL | Status | Code | Last | Up | Down
+		cols := []int{urlW, httpStatusColW, httpCodeColW, httpLatColW, httpCountColW, httpCountColW}
 		innerW := urlW + httpStatusColW + httpCodeColW + httpLatColW + httpCountColW*2 + 5
-		top := strings.Repeat("─", innerW)
-		hu := strings.Repeat("─", urlW)
-		hs := strings.Repeat("─", httpStatusColW)
-		hc := strings.Repeat("─", httpCodeColW)
-		hl := strings.Repeat("─", httpLatColW)
-		hct := strings.Repeat("─", httpCountColW)
 
-		fmt.Fprintf(&sb, "[white]┌%s┐[-]\n", top)
-		fmt.Fprintf(&sb, "[white]├%s┬%s┬%s┬%s┬%s┬%s┤[-]\n", hu, hs, hc, hl, hct, hct)
-		fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
-			paddedCell("URL", urlW),
-			paddedCell("Status", httpStatusColW),
-			paddedCell("Code", httpCodeColW),
-			paddedCell("Last", httpLatColW),
-			paddedCell("Up", httpCountColW),
-			paddedCell("Down", httpCountColW))
-		fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┼%s┼%s┤[-]\n", hu, hs, hc, hl, hct, hct)
+		fmt.Fprintln(&sb, boxBorder([]int{innerW}, borderTop))
+		fmt.Fprintln(&sb, boxBorder(cols, borderIntro))
+		fmt.Fprintln(&sb, boxHeaderRow([]string{"URL", "Status", "Code", "Last", "Up", "Down"}, cols))
+		fmt.Fprintln(&sb, boxBorder(cols, borderMid))
 
 		if len(results) == 0 {
-			fmt.Fprintf(&sb, "[white]│[darkgray]%s[white]│[-]\n",
-				formatCellText(" Waiting for results...", innerW, tview.AlignLeft))
+			fmt.Fprintln(&sb, boxSpanRow(" Waiting for results...", innerW, "[darkgray]"))
 		} else {
 			for i, r := range results {
 				v := r.GetView()
@@ -187,42 +174,25 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 					paddedCell(fmt.Sprintf("%d", v.UpCount), httpCountColW),
 					paddedCell(fmt.Sprintf("%d", v.DownCount), httpCountColW))
 				if i < len(results)-1 {
-					fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┼%s┼%s┤[-]\n", hu, hs, hc, hl, hct, hct)
+					fmt.Fprintln(&sb, boxBorder(cols, borderMid))
 				}
 			}
 		}
-		fmt.Fprintf(&sb, "[white]└%s┴%s┴%s┴%s┴%s┴%s┘[-]\n", hu, hs, hc, hl, hct, hct)
+		fmt.Fprintln(&sb, boxBorder(cols, borderBottom))
 	} else {
 		// Full: URL | Status | Code | Last | Min | Avg | Max | Up | Down | Since
+		cols := []int{urlW, httpStatusColW, httpCodeColW, httpLatColW, httpLatColW, httpLatColW,
+			httpLatColW, httpCountColW, httpCountColW, httpSinceColW}
 		innerW := urlW + httpStatusColW + httpCodeColW + httpLatColW*4 + httpCountColW*2 + httpSinceColW + 9
-		top := strings.Repeat("─", innerW)
-		hu := strings.Repeat("─", urlW)
-		hs := strings.Repeat("─", httpStatusColW)
-		hc := strings.Repeat("─", httpCodeColW)
-		hl := strings.Repeat("─", httpLatColW)
-		hct := strings.Repeat("─", httpCountColW)
-		hsi := strings.Repeat("─", httpSinceColW)
 
-		fmt.Fprintf(&sb, "[white]┌%s┐[-]\n", top)
-		fmt.Fprintf(&sb, "[white]├%s┬%s┬%s┬%s┬%s┬%s┬%s┬%s┬%s┬%s┤[-]\n",
-			hu, hs, hc, hl, hl, hl, hl, hct, hct, hsi)
-		fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
-			paddedCell("URL", urlW),
-			paddedCell("Status", httpStatusColW),
-			paddedCell("Code", httpCodeColW),
-			paddedCell("Last", httpLatColW),
-			paddedCell("Min", httpLatColW),
-			paddedCell("Avg", httpLatColW),
-			paddedCell("Max", httpLatColW),
-			paddedCell("Up", httpCountColW),
-			paddedCell("Down", httpCountColW),
-			paddedCell("Since", httpSinceColW))
-		fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┼%s┼%s┼%s┼%s┼%s┼%s┤[-]\n",
-			hu, hs, hc, hl, hl, hl, hl, hct, hct, hsi)
+		fmt.Fprintln(&sb, boxBorder([]int{innerW}, borderTop))
+		fmt.Fprintln(&sb, boxBorder(cols, borderIntro))
+		fmt.Fprintln(&sb, boxHeaderRow([]string{"URL", "Status", "Code", "Last", "Min", "Avg",
+			"Max", "Up", "Down", "Since"}, cols))
+		fmt.Fprintln(&sb, boxBorder(cols, borderMid))
 
 		if len(results) == 0 {
-			fmt.Fprintf(&sb, "[white]│[darkgray]%s[white]│[-]\n",
-				formatCellText(" Waiting for results...", innerW, tview.AlignLeft))
+			fmt.Fprintln(&sb, boxSpanRow(" Waiting for results...", innerW, "[darkgray]"))
 		} else {
 			for i, r := range results {
 				v := r.GetView()
@@ -238,13 +208,11 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 					paddedCell(fmt.Sprintf("%d", v.DownCount), httpCountColW),
 					paddedCell(httpSinceStr(v.LastChange), httpSinceColW))
 				if i < len(results)-1 {
-					fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┼%s┼%s┼%s┼%s┼%s┼%s┤[-]\n",
-						hu, hs, hc, hl, hl, hl, hl, hct, hct, hsi)
+					fmt.Fprintln(&sb, boxBorder(cols, borderMid))
 				}
 			}
 		}
-		fmt.Fprintf(&sb, "[white]└%s┴%s┴%s┴%s┴%s┴%s┴%s┴%s┴%s┴%s┘[-]\n",
-			hu, hs, hc, hl, hl, hl, hl, hct, hct, hsi)
+		fmt.Fprintln(&sb, boxBorder(cols, borderBottom))
 	}
 
 	return sb.String()
