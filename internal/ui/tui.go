@@ -33,7 +33,11 @@ type RunOptions struct {
 	TraceEnabled bool
 	MTREnabled   bool
 	PortEnabled  bool
+	HTTPEnabled  bool
 	ASNEnabled   bool
+	// HTTPResults holds live HTTP health-check results for the HTTP Monitor pane.
+	// Nil when HTTPEnabled is false.
+	HTTPResults []*stats.HTTPCheckResult
 	// Thresholds overrides the colour-coding / alert boundaries. Nil keeps the
 	// built-in defaults.
 	Thresholds *Thresholds
@@ -51,6 +55,7 @@ type RunOptions struct {
 	OnResetTrace  func()
 	OnResetMTR    func()
 	OnResetPort   func()
+	OnResetHTTP   func()
 }
 
 // Run starts the TUI application with the given options.
@@ -68,12 +73,15 @@ func Run(opts RunOptions) error {
 	traceEnabled := opts.TraceEnabled
 	mtrEnabled := opts.MTREnabled
 	portEnabled := opts.PortEnabled
+	httpEnabled := opts.HTTPEnabled
+	httpResults := opts.HTTPResults
 	asnEnabled := opts.ASNEnabled
 	onStop := opts.OnStop
 	onRestart := opts.OnRestart
 	onResetTrace := opts.OnResetTrace
 	onResetMTR := opts.OnResetMTR
 	onResetPort := opts.OnResetPort
+	onResetHTTP := opts.OnResetHTTP
 
 	externalCloseCh := opts.ExternalCloseCh
 	externalLogCh := opts.ExternalLogCh
@@ -269,11 +277,36 @@ func Run(opts RunOptions) error {
 		portPane.SetDrawFunc(makeDoubleBorderDrawFunc(" Port Monitor ", &portBorderColor))
 	}
 
+	// HTTP Monitor pane
+	var httpView *tview.TextView
+	var httpPane *tview.Flex
+	setHTTPBorderColor := func(_ tcell.Color) {}
+
+	if httpEnabled {
+		httpView = tview.NewTextView().
+			SetDynamicColors(true).
+			SetScrollable(true).
+			SetWrap(false)
+		httpView.SetBackgroundColor(tcell.ColorBlack)
+
+		httpPane = tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(httpView, 0, 1, true)
+		httpPane.SetBorder(true).SetBorderColor(tcell.ColorWhite)
+
+		httpBorderColor := tcell.ColorWhite
+		setHTTPBorderColor = func(c tcell.Color) {
+			httpBorderColor = c
+			httpPane.SetBorderColor(c)
+		}
+		httpPane.SetDrawFunc(makeDoubleBorderDrawFunc(" HTTP Monitor ", &httpBorderColor))
+	}
+
 	// Error log state
 	errorLogs := []string{}
 	lastLossTimes := make(map[string]time.Time)
 	alertState := make(map[string]alertFlags)
 	lastPortStatuses := make(map[string]string)
+	lastHTTPStatuses := make(map[string]string)
 
 	for _, line := range initialLogs {
 		appendErrorLog(&errorLogs, errorView, line)
@@ -470,6 +503,11 @@ func Run(opts RunOptions) error {
 			_, _, availW, _ := portView.GetInnerRect()
 			portView.SetText(renderPortMonitorTable(targets, availW, lastPortStatuses, &errorLogs, errorView))
 		}
+
+		if httpEnabled && httpView != nil {
+			_, _, availW, _ := httpView.GetInnerRect()
+			httpView.SetText(renderHTTPMonitorTable(httpResults, availW, lastHTTPStatuses, &errorLogs, errorView))
+		}
 	}
 
 	appStop := make(chan struct{})
@@ -524,8 +562,9 @@ func Run(opts RunOptions) error {
 				setTraceBorderColor(tcell.ColorWhite)
 				setMTRBorderColor(tcell.ColorWhite)
 				setPortBorderColor(tcell.ColorWhite)
+				setHTTPBorderColor(tcell.ColorWhite)
 			}
-			// Build ordered focus cycle: table → [trace] → [mtr] → [port] → graph → error → table
+			// Build ordered focus cycle: table → [trace] → [mtr] → [port] → [http] → graph → error → table
 			type focusEntry struct {
 				enabled  bool
 				view     tview.Primitive
@@ -536,6 +575,7 @@ func Run(opts RunOptions) error {
 				{traceEnabled && traceView != nil, traceView, setTraceBorderColor},
 				{mtrEnabled && mtrView != nil, mtrView, setMTRBorderColor},
 				{portEnabled && portView != nil, portView, setPortBorderColor},
+				{httpEnabled && httpView != nil, httpView, setHTTPBorderColor},
 				{true, graphView, func(c tcell.Color) { graphView.SetBorderColor(c) }},
 				{true, errorView, func(c tcell.Color) { errorView.SetBorderColor(c) }},
 			}
@@ -612,6 +652,7 @@ func Run(opts RunOptions) error {
 			lastLossTimes = make(map[string]time.Time)
 			alertState = make(map[string]alertFlags)
 			lastPortStatuses = make(map[string]string)
+			lastHTTPStatuses = make(map[string]string)
 			if !stopRequested {
 				if traceEnabled {
 					for _, t := range targets {
@@ -626,6 +667,9 @@ func Run(opts RunOptions) error {
 				}
 				if portEnabled && onResetPort != nil {
 					go onResetPort()
+				}
+				if httpEnabled && onResetHTTP != nil {
+					go onResetHTTP()
 				}
 			}
 		}
@@ -696,6 +740,9 @@ func Run(opts RunOptions) error {
 	}
 	if portEnabled && portPane != nil {
 		monitorPanes = append(monitorPanes, monitorPane{portPane})
+	}
+	if httpEnabled && httpPane != nil {
+		monitorPanes = append(monitorPanes, monitorPane{httpPane})
 	}
 	monitorWeight := 3
 	if len(monitorPanes) > 1 {

@@ -7,7 +7,7 @@ import (
 )
 
 func TestBuildSnapshot_Empty(t *testing.T) {
-	snap := BuildSnapshot(nil)
+	snap := BuildSnapshot(nil, nil)
 	if snap.Targets == nil {
 		t.Error("Targets should not be nil")
 	}
@@ -29,7 +29,7 @@ func TestBuildSnapshot_Basic(t *testing.T) {
 	ts.IncSent()
 	ts.OnFailure("timeout")
 
-	snap := BuildSnapshot([]*TargetStats{ts})
+	snap := BuildSnapshot([]*TargetStats{ts}, nil)
 	if len(snap.Targets) != 1 {
 		t.Fatalf("expected 1 target, got %d", len(snap.Targets))
 	}
@@ -76,7 +76,7 @@ func TestBuildSnapshot_JSON(t *testing.T) {
 	ts.IncSent()
 	ts.OnSuccess(8*time.Millisecond, 115)
 
-	snap := BuildSnapshot([]*TargetStats{ts})
+	snap := BuildSnapshot([]*TargetStats{ts}, nil)
 	data, err := json.Marshal(snap)
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
@@ -97,7 +97,7 @@ func TestBuildSnapshot_JSON(t *testing.T) {
 
 func TestBuildSnapshot_NoLoss(t *testing.T) {
 	ts := NewTargetStats("host.local")
-	snap := BuildSnapshot([]*TargetStats{ts})
+	snap := BuildSnapshot([]*TargetStats{ts}, nil)
 	st := snap.Targets[0]
 	if st.LossRatePct != 0.0 {
 		t.Errorf("LossRatePct with Sent=0 should be 0.0, got %f", st.LossRatePct)
@@ -111,7 +111,7 @@ func TestBuildSnapshot_TraceHops(t *testing.T) {
 	ts := NewTargetStats("host.local")
 	ts.SetTraceHops([]string{"1.1.1.1", "2.2.2.2"})
 
-	snap := BuildSnapshot([]*TargetStats{ts})
+	snap := BuildSnapshot([]*TargetStats{ts}, nil)
 	st := snap.Targets[0]
 	if len(st.TraceHops) != 2 {
 		t.Errorf("expected 2 trace hops, got %d", len(st.TraceHops))
@@ -122,7 +122,7 @@ func TestBuildSnapshot_PMTU(t *testing.T) {
 	ts := NewTargetStats("host.local")
 	ts.SetPMTU(1400)
 
-	snap := BuildSnapshot([]*TargetStats{ts})
+	snap := BuildSnapshot([]*TargetStats{ts}, nil)
 	st := snap.Targets[0]
 	if st.PMTU != 1400 {
 		t.Errorf("expected PMTU=1400, got %d", st.PMTU)

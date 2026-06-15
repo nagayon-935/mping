@@ -1013,7 +1013,7 @@ func TestWriteJSONSnapshot_CreatesValidJSON(t *testing.T) {
 	targets := []*stats.TargetStats{stats.NewTargetStats("example.com")}
 	targets[0].SetIP("1.2.3.4")
 
-	if err := writeJSONSnapshot(path, targets); err != nil {
+	if err := writeJSONSnapshot(path, targets, nil); err != nil {
 		t.Fatalf("writeJSONSnapshot: %v", err)
 	}
 
@@ -1039,7 +1039,7 @@ func TestWriteJSONSnapshot_Atomic(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "stats.json")
 
-	if err := writeJSONSnapshot(path, nil); err != nil {
+	if err := writeJSONSnapshot(path, nil, nil); err != nil {
 		t.Fatalf("writeJSONSnapshot: %v", err)
 	}
 
