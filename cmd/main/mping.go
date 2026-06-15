@@ -861,6 +861,16 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			logCh       chan string // route flap and watcher log messages → TUI Log pane
 		)
 
+		// onFlap is the shared callback for MTR route-flap events.
+		// logCh must be initialised before startPinger() is called.
+		onFlap := func(host, desc string) {
+			select {
+			case logCh <- fmt.Sprintf("[yellow][%s] Route flap %s: %s[-]",
+				time.Now().Format("15:04:05"), host, desc):
+			default:
+			}
+		}
+
 		startPinger := func() error {
 			next := makePinger(packetSizeToUse)
 			if err := next.Start(interval, timeout); err != nil {
@@ -878,15 +888,13 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 				if mtrEngine != nil {
 					mtrEngine.Stop()
 				}
-				adapter := &pingerMTRAdapter{p: next.(*pingerAdapter).Pinger}
+				pa, ok := next.(*pingerAdapter)
+				if !ok {
+					return fmt.Errorf("internal: unexpected pinger type %T", next)
+				}
+				adapter := &pingerMTRAdapter{p: pa.Pinger}
 				mtrEngine = mtr.NewEngine(adapter, targets, mtr.Config{
-					OnFlap: func(host, desc string) {
-						select {
-						case logCh <- fmt.Sprintf("[yellow][%s] Route flap %s: %s[-]",
-							time.Now().Format("15:04:05"), host, desc):
-						default:
-						}
-					},
+					OnFlap: onFlap,
 				})
 				mtrEngine.Start()
 			}
@@ -911,6 +919,9 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 				cur.Wait()
 			}
 		}
+
+		// Initialize logCh before startPinger so OnFlap callbacks never write to a nil channel.
+		logCh = make(chan string, 16)
 
 		if err := startPinger(); err != nil {
 			fmt.Fprintf(errOut, "Error starting pinger: %v\n", err)
@@ -964,15 +975,14 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 					curEngine.Stop()
 				}
 				cur := p
-				adapter := &pingerMTRAdapter{p: cur.(*pingerAdapter).Pinger}
+				pa, ok := cur.(*pingerAdapter)
+				if !ok {
+					pMu.Unlock()
+					return
+				}
+				adapter := &pingerMTRAdapter{p: pa.Pinger}
 				mtrEngine = mtr.NewEngine(adapter, targets, mtr.Config{
-					OnFlap: func(host, desc string) {
-						select {
-						case logCh <- fmt.Sprintf("[yellow][%s] Route flap %s: %s[-]",
-							time.Now().Format("15:04:05"), host, desc):
-						default:
-						}
-					},
+					OnFlap: onFlap,
 				})
 				mtrEngine.Start()
 				pMu.Unlock()
@@ -1031,9 +1041,6 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		// reloadCh is closed by the YAML watcher to signal TUI shutdown.
 		reloadCh := make(chan struct{})
 		var reloadCloseOnce sync.Once
-
-		// logCh carries messages from route flap detection and the watcher to the TUI Log pane.
-		logCh = make(chan string, 16)
 
 		// onFileChange is the callback invoked by the watcher after debounce.
 		onFileChange := func() {

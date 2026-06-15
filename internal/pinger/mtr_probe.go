@@ -269,9 +269,13 @@ func receiveViaSocket(ctx context.Context, sock *HopSocket, accept func(*icmp.Me
 	proto := 58
 	if sock.isV4 {
 		proto = 1
-		sock.sendV4.SetReadDeadline(deadline)
+		if err := sock.sendV4.SetReadDeadline(deadline); err != nil {
+			return HopReply{}, fmt.Errorf("set read deadline: %w", err)
+		}
 	} else {
-		sock.sendV6.SetReadDeadline(deadline)
+		if err := sock.sendV6.SetReadDeadline(deadline); err != nil {
+			return HopReply{}, fmt.Errorf("set read deadline: %w", err)
+		}
 	}
 	for {
 		select {
