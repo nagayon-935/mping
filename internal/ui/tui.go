@@ -488,7 +488,7 @@ func Run(opts RunOptions) error {
 
 		// Pass 2: render table rows.
 		if len(groups) > 0 && !compactLayout {
-			// Group-aware rendering: header → [targets] → aggregate per group.
+			// Group-aware rendering: header → [targets] per group.
 			for rowIdx, row := range groupRowMap {
 				tableRow := rowIdx + 1
 				switch row.kind {
@@ -503,11 +503,6 @@ func Run(opts RunOptions) error {
 					for c, cell := range cells {
 						table.SetCell(tableRow, c, cell)
 					}
-				case groupRowAggregate:
-					agg := computeGroupAggregate(targets, groups[row.groupIdx].Indices)
-					cols, lossRate := buildAggregateColumns(row.groupName, agg, asnEnabled)
-					setGroupAggregateRow(table, tableRow, row.groupName, agg,
-						cols, widths, fullAligns, lossRate, asnEnabled)
 				}
 			}
 		} else {
