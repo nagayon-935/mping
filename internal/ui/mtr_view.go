@@ -19,7 +19,8 @@ const (
 
 // mtrLossColorTag returns a tview color tag string based on loss percentage.
 func mtrLossColorTag(pct float64) string {
-	if pct >= activeThresholds.LossCrit {
+	th := getActiveThresholds()
+	if pct >= th.LossCrit {
 		return "[red::b]"
 	}
 	if pct > 0 {
@@ -33,10 +34,11 @@ func mtrRTTColorTag(rtt time.Duration) string {
 	if rtt == 0 {
 		return "[white]"
 	}
-	if rtt > activeThresholds.RTTCrit {
+	th := getActiveThresholds()
+	if rtt > th.RTTCrit {
 		return "[red]"
 	}
-	if rtt > activeThresholds.RTTWarn {
+	if rtt > th.RTTWarn {
 		return "[orange]"
 	}
 	return "[green]"

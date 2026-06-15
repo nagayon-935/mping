@@ -80,11 +80,11 @@ func TestThresholds_Validate(t *testing.T) {
 	}
 }
 
-// withThresholds temporarily swaps activeThresholds for a test and restores it.
+// withThresholds temporarily swaps the active thresholds for a test and restores them.
 func withThresholds(th Thresholds, fn func()) {
-	prev := activeThresholds
-	activeThresholds = th
-	defer func() { activeThresholds = prev }()
+	prev := getActiveThresholds()
+	setActiveThresholds(th)
+	defer setActiveThresholds(prev)
 	fn()
 }
 
