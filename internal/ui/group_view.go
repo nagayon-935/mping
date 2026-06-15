@@ -38,7 +38,6 @@ type groupTableRow struct {
 func buildGroupRows(
 	targets []*stats.TargetStats,
 	groups []TargetGroup,
-	filter func(stats.TargetView) bool,
 ) []groupTableRow {
 	// Build a set of target indices that belong to any group.
 	groupedIdx := make(map[int]struct{})
@@ -51,11 +50,8 @@ func buildGroupRows(
 	var rows []groupTableRow
 
 	// Ungrouped targets first, preserving original order.
-	for i, t := range targets {
+	for i := range targets {
 		if _, inGroup := groupedIdx[i]; inGroup {
-			continue
-		}
-		if filter != nil && !filter(t.GetView()) {
 			continue
 		}
 		rows = append(rows, groupTableRow{

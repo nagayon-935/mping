@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 	"time"
 
@@ -110,62 +109,6 @@ func formatRTT(d time.Duration) string {
 		return "-"
 	}
 	return fmt.Sprintf("%v", d.Round(time.Microsecond))
-}
-
-func matchesFilter(view stats.TargetView, filter string) bool {
-	if filter == "" {
-		return true
-	}
-
-	filter = strings.ToLower(filter)
-
-	// Check for condition match like loss>0, rtt>100, jitter>10
-	if strings.Contains(filter, ">") {
-		parts := strings.Split(filter, ">")
-		if len(parts) == 2 {
-			key := strings.TrimSpace(parts[0])
-			valStr := strings.TrimSpace(parts[1])
-			val, err := strconv.ParseFloat(valStr, 64)
-			if err != nil {
-				return false
-			}
-			switch key {
-			case "loss":
-				return calcLossRate(view) > val
-			case "rtt":
-				return float64(view.LastRTT.Milliseconds()) > val
-			case "avg":
-				return float64(view.AvgRTT.Milliseconds()) > val
-			case "jitter":
-				return float64(view.Jitter.Milliseconds()) > val
-			}
-		}
-	} else if strings.Contains(filter, "<") {
-		parts := strings.Split(filter, "<")
-		if len(parts) == 2 {
-			key := strings.TrimSpace(parts[0])
-			valStr := strings.TrimSpace(parts[1])
-			val, err := strconv.ParseFloat(valStr, 64)
-			if err != nil {
-				return false
-			}
-			switch key {
-			case "loss":
-				return calcLossRate(view) < val
-			case "rtt":
-				return float64(view.LastRTT.Milliseconds()) < val
-			case "avg":
-				return float64(view.AvgRTT.Milliseconds()) < val
-			case "jitter":
-				return float64(view.Jitter.Milliseconds()) < val
-			}
-		}
-	}
-
-	// Default: text match on host, IP or ASN
-	return strings.Contains(strings.ToLower(view.Host), filter) ||
-		strings.Contains(strings.ToLower(view.IP), filter) ||
-		strings.Contains(strings.ToLower(view.ASN), filter)
 }
 
 func calcLossRate(view stats.TargetView) float64 {

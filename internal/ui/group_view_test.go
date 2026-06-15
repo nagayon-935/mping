@@ -13,7 +13,7 @@ func TestBuildGroupRows_NoGroups(t *testing.T) {
 		stats.NewTargetStats("a"),
 		stats.NewTargetStats("b"),
 	}
-	rows := buildGroupRows(targets, nil, nil)
+	rows := buildGroupRows(targets, nil)
 	if len(rows) != 2 {
 		t.Fatalf("want 2 rows, got %d", len(rows))
 	}
@@ -38,7 +38,7 @@ func TestBuildGroupRows_UngroupedFirst(t *testing.T) {
 		stats.NewTargetStats("g1-b"),
 	}
 	groups := []TargetGroup{{Name: "G1", Indices: []int{1, 2}}}
-	rows := buildGroupRows(targets, groups, nil)
+	rows := buildGroupRows(targets, groups)
 	// expect: ungrouped(0), header(G1), target(1), target(2) = 4 rows
 	if len(rows) != 4 {
 		t.Fatalf("want 4 rows, got %d: %v", len(rows), rows)
@@ -66,7 +66,7 @@ func TestBuildGroupRows_MultipleGroups(t *testing.T) {
 		{Name: "G1", Indices: []int{0}},
 		{Name: "G2", Indices: []int{1}},
 	}
-	rows := buildGroupRows(targets, groups, nil)
+	rows := buildGroupRows(targets, groups)
 	// expect: header(G1), target(0), header(G2), target(1) = 4
 	if len(rows) != 4 {
 		t.Fatalf("want 4 rows, got %d", len(rows))
@@ -85,28 +85,12 @@ func TestBuildGroupRows_MultipleGroups(t *testing.T) {
 	}
 }
 
-func TestBuildGroupRows_FilterSkipsUngrouped(t *testing.T) {
-	targets := []*stats.TargetStats{
-		stats.NewTargetStats("alpha"),
-		stats.NewTargetStats("beta"),
-	}
-	// Only "alpha" passes the filter
-	filter := func(v stats.TargetView) bool { return v.Host == "alpha" }
-	rows := buildGroupRows(targets, nil, filter)
-	if len(rows) != 1 {
-		t.Fatalf("want 1 row after filter, got %d", len(rows))
-	}
-	if rows[0].targetIdx != 0 {
-		t.Errorf("want targetIdx=0, got %d", rows[0].targetIdx)
-	}
-}
-
 func TestBuildGroupRows_HeaderGroupIdxSet(t *testing.T) {
 	targets := []*stats.TargetStats{
 		stats.NewTargetStats("h"),
 	}
 	groups := []TargetGroup{{Name: "G1", Indices: []int{0}}}
-	rows := buildGroupRows(targets, groups, nil)
+	rows := buildGroupRows(targets, groups)
 	for _, r := range rows {
 		if r.groupIdx < 0 {
 			continue
