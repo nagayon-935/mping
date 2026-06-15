@@ -16,6 +16,7 @@
 * **YAML host list** — manage target hosts in a file.
 * **Host groups** — define named groups in the YAML file. Each group shows a header row with a member count, making it easy to visually separate sets of targets.
 * **Traceroute pane** — show the route to each target in a Host/Route table when `-T` is given. Multiple targets are traced concurrently and displayed together.
+* **Paris Traceroute** — opt-in with `--paris` / `-P`. Fixes the ICMP flow identifier (ID and Sequence) across all TTL-limited probes so that every hop is measured along the same ECMP path, eliminating phantom hops caused by load balancers. Automatically enables the Traceroute pane.
 * **MTR Monitor pane** — continuous per-hop loss/latency statistics when `-M` is given. Each hop is probed every second and displays Hop, Host, Loss%, Snt, Recv, Last, Avg, Min, Max, Jitter — the same columns as `mtr`. Can be used simultaneously with `-T`.
 * **HTTP(S) health check pane** — monitor HTTP/HTTPS endpoints when `-H` is given. Performs GET requests at the ping interval and tracks status code, response time (Last/Min/Avg/Max), and cumulative Up/Down counts. Status changes are logged to the Log pane.
 * **Port Monitor pane** — monitor TCP/UDP port reachability in real time with `-p`. Displays the estimated service name, **Last / Min / Avg / Max RTT** (measured from TCP connect or UDP round-trip), cumulative Open/Closed counts, and time since last status change. RTT statistics are collected for `Open` responses only.
@@ -183,6 +184,12 @@ mping --rtt-warn 30 --rtt-crit 100 --loss-warn 10 --loss-crit 50 google.com
 
 # Display AS numbers for target IPs
 mping -a google.com 1.1.1.1
+
+# Paris Traceroute (keeps all probes on the same ECMP path)
+mping -P google.com
+
+# Paris Traceroute + MTR simultaneously
+mping -P -M google.com
 ```
 
 > If you run mping **without** installing (i.e. without `setcap`/`setuid`), prepend `sudo`:
@@ -244,6 +251,7 @@ groups:
 | `--timeout` | `-t` | Ping timeout (ms) | `1000` |
 | `--file` | `-f` | Path to YAML host list file | `""` |
 | `--traceroute` | `-T` | Show Traceroute pane | `false` |
+| `--paris` | `-P` | Use Paris Traceroute algorithm (fixes ECMP path); implies `-T` | `false` |
 | `--mtr` | `-M` | Show MTR Monitor pane (continuous per-hop loss/latency) | `false` |
 | `--discovery-mtu` | `-m` | Discover max payload size with DF bit | `false` |
 | `--interface` | `-I` | Network interface name (e.g. `eth0`, `en0`) | `""` |
@@ -295,6 +303,14 @@ groups:
 * **TTL** — Time To Live of the last received packet.
 * **Error** — Abbreviated latest error message (red). Full details appear in the Log pane.
 * **Last Loss** — Time elapsed since the last packet loss.
+
+## Paris Traceroute
+
+Standard traceroute varies the ICMP Sequence number per hop, which can cause ECMP (Equal-Cost Multi-Path) routers to hash different probes onto different paths. The result is "phantom" hops — IPs that appear in the trace but are not actually on the true end-to-end path.
+
+Paris Traceroute (`--paris` / `-P`) fixes both the ICMP Identifier and Sequence fields across all TTL-limited probes. Since the ICMP checksum (used by routers as a flow hash) stays constant, every hop is probed along the same path, giving a consistent and accurate route view.
+
+The Traceroute pane title changes to **Paris Traceroute Monitor** when this mode is active.
 
 ## Traceroute Monitor pane
 

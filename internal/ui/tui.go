@@ -31,6 +31,7 @@ type RunOptions struct {
 	PacketSize   int
 	InitialLogs  []string
 	TraceEnabled bool
+	ParisTrace   bool
 	MTREnabled   bool
 	PortEnabled  bool
 	HTTPEnabled  bool
@@ -74,6 +75,7 @@ func Run(opts RunOptions) error {
 	packetSize := opts.PacketSize
 	initialLogs := opts.InitialLogs
 	traceEnabled := opts.TraceEnabled
+	parisTrace := opts.ParisTrace
 	mtrEnabled := opts.MTREnabled
 	portEnabled := opts.PortEnabled
 	httpEnabled := opts.HTTPEnabled
@@ -234,7 +236,11 @@ func Run(opts RunOptions) error {
 			traceBorderColor = c
 			tracePane.SetBorderColor(c)
 		}
-		tracePane.SetDrawFunc(makeDoubleBorderDrawFunc(" Traceroute Monitor ", &traceBorderColor))
+		tracePaneTitle := " Traceroute Monitor "
+		if parisTrace {
+			tracePaneTitle = " Paris Traceroute Monitor "
+		}
+		tracePane.SetDrawFunc(makeDoubleBorderDrawFunc(tracePaneTitle, &traceBorderColor))
 	}
 
 	// MTR Monitor pane

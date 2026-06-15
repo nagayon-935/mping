@@ -64,6 +64,10 @@ func (f *fakePinger) TraceRoute(dest string, maxHops int, timeout time.Duration)
 	return []string{"hop1", "hop2"}, nil
 }
 
+func (f *fakePinger) ParisTraceRoute(dest string, maxHops int, timeout time.Duration) ([]string, error) {
+	return []string{"hop1", "hop2"}, nil
+}
+
 func (f *fakePinger) SetSource(ip string)                       {}
 func (f *fakePinger) SetSize(size int)                          {}
 func (f *fakePinger) SetCount(count int)                        {}
@@ -490,7 +494,7 @@ func TestRunTraceroutes_ContextCancel(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runTraceroutes(ctx, fp, targets)
+		runTraceroutes(ctx, fp, targets, false)
 		close(done)
 	}()
 
@@ -517,7 +521,7 @@ func TestRunTraceroutes_TraceError(t *testing.T) {
 	targets := []*stats.TargetStats{stats.NewTargetStats("example.com")}
 	fp := &fakePinger{traceErr: io.ErrUnexpectedEOF}
 
-	runTraceroutes(ctx, fp, targets)
+	runTraceroutes(ctx, fp, targets, false)
 
 	view := targets[0].GetView()
 	if len(view.TraceHops) == 0 || !strings.HasPrefix(view.TraceHops[0], "error:") {
@@ -534,7 +538,7 @@ func TestRunTraceroutes_EmptyHops(t *testing.T) {
 	targets := []*stats.TargetStats{stats.NewTargetStats("example.com")}
 	fp := &fakePinger{}
 
-	runTraceroutes(ctx, fp, targets)
+	runTraceroutes(ctx, fp, targets, false)
 
 	view := targets[0].GetView()
 	if len(view.TraceHops) == 0 {
