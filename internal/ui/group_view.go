@@ -35,11 +35,9 @@ type groupTableRow struct {
 
 // buildGroupRows returns the ordered list of table rows for the groups layout.
 // Ungrouped targets appear first, then each group: header → targets.
-// Individual target rows within collapsed groups are omitted.
 func buildGroupRows(
 	targets []*stats.TargetStats,
 	groups []TargetGroup,
-	collapsedGroups map[string]bool,
 	filter func(stats.TargetView) bool,
 ) []groupTableRow {
 	// Build a set of target indices that belong to any group.
@@ -65,20 +63,18 @@ func buildGroupRows(
 		})
 	}
 
-	// Groups in definition order: header → [target rows].
+	// Groups in definition order: header → target rows.
 	for gi, g := range groups {
 		rows = append(rows, groupTableRow{
 			kind: groupRowHeader, targetIdx: -1, groupIdx: gi, groupName: g.Name,
 		})
-		if !collapsedGroups[g.Name] {
-			for _, idx := range g.Indices {
-				if idx >= len(targets) {
-					continue
-				}
-				rows = append(rows, groupTableRow{
-					kind: groupRowTarget, targetIdx: idx, groupIdx: gi,
-				})
+		for _, idx := range g.Indices {
+			if idx >= len(targets) {
+				continue
 			}
+			rows = append(rows, groupTableRow{
+				kind: groupRowTarget, targetIdx: idx, groupIdx: gi,
+			})
 		}
 	}
 
@@ -87,13 +83,9 @@ func buildGroupRows(
 
 // setGroupHeaderRow fills a table row with a group header separator.
 func setGroupHeaderRow(table *tview.Table, tableRow int, colCount int,
-	groupName string, memberCount int, collapsed bool,
+	groupName string, memberCount int,
 ) {
-	indicator := "▼"
-	if collapsed {
-		indicator = "▶"
-	}
-	label := fmt.Sprintf(" %s %s  (%d hosts)", indicator, groupName, memberCount)
+	label := fmt.Sprintf(" ▸ %s  (%d hosts)", groupName, memberCount)
 
 	first := tview.NewTableCell(label).
 		SetAttributes(tcell.AttrBold).
@@ -105,10 +97,3 @@ func setGroupHeaderRow(table *tview.Table, tableRow int, colCount int,
 	}
 }
 
-// groupHintText returns the footer hint for z-key when groups are defined.
-func groupHintText(hasGroups bool) string {
-	if hasGroups {
-		return " | z: Toggle group collapse"
-	}
-	return ""
-}

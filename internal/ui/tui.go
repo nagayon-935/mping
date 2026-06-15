@@ -186,8 +186,6 @@ func Run(opts RunOptions) error {
 	compactLayout := false
 	filter := ""
 
-	// Group collapse state: group name → true means collapsed.
-	collapsedGroups := make(map[string]bool)
 	// groupRowMap maps visible table data-row index to its logical row entry.
 	// Rebuilt on every updateTable call when groups are active.
 	var groupRowMap []groupTableRow
@@ -420,7 +418,7 @@ func Run(opts RunOptions) error {
 
 		// When groups are active, override rowCount with the group layout.
 		if len(groups) > 0 && !compactLayout {
-			groupRowMap = buildGroupRows(targets, groups, collapsedGroups, nil)
+			groupRowMap = buildGroupRows(targets, groups, nil)
 			rowCount = len(groupRowMap) + 1
 		}
 
@@ -495,7 +493,7 @@ func Run(opts RunOptions) error {
 				case groupRowHeader:
 					memberCount := len(groups[row.groupIdx].Indices)
 					setGroupHeaderRow(table, tableRow, len(activeHeaders),
-						row.groupName, memberCount, collapsedGroups[row.groupName])
+						row.groupName, memberCount)
 				case groupRowUngrouped, groupRowTarget:
 					view := targets[row.targetIdx].GetView()
 					cols, _, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize, asnEnabled)
@@ -707,20 +705,6 @@ func Run(opts RunOptions) error {
 				}
 				if httpEnabled && onResetHTTP != nil {
 					go onResetHTTP()
-				}
-			}
-		case 'z':
-			// Toggle collapse of the group at the current scroll position.
-			if len(groups) == 0 {
-				break
-			}
-			offset, _ := table.GetOffset()
-			if offset < len(groupRowMap) {
-				row := groupRowMap[offset]
-				if row.groupIdx >= 0 && row.groupIdx < len(groups) {
-					name := groups[row.groupIdx].Name
-					collapsedGroups[name] = !collapsedGroups[name]
-					updateTable()
 				}
 			}
 		}
