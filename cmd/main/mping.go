@@ -232,6 +232,7 @@ type config struct {
 	ipv4Only       bool
 	ipv6Only       bool
 	portSpecs      []string
+	httpURLs       []string
 	jsonOutputFile string
 	mtr            bool
 
@@ -259,6 +260,7 @@ type hostsFileYAML struct {
 	Ipv4Only   *bool           `yaml:"ipv4"`
 	Ipv6Only   *bool           `yaml:"ipv6"`
 	PortSpecs  []string        `yaml:"port"`
+	HTTPURLs   []string        `yaml:"http"`
 	JsonOutput *string         `yaml:"json-output"`
 	Mtr        *bool           `yaml:"mtr"`
 	Thresholds *thresholdsYAML `yaml:"thresholds"`
@@ -340,6 +342,9 @@ func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]string, 
 	}
 	if !fs.Changed("port") && len(doc.PortSpecs) > 0 {
 		cfg.portSpecs = doc.PortSpecs
+	}
+	if !fs.Changed("http") && len(doc.HTTPURLs) > 0 {
+		cfg.httpURLs = doc.HTTPURLs
 	}
 	if !fs.Changed("json-output") && doc.JsonOutput != nil {
 		cfg.jsonOutputFile = *doc.JsonOutput
@@ -460,8 +465,8 @@ func overlayThresholds(base ui.Thresholds, th *thresholdsYAML) ui.Thresholds {
 // writeJSONSnapshot serialises a statistics snapshot to path atomically.
 // It writes to a temporary file first, then renames it to path, so readers
 // always see a complete file.
-func writeJSONSnapshot(path string, targets []*stats.TargetStats) error {
-	snap := stats.BuildSnapshot(targets)
+func writeJSONSnapshot(path string, targets []*stats.TargetStats, httpResults []*stats.HTTPCheckResult) error {
+	snap := stats.BuildSnapshot(targets, httpResults)
 	data, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal snapshot: %w", err)
@@ -561,6 +566,7 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 	fs.BoolVarP(&cfg.ipv4Only, "ipv4", "4", false, "force IPv4 only")
 	fs.BoolVarP(&cfg.ipv6Only, "ipv6", "6", false, "force IPv6 only")
 	fs.StringSliceVarP(&cfg.portSpecs, "port", "p", nil, "port(s) to check, e.g. 443/tcp,53/udp or 443 (defaults to tcp)")
+	fs.StringSliceVarP(&cfg.httpURLs, "http", "H", nil, "URL(s) to health-check, e.g. https://example.com/health (comma-separated or repeated)")
 	fs.StringVarP(&cfg.jsonOutputFile, "json-output", "j", "", "write JSON statistics snapshot to this file (updated every 5s)")
 	fs.BoolVarP(&cfg.mtr, "mtr", "M", false, "enable MTR-style per-hop monitor pane")
 
@@ -675,6 +681,15 @@ func setupPortChecker(targets []*stats.TargetStats, portSpecs []pinger.PortSpec,
 	return pc
 }
 
+func setupHTTPChecker(urls []string, interval, timeout time.Duration) *pinger.HTTPChecker {
+	if len(urls) == 0 {
+		return nil
+	}
+	hc := pinger.NewHTTPChecker(urls, interval, timeout)
+	hc.Start()
+	return hc
+}
+
 func run(args []string, out io.Writer, errOut io.Writer) int {
 	// ── 1. Parse command-line arguments ──────────────────────────────────────
 	cfg, hosts, fs, usage, err := parseArgs(args)
@@ -784,6 +799,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			traceCtx    context.Context
 			traceCancel context.CancelFunc
 			portChecker *pinger.PortChecker
+			httpChecker *pinger.HTTPChecker
 			mtrEngine   *mtr.Engine
 			logCh       chan string // route flap and watcher log messages → TUI Log pane
 		)
@@ -847,6 +863,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 
 		pMu.Lock()
 		portChecker = setupPortChecker(targets, portSpecs, interval, timeout)
+		httpChecker = setupHTTPChecker(currentCfg.httpURLs, interval, timeout)
 		pMu.Unlock()
 
 		// stopAll is called from multiple sites (OnStop, OnRestart, error path,
@@ -856,10 +873,14 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		stopAll := func() {
 			stopPinger()
 			pMu.Lock()
-			cur := portChecker
+			curPort := portChecker
+			curHTTP := httpChecker
 			pMu.Unlock()
-			if cur != nil {
-				cur.Stop()
+			if curPort != nil {
+				curPort.Stop()
+			}
+			if curHTTP != nil {
+				curHTTP.Stop()
 			}
 		}
 
@@ -897,6 +918,23 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 					},
 				})
 				mtrEngine.Start()
+				pMu.Unlock()
+			}
+		}
+
+		var resetHTTP func()
+		if len(currentCfg.httpURLs) > 0 {
+			resetHTTP = func() {
+				pMu.Lock()
+				cur := httpChecker
+				httpChecker = nil
+				pMu.Unlock()
+				if cur != nil {
+					cur.Stop()
+				}
+				next := setupHTTPChecker(currentCfg.httpURLs, interval, timeout)
+				pMu.Lock()
+				httpChecker = next
 				pMu.Unlock()
 			}
 		}
@@ -998,7 +1036,14 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 				for {
 					select {
 					case <-ticker.C:
-						if err := writeJSONSnapshot(currentCfg.jsonOutputFile, targets); err != nil {
+						if err := writeJSONSnapshot(currentCfg.jsonOutputFile, targets, func() []*stats.HTTPCheckResult {
+							pMu.Lock()
+							defer pMu.Unlock()
+							if httpChecker == nil {
+								return nil
+							}
+							return httpChecker.Results()
+						}()); err != nil {
 							fmt.Fprintf(errOut, "Warning: JSON snapshot write failed: %v\n", err)
 						}
 					case <-jsonCtx.Done():
@@ -1013,17 +1058,26 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		// ── Run TUI ──────────────────────────────────────────────────────────
 		uiThresholds := thresholdsFromCfg(currentCfg)
 		if err := uiRun(ui.RunOptions{
-			Targets:         targets,
-			Interval:        interval,
-			Timeout:         timeout,
-			DoneCh:          doneCh,
-			SourceIPv4:      displaySourceIPv4,
-			SourceIPv6:      displaySourceIPv6,
-			PacketSize:      packetSizeToUse,
-			InitialLogs:     preLogs,
-			TraceEnabled:    currentCfg.trace,
-			MTREnabled:      currentCfg.mtr,
-			PortEnabled:     len(portSpecs) > 0,
+			Targets:      targets,
+			Interval:     interval,
+			Timeout:      timeout,
+			DoneCh:       doneCh,
+			SourceIPv4:   displaySourceIPv4,
+			SourceIPv6:   displaySourceIPv6,
+			PacketSize:   packetSizeToUse,
+			InitialLogs:  preLogs,
+			TraceEnabled: currentCfg.trace,
+			MTREnabled:   currentCfg.mtr,
+			PortEnabled:  len(portSpecs) > 0,
+			HTTPEnabled:  len(currentCfg.httpURLs) > 0,
+			HTTPResults: func() []*stats.HTTPCheckResult {
+				pMu.Lock()
+				defer pMu.Unlock()
+				if httpChecker == nil {
+					return nil
+				}
+				return httpChecker.Results()
+			}(),
 			ASNEnabled:      currentCfg.asnEnabled,
 			Thresholds:      &uiThresholds,
 			ExternalCloseCh: reloadCh,
@@ -1036,12 +1090,14 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 				}
 				pMu.Lock()
 				portChecker = setupPortChecker(targets, portSpecs, interval, timeout)
+				httpChecker = setupHTTPChecker(currentCfg.httpURLs, interval, timeout)
 				pMu.Unlock()
 				return nil
 			},
 			OnResetTrace: resetTrace,
 			OnResetMTR:   resetMTR,
 			OnResetPort:  resetPort,
+			OnResetHTTP:  resetHTTP,
 		}); err != nil {
 			fmt.Fprintf(errOut, "Error running application: %v\n", err)
 			jsonCancel()
@@ -1057,7 +1113,14 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		jsonCancel()
 		<-jsonDone
 		if currentCfg.jsonOutputFile != "" {
-			if err := writeJSONSnapshot(currentCfg.jsonOutputFile, targets); err != nil {
+			if err := writeJSONSnapshot(currentCfg.jsonOutputFile, targets, func() []*stats.HTTPCheckResult {
+				pMu.Lock()
+				defer pMu.Unlock()
+				if httpChecker == nil {
+					return nil
+				}
+				return httpChecker.Results()
+			}()); err != nil {
 				fmt.Fprintf(errOut, "Warning: Final JSON snapshot write failed: %v\n", err)
 			}
 		}

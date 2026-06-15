@@ -4,8 +4,9 @@ import "time"
 
 // ExportSnapshot is the root of the JSON statistics export.
 type ExportSnapshot struct {
-	Timestamp time.Time       `json:"timestamp"`
-	Targets   []TargetSummary `json:"targets"`
+	Timestamp  time.Time          `json:"timestamp"`
+	Targets    []TargetSummary    `json:"targets"`
+	HTTPChecks []HTTPCheckSummary `json:"http_checks,omitempty"`
 }
 
 // TargetSummary is a JSON-serialisable summary for a single ping target.
@@ -60,16 +61,29 @@ type PortSummary struct {
 	ClosedCount int     `json:"closed_count"`
 }
 
+// HTTPCheckSummary is a JSON-serialisable summary for a single HTTP health check.
+type HTTPCheckSummary struct {
+	URL        string  `json:"url"`
+	Status     string  `json:"status"`
+	StatusCode int     `json:"status_code"`
+	LastRTTMs  float64 `json:"last_rtt_ms"`
+	MinRTTMs   float64 `json:"min_rtt_ms,omitempty"`
+	AvgRTTMs   float64 `json:"avg_rtt_ms,omitempty"`
+	MaxRTTMs   float64 `json:"max_rtt_ms,omitempty"`
+	UpCount    int     `json:"up_count"`
+	DownCount  int     `json:"down_count"`
+}
+
 // durationMs converts a time.Duration to milliseconds (float64).
 func durationMs(d time.Duration) float64 {
 	return float64(d.Microseconds()) / 1000.0
 }
 
-// BuildSnapshot builds an ExportSnapshot from the given targets.
+// BuildSnapshot builds an ExportSnapshot from the given targets and optional HTTP results.
 // GetView is called once per target for a consistent, thread-safe snapshot.
 // If targets is nil or empty, Targets in the returned snapshot is a non-nil,
 // empty slice (JSON encodes as [] rather than null).
-func BuildSnapshot(targets []*TargetStats) ExportSnapshot {
+func BuildSnapshot(targets []*TargetStats, httpResults []*HTTPCheckResult) ExportSnapshot {
 	snap := ExportSnapshot{
 		Timestamp: time.Now().UTC(),
 		Targets:   make([]TargetSummary, 0, len(targets)),
@@ -148,5 +162,21 @@ func BuildSnapshot(targets []*TargetStats) ExportSnapshot {
 			MTRHops:      mtrHops,
 		})
 	}
+
+	for _, r := range httpResults {
+		v := r.GetView()
+		snap.HTTPChecks = append(snap.HTTPChecks, HTTPCheckSummary{
+			URL:        v.URL,
+			Status:     v.Status,
+			StatusCode: v.StatusCode,
+			LastRTTMs:  durationMs(v.RTT),
+			MinRTTMs:   durationMs(v.MinRTT),
+			AvgRTTMs:   durationMs(v.AvgRTT),
+			MaxRTTMs:   durationMs(v.MaxRTT),
+			UpCount:    v.UpCount,
+			DownCount:  v.DownCount,
+		})
+	}
+
 	return snap
 }

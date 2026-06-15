@@ -16,6 +16,7 @@
 * **YAML host list** — manage target hosts in a file.
 * **Traceroute pane** — show the route to each target in a Host/Route table when `-T` is given. Multiple targets are traced concurrently and displayed together.
 * **MTR Monitor pane** — continuous per-hop loss/latency statistics when `-M` is given. Each hop is probed every second and displays Hop, Host, Loss%, Snt, Recv, Last, Avg, Min, Max, Jitter — the same columns as `mtr`. Can be used simultaneously with `-T`.
+* **HTTP(S) health check pane** — monitor HTTP/HTTPS endpoints when `-H` is given. Performs GET requests at the ping interval and tracks status code, response time (Last/Min/Avg/Max), and cumulative Up/Down counts. Status changes are logged to the Log pane.
 * **Port Monitor pane** — monitor TCP/UDP port reachability in real time with `-p`. Displays the estimated service name, **Last / Min / Avg / Max RTT** (measured from TCP connect or UDP round-trip), cumulative Open/Closed counts, and time since last status change. RTT statistics are collected for `Open` responses only.
 * **PMTU discovery** — probe maximum payload size using DF-bit ICMP packets.
 * **Auto source IP detection** — automatically detects and displays the local IP used for each destination.
@@ -164,6 +165,12 @@ mping -M google.com
 # MTR + Traceroute simultaneously
 mping -T -M google.com
 
+# HTTP(S) health check
+mping -H https://example.com/health google.com
+
+# Multiple HTTP endpoints
+mping -H https://api.example.com/health,https://cdn.example.com/ping google.com
+
 # Traceroute + Port Monitor simultaneously
 mping -T -p 443/tcp google.com
 
@@ -228,6 +235,7 @@ thresholds:
 | `--port` | `-p` | Ports to check (e.g. `443/tcp`, `53/udp`, `443`). Comma-separated for multiple. | `""` |
 | `--json-output` | `-j` | Write a JSON statistics snapshot to this file every 5 seconds | `""` |
 | `--asn` | `-a` | Look up and display AS numbers for target IPs | `false` |
+| `--http` | `-H` | URL(s) to health-check, e.g. `https://example.com/health`. Comma-separated or repeated for multiple. | `""` |
 | `--rtt-warn` | | RTT warn threshold in ms (orange) | `50` |
 | `--rtt-crit` | | RTT crit threshold in ms (red) | `200` |
 | `--jitter-warn` | | Jitter warn threshold in ms (orange) | `10` |
@@ -296,6 +304,27 @@ thresholds:
 * On narrow terminals, **Min**, **Max**, **Recv**, and **Jitter** columns are hidden automatically (compact mode).
 * MTR statistics are included in the `-j` JSON export as `mtr_hops` per target.
 * **Route flap detection** — when re-discovery detects that the hop path has changed, a `[FLAP ×N HH:MM:SS]` badge is appended to the target's header row and a yellow alert is written to the Log pane (e.g. `[route flap google.com: hop 3: 10.0.0.2 → 10.0.0.9]`).
+
+## HTTP Monitor pane
+
+* Shown only when `-H` / `--http` is given.
+* Performs HTTP(S) GET requests at the ping interval and records the HTTP status code and response time.
+* Multiple URLs can be specified comma-separated (e.g. `-H https://a.example.com,https://b.example.com`) or with repeated flags.
+* Can also be set in the `http:` list in the YAML hosts file.
+* Columns:
+  * **URL** — the monitored endpoint
+  * **Status** — `Up` (green, 2xx–3xx) / `Down` (red, 4xx–5xx) / `Error` (red, connection error) / `Checking...` (gray, initial state)
+  * **Code** — HTTP status code (e.g. `200`, `503`); `-` on error
+  * **Last** — response time of the most recent request
+  * **Min** — minimum response time (Up responses only)
+  * **Avg** — average response time (Up responses only)
+  * **Max** — maximum response time (Up responses only)
+  * **Up** — cumulative Up count
+  * **Down** — cumulative Down + Error count
+  * **Since** — time elapsed since the last status change
+* On narrow terminals, **Min**, **Avg**, **Max**, and **Since** columns are hidden automatically (compact mode).
+* Status changes are logged to the Log pane (e.g. `HTTP https://example.com: Up → Down`).
+* HTTP check results are included in the `-j` JSON export as `http_checks`.
 
 ## Port Monitor pane
 
