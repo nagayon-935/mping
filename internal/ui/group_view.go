@@ -92,4 +92,3 @@ func setGroupHeaderRow(table *tview.Table, tableRow int, colCount int,
 		table.SetCell(tableRow, c, tview.NewTableCell("").SetSelectable(false))
 	}
 }
-
