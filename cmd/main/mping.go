@@ -785,6 +785,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			traceCancel context.CancelFunc
 			portChecker *pinger.PortChecker
 			mtrEngine   *mtr.Engine
+			logCh       chan string // route flap and watcher log messages → TUI Log pane
 		)
 
 		startPinger := func() error {
@@ -805,7 +806,15 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 					mtrEngine.Stop()
 				}
 				adapter := &pingerMTRAdapter{p: next.(*pingerAdapter).Pinger}
-				mtrEngine = mtr.NewEngine(adapter, targets, mtr.Config{})
+				mtrEngine = mtr.NewEngine(adapter, targets, mtr.Config{
+					OnFlap: func(host, desc string) {
+						select {
+						case logCh <- fmt.Sprintf("[yellow][%s] Route flap %s: %s[-]",
+							time.Now().Format("15:04:05"), host, desc):
+						default:
+						}
+					},
+				})
 				mtrEngine.Start()
 			}
 			p = next
@@ -878,7 +887,15 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 				}
 				cur := p
 				adapter := &pingerMTRAdapter{p: cur.(*pingerAdapter).Pinger}
-				mtrEngine = mtr.NewEngine(adapter, targets, mtr.Config{})
+				mtrEngine = mtr.NewEngine(adapter, targets, mtr.Config{
+					OnFlap: func(host, desc string) {
+						select {
+						case logCh <- fmt.Sprintf("[yellow][%s] Route flap %s: %s[-]",
+							time.Now().Format("15:04:05"), host, desc):
+						default:
+						}
+					},
+				})
 				mtrEngine.Start()
 				pMu.Unlock()
 			}
@@ -920,8 +937,8 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		reloadCh := make(chan struct{})
 		var reloadCloseOnce sync.Once
 
-		// logCh carries messages from the watcher to the TUI Log pane.
-		logCh := make(chan string, 16)
+		// logCh carries messages from route flap detection and the watcher to the TUI Log pane.
+		logCh = make(chan string, 16)
 
 		// onFileChange is the callback invoked by the watcher after debounce.
 		onFileChange := func() {

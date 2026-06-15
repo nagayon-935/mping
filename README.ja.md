@@ -295,6 +295,7 @@ thresholds:
   * **Jitter** — パケット遅延変動 (RFC 1889 スムージング)
 * 端末幅が狭い場合、**Recv** / **Min** / **Max** / **Jitter** カラムは自動的に省略されます (コンパクトモード)。
 * MTR 統計は `-j` JSON エクスポートに `mtr_hops` フィールドとして含まれます。
+* **経路変化 (Route Flap) 検知** — 再発見時に経路が変化した場合、対象ターゲットのヘッダに `[FLAP ×N HH:MM:SS]` バッジを表示し、Log ペインに黄色いアラート (例: `[route flap google.com: hop 3: 10.0.0.2 → 10.0.0.9]`) を記録します。
 
 ## Port Monitor ペイン
 

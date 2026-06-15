@@ -1,6 +1,8 @@
 package stats
 
 import (
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -8,7 +10,8 @@ import (
 // HopStats accumulates per-hop probe statistics for one TTL position.
 type HopStats struct {
 	TTL     int    // hop number (1-based)
-	IP      string // last-seen responder IP ("" if never responded)
+	IP      string // live display IP (updated by both discovery and probe replies)
+	routeIP string // IP from last explicit discovery (SetIP only); used for flap detection
 	ASN     string // cached ASN annotation
 	Country string // two-letter country code (from Cymru)
 	Org     string // organization name (from Cymru)
@@ -41,8 +44,11 @@ type HopView struct {
 // MTRStats holds the full hop path and per-hop stats for one target.
 // Self-locking so the MTR engine never contends on TargetStats.mu.
 type MTRStats struct {
-	mu   sync.RWMutex
-	hops []*HopStats
+	mu           sync.RWMutex
+	hops         []*HopStats
+	flapCount    int
+	lastFlapAt   time.Time
+	lastFlapDesc string
 }
 
 // NewMTRStats returns an empty MTRStats.
@@ -126,6 +132,7 @@ func (m *MTRStats) SetIP(ttl int, ip, asn, country, org string) {
 	}
 	if ip != "" {
 		h.IP = ip
+		h.routeIP = ip // track discovery-time IP separately for flap detection
 	}
 	if asn != "" {
 		h.ASN = asn
@@ -169,6 +176,85 @@ func (m *MTRStats) View() []HopView {
 		}
 	}
 	return views
+}
+
+// RouteSnapshot returns the ordered discovery-time hop IPs for later comparison.
+// Uses routeIP (set only by SetIP/discovery) rather than the live IP field
+// (which can be updated by probe replies), so probe-reply IP updates do not
+// mask route changes between successive discoveries.
+func (m *MTRStats) RouteSnapshot() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ips := make([]string, len(m.hops))
+	for i, h := range m.hops {
+		ips[i] = h.routeIP
+	}
+	return ips
+}
+
+// CheckFlap compares the current route against prevIPs (from a prior RouteSnapshot).
+// If they differ, a flap is recorded and (true, description) is returned.
+func (m *MTRStats) CheckFlap(prevIPs []string, now time.Time) (bool, string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cur := make([]string, len(m.hops))
+	for i, h := range m.hops {
+		cur[i] = h.routeIP // compare discovery IPs, not live probe IPs
+	}
+
+	if routeEqual(prevIPs, cur) {
+		return false, ""
+	}
+
+	desc := buildFlapDesc(prevIPs, cur)
+	m.flapCount++
+	m.lastFlapAt = now
+	m.lastFlapDesc = desc
+	return true, desc
+}
+
+// FlapInfo returns the cumulative flap count, timestamp and description of the last flap.
+func (m *MTRStats) FlapInfo() (count int, at time.Time, desc string) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.flapCount, m.lastFlapAt, m.lastFlapDesc
+}
+
+func routeEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func buildFlapDesc(prev, cur []string) string {
+	if len(prev) != len(cur) {
+		return fmt.Sprintf("path length: %d → %d hops", len(prev), len(cur))
+	}
+	var changed []string
+	for i := range prev {
+		if prev[i] != cur[i] {
+			old := prev[i]
+			if old == "" {
+				old = "*"
+			}
+			nw := cur[i]
+			if nw == "" {
+				nw = "*"
+			}
+			changed = append(changed, fmt.Sprintf("hop %d: %s → %s", i+1, old, nw))
+		}
+	}
+	if len(changed) == 1 {
+		return changed[0]
+	}
+	return strings.Join(changed, "; ")
 }
 
 // Reset clears all hop data.

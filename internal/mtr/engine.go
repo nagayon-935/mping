@@ -38,6 +38,9 @@ type Config struct {
 	ProbeInterval   time.Duration
 	HopTimeout      time.Duration
 	RediscoverEvery time.Duration
+	// OnFlap is called (in the engine goroutine) when a route change is detected.
+	// host is TargetStats.Host; desc summarises what changed.
+	OnFlap func(host, desc string)
 }
 
 func (c *Config) withDefaults() Config {
@@ -128,7 +131,11 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 		case <-ctx.Done():
 			return
 		case <-rediscoverTicker.C:
+			prevIPs := mtr.RouteSnapshot()
 			hopCount = discover(ctx, prober, sock, mtr, dest, cfg)
+			if changed, desc := mtr.CheckFlap(prevIPs, time.Now()); changed && cfg.OnFlap != nil {
+				cfg.OnFlap(ts.Host, desc)
+			}
 		case <-probeTicker.C:
 			probe(ctx, prober, sock, mtr, dest, hopCount, cfg)
 		}
