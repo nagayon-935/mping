@@ -276,7 +276,7 @@ groups:
 | **S** | Ping 送信を再開する (**s** で一時停止した後のみ有効) |
 | **R** | 全ての統計情報とログをリセットする |
 | **a** | 「ホスト追加」ダイアログを開く — ホスト名または IP を入力して Enter で実行時に追加 |
-| **d** | 「ホスト削除」ダイアログを開く — ↑/↓ でホストを選択して Enter で実行時に削除 |
+| **d** | 「ホスト削除」入力を開く — Ping Monitor テーブルに表示されているホスト名または IP を入力して Enter で実行時に削除 |
 | **Tab** | フォーカスを切り替える: Ping Monitor → Traceroute Monitor → MTR Monitor → Port Monitor → RTT Graphs → Log |
 | **↑ / ↓ / PgUp / PgDn** | フォーカス中のペインをスクロール (Table / Traceroute / RTT Graphs) |
 

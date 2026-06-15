@@ -2689,7 +2689,12 @@ func TestRunOnDeleteHost_CallbackInvoked(t *testing.T) {
 			// Simulate 'd' key to open delete dialog
 			screen.InjectKey(tcell.KeyRune, 'd', tcell.ModNone)
 			time.Sleep(20 * time.Millisecond)
-			// Press Enter to select first host
+			// Type the hostname to delete
+			for _, r := range "8.8.8.8" {
+				screen.InjectKey(tcell.KeyRune, r, tcell.ModNone)
+			}
+			time.Sleep(20 * time.Millisecond)
+			// Press Enter to confirm
 			screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
 			time.Sleep(100 * time.Millisecond)
 			app.Stop()
@@ -2697,7 +2702,7 @@ func TestRunOnDeleteHost_CallbackInvoked(t *testing.T) {
 		return app
 	}
 
-	target := stats.NewTargetStats("example.com")
+	target := stats.NewTargetStats("8.8.8.8")
 	err := Run(RunOptions{
 		Targets:  []*stats.TargetStats{target},
 		Interval: 50 * time.Millisecond,
@@ -2717,8 +2722,8 @@ func TestRunOnDeleteHost_CallbackInvoked(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("OnDeleteHost was not called within timeout")
 	}
-	if got != "example.com" {
-		t.Fatalf("OnDeleteHost called with %q, want %q", got, "example.com")
+	if got != "8.8.8.8" {
+		t.Fatalf("OnDeleteHost called with %q, want %q", got, "8.8.8.8")
 	}
 }
 
@@ -2732,16 +2737,20 @@ func TestRunOnDeleteHost_EscapeAborts(t *testing.T) {
 		go func() {
 			time.Sleep(20 * time.Millisecond)
 			screen.InjectKey(tcell.KeyRune, 'd', tcell.ModNone)
+			time.Sleep(20 * time.Millisecond)
+			// Type something then press Escape to cancel
+			for _, r := range "8.8.8.8" {
+				screen.InjectKey(tcell.KeyRune, r, tcell.ModNone)
+			}
 			time.Sleep(10 * time.Millisecond)
-			// Press Escape to cancel
 			screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
-			time.Sleep(30 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 			app.Stop()
 		}()
 		return app
 	}
 
-	target := stats.NewTargetStats("example.com")
+	target := stats.NewTargetStats("8.8.8.8")
 	err := Run(RunOptions{
 		Targets:  []*stats.TargetStats{target},
 		Interval: 50 * time.Millisecond,

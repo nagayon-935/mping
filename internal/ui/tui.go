@@ -357,18 +357,18 @@ func Run(opts RunOptions) error {
 		SetFieldTextColor(tcell.ColorWhite).
 		SetLabelColor(tcell.ColorYellow)
 
-	// Delete host list (full-screen modal shown via rootPages)
-	deleteList := tview.NewList().ShowSecondaryText(false)
-	deleteList.SetBackgroundColor(tcell.ColorBlack).
-		SetBorder(true).
-		SetTitle(" Delete Host (Enter: delete  Esc: cancel) ").
-		SetTitleColor(tcell.ColorRed).
-		SetBorderColor(tcell.ColorRed)
+	// Delete host input (shown in footer row, same pattern as addHostInput)
+	deleteHostInput := tview.NewInputField().
+		SetLabel(" Delete host: ").
+		SetFieldBackgroundColor(tcell.ColorBlack).
+		SetFieldTextColor(tcell.ColorWhite).
+		SetLabelColor(tcell.ColorRed)
 
 	pages := tview.NewPages().
 		AddPage("footer", footer, true, true).
 		AddPage("filter", filterInput, true, false).
-		AddPage("addHost", addHostInput, true, false)
+		AddPage("addHost", addHostInput, true, false).
+		AddPage("deleteHost", deleteHostInput, true, false)
 
 	updateTickerCh := make(chan time.Duration, 1)
 	var updateTable func()
@@ -400,6 +400,27 @@ func Run(opts RunOptions) error {
 			}
 		} else if key == tcell.KeyEscape {
 			addHostInput.SetText("")
+		}
+		pages.SwitchToPage("footer")
+		app.SetFocus(table)
+	})
+
+	deleteHostInput.SetDoneFunc(func(key tcell.Key) {
+		if key == tcell.KeyEnter {
+			host := strings.TrimSpace(deleteHostInput.GetText())
+			deleteHostInput.SetText("")
+			if host != "" && onDeleteHost != nil {
+				go func() {
+					if err := onDeleteHost(host); err != nil {
+						app.QueueUpdateDraw(func() {
+							appendErrorLog(&errorLogs, errorView, fmt.Sprintf("[red][%s] Delete host error: %v[-]",
+								time.Now().Format("15:04:05"), err))
+						})
+					}
+				}()
+			}
+		} else if key == tcell.KeyEscape {
+			deleteHostInput.SetText("")
 		}
 		pages.SwitchToPage("footer")
 		app.SetFocus(table)
@@ -601,15 +622,11 @@ func Run(opts RunOptions) error {
 	var appStopOnce sync.Once
 	closeAppStop := func() { appStopOnce.Do(func() { close(appStop) }) }
 
-	// rootPages wraps the main flex layout and the delete-host modal.
-	// Declared here so key handlers can reference it; assigned below after flex is built.
-	var rootPages *tview.Pages
-
 	// Keys
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		// Pass all events through when a text input or modal list is focused.
 		switch app.GetFocus() {
-		case filterInput, addHostInput, deleteList:
+		case filterInput, addHostInput, deleteHostInput:
 			return event
 		}
 		if app.GetFocus() == table {
@@ -707,12 +724,8 @@ func Run(opts RunOptions) error {
 			}
 		case 'd':
 			if onDeleteHost != nil {
-				deleteList.Clear()
-				for _, t := range targets {
-					deleteList.AddItem(t.GetView().Host, "", 0, nil)
-				}
-				rootPages.SwitchToPage("deleteHost")
-				app.SetFocus(deleteList)
+				pages.SwitchToPage("deleteHost")
+				app.SetFocus(deleteHostInput)
 				return nil
 			}
 		case 'q':
@@ -866,34 +879,7 @@ func Run(opts RunOptions) error {
 
 	flex.SetBackgroundColor(tcell.ColorBlack)
 
-	deleteList.SetSelectedFunc(func(_ int, main string, _ string, _ rune) {
-		rootPages.SwitchToPage("main")
-		app.SetFocus(table)
-		if onDeleteHost != nil {
-			go func() {
-				if err := onDeleteHost(main); err != nil {
-					app.QueueUpdateDraw(func() {
-						appendErrorLog(&errorLogs, errorView, fmt.Sprintf("[red][%s] Delete host error: %v[-]",
-							time.Now().Format("15:04:05"), err))
-					})
-				}
-			}()
-		}
-	})
-	deleteList.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEscape {
-			rootPages.SwitchToPage("main")
-			app.SetFocus(table)
-			return nil
-		}
-		return event
-	})
-
-	rootPages = tview.NewPages().
-		AddPage("main", flex, true, true).
-		AddPage("deleteHost", deleteList, true, false)
-
-	err := app.SetRoot(rootPages, true).Run()
+	err := app.SetRoot(flex, true).Run()
 	closeAppStop() // fallback: ensure goroutine stops even on non-interactive exit
 	return err
 }
