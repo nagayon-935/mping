@@ -295,6 +295,7 @@ thresholds:
   * **Jitter** — Smoothed inter-packet delay variation (RFC 1889)
 * On narrow terminals, **Min**, **Max**, **Recv**, and **Jitter** columns are hidden automatically (compact mode).
 * MTR statistics are included in the `-j` JSON export as `mtr_hops` per target.
+* **Route flap detection** — when re-discovery detects that the hop path has changed, a `[FLAP ×N HH:MM:SS]` badge is appended to the target's header row and a yellow alert is written to the Log pane (e.g. `[route flap google.com: hop 3: 10.0.0.2 → 10.0.0.9]`).
 
 ## Port Monitor pane
 

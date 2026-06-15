@@ -106,6 +106,9 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, 
 	if view.Host != "" && view.Host != view.IP {
 		label = fmt.Sprintf("%s (%s -> %s)", view.Host, srcIP, dstIP)
 	}
+	if view.MTRFlapCount > 0 {
+		label += fmt.Sprintf("  [FLAP ×%d %s]", view.MTRFlapCount, view.MTRLastFlapAt.Format("15:04:05"))
+	}
 
 	if compact {
 		// ── Compact: Hop | Host | Loss% | Snt | Last | Avg ──────────────

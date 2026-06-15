@@ -1,6 +1,8 @@
 package stats
 
 import (
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -206,6 +208,131 @@ func TestTargetStats_MTRIntegration(t *testing.T) {
 	}
 	if v.MTRHops[0].IP != "10.0.0.1" {
 		t.Errorf("GetView MTRHops[0].IP: want 10.0.0.1, got %q", v.MTRHops[0].IP)
+	}
+}
+
+func TestMTRStats_RouteSnapshot(t *testing.T) {
+	m := NewMTRStats()
+	m.EnsureLen(3)
+	m.SetIP(1, "10.0.0.1", "", "", "")
+	m.SetIP(2, "10.0.0.2", "", "", "")
+	m.SetIP(3, "8.8.8.8", "", "", "")
+
+	snap := m.RouteSnapshot()
+	if len(snap) != 3 {
+		t.Fatalf("want 3 IPs, got %d", len(snap))
+	}
+	want := []string{"10.0.0.1", "10.0.0.2", "8.8.8.8"}
+	for i, ip := range want {
+		if snap[i] != ip {
+			t.Errorf("snap[%d]: want %q, got %q", i, ip, snap[i])
+		}
+	}
+}
+
+func TestMTRStats_CheckFlap_NoChange(t *testing.T) {
+	m := NewMTRStats()
+	m.EnsureLen(2)
+	m.SetIP(1, "10.0.0.1", "", "", "")
+	m.SetIP(2, "8.8.8.8", "", "", "")
+
+	prev := m.RouteSnapshot()
+	changed, _ := m.CheckFlap(prev, time.Now())
+	if changed {
+		t.Error("identical routes should not trigger a flap")
+	}
+	count, _, _ := m.FlapInfo()
+	if count != 0 {
+		t.Errorf("flapCount: want 0, got %d", count)
+	}
+}
+
+func TestMTRStats_CheckFlap_IPChanged(t *testing.T) {
+	m := NewMTRStats()
+	m.EnsureLen(3)
+	m.SetIP(1, "10.0.0.1", "", "", "")
+	m.SetIP(2, "10.0.0.2", "", "", "")
+	m.SetIP(3, "8.8.8.8", "", "", "")
+
+	prev := m.RouteSnapshot()
+	// Simulate re-discovery: hop 2 changes
+	m.SetIP(2, "10.0.0.99", "", "", "")
+
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	changed, desc := m.CheckFlap(prev, now)
+	if !changed {
+		t.Fatal("expected flap to be detected")
+	}
+	if !strings.Contains(desc, "10.0.0.2") || !strings.Contains(desc, "10.0.0.99") {
+		t.Errorf("desc should mention old and new IPs, got %q", desc)
+	}
+
+	count, at, storedDesc := m.FlapInfo()
+	if count != 1 {
+		t.Errorf("flapCount: want 1, got %d", count)
+	}
+	if !at.Equal(now) {
+		t.Errorf("lastFlapAt: want %v, got %v", now, at)
+	}
+	if storedDesc != desc {
+		t.Errorf("storedDesc mismatch: want %q, got %q", desc, storedDesc)
+	}
+}
+
+func TestMTRStats_CheckFlap_LengthChanged(t *testing.T) {
+	m := NewMTRStats()
+	m.EnsureLen(2)
+	m.SetIP(1, "10.0.0.1", "", "", "")
+	m.SetIP(2, "8.8.8.8", "", "", "")
+
+	prev := m.RouteSnapshot()
+	// Simulate re-discovery: path grew by one hop
+	m.EnsureLen(3)
+	m.SetIP(3, "1.2.3.4", "", "", "")
+
+	changed, _ := m.CheckFlap(prev, time.Now())
+	if !changed {
+		t.Error("path length change should trigger a flap")
+	}
+}
+
+func TestMTRStats_CheckFlap_Cumulative(t *testing.T) {
+	m := NewMTRStats()
+	m.EnsureLen(1)
+	m.SetIP(1, "10.0.0.1", "", "", "")
+
+	for i := 2; i <= 4; i++ {
+		prev := m.RouteSnapshot()
+		m.SetIP(1, fmt.Sprintf("10.0.0.%d", i), "", "", "")
+		changed, _ := m.CheckFlap(prev, time.Now())
+		if !changed {
+			t.Errorf("iteration %d: expected flap", i)
+		}
+	}
+	count, _, _ := m.FlapInfo()
+	if count != 3 {
+		t.Errorf("flapCount: want 3, got %d", count)
+	}
+}
+
+func TestTargetStats_GetView_FlapFields(t *testing.T) {
+	ts := NewTargetStats("example.com")
+	m := ts.MTR()
+	m.EnsureLen(2)
+	m.SetIP(1, "10.0.0.1", "", "", "")
+	m.SetIP(2, "8.8.8.8", "", "", "")
+
+	prev := m.RouteSnapshot()
+	m.SetIP(1, "10.0.0.99", "", "", "")
+	now := time.Now()
+	m.CheckFlap(prev, now)
+
+	v := ts.GetView()
+	if v.MTRFlapCount != 1 {
+		t.Errorf("MTRFlapCount: want 1, got %d", v.MTRFlapCount)
+	}
+	if v.MTRLastFlapAt.IsZero() {
+		t.Error("MTRLastFlapAt should not be zero after a flap")
 	}
 }
 

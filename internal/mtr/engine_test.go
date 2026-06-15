@@ -271,3 +271,120 @@ func (c *callCountingProber) ProbeHop(ctx context.Context, sock HopSocket, dest 
 }
 func (c *callCountingProber) NextTraceID() int                    { return c.delegate.NextTraceID() }
 func (c *callCountingProber) ASNInfoFor(ip string) pinger.ASNInfo { return pinger.ASNInfo{} }
+
+// switchingProber returns different hop IPs on the Nth call group to simulate route change.
+type switchingProber struct {
+	mu         sync.Mutex
+	callGroups int // incremented each time setReplies is called
+	inner      *fakeProber
+}
+
+func newSwitchingProber(initial map[int]pinger.HopReply) *switchingProber {
+	return &switchingProber{inner: newFakeProber(initial)}
+}
+
+func (s *switchingProber) setReplies(r map[int]pinger.HopReply) {
+	s.mu.Lock()
+	s.inner.mu.Lock()
+	s.inner.replies = r
+	s.inner.mu.Unlock()
+	s.callGroups++
+	s.mu.Unlock()
+}
+
+func (s *switchingProber) OpenHopSocket(dest string) (HopSocket, error) {
+	return s.inner.OpenHopSocket(dest)
+}
+func (s *switchingProber) ProbeHop(ctx context.Context, sock HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error) {
+	return s.inner.ProbeHop(ctx, sock, dest, ttl, traceID, timeout)
+}
+func (s *switchingProber) NextTraceID() int                    { return s.inner.NextTraceID() }
+func (s *switchingProber) ASNInfoFor(ip string) pinger.ASNInfo { return pinger.ASNInfo{} }
+
+func TestEngine_OnFlap_CalledOnRouteChange(t *testing.T) {
+	target := stats.NewTargetStats("8.8.8.8")
+	target.SetIP("8.8.8.8")
+
+	prober := newSwitchingProber(map[int]pinger.HopReply{
+		1: {SrcIP: "10.0.0.1", Responded: true, ReachedDest: true},
+	})
+
+	var flapMu sync.Mutex
+	var flapHost, flapDesc string
+	flapCalled := make(chan struct{}, 1)
+
+	cfg := Config{
+		ProbeInterval:   10 * time.Millisecond,
+		HopTimeout:      20 * time.Millisecond,
+		RediscoverEvery: 30 * time.Millisecond, // very short for test
+		MaxHops:         3,
+		OnFlap: func(host, desc string) {
+			flapMu.Lock()
+			flapHost = host
+			flapDesc = desc
+			flapMu.Unlock()
+			select {
+			case flapCalled <- struct{}{}:
+			default:
+			}
+		},
+	}
+	eng := NewEngine(prober, []*stats.TargetStats{target}, cfg)
+	eng.Start()
+
+	// Wait for initial discovery
+	waitForHops(t, target, 1, 500*time.Millisecond)
+
+	// Change the route
+	prober.setReplies(map[int]pinger.HopReply{
+		1: {SrcIP: "192.168.99.1", Responded: true, ReachedDest: true},
+	})
+
+	// Wait for OnFlap to fire (rediscover ticker fires every 30ms)
+	select {
+	case <-flapCalled:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("OnFlap was not called within timeout")
+	}
+
+	eng.Stop()
+
+	flapMu.Lock()
+	defer flapMu.Unlock()
+	if flapHost != "8.8.8.8" {
+		t.Errorf("OnFlap host: want 8.8.8.8, got %q", flapHost)
+	}
+	if flapDesc == "" {
+		t.Error("OnFlap desc should not be empty")
+	}
+}
+
+func TestEngine_OnFlap_NotCalledOnSameRoute(t *testing.T) {
+	target := stats.NewTargetStats("1.1.1.1")
+	target.SetIP("1.1.1.1")
+
+	prober := newFakeProber(map[int]pinger.HopReply{
+		1: {SrcIP: "10.0.0.1", Responded: true, ReachedDest: true},
+	})
+
+	flapCalled := false
+	cfg := Config{
+		ProbeInterval:   10 * time.Millisecond,
+		HopTimeout:      20 * time.Millisecond,
+		RediscoverEvery: 30 * time.Millisecond,
+		MaxHops:         3,
+		OnFlap: func(host, desc string) {
+			flapCalled = true
+		},
+	}
+	eng := NewEngine(prober, []*stats.TargetStats{target}, cfg)
+	eng.Start()
+
+	// Wait for at least two re-discovers to happen
+	time.Sleep(120 * time.Millisecond)
+	eng.Stop()
+
+	if flapCalled {
+		t.Error("OnFlap should not be called when route is unchanged")
+	}
+}

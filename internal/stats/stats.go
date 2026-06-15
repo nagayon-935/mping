@@ -185,6 +185,9 @@ type TargetView struct {
 	TraceHops        []string
 	PortResults      []PortCheckView
 	MTRHops          []HopView
+	MTRFlapCount     int
+	MTRLastFlapAt    time.Time
+	MTRLastFlapDesc  string
 	Sent             int
 	Recv             int
 	Loss             int
@@ -227,8 +230,12 @@ func (t *TargetStats) GetView() TargetView {
 	// MTR snapshot is taken outside TargetStats.mu to avoid lock ordering issues;
 	// MTRStats carries its own lock.
 	var mtrHops []HopView
+	var mtrFlapCount int
+	var mtrLastFlapAt time.Time
+	var mtrLastFlapDesc string
 	if t.mtrStats != nil {
 		mtrHops = t.mtrStats.View()
+		mtrFlapCount, mtrLastFlapAt, mtrLastFlapDesc = t.mtrStats.FlapInfo()
 	}
 
 	return TargetView{
@@ -243,6 +250,9 @@ func (t *TargetStats) GetView() TargetView {
 		TraceHops:        traceCopy,
 		PortResults:      portCopy,
 		MTRHops:          mtrHops,
+		MTRFlapCount:     mtrFlapCount,
+		MTRLastFlapAt:    mtrLastFlapAt,
+		MTRLastFlapDesc:  mtrLastFlapDesc,
 		Sent:             t.Sent,
 		Recv:             t.Recv,
 		Loss:             t.Loss,
