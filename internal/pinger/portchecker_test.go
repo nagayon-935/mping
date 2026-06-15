@@ -232,6 +232,18 @@ func TestCheckUDP_Closed(t *testing.T) {
 	}
 }
 
+func TestCheckUDP_DialError(t *testing.T) {
+	// An out-of-range port makes net.DialTimeout fail deterministically,
+	// exercising the "Error" return path.
+	status, rtt := checkUDP("127.0.0.1:99999", 50*time.Millisecond)
+	if status != "Error" {
+		t.Errorf("checkUDP with invalid port = %q, want Error", status)
+	}
+	if rtt != 0 {
+		t.Errorf("checkUDP error path rtt = %v, want 0", rtt)
+	}
+}
+
 // ---- isTimeout tests ----
 
 type mockTimeoutError struct{ timeout bool }
