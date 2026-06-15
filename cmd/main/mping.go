@@ -245,8 +245,15 @@ type config struct {
 	lossCritPct  float64
 }
 
+// groupYAML represents a named host group in the YAML config file.
+type groupYAML struct {
+	Name  string   `yaml:"name"`
+	Hosts []string `yaml:"hosts"`
+}
+
 type hostsFileYAML struct {
 	Hosts      []string        `yaml:"hosts"`
+	Groups     []groupYAML     `yaml:"groups"`
 	IntervalMs *int            `yaml:"interval"`
 	TimeoutMs  *int            `yaml:"timeout"`
 	OutputFile *string         `yaml:"output"`
@@ -302,8 +309,9 @@ func resolveNetwork(cfg config) string {
 
 // applyDocToCfg applies YAML document fields to cfg, respecting CLI flag
 // overrides (a field is only applied when the CLI flag was not explicitly set).
-// Returns the hosts listed in the document and the updated cfg.
-func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]string, config, error) {
+// Returns the ungrouped hosts listed in the document, the raw group definitions,
+// and the updated cfg.
+func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]string, []groupYAML, config, error) {
 	if !fs.Changed("interval") && doc.IntervalMs != nil {
 		cfg.intervalMs = *doc.IntervalMs
 	}
@@ -354,9 +362,9 @@ func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]string, 
 	}
 	applyThresholdsDoc(&cfg, fs, doc.Thresholds)
 	if cfg.ipv4Only && cfg.ipv6Only {
-		return nil, cfg, fmt.Errorf("cannot use both -4 and -6")
+		return nil, nil, cfg, fmt.Errorf("cannot use both -4 and -6")
 	}
-	return doc.Hosts, cfg, nil
+	return doc.Hosts, doc.Groups, cfg, nil
 }
 
 // applyThresholdsDoc applies the YAML thresholds block to cfg, respecting CLI
@@ -385,30 +393,69 @@ func applyThresholdsDoc(cfg *config, fs *pflag.FlagSet, th *thresholdsYAML) {
 	}
 }
 
-func mergeHosts(cfg config, fs *pflag.FlagSet, hosts []string) ([]string, config, error) {
+// mergeHosts merges a hosts-file's configuration into cfg and host list.
+// It returns the full host list (ungrouped hosts first, then group hosts),
+// the TargetGroup slice for grouped display, and the merged config.
+func mergeHosts(cfg config, fs *pflag.FlagSet, hosts []string) ([]string, []ui.TargetGroup, config, error) {
 	if cfg.hostsFile == "" {
-		return hosts, cfg, nil
+		return hosts, nil, cfg, nil
 	}
 	doc, err := parseHostsFile(cfg.hostsFile)
 	if err != nil {
-		return nil, cfg, err
+		return nil, nil, cfg, err
 	}
-	docHosts, merged, err := applyDocToCfg(cfg, fs, doc)
+	docHosts, docGroups, merged, err := applyDocToCfg(cfg, fs, doc)
 	if err != nil {
-		return nil, cfg, err
+		return nil, nil, merged, err
 	}
-	return append(docHosts, hosts...), merged, nil
+	allHosts, uiGroups := buildHostsAndGroups(docHosts, docGroups, hosts)
+	return allHosts, uiGroups, merged, nil
+}
+
+// buildHostsAndGroups assembles the final host list and TargetGroup slice.
+// Ungrouped hosts (docHosts + cliHosts) come first; group hosts are appended
+// after, with indices pointing into the combined slice.
+func buildHostsAndGroups(docHosts []string, docGroups []groupYAML, cliHosts []string) ([]string, []ui.TargetGroup) {
+	allHosts := append(append([]string(nil), docHosts...), cliHosts...)
+	var uiGroups []ui.TargetGroup
+	for _, g := range docGroups {
+		startIdx := len(allHosts)
+		allHosts = append(allHosts, g.Hosts...)
+		indices := make([]int, len(g.Hosts))
+		for j := range g.Hosts {
+			indices[j] = startIdx + j
+		}
+		uiGroups = append(uiGroups, ui.TargetGroup{Name: g.Name, Indices: indices})
+	}
+	return allHosts, uiGroups
 }
 
 // validateHostsDoc checks a hostsFileYAML for semantic errors.
 // Returns a non-nil error if any field is out of range or logically invalid.
 func validateHostsDoc(doc hostsFileYAML) error {
-	if len(doc.Hosts) == 0 {
-		return fmt.Errorf("hosts: at least one entry required")
+	totalHosts := len(doc.Hosts)
+	for _, g := range doc.Groups {
+		totalHosts += len(g.Hosts)
+	}
+	if totalHosts == 0 {
+		return fmt.Errorf("hosts: at least one entry required (in hosts: or groups:)")
 	}
 	for i, h := range doc.Hosts {
 		if strings.TrimSpace(h) == "" {
 			return fmt.Errorf("hosts[%d]: empty host entry", i)
+		}
+	}
+	for gi, g := range doc.Groups {
+		if strings.TrimSpace(g.Name) == "" {
+			return fmt.Errorf("groups[%d]: name is required", gi)
+		}
+		if len(g.Hosts) == 0 {
+			return fmt.Errorf("groups[%q]: at least one host required", g.Name)
+		}
+		for j, h := range g.Hosts {
+			if strings.TrimSpace(h) == "" {
+				return fmt.Errorf("groups[%q][%d]: empty host entry", g.Name, j)
+			}
 		}
 	}
 	if doc.IntervalMs != nil && (*doc.IntervalMs < 100 || *doc.IntervalMs > 60000) {
@@ -707,7 +754,8 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	cliHosts := append([]string(nil), hosts...)
 
 	// ── 2. Initial YAML merge ────────────────────────────────────────────────
-	hosts, cfg, err = mergeHosts(cfg, fs, hosts)
+	var currentGroups []ui.TargetGroup
+	hosts, currentGroups, cfg, err = mergeHosts(cfg, fs, hosts)
 	if err != nil {
 		fmt.Fprintf(errOut, "Error reading hosts file: %v\n", err)
 		return 1
@@ -765,6 +813,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 
 	currentCfg := cfg
 	currentHosts := hosts
+	// currentGroups is declared above at the mergeHosts call site.
 
 	// targets is declared outside the loop so the exit summary can read it.
 	var targets []*stats.TargetStats
@@ -1098,6 +1147,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			OnResetMTR:   resetMTR,
 			OnResetPort:  resetPort,
 			OnResetHTTP:  resetHTTP,
+			Groups:       currentGroups,
 		}); err != nil {
 			fmt.Fprintf(errOut, "Error running application: %v\n", err)
 			jsonCancel()
@@ -1135,12 +1185,12 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		reloadMu.Lock()
 		reload := reloadRequested
 		if reload {
-			docHosts, newCfg, applyErr := applyDocToCfg(cliCfg, fs, reloadDoc)
+			docHosts, docGroups, newCfg, applyErr := applyDocToCfg(cliCfg, fs, reloadDoc)
 			if applyErr != nil {
 				// Shouldn't happen (validateHostsDoc passed), but be safe.
 				reload = false
 			} else {
-				currentHosts = append(append([]string(nil), docHosts...), cliHosts...)
+				currentHosts, currentGroups = buildHostsAndGroups(docHosts, docGroups, cliHosts)
 				currentCfg = newCfg
 			}
 			reloadRequested = false

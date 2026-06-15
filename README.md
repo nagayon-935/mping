@@ -14,6 +14,7 @@
 * **Color-coded alerts** — loss ratio, RTT, and Jitter are color-coded for instant status recognition. Alerts are recorded in the Log pane when thresholds are exceeded.
 * **Flexible configuration** — specify interface, source IP, packet size, send count, and more.
 * **YAML host list** — manage target hosts in a file.
+* **Host groups** — define named groups in the YAML file. Each group shows a header row and a worst-case aggregate row (summed loss counts, max RTT/Jitter, min MinRTT). Groups can be collapsed with the `z` key.
 * **Traceroute pane** — show the route to each target in a Host/Route table when `-T` is given. Multiple targets are traced concurrently and displayed together.
 * **MTR Monitor pane** — continuous per-hop loss/latency statistics when `-M` is given. Each hop is probed every second and displays Hop, Host, Loss%, Snt, Recv, Last, Avg, Min, Max, Jitter — the same columns as `mtr`. Can be used simultaneously with `-T`.
 * **HTTP(S) health check pane** — monitor HTTP/HTTPS endpoints when `-H` is given. Performs GET requests at the ping interval and tracks status code, response time (Last/Min/Avg/Max), and cumulative Up/Down counts. Status changes are logged to the Log pane.
@@ -215,6 +216,30 @@ thresholds:
   loss-crit: 80     # percent (red)
 ```
 
+### Host groups in YAML
+
+Use the `groups:` key to define named groups of hosts. Each group is rendered with a header row and a worst-case aggregate row. Groups can coexist with ungrouped `hosts:` entries (ungrouped hosts are displayed first).
+
+```yaml
+hosts:
+  - 8.8.8.8        # ungrouped — displayed above all groups
+
+groups:
+  - name: US DNS
+    hosts:
+      - 1.1.1.1
+      - 8.8.4.4
+  - name: Japan
+    hosts:
+      - dns.google
+      - dns.cloudflare.com
+```
+
+Aggregate row behaviour:
+* **Sent / Recv / Loss** — summed across all members
+* **AvgRTT / MaxRTT / LastRTT / Jitter** — worst case (maximum) across members
+* **MinRTT** — best case (minimum) across members
+
 ### Options
 
 | Flag | Short | Description | Default |
@@ -255,6 +280,7 @@ thresholds:
 | **R** | Reset all statistics and logs |
 | **Tab** | Cycle focus: Ping Monitor → Traceroute Monitor → MTR Monitor → Port Monitor → RTT Graphs → Log |
 | **↑ / ↓ / PgUp / PgDn** | Scroll focused pane (Table / Traceroute / RTT Graphs) |
+| **z** | Toggle collapse/expand for the group at the current scroll position (only when groups are defined) |
 
 ## TUI columns
 
