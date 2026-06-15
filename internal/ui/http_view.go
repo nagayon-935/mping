@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattn/go-runewidth"
 	"github.com/rivo/tview"
 
 	"github.com/nagayon-935/mping/internal/stats"
@@ -14,27 +15,42 @@ const (
 	httpStatusColW = 12 // " Checking... "
 	httpCodeColW   = 6  // "  200 "
 	httpCountColW  = 7  // " 99999 "
-	httpLatColW    = 9  // same as mtrLatColW — " 1.234ms "
+	httpLatColW    = 10 // " 123.45ms " — hundreds to 2 decimal places in ms
 	httpSinceColW  = 12 // " 1h23m45s  "
 	minHTTPURLW    = 20
 )
 
-// httpURLColW returns the URL column width given available terminal width and
-// whether compact mode is active.
-func httpURLColW(availW int, compact bool) int {
+// httpURLColW returns the URL column width given results, available terminal width,
+// and whether compact mode is active. It sizes the column to the longest URL
+// (with 2 chars of padding) so it does not waste space, capped at what fits.
+func httpURLColW(results []*stats.HTTPCheckResult, availW int, compact bool) int {
 	var fixedW int
 	if compact {
-		// URL + Status + Code + Last + Up + Down + 5 separators
+		// URL + Status + Code + Last + Up + Down + 5 inner separators
 		fixedW = httpStatusColW + httpCodeColW + httpLatColW + httpCountColW*2 + 5
 	} else {
-		// URL + Status + Code + Last + Min + Avg + Max + Up + Down + Since + 9 separators
+		// URL + Status + Code + Last + Min + Avg + Max + Up + Down + Since + 9 inner separators
 		fixedW = httpStatusColW + httpCodeColW + httpLatColW*4 + httpCountColW*2 + httpSinceColW + 9
 	}
-	w := availW - fixedW
-	if w < minHTTPURLW {
-		w = minHTTPURLW
+	// -2 accounts for the outer left/right border chars (┌─┐ / └─┘).
+	cap := availW - fixedW - 2
+	if cap < minHTTPURLW {
+		cap = minHTTPURLW
 	}
-	return w
+
+	// Fit to the longest URL (+ 2 padding spaces) to avoid wasting space.
+	contentW := minHTTPURLW
+	for _, r := range results {
+		v := r.GetView()
+		if w := runewidth.StringWidth(v.URL) + 2; w > contentW {
+			contentW = w
+		}
+	}
+
+	if contentW < cap {
+		return contentW
+	}
+	return cap
 }
 
 // httpStatusColorTag returns a tview color tag for an HTTP check status.
@@ -73,6 +89,14 @@ func httpCodeStr(code int) string {
 	return fmt.Sprintf("%d", code)
 }
 
+// formatHTTPRTT formats a duration as milliseconds with 2 decimal places (e.g. "123.45ms").
+func formatHTTPRTT(d time.Duration) string {
+	if d == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.2fms", float64(d.Microseconds())/1000.0)
+}
+
 // httpSinceStr formats the time elapsed since a status change.
 func httpSinceStr(t time.Time) string {
 	if t.IsZero() {
@@ -95,10 +119,11 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 	Write(p []byte) (n int, err error)
 }) string {
 	// Compact: drop Min/Avg/Max/Since when screen is narrow.
-	fullFixed := minHTTPURLW + httpStatusColW + httpCodeColW + httpLatColW*4 + httpCountColW*2 + httpSinceColW + 9
+	// +2 accounts for the outer left/right border chars that consume available width.
+	fullFixed := minHTTPURLW + httpStatusColW + httpCodeColW + httpLatColW*4 + httpCountColW*2 + httpSinceColW + 9 + 2
 	compact := availW < fullFixed
 
-	urlW := httpURLColW(availW, compact)
+	urlW := httpURLColW(results, availW, compact)
 
 	// Detect status changes and log them.
 	if lastStatuses != nil && errorLogs != nil {
@@ -152,15 +177,18 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 			fmt.Fprintf(&sb, "[white]│[darkgray]%s[white]│[-]\n",
 				formatCellText(" Waiting for results...", innerW, tview.AlignLeft))
 		} else {
-			for _, r := range results {
+			for i, r := range results {
 				v := r.GetView()
 				fmt.Fprintf(&sb, "[white]│[white]%s[white]│%s%s[-][white]│%s%s[-][white]│%s%s[-][white]│[white]%s[white]│[white]%s[white]│[-]\n",
 					paddedCell(v.URL, urlW),
 					httpStatusColorTag(v.Status), paddedCell(v.Status, httpStatusColW),
 					httpCodeColorTag(v.StatusCode), paddedCell(httpCodeStr(v.StatusCode), httpCodeColW),
-					mtrRTTColorTag(v.RTT), paddedCell(formatRTT(v.RTT), httpLatColW),
+					mtrRTTColorTag(v.RTT), paddedCell(formatHTTPRTT(v.RTT), httpLatColW),
 					paddedCell(fmt.Sprintf("%d", v.UpCount), httpCountColW),
 					paddedCell(fmt.Sprintf("%d", v.DownCount), httpCountColW))
+				if i < len(results)-1 {
+					fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┼%s┼%s┤[-]\n", hu, hs, hc, hl, hct, hct)
+				}
 			}
 		}
 		fmt.Fprintf(&sb, "[white]└%s┴%s┴%s┴%s┴%s┴%s┘[-]\n", hu, hs, hc, hl, hct, hct)
@@ -196,19 +224,23 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 			fmt.Fprintf(&sb, "[white]│[darkgray]%s[white]│[-]\n",
 				formatCellText(" Waiting for results...", innerW, tview.AlignLeft))
 		} else {
-			for _, r := range results {
+			for i, r := range results {
 				v := r.GetView()
 				fmt.Fprintf(&sb, "[white]│[white]%s[white]│%s%s[-][white]│%s%s[-][white]│%s%s[-][white]│%s%s[-][white]│%s%s[-][white]│%s%s[-][white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[-]\n",
 					paddedCell(v.URL, urlW),
 					httpStatusColorTag(v.Status), paddedCell(v.Status, httpStatusColW),
 					httpCodeColorTag(v.StatusCode), paddedCell(httpCodeStr(v.StatusCode), httpCodeColW),
-					mtrRTTColorTag(v.RTT), paddedCell(formatRTT(v.RTT), httpLatColW),
-					mtrRTTColorTag(v.MinRTT), paddedCell(formatRTT(v.MinRTT), httpLatColW),
-					mtrRTTColorTag(v.AvgRTT), paddedCell(formatRTT(v.AvgRTT), httpLatColW),
-					mtrRTTColorTag(v.MaxRTT), paddedCell(formatRTT(v.MaxRTT), httpLatColW),
+					mtrRTTColorTag(v.RTT), paddedCell(formatHTTPRTT(v.RTT), httpLatColW),
+					mtrRTTColorTag(v.MinRTT), paddedCell(formatHTTPRTT(v.MinRTT), httpLatColW),
+					mtrRTTColorTag(v.AvgRTT), paddedCell(formatHTTPRTT(v.AvgRTT), httpLatColW),
+					mtrRTTColorTag(v.MaxRTT), paddedCell(formatHTTPRTT(v.MaxRTT), httpLatColW),
 					paddedCell(fmt.Sprintf("%d", v.UpCount), httpCountColW),
 					paddedCell(fmt.Sprintf("%d", v.DownCount), httpCountColW),
 					paddedCell(httpSinceStr(v.LastChange), httpSinceColW))
+				if i < len(results)-1 {
+					fmt.Fprintf(&sb, "[white]├%s┼%s┼%s┼%s┼%s┼%s┼%s┼%s┼%s┼%s┤[-]\n",
+						hu, hs, hc, hl, hl, hl, hl, hct, hct, hsi)
+				}
 			}
 		}
 		fmt.Fprintf(&sb, "[white]└%s┴%s┴%s┴%s┴%s┴%s┴%s┴%s┴%s┴%s┘[-]\n",
