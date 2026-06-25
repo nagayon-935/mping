@@ -195,15 +195,19 @@ func getPreferredOutboundIP(remoteAddr, network string) string {
 func detectAutoSourceIPs(hosts []string) (string, string) {
 	var src4, src6 string
 	for _, host := range hosts {
+		cleanHost := host
+		if idx := strings.Index(host, " ("); idx >= 0 && strings.HasSuffix(host, ")") {
+			cleanHost = host[idx+2 : len(host)-1]
+		}
 		if src4 == "" {
-			if ip, err := net.ResolveIPAddr("ip4", host); err == nil && ip != nil && ip.IP != nil {
+			if ip, err := net.ResolveIPAddr("ip4", cleanHost); err == nil && ip != nil && ip.IP != nil {
 				if out := getPreferredOutboundIP(ip.IP.String(), "udp4"); out != "" {
 					src4 = out
 				}
 			}
 		}
 		if src6 == "" {
-			if ip, err := net.ResolveIPAddr("ip6", host); err == nil && ip != nil && ip.IP != nil {
+			if ip, err := net.ResolveIPAddr("ip6", cleanHost); err == nil && ip != nil && ip.IP != nil {
 				remote := ip.String()
 				if out := getPreferredOutboundIP(remote, "udp6"); out != "" {
 					src6 = out

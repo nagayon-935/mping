@@ -199,6 +199,14 @@ func TestDetectAutoSourceIPs_Unresolvable(t *testing.T) {
 	}
 }
 
+func TestDetectAutoSourceIPs_WithResolvedFormat(t *testing.T) {
+	// This test ensures that format like "hostname (IP)" is processed correctly
+	// without crashing and parses the IP inside parentheses.
+	// Since 127.0.0.1 may or may not resolve to a preferred outbound IP depending on active interfaces,
+	// we just call it to ensure no panics.
+	detectAutoSourceIPs([]string{"localhost (127.0.0.1)", "localhost (::1)"})
+}
+
 func TestRunStopRestart(t *testing.T) {
 	origPinger := newPinger
 	origUI := uiRun
