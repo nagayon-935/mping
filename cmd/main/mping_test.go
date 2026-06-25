@@ -1661,3 +1661,40 @@ func TestPrintExitSummary_WithRecv(t *testing.T) {
 		t.Errorf("missing rtt line in summary: %q", s)
 	}
 }
+
+func TestNewCustomResolver(t *testing.T) {
+	r := newCustomResolver("8.8.8.8")
+	if r == nil {
+		t.Fatal("expected resolver, got nil")
+	}
+
+	rPort := newCustomResolver("8.8.8.8:53")
+	if rPort == nil {
+		t.Fatal("expected resolver with port, got nil")
+	}
+}
+
+func TestExpandTargets(t *testing.T) {
+	// Without resolveAll
+	hosts := []string{"example.com", "8.8.8.8"}
+	groups := []ui.TargetGroup{
+		{Name: "G1", Indices: []int{0}},
+	}
+	expandedHosts, _, err := expandTargets(hosts, groups, config{resolveAll: false})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(expandedHosts) != 2 || expandedHosts[0] != "example.com" {
+		t.Errorf("expected original hosts, got %v", expandedHosts)
+	}
+
+	// With resolveAll but already expanded/pinned
+	hostsPinned := []string{"example.com (1.1.1.1)", "8.8.8.8"}
+	expandedHostsPinned, _, err := expandTargets(hostsPinned, groups, config{resolveAll: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(expandedHostsPinned) != 2 || expandedHostsPinned[0] != "example.com (1.1.1.1)" {
+		t.Errorf("expected pinned hosts, got %v", expandedHostsPinned)
+	}
+}

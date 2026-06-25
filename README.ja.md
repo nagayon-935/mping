@@ -201,6 +201,8 @@ port:
   - 443/tcp
   - 53/udp
 json-output: stats.json
+dns-server: 8.8.8.8
+resolve-all: true
 thresholds:
   rtt-warn: 50      # ミリ秒 (オレンジ)
   rtt-crit: 200     # ミリ秒 (赤)
@@ -239,6 +241,8 @@ groups:
 | `--file` | `-f` | ホスト一覧の YAML ファイルパス | `""` |
 | `--traceroute` | `-T` | Traceroute ペインを表示する | `false` |
 | `--mtr` | `-M` | MTR Monitor ペインを表示する (経路別ロス/レイテンシの継続計測) | `false` |
+| `--dns-server` | `-d` | 名前解決に使用するカスタム DNS サーバー IP アドレス | `""` (OSデフォルト) |
+| `--resolve-all` | | 宛先のホスト名を解決して得られたすべての IP を個別のターゲットとして並行監視する | `false` |
 | `--discovery-mtu` | `-m` | 最大 payload サイズを DF で探索する | `false` |
 | `--interface` | `-I` | 使用するネットワークインターフェイス名 (例: `eth0`, `en0`) | `""` |
 | `--source` | `-S` | 送信元 IPv4 アドレスの指定 | `""` (自動検出) |

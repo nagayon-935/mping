@@ -207,6 +207,8 @@ port:
   - 443/tcp
   - 53/udp
 json-output: stats.json
+dns-server: 8.8.8.8
+resolve-all: true
 thresholds:
   rtt-warn: 50      # ms (orange)
   rtt-crit: 200     # ms (red)
@@ -245,6 +247,8 @@ groups:
 | `--file` | `-f` | Path to YAML host list file | `""` |
 | `--traceroute` | `-T` | Show Traceroute pane | `false` |
 | `--mtr` | `-M` | Show MTR Monitor pane (continuous per-hop loss/latency) | `false` |
+| `--dns-server` | `-d` | Custom DNS server IP address to resolve target hostnames | `""` (OS default) |
+| `--resolve-all` | | Resolve target hostnames to all IP addresses and monitor them concurrently | `false` |
 | `--discovery-mtu` | `-m` | Discover max payload size with DF bit | `false` |
 | `--interface` | `-I` | Network interface name (e.g. `eth0`, `en0`) | `""` |
 | `--source` | `-S` | Source IPv4 address | `""` (auto-detect) |

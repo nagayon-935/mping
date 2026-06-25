@@ -206,8 +206,8 @@ func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, pack
 
 	rowSourceIP := displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
 
-	dstDisplay := view.IP
-	if view.Host != view.IP {
+	dstDisplay := view.Host
+	if view.Host != view.IP && !strings.Contains(view.Host, " ("+view.IP+")") {
 		dstDisplay = fmt.Sprintf("%s (%s)", view.Host, view.IP)
 	}
 

@@ -169,10 +169,10 @@ func Run(opts RunOptions) error {
 				case 0:
 					value = displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
 				case 1:
-					if view.Host != view.IP {
+					if view.Host != view.IP && !strings.Contains(view.Host, " ("+view.IP+")") {
 						value = fmt.Sprintf("%s (%s)", view.Host, view.IP)
 					} else {
-						value = view.IP
+						value = view.Host
 					}
 				case 2:
 					if asnEnabled {
