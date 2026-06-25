@@ -1,6 +1,7 @@
 package pinger
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -100,6 +101,7 @@ type listenPacketFunc func(network, address string) (net.PacketConn, error)
 
 type Options struct {
 	ResolveIPAddr resolveIPAddrFunc
+	Resolver      *net.Resolver
 	Now           func() time.Time
 	ListenPacket  listenPacketFunc
 	LookupTXT     func(string) ([]string, error)
@@ -115,7 +117,20 @@ func NewPinger(targets []*stats.TargetStats) *Pinger {
 func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 	resolve := opts.ResolveIPAddr
 	if resolve == nil {
-		resolve = net.ResolveIPAddr
+		if opts.Resolver != nil {
+			resolve = func(network, address string) (*net.IPAddr, error) {
+				ips, err := opts.Resolver.LookupIP(context.Background(), network, address)
+				if err != nil {
+					return nil, err
+				}
+				if len(ips) == 0 {
+					return nil, &net.DNSError{Err: "no such host", Name: address}
+				}
+				return &net.IPAddr{IP: ips[0]}, nil
+			}
+		} else {
+			resolve = net.ResolveIPAddr
+		}
 	}
 	now := opts.Now
 	if now == nil {
@@ -127,7 +142,13 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 	}
 	lookup := opts.LookupTXT
 	if lookup == nil {
-		lookup = net.LookupTXT
+		if opts.Resolver != nil {
+			lookup = func(name string) ([]string, error) {
+				return opts.Resolver.LookupTXT(context.Background(), name)
+			}
+		} else {
+			lookup = net.LookupTXT
+		}
 	}
 
 	return &Pinger{

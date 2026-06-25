@@ -199,6 +199,53 @@ func TestDetectAutoSourceIPs_Unresolvable(t *testing.T) {
 	}
 }
 
+func TestDetectAutoSourceIPs_WithResolvedFormat(t *testing.T) {
+	// This test ensures that format like "hostname (IP)" is processed correctly
+	// without crashing and parses the IP inside parentheses.
+	// Since 127.0.0.1 may or may not resolve to a preferred outbound IP depending on active interfaces,
+	// we just call it to ensure no panics.
+	detectAutoSourceIPs([]string{"localhost (127.0.0.1)", "localhost (::1)"})
+}
+
+func TestHasIPv6Connectivity(t *testing.T) {
+	orig := getPreferredOutboundIPFn
+	t.Cleanup(func() {
+		getPreferredOutboundIPFn = orig
+	})
+
+	// Case 1: returns empty (no connectivity)
+	getPreferredOutboundIPFn = func(remote string, network string) string {
+		return ""
+	}
+	if hasIPv6Connectivity() {
+		t.Fatal("expected false, got true")
+	}
+
+	// Case 2: returns a valid global IPv6 address
+	getPreferredOutboundIPFn = func(remote string, network string) string {
+		return "2001:db8::1"
+	}
+	if !hasIPv6Connectivity() {
+		t.Fatal("expected true, got false")
+	}
+
+	// Case 3: returns a link-local IPv6 address (should be treated as no connectivity)
+	getPreferredOutboundIPFn = func(remote string, network string) string {
+		return "fe80::1"
+	}
+	if hasIPv6Connectivity() {
+		t.Fatal("expected false for link-local, got true")
+	}
+
+	// Case 4: returns invalid IP
+	getPreferredOutboundIPFn = func(remote string, network string) string {
+		return "invalid"
+	}
+	if hasIPv6Connectivity() {
+		t.Fatal("expected false for invalid IP, got true")
+	}
+}
+
 func TestRunStopRestart(t *testing.T) {
 	origPinger := newPinger
 	origUI := uiRun
@@ -262,8 +309,12 @@ func TestResolveNetwork(t *testing.T) {
 	if got := resolveNetwork(config{ipv6Only: true}); got != "ip6" {
 		t.Fatalf("ipv6: got %q", got)
 	}
-	if got := resolveNetwork(config{}); got != "ip" {
-		t.Fatalf("default: got %q", got)
+	expected := "ip4"
+	if hasIPv6Connectivity() {
+		expected = "ip"
+	}
+	if got := resolveNetwork(config{}); got != expected {
+		t.Fatalf("default: got %q, expected %q", got, expected)
 	}
 }
 
@@ -1659,5 +1710,62 @@ func TestPrintExitSummary_WithRecv(t *testing.T) {
 	}
 	if !strings.Contains(s, "rtt min") {
 		t.Errorf("missing rtt line in summary: %q", s)
+	}
+}
+
+func TestNewCustomResolver(t *testing.T) {
+	r := newCustomResolver("8.8.8.8")
+	if r == nil {
+		t.Fatal("expected resolver, got nil")
+	}
+
+	rPort := newCustomResolver("8.8.8.8:53")
+	if rPort == nil {
+		t.Fatal("expected resolver with port, got nil")
+	}
+}
+
+func TestExpandTargets(t *testing.T) {
+	// Without resolveAll
+	hosts := []string{"example.com", "8.8.8.8"}
+	groups := []ui.TargetGroup{
+		{Name: "G1", Indices: []int{0}},
+	}
+	expandedHosts, _, err := expandTargets(hosts, groups, config{resolveAll: false})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(expandedHosts) != 2 || expandedHosts[0] != "example.com" {
+		t.Errorf("expected original hosts, got %v", expandedHosts)
+	}
+
+	// With resolveAll but already expanded/pinned
+	hostsPinned := []string{"example.com (1.1.1.1)", "8.8.8.8"}
+	expandedHostsPinned, _, err := expandTargets(hostsPinned, groups, config{resolveAll: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(expandedHostsPinned) != 2 || expandedHostsPinned[0] != "example.com (1.1.1.1)" {
+		t.Errorf("expected pinned hosts, got %v", expandedHostsPinned)
+	}
+
+	// With resolveAll and a resolvable host (using localhost)
+	hostsLocal := []string{"localhost"}
+	expandedHostsLocal, _, err := expandTargets(hostsLocal, groups, config{resolveAll: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(expandedHostsLocal) == 0 {
+		t.Errorf("expected localhost to expand, got 0 targets")
+	}
+
+	// With resolveAll and an unresolvable host (invalid.invalid)
+	hostsUnresolvable := []string{"invalid.invalid"}
+	expandedHostsUnres, _, err := expandTargets(hostsUnresolvable, groups, config{resolveAll: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(expandedHostsUnres) != 1 || expandedHostsUnres[0] != "invalid.invalid" {
+		t.Errorf("expected unresolvable host to remain as is, got %v", expandedHostsUnres)
 	}
 }

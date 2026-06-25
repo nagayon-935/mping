@@ -197,7 +197,7 @@ func mtuString(mtu int) string {
 	return fmt.Sprintf("%d", mtu)
 }
 
-func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, packetSize int, asnEnabled bool) ([]string, string, float64) {
+func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, packetSize int, asnEnabled bool, dnsEnabled bool) ([]string, string, float64) {
 	lossRate := calcLossRate(view)
 	lossStr := formatLossAgo(view.LastLossTime)
 	rttStr := formatRTT(view.LastRTT)
@@ -206,14 +206,17 @@ func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, pack
 
 	rowSourceIP := displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
 
-	dstDisplay := view.IP
-	if view.Host != view.IP {
+	dstDisplay := view.Host
+	if view.Host != view.IP && !strings.Contains(view.Host, " ("+view.IP+")") {
 		dstDisplay = fmt.Sprintf("%s (%s)", view.Host, view.IP)
 	}
 
 	cols := []string{
 		rowSourceIP,
 		dstDisplay, // Dst IP
+	}
+	if dnsEnabled {
+		cols = append(cols, view.DNSServer)
 	}
 	if asnEnabled {
 		asnCol := view.ASN
@@ -583,7 +586,7 @@ func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, 
 	return state, msgs
 }
 
-func buildFullRowCells(cols []string, widths []int, aligns []int, lossRate float64, rtt time.Duration, jitter time.Duration, rowColor tcell.Color, asnEnabled bool) []*tview.TableCell {
+func buildFullRowCells(cols []string, widths []int, aligns []int, lossRate float64, rtt time.Duration, jitter time.Duration, rowColor tcell.Color, asnEnabled bool, dnsEnabled bool) []*tview.TableCell {
 	cells := make([]*tview.TableCell, len(cols))
 	lossColor := lossColorForRate(lossRate)
 	rttColor := rttColorForRTT(rtt)
@@ -597,8 +600,11 @@ func buildFullRowCells(cols []string, widths []int, aligns []int, lossRate float
 			SetAlign(aligns[c])
 
 		offset := 0
+		if dnsEnabled {
+			offset++
+		}
 		if asnEnabled {
-			offset = 1
+			offset++
 		}
 
 		switch c {

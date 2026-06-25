@@ -179,33 +179,56 @@ func getInterfaceMTU(ifaceName, sourceIP, firstHost string) (int, error) {
 	return 0, fmt.Errorf("interface for %s not found", lookupIP)
 }
 
+var getPreferredOutboundIPFn = getPreferredOutboundIP
+
 // getPreferredOutboundIP determines the preferred local IP address for reaching a remote host.
 func getPreferredOutboundIP(remoteAddr, network string) string {
 	// network should be "udp", "udp4", or "udp6"
-	conn, err := net.Dial(network, net.JoinHostPort(remoteAddr, probePort))
+	dialer := &net.Dialer{Timeout: 200 * time.Millisecond}
+	conn, err := dialer.Dial(network, net.JoinHostPort(remoteAddr, probePort))
 	if err != nil {
 		return ""
 	}
 	defer conn.Close()
 
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	localAddr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return ""
+	}
 	return localAddr.IP.String()
+}
+
+func hasIPv6Connectivity() bool {
+	// Use Cloudflare's public IPv6 DNS address to probe for outbound IPv6 route
+	out := getPreferredOutboundIPFn("2606:4700:4700::1111", "udp6")
+	if out == "" {
+		return false
+	}
+	ip := net.ParseIP(out)
+	if ip == nil || ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() {
+		return false
+	}
+	return true
 }
 
 func detectAutoSourceIPs(hosts []string) (string, string) {
 	var src4, src6 string
 	for _, host := range hosts {
+		cleanHost := host
+		if idx := strings.Index(host, " ("); idx >= 0 && strings.HasSuffix(host, ")") {
+			cleanHost = host[idx+2 : len(host)-1]
+		}
 		if src4 == "" {
-			if ip, err := net.ResolveIPAddr("ip4", host); err == nil && ip != nil && ip.IP != nil {
-				if out := getPreferredOutboundIP(ip.IP.String(), "udp4"); out != "" {
+			if ip, err := net.ResolveIPAddr("ip4", cleanHost); err == nil && ip != nil && ip.IP != nil {
+				if out := getPreferredOutboundIPFn(ip.IP.String(), "udp4"); out != "" {
 					src4 = out
 				}
 			}
 		}
 		if src6 == "" {
-			if ip, err := net.ResolveIPAddr("ip6", host); err == nil && ip != nil && ip.IP != nil {
+			if ip, err := net.ResolveIPAddr("ip6", cleanHost); err == nil && ip != nil && ip.IP != nil {
 				remote := ip.String()
-				if out := getPreferredOutboundIP(remote, "udp6"); out != "" {
+				if out := getPreferredOutboundIPFn(remote, "udp6"); out != "" {
 					src6 = out
 				}
 			}
@@ -235,6 +258,8 @@ type config struct {
 	httpURLs       []string
 	jsonOutputFile string
 	mtr            bool
+	dnsServer      string
+	resolveAll     bool
 
 	// Colour-coding / alert thresholds (warn = orange, crit = red).
 	rttWarnMs    int
@@ -270,6 +295,8 @@ type hostsFileYAML struct {
 	HTTPURLs   []string        `yaml:"http"`
 	JsonOutput *string         `yaml:"json-output"`
 	Mtr        *bool           `yaml:"mtr"`
+	DNSServer  *string         `yaml:"dns-server"`
+	ResolveAll *bool           `yaml:"resolve-all"`
 	Thresholds *thresholdsYAML `yaml:"thresholds"`
 }
 
@@ -303,6 +330,9 @@ func resolveNetwork(cfg config) string {
 	}
 	if cfg.ipv6Only {
 		return "ip6"
+	}
+	if !hasIPv6Connectivity() {
+		return "ip4"
 	}
 	return "ip"
 }
@@ -359,6 +389,12 @@ func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]string, 
 	}
 	if !fs.Changed("mtr") && doc.Mtr != nil {
 		cfg.mtr = *doc.Mtr
+	}
+	if !fs.Changed("dns-server") && doc.DNSServer != nil {
+		cfg.dnsServer = *doc.DNSServer
+	}
+	if !fs.Changed("resolve-all") && doc.ResolveAll != nil {
+		cfg.resolveAll = *doc.ResolveAll
 	}
 	applyThresholdsDoc(&cfg, fs, doc.Thresholds)
 	if cfg.ipv4Only && cfg.ipv6Only {
@@ -472,6 +508,15 @@ func validateHostsDoc(doc hostsFileYAML) error {
 	}
 	if doc.Ipv4Only != nil && doc.Ipv6Only != nil && *doc.Ipv4Only && *doc.Ipv6Only {
 		return fmt.Errorf("ipv4 and ipv6 cannot both be true")
+	}
+	if doc.DNSServer != nil && *doc.DNSServer != "" {
+		host, _, err := net.SplitHostPort(*doc.DNSServer)
+		if err != nil {
+			host = *doc.DNSServer
+		}
+		if net.ParseIP(host) == nil {
+			return fmt.Errorf("dns-server: invalid IP address %q", *doc.DNSServer)
+		}
 	}
 	if doc.Thresholds != nil {
 		th := overlayThresholds(ui.DefaultThresholds(), doc.Thresholds)
@@ -616,6 +661,8 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 	fs.StringSliceVarP(&cfg.httpURLs, "http", "H", nil, "URL(s) to health-check, e.g. https://example.com/health (comma-separated or repeated)")
 	fs.StringVarP(&cfg.jsonOutputFile, "json-output", "j", "", "write JSON statistics snapshot to this file (updated every 5s)")
 	fs.BoolVarP(&cfg.mtr, "mtr", "M", false, "enable MTR-style per-hop monitor pane")
+	fs.StringVarP(&cfg.dnsServer, "dns-server", "d", "", "custom DNS server IP to use for hostname resolution")
+	fs.BoolVar(&cfg.resolveAll, "resolve-all", false, "resolve target hostname to all IP addresses and monitor them concurrently")
 
 	// Colour-coding / alert thresholds (warn = orange, crit = red).
 	fs.IntVar(&cfg.rttWarnMs, "rtt-warn", 50, "RTT warn threshold in ms (orange)")
@@ -660,6 +707,27 @@ func parseHostsFile(path string) (hostsFileYAML, error) {
 		return hostsFileYAML{}, fmt.Errorf("parse hosts file %q: %w", path, err)
 	}
 	return doc, nil
+}
+
+func newCustomResolver(dnsServer string) *net.Resolver {
+	if dnsServer == "" {
+		return net.DefaultResolver
+	}
+	host, port, err := net.SplitHostPort(dnsServer)
+	if err != nil {
+		host = dnsServer
+		port = "53"
+	}
+	dnsAddress := net.JoinHostPort(host, port)
+	return &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			d := net.Dialer{
+				Timeout: 2 * time.Second,
+			}
+			return d.DialContext(ctx, "udp", dnsAddress)
+		},
+	}
 }
 
 // makePingerFactory returns a closure that creates a configured pinger instance
@@ -760,6 +828,13 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		fmt.Fprintf(errOut, "Error reading hosts file: %v\n", err)
 		return 1
 	}
+	expandedHosts, expandedGroups, err := expandTargets(hosts, currentGroups, cfg)
+	if err != nil {
+		fmt.Fprintf(errOut, "Error expanding targets: %v\n", err)
+		return 1
+	}
+	hosts = expandedHosts
+	currentGroups = expandedGroups
 	if len(hosts) == 0 {
 		fmt.Fprint(errOut, usage)
 		return 1
@@ -825,11 +900,42 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		timeout := time.Duration(currentCfg.timeoutMs) * time.Millisecond
 
 		targets = initTargets(currentHosts)
+		for _, t := range targets {
+			hostName := t.Host
+			if idx := strings.Index(hostName, " ("); idx >= 0 && strings.HasSuffix(hostName, ")") {
+				hostName = hostName[:idx]
+			}
+			if net.ParseIP(hostName) == nil {
+				if currentCfg.dnsServer != "" {
+					t.SetDNSServer(currentCfg.dnsServer)
+				} else {
+					t.SetDNSServer("Default")
+				}
+			} else {
+				t.SetDNSServer("-")
+			}
+		}
 
+		customResolver := newCustomResolver(currentCfg.dnsServer)
 		opts := pinger.Options{
 			ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {
+				if idx := strings.Index(address, " ("); idx >= 0 && strings.HasSuffix(address, ")") {
+					ipStr := address[idx+2 : len(address)-1]
+					return net.ResolveIPAddr(network, ipStr)
+				}
+				if customResolver != nil && currentCfg.dnsServer != "" {
+					ips, err := customResolver.LookupIP(context.Background(), network, address)
+					if err != nil {
+						return nil, err
+					}
+					if len(ips) == 0 {
+						return nil, &net.DNSError{Err: "no such host", Name: address}
+					}
+					return &net.IPAddr{IP: ips[0]}, nil
+				}
 				return net.ResolveIPAddr(resNetwork, address)
 			},
+			Resolver:   customResolver,
 			AsnEnabled: currentCfg.asnEnabled,
 		}
 
@@ -1248,6 +1354,13 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 					currentCfg = newCfg
 				}
 			}
+			if reload {
+				expandedHosts, expandedGroups, expandErr := expandTargets(currentHosts, currentGroups, currentCfg)
+				if expandErr == nil {
+					currentHosts = expandedHosts
+					currentGroups = expandedGroups
+				}
+			}
 			reloadRequested = false
 			reloadDoc = hostsFileYAML{}
 			reloadNewHosts = nil
@@ -1332,6 +1445,85 @@ func runTraceroutes(ctx context.Context, p tracer, targets []*stats.TargetStats)
 			runOnce()
 		}
 	}
+}
+
+func expandTargets(hosts []string, groups []ui.TargetGroup, cfg config) ([]string, []ui.TargetGroup, error) {
+	if !cfg.resolveAll {
+		return hosts, groups, nil
+	}
+
+	resolver := newCustomResolver(cfg.dnsServer)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resolvedIPs := make(map[string][]string)
+	for _, host := range hosts {
+		if idx := strings.Index(host, " ("); idx >= 0 && strings.HasSuffix(host, ")") {
+			continue
+		}
+		rawHost := host
+		if net.ParseIP(rawHost) != nil {
+			resolvedIPs[host] = []string{rawHost}
+			continue
+		}
+
+		network := resolveNetwork(cfg)
+		ips, err := resolver.LookupIP(ctx, network, rawHost)
+		if err != nil || len(ips) == 0 {
+			resolvedIPs[host] = []string{rawHost}
+			continue
+		}
+
+		var ipStrs []string
+		for _, ip := range ips {
+			ipStrs = append(ipStrs, ip.String())
+		}
+		resolvedIPs[host] = ipStrs
+	}
+
+	var expandedHosts []string
+	expansionMap := make(map[int][]int)
+
+	for i, host := range hosts {
+		if idx := strings.Index(host, " ("); idx >= 0 && strings.HasSuffix(host, ")") {
+			expandedHosts = append(expandedHosts, host)
+			expansionMap[i] = []int{len(expandedHosts) - 1}
+			continue
+		}
+
+		ips := resolvedIPs[host]
+		startIdx := len(expandedHosts)
+		
+		rawHost := host
+		for _, ip := range ips {
+			if rawHost != ip {
+				expandedHosts = append(expandedHosts, fmt.Sprintf("%s (%s)", rawHost, ip))
+			} else {
+				expandedHosts = append(expandedHosts, ip)
+			}
+		}
+
+		endIdx := len(expandedHosts)
+		var indices []int
+		for j := startIdx; j < endIdx; j++ {
+			indices = append(indices, j)
+		}
+		expansionMap[i] = indices
+	}
+
+	var expandedGroups []ui.TargetGroup
+	for _, g := range groups {
+		var newIndices []int
+		for _, oldIdx := range g.Indices {
+			newIndices = append(newIndices, expansionMap[oldIdx]...)
+		}
+		expandedGroups = append(expandedGroups, ui.TargetGroup{
+			Name:    g.Name,
+			Indices: newIndices,
+		})
+	}
+
+	return expandedHosts, expandedGroups, nil
 }
 
 func main() {
