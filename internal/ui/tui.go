@@ -122,12 +122,29 @@ func Run(opts RunOptions) error {
 	table.SetBorderColor(tcell.ColorWhite)
 	table.SetBordersColor(tcell.ColorWhite)
 
-	// Columns: Src IP, Dst IP, ASN, Success, Loss, Loss Ratio, RTT, Avg, Jitter, Size, MTU, TTL, Error, Last Loss
+	dnsEnabled := false
+	for _, t := range targets {
+		v := t.GetView()
+		if v.DNSServer != "" && v.DNSServer != "-" {
+			dnsEnabled = true
+			break
+		}
+	}
+
+	// Columns: Src IP, Dst IP, DNS, ASN, Success, Loss, Loss Ratio, RTT, Avg, Jitter, Size, MTU, TTL, Error, Last Loss
 	fullHeaders := []string{"Src IP", "Dst IP"}
 	fullAligns := []int{tview.AlignLeft, tview.AlignLeft}
 	baseWidths := []int{6, 6}
 	minWidths := []int{4, 8}
 	maxWidths := []int{45, 60}
+
+	if dnsEnabled {
+		fullHeaders = append(fullHeaders, "DNS")
+		fullAligns = append(fullAligns, tview.AlignLeft)
+		baseWidths = append(baseWidths, 10)
+		minWidths = append(minWidths, 7)
+		maxWidths = append(maxWidths, 15)
+	}
 
 	if asnEnabled {
 		fullHeaders = append(fullHeaders, "ASN")
@@ -157,27 +174,34 @@ func Run(opts RunOptions) error {
 	calcColumnWidths := func() []int {
 		widths := append([]int(nil), baseWidths...)
 		dynamicCols := []int{0, 1}
+		nextCol := 2
+		if dnsEnabled {
+			dynamicCols = append(dynamicCols, nextCol)
+			nextCol++
+		}
 		if asnEnabled {
-			dynamicCols = append(dynamicCols, 2)
+			dynamicCols = append(dynamicCols, nextCol)
+			nextCol++
 		}
 		for _, c := range dynamicCols {
 			maxWidth := runewidth.StringWidth(fullHeaders[c])
 			for _, t := range targets {
 				view := t.GetView()
 				value := ""
-				switch c {
-				case 0:
+				header := fullHeaders[c]
+				switch header {
+				case "Src IP":
 					value = displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
-				case 1:
+				case "Dst IP":
 					if view.Host != view.IP && !strings.Contains(view.Host, " ("+view.IP+")") {
 						value = fmt.Sprintf("%s (%s)", view.Host, view.IP)
 					} else {
 						value = view.Host
 					}
-				case 2:
-					if asnEnabled {
-						value = view.ASN
-					}
+				case "DNS":
+					value = view.DNSServer
+				case "ASN":
+					value = view.ASN
 				}
 				if w := runewidth.StringWidth(value); w > maxWidth {
 					maxWidth = w
@@ -510,7 +534,7 @@ func Run(opts RunOptions) error {
 				}
 			}
 			if !compactLayout {
-				cols, rowSourceIP, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize, asnEnabled)
+				cols, rowSourceIP, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize, asnEnabled, dnsEnabled)
 				state := alertState[view.Host]
 				state, msgs := updateAlertState(view, rowSourceIP, lossRate, now, state)
 				for _, msg := range msgs {
@@ -533,8 +557,8 @@ func Run(opts RunOptions) error {
 						row.groupName, memberCount)
 				case groupRowUngrouped, groupRowTarget:
 					view := targets[row.targetIdx].GetView()
-					cols, _, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize, asnEnabled)
-					cells := buildFullRowCells(cols, widths, fullAligns, lossRate, view.LastRTT, view.Jitter, rowColor, asnEnabled)
+					cols, _, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize, asnEnabled, dnsEnabled)
+					cells := buildFullRowCells(cols, widths, fullAligns, lossRate, view.LastRTT, view.Jitter, rowColor, asnEnabled, dnsEnabled)
 					for c, cell := range cells {
 						table.SetCell(tableRow, c, cell)
 					}
@@ -550,8 +574,8 @@ func Run(opts RunOptions) error {
 				}
 				row := displayIdx
 				displayIdx++
-				cols, _, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize, asnEnabled)
-				cells := buildFullRowCells(cols, widths, fullAligns, lossRate, view.LastRTT, view.Jitter, rowColor, asnEnabled)
+				cols, _, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize, asnEnabled, dnsEnabled)
+				cells := buildFullRowCells(cols, widths, fullAligns, lossRate, view.LastRTT, view.Jitter, rowColor, asnEnabled, dnsEnabled)
 				for c, cell := range cells {
 					table.SetCell(row, c, cell)
 				}

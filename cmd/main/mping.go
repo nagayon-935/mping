@@ -874,6 +874,21 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		timeout := time.Duration(currentCfg.timeoutMs) * time.Millisecond
 
 		targets = initTargets(currentHosts)
+		for _, t := range targets {
+			hostName := t.Host
+			if idx := strings.Index(hostName, " ("); idx >= 0 && strings.HasSuffix(hostName, ")") {
+				hostName = hostName[:idx]
+			}
+			if net.ParseIP(hostName) == nil {
+				if currentCfg.dnsServer != "" {
+					t.SetDNSServer(currentCfg.dnsServer)
+				} else {
+					t.SetDNSServer("Default")
+				}
+			} else {
+				t.SetDNSServer("-")
+			}
+		}
 
 		customResolver := newCustomResolver(currentCfg.dnsServer)
 		opts := pinger.Options{

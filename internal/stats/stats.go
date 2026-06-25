@@ -110,6 +110,7 @@ type TargetStats struct {
 	ASN              string
 	Country          string
 	Org              string
+	DNSServer        string
 	IfaceMTU         int
 	PMTU             int
 	PMTUBottleneckIP string
@@ -179,6 +180,7 @@ type TargetView struct {
 	ASN              string
 	Country          string
 	Org              string
+	DNSServer        string
 	IfaceMTU         int
 	PMTU             int
 	PMTUBottleneckIP string
@@ -244,6 +246,7 @@ func (t *TargetStats) GetView() TargetView {
 		ASN:              t.ASN,
 		Country:          t.Country,
 		Org:              t.Org,
+		DNSServer:        t.DNSServer,
 		IfaceMTU:         t.IfaceMTU,
 		PMTU:             t.PMTU,
 		PMTUBottleneckIP: t.PMTUBottleneckIP,
@@ -296,6 +299,12 @@ func (t *TargetStats) SetASNInfo(number, country, org string) {
 	t.ASN = number
 	t.Country = country
 	t.Org = org
+}
+
+func (t *TargetStats) SetDNSServer(dnsServer string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.DNSServer = dnsServer
 }
 
 func (t *TargetStats) SetTraceHops(hops []string) {

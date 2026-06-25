@@ -338,18 +338,21 @@ func TestBuildCompactLayout(t *testing.T) {
 
 func TestBuildFullColumns(t *testing.T) {
 	view := stats.TargetView{
-		Host:     "example.com",
-		IP:       "1.1.1.1",
-		ASN:      "AS15169",
-		Recv:     10,
-		Loss:     2,
-		LastRTT:  12 * time.Millisecond,
-		AvgRTT:   10 * time.Millisecond,
-		Jitter:   2 * time.Millisecond,
-		IfaceMTU: 1500,
-		LastTTL:  64,
+		Host:      "example.com",
+		IP:        "1.1.1.1",
+		ASN:       "AS15169",
+		DNSServer: "8.8.8.8",
+		Recv:      10,
+		Loss:      2,
+		LastRTT:   12 * time.Millisecond,
+		AvgRTT:    10 * time.Millisecond,
+		Jitter:    2 * time.Millisecond,
+		IfaceMTU:  1500,
+		LastTTL:   64,
 	}
-	cols, src, rate := buildFullColumns(view, "10.0.0.2", "", 56, true)
+	
+	// Case 1: dnsEnabled = false, asnEnabled = true
+	cols, src, rate := buildFullColumns(view, "10.0.0.2", "", 56, true, false)
 	if src != "10.0.0.2" {
 		t.Fatalf("src: got %q", src)
 	}
@@ -365,6 +368,21 @@ func TestBuildFullColumns(t *testing.T) {
 	}
 	if cols[2] != "AS15169" {
 		t.Fatalf("asn: got %q", cols[2])
+	}
+
+	// Case 2: dnsEnabled = true, asnEnabled = true
+	cols2, _, _ := buildFullColumns(view, "10.0.0.2", "", 56, true, true)
+	if len(cols2) != 15 {
+		t.Fatalf("cols len (dns enabled): got %d", len(cols2))
+	}
+	if cols2[1] != "example.com (1.1.1.1)" {
+		t.Fatalf("dst ip: got %q", cols2[1])
+	}
+	if cols2[2] != "8.8.8.8" {
+		t.Fatalf("dns: got %q, expected 8.8.8.8", cols2[2])
+	}
+	if cols2[3] != "AS15169" {
+		t.Fatalf("asn: got %q", cols2[3])
 	}
 }
 
@@ -394,18 +412,31 @@ func TestColorHelpers(t *testing.T) {
 }
 
 func TestBuildFullRowCells(t *testing.T) {
+	// Case 1: dnsEnabled = false, asnEnabled = true
 	cols := []string{"s", "d", "AS123", "1", "2", "10.0%", "1ms", "1ms", "1ms", "56", "1500", "64", "err", "1s ago"}
 	widths := make([]int, len(cols))
 	for i := range widths {
 		widths[i] = 5
 	}
 	aligns := make([]int, len(cols))
-	cells := buildFullRowCells(cols, widths, aligns, 90.0, 300*time.Millisecond, 60*time.Millisecond, tcell.ColorWhite, true)
+	cells := buildFullRowCells(cols, widths, aligns, 90.0, 300*time.Millisecond, 60*time.Millisecond, tcell.ColorWhite, true, false)
 	if len(cells) != len(cols) {
 		t.Fatalf("cells len mismatch")
 	}
 	if cells[12].Color == tcell.ColorWhite {
 		t.Fatalf("expected error cell colored")
+	}
+
+	// Case 2: dnsEnabled = true, asnEnabled = true
+	cols2 := []string{"s", "d", "dns", "AS123", "1", "2", "10.0%", "1ms", "1ms", "1ms", "56", "1500", "64", "err", "1s ago"}
+	widths2 := make([]int, len(cols2))
+	for i := range widths2 {
+		widths2[i] = 5
+	}
+	aligns2 := make([]int, len(cols2))
+	cells2 := buildFullRowCells(cols2, widths2, aligns2, 90.0, 300*time.Millisecond, 60*time.Millisecond, tcell.ColorWhite, true, true)
+	if len(cells2) != len(cols2) {
+		t.Fatalf("cells len mismatch (dns enabled)")
 	}
 }
 
