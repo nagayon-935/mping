@@ -207,6 +207,45 @@ func TestDetectAutoSourceIPs_WithResolvedFormat(t *testing.T) {
 	detectAutoSourceIPs([]string{"localhost (127.0.0.1)", "localhost (::1)"})
 }
 
+func TestHasIPv6Connectivity(t *testing.T) {
+	orig := getPreferredOutboundIPFn
+	t.Cleanup(func() {
+		getPreferredOutboundIPFn = orig
+	})
+
+	// Case 1: returns empty (no connectivity)
+	getPreferredOutboundIPFn = func(remote string, network string) string {
+		return ""
+	}
+	if hasIPv6Connectivity() {
+		t.Fatal("expected false, got true")
+	}
+
+	// Case 2: returns a valid global IPv6 address
+	getPreferredOutboundIPFn = func(remote string, network string) string {
+		return "2001:db8::1"
+	}
+	if !hasIPv6Connectivity() {
+		t.Fatal("expected true, got false")
+	}
+
+	// Case 3: returns a link-local IPv6 address (should be treated as no connectivity)
+	getPreferredOutboundIPFn = func(remote string, network string) string {
+		return "fe80::1"
+	}
+	if hasIPv6Connectivity() {
+		t.Fatal("expected false for link-local, got true")
+	}
+
+	// Case 4: returns invalid IP
+	getPreferredOutboundIPFn = func(remote string, network string) string {
+		return "invalid"
+	}
+	if hasIPv6Connectivity() {
+		t.Fatal("expected false for invalid IP, got true")
+	}
+}
+
 func TestRunStopRestart(t *testing.T) {
 	origPinger := newPinger
 	origUI := uiRun
@@ -1708,5 +1747,25 @@ func TestExpandTargets(t *testing.T) {
 	}
 	if len(expandedHostsPinned) != 2 || expandedHostsPinned[0] != "example.com (1.1.1.1)" {
 		t.Errorf("expected pinned hosts, got %v", expandedHostsPinned)
+	}
+
+	// With resolveAll and a resolvable host (using localhost)
+	hostsLocal := []string{"localhost"}
+	expandedHostsLocal, _, err := expandTargets(hostsLocal, groups, config{resolveAll: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(expandedHostsLocal) == 0 {
+		t.Errorf("expected localhost to expand, got 0 targets")
+	}
+
+	// With resolveAll and an unresolvable host (invalid.invalid)
+	hostsUnresolvable := []string{"invalid.invalid"}
+	expandedHostsUnres, _, err := expandTargets(hostsUnresolvable, groups, config{resolveAll: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(expandedHostsUnres) != 1 || expandedHostsUnres[0] != "invalid.invalid" {
+		t.Errorf("expected unresolvable host to remain as is, got %v", expandedHostsUnres)
 	}
 }
