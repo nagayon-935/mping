@@ -16,7 +16,6 @@
 * **YAML ホストリスト**: ホスト一覧をファイルで管理できます。
 * **ホストグループ**: YAML ファイルで名前付きグループを定義できます。グループごとにホスト数つきのヘッダ行を表示し、ターゲットを視覚的にまとめて確認できます。
 * **Traceroute ペイン**: `-T` オプション指定時に Host/Route の 2 カラムテーブル形式で経路を表示します。複数ターゲットを同時に traceroute し、それぞれの結果を行で区切って一覧表示します。
-* **Paris Traceroute**: `--paris` / `-P` オプションで有効化。ICMP のフロー識別子（ID と Sequence）を全 TTL プローブ間で固定することで、ECMP ロードバランサ環境でも全ホップが同一経路を通ることを保証します。ファントムホップ（実際には経路上にない IP がトレース結果に現れる現象）を排除し、正確な経路を表示できます。`-T` を自動で有効化します。
 * **MTR Monitor ペイン**: `-M` オプション指定時に、経路上の各ホップに対してリアルタイムでロス率/レイテンシ統計を計測・表示します。`mtr` コマンドと同様の Hop / Host / Loss% / Snt / Recv / Last / Avg / Min / Max / Jitter カラムを表示。`-T` と同時使用可能です。
 * **HTTP(S) ヘルスチェックペイン**: `-H` オプション指定時に HTTP/HTTPS エンドポイントへ GET リクエストを送信し、ステータスコードとレスポンスタイム (Last/Min/Avg/Max) および Up/Down 累計回数をリアルタイムで監視します。
 * **Port Monitor ペイン**: `-p` オプション指定時に TCP/UDP ポートの疎通状況をリアルタイムで監視します。ポート番号から推定されるサービス名、**Last / Min / Avg / Max RTT**（TCP 接続確立または UDP 応答までの往復時間）、Open/Closed の累計回数、最終ステータス変化時刻を表示します。RTT 統計は `Open` 応答時のみ記録されます。
@@ -178,12 +177,6 @@ mping --rtt-warn 30 --rtt-crit 100 --loss-warn 10 --loss-crit 50 google.com
 
 # ターゲット IP の AS 番号を表示する
 mping -a google.com 1.1.1.1
-
-# Paris Traceroute (ECMP 経路を固定して正確なホップを表示)
-mping -P google.com
-
-# Paris Traceroute + MTR を同時に表示
-mping -P -M google.com
 ```
 
 > インストールせずに実行する場合 (`setcap`/`setuid` なし) は `sudo` を付けてください:
@@ -245,7 +238,6 @@ groups:
 | `--timeout` | `-t` | Ping のタイムアウト (ミリ秒) | `1000` |
 | `--file` | `-f` | ホスト一覧の YAML ファイルパス | `""` |
 | `--traceroute` | `-T` | Traceroute ペインを表示する | `false` |
-| `--paris` | `-P` | Paris Traceroute アルゴリズムを使用する（ECMP 経路を固定）。`-T` を自動で有効化 | `false` |
 | `--mtr` | `-M` | MTR Monitor ペインを表示する (経路別ロス/レイテンシの継続計測) | `false` |
 | `--discovery-mtu` | `-m` | 最大 payload サイズを DF で探索する | `false` |
 | `--interface` | `-I` | 使用するネットワークインターフェイス名 (例: `eth0`, `en0`) | `""` |
@@ -302,13 +294,6 @@ groups:
 * **Error**: 最新エラーの短縮メッセージを表示 (赤色)。詳細は Log ペインに表示されます。
 * **Last Loss**: 最後にパケットロスが発生してからの経過時間。
 
-## Paris Traceroute
-
-通常の traceroute は TTL ごとに ICMP の Sequence 番号を変えるため、ECMP（等コスト多経路）ルータがプローブごとに異なる経路へハッシュし、実際には存在しないホップ（ファントムホップ）が現れることがあります。
-
-Paris Traceroute（`--paris` / `-P`）は、全 TTL プローブで ICMP の Identifier と Sequence を固定します。ルータがフローハッシュに使う ICMP チェックサムが一定に保たれるため、全ホップが同一経路を通り、正確で一貫性のある経路が得られます。
-
-このモードが有効なとき、ペインのタイトルが **Paris Traceroute Monitor** に変わります。
 
 ## Traceroute Monitor ペイン
 
