@@ -182,14 +182,31 @@ func getInterfaceMTU(ifaceName, sourceIP, firstHost string) (int, error) {
 // getPreferredOutboundIP determines the preferred local IP address for reaching a remote host.
 func getPreferredOutboundIP(remoteAddr, network string) string {
 	// network should be "udp", "udp4", or "udp6"
-	conn, err := net.Dial(network, net.JoinHostPort(remoteAddr, probePort))
+	dialer := &net.Dialer{Timeout: 200 * time.Millisecond}
+	conn, err := dialer.Dial(network, net.JoinHostPort(remoteAddr, probePort))
 	if err != nil {
 		return ""
 	}
 	defer conn.Close()
 
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	localAddr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return ""
+	}
 	return localAddr.IP.String()
+}
+
+func hasIPv6Connectivity() bool {
+	// Use Cloudflare's public IPv6 DNS address to probe for outbound IPv6 route
+	out := getPreferredOutboundIP("2606:4700:4700::1111", "udp6")
+	if out == "" {
+		return false
+	}
+	ip := net.ParseIP(out)
+	if ip == nil || ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() {
+		return false
+	}
+	return true
 }
 
 func detectAutoSourceIPs(hosts []string) (string, string) {
@@ -311,6 +328,9 @@ func resolveNetwork(cfg config) string {
 	}
 	if cfg.ipv6Only {
 		return "ip6"
+	}
+	if !hasIPv6Connectivity() {
+		return "ip4"
 	}
 	return "ip"
 }

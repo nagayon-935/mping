@@ -270,8 +270,12 @@ func TestResolveNetwork(t *testing.T) {
 	if got := resolveNetwork(config{ipv6Only: true}); got != "ip6" {
 		t.Fatalf("ipv6: got %q", got)
 	}
-	if got := resolveNetwork(config{}); got != "ip" {
-		t.Fatalf("default: got %q", got)
+	expected := "ip4"
+	if hasIPv6Connectivity() {
+		expected = "ip"
+	}
+	if got := resolveNetwork(config{}); got != expected {
+		t.Fatalf("default: got %q, expected %q", got, expected)
 	}
 }
 
