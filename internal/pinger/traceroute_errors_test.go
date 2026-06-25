@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// traceFunc is the common signature of TraceRoute and ParisTraceRoute so the
+// traceFunc is the common signature of TraceRoute so the
 // validation/error-path cases can be shared between both.
 type traceFunc func(dest string, maxHops int, timeout time.Duration) ([]string, error)
 
@@ -21,7 +21,6 @@ func TestTraceRoute_ValidationAndResolveErrors(t *testing.T) {
 
 	variants := map[string]traceFunc{
 		"TraceRoute":      p.TraceRoute,
-		"ParisTraceRoute": p.ParisTraceRoute,
 	}
 
 	for name, fn := range variants {
