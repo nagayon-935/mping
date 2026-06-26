@@ -102,9 +102,10 @@ func (e *Engine) Stop() {
 
 // runTarget is the per-target goroutine: discover hops, then continuously probe.
 func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg Config) {
-	dest := ts.IP
+	v := ts.GetView()
+	dest := v.IP
 	if dest == "" {
-		dest = ts.Host
+		dest = v.Host
 	}
 
 	sock, err := prober.OpenHopSocket(dest)
