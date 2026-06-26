@@ -264,10 +264,12 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 
 	// Start Receivers
 	if p.connV4 != nil {
-		go p.runReceiverV4()
+		p.wg.Add(1)
+		go func() { defer p.wg.Done(); p.runReceiverV4() }()
 	}
 	if p.connV6 != nil {
-		go p.runReceiverV6()
+		p.wg.Add(1)
+		go func() { defer p.wg.Done(); p.runReceiverV6() }()
 	}
 
 	return nil
@@ -377,7 +379,9 @@ func (p *Pinger) runReceiver(
 		case <-p.done:
 			return
 		default:
-			setDeadline(time.Now().Add(receiverReadTimeout))
+			if err := setDeadline(time.Now().Add(receiverReadTimeout)); err != nil {
+				return
+			}
 			n, ttl, src, err := readFrom(buf)
 			if err != nil {
 				var opErr *net.OpError
