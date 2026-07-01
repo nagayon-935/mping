@@ -149,7 +149,16 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 			}
 
 			prevIPs := mtr.RouteSnapshot()
-			hopCount = discover(ctx, prober, sock, mtr, dest, cfg)
+			newHopCount := discover(ctx, prober, sock, mtr, dest, cfg)
+			if newHopCount == 0 || ctx.Err() != nil {
+				// Round was cancelled mid-flight (e.g. Stop() racing this
+				// tick); discover() registered nothing this round, so
+				// comparing against prevIPs would report a bogus flap.
+				// Keep the previous hopCount and let the next loop
+				// iteration observe ctx.Done().
+				continue
+			}
+			hopCount = newHopCount
 			if changed, desc := mtr.CheckFlap(prevIPs, time.Now()); changed && cfg.OnFlap != nil {
 				cfg.OnFlap(ts.Host, desc)
 			}
@@ -195,6 +204,18 @@ func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.
 		}(ttl)
 	}
 	wg.Wait()
+
+	// If cancellation happened mid-round, per-TTL goroutines may have
+	// observed ctx.Err() at different times: some appended their result
+	// before cancellation, others bailed out after. Registering that torn
+	// result set would corrupt mtr's hop count / route (e.g. a hop that
+	// actually reached the destination missing because its goroutine ran
+	// after cancellation, while unresponsive higher-TTL hops still got in).
+	// Discard the whole round instead; 0 is never returned otherwise since
+	// hopCount is always >= 1 below.
+	if ctx.Err() != nil {
+		return 0
+	}
 
 	hopCount := cfg.MaxHops
 	if reached {
