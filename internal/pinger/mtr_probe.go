@@ -37,46 +37,40 @@ type hopSendConnV6 interface {
 	Close() error
 }
 
-// HopSocket holds the send socket and associated traceChan for MTR probing.
-// Call Close when done to release resources and deregister the traceChan.
+// HopSocket holds the send socket for MTR probing.
+// Call Close when done to release resources.
 type HopSocket struct {
-	sendV4  hopSendConnV4
-	sendV6  hopSendConnV6
-	traceCh chan traceMsg
-	isV4    bool
-	pinger  *Pinger
+	sendV4 hopSendConnV4
+	sendV6 hopSendConnV6
+	isV4   bool
+	pinger *Pinger
 }
 
-// Close releases the socket and deregisters the traceChan from the pinger.
+// Close releases the socket.
 func (s *HopSocket) Close() {
 	if s.isV4 && s.sendV4 != nil {
 		s.sendV4.Close()
 	} else if !s.isV4 && s.sendV6 != nil {
 		s.sendV6.Close()
 	}
-	if s.traceCh != nil {
-		s.pinger.UnregisterTraceChan(s.traceCh)
-	}
 }
 
-// RegisterTraceChan adds ch to the pinger's broadcast list and returns it.
-func (p *Pinger) RegisterTraceChan() chan traceMsg {
+// RegisterTraceChan adds a trace channel keyed by traceID to the pinger's map and returns it.
+func (p *Pinger) RegisterTraceChan(traceID int) chan traceMsg {
 	ch := make(chan traceMsg, traceChanBuffer)
 	p.traceChansMu.Lock()
-	p.traceChans = append(p.traceChans, ch)
+	if p.traceChans == nil {
+		p.traceChans = make(map[int]chan traceMsg)
+	}
+	p.traceChans[traceID] = ch
 	p.traceChansMu.Unlock()
 	return ch
 }
 
-// UnregisterTraceChan removes ch from the pinger's broadcast list.
-func (p *Pinger) UnregisterTraceChan(ch chan traceMsg) {
+// UnregisterTraceChan removes the trace channel for the given traceID from the pinger's map.
+func (p *Pinger) UnregisterTraceChan(traceID int) {
 	p.traceChansMu.Lock()
-	for i, c := range p.traceChans {
-		if c == ch {
-			p.traceChans = append(p.traceChans[:i], p.traceChans[i+1:]...)
-			break
-		}
-	}
+	delete(p.traceChans, traceID)
 	p.traceChansMu.Unlock()
 }
 
@@ -101,10 +95,7 @@ func (p *Pinger) GetASNInfoFor(ip string) ASNInfo {
 	return p.getASNInfo(ip)
 }
 
-// OpenHopSocket opens a send socket for TTL-limited probes to dest and
-// registers a traceChan so that replies are received via the pinger's shared
-// receiver goroutine (avoiding raw-socket races on macOS).
-//
+// OpenHopSocket opens a send socket for TTL-limited probes to dest.
 // The caller must call HopSocket.Close() when done.
 func (p *Pinger) OpenHopSocket(dest string) (*HopSocket, error) {
 	dstAddr, err := p.resolveIPAddr("ip", dest)
@@ -138,11 +129,6 @@ func (p *Pinger) OpenHopSocket(dest string) (*HopSocket, error) {
 		// Non-fatal: hop limit control message may not be available on all platforms.
 		_ = v6conn.SetControlMessage(ipv6.FlagHopLimit, true)
 		sock.sendV6 = v6conn
-	}
-
-	// Register a traceChan only when the pinger's receiver is running.
-	if (isV4 && p.connV4 != nil) || (!isV4 && p.connV6 != nil) {
-		sock.traceCh = p.RegisterTraceChan()
 	}
 
 	return sock, nil
@@ -200,8 +186,14 @@ func (p *Pinger) ProbeHop(ctx context.Context, sock *HopSocket, dest string, ttl
 		return acceptHopPacket(msg, src, traceID, ttl)
 	}
 
-	if sock.traceCh != nil {
-		return receiveViaTraceChan(ctx, sock.traceCh, accept, sent, timeout)
+	var traceCh chan traceMsg
+	if (sock.isV4 && p.connV4 != nil) || (!sock.isV4 && p.connV6 != nil) {
+		traceCh = p.RegisterTraceChan(traceID)
+		defer p.UnregisterTraceChan(traceID)
+	}
+
+	if traceCh != nil {
+		return receiveViaTraceChan(ctx, traceCh, accept, sent, timeout)
 	}
 	return receiveViaSocket(ctx, sock, accept, sent, timeout)
 }

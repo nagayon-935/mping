@@ -55,12 +55,14 @@ func buildEchoReplyMsg(id, seq int) []byte {
 }
 
 func TestRegisterUnregisterTraceChan(t *testing.T) {
-	p := &Pinger{}
-	ch := p.RegisterTraceChan()
+	p := &Pinger{
+		traceChans: make(map[int]chan traceMsg),
+	}
+	p.RegisterTraceChan(123)
 	if len(p.traceChans) != 1 {
 		t.Fatalf("want 1 traceChan, got %d", len(p.traceChans))
 	}
-	p.UnregisterTraceChan(ch)
+	p.UnregisterTraceChan(123)
 	if len(p.traceChans) != 0 {
 		t.Fatalf("want 0 traceChans after unregister, got %d", len(p.traceChans))
 	}
@@ -135,13 +137,12 @@ func TestProbeHop_ViaTraceChan_TimeExceeded(t *testing.T) {
 			return &net.IPAddr{IP: net.IPv4(8, 8, 8, 8)}, nil
 		},
 		lookupTXT: func(name string) ([]string, error) { return nil, nil },
+		traceChans: make(map[int]chan traceMsg),
 	}
+	p.connV4 = &fakePacketConnV4{}
 
-	// Build HopSocket directly with a fake send conn and a pre-registered traceChan.
-	traceCh := p.RegisterTraceChan()
 	sock := &HopSocket{
 		sendV4:  &fakeHopConn{},
-		traceCh: traceCh,
 		isV4:    true,
 		pinger:  p,
 	}
@@ -149,12 +150,23 @@ func TestProbeHop_ViaTraceChan_TimeExceeded(t *testing.T) {
 
 	traceID := p.NextTraceID()
 
-	// Inject a matching Time Exceeded into the traceChan
+	// Inject a matching Time Exceeded into the traceChan after it is registered
 	raw := buildTimeExceededMsg(traceID, 3)
 	msg, _ := icmp.ParseMessage(1, raw)
 	go func() {
-		time.Sleep(5 * time.Millisecond)
-		sock.traceCh <- traceMsg{parsed: msg, src: &net.IPAddr{IP: net.IPv4(10, 0, 0, 1)}}
+		var ch chan traceMsg
+		for i := 0; i < 100; i++ {
+			p.traceChansMu.RLock()
+			ch = p.traceChans[traceID]
+			p.traceChansMu.RUnlock()
+			if ch != nil {
+				break
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+		if ch != nil {
+			ch <- traceMsg{parsed: msg, src: &net.IPAddr{IP: net.IPv4(10, 0, 0, 1)}}
+		}
 	}()
 
 	ctx := context.Background()
@@ -182,10 +194,8 @@ func TestProbeHop_Timeout(t *testing.T) {
 		lookupTXT: func(name string) ([]string, error) { return nil, nil },
 	}
 
-	traceCh := p.RegisterTraceChan()
 	sock := &HopSocket{
 		sendV4:  &fakeHopConn{},
-		traceCh: traceCh,
 		isV4:    true,
 		pinger:  p,
 	}
@@ -208,12 +218,12 @@ func TestProbeHop_CtxCancel(t *testing.T) {
 			return &net.IPAddr{IP: net.IPv4(8, 8, 8, 8)}, nil
 		},
 		lookupTXT: func(name string) ([]string, error) { return nil, nil },
+		traceChans: make(map[int]chan traceMsg),
 	}
+	p.connV4 = &fakePacketConnV4{}
 
-	traceCh := p.RegisterTraceChan()
 	sock := &HopSocket{
 		sendV4:  &fakeHopConn{},
-		traceCh: traceCh,
 		isV4:    true,
 		pinger:  p,
 	}

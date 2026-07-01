@@ -51,7 +51,7 @@ func TestTraceRoute_ListenPacketFailureV4(t *testing.T) {
 			return nil, fmt.Errorf("listen: permission denied")
 		},
 	})
-	_, err := p.TraceRoute("8.8.8.8", 5, time.Second)
+	_, err := p.TraceRoute(context.Background(), "8.8.8.8", 5, time.Second)
 	if err == nil {
 		t.Fatal("expected error when listenPacket fails")
 	}
@@ -70,7 +70,7 @@ func TestTraceRoute_ListenPacketFailureV6(t *testing.T) {
 			return nil, fmt.Errorf("listen: permission denied")
 		},
 	})
-	_, err := p.TraceRoute("2001:4860:4860::8888", 5, time.Second)
+	_, err := p.TraceRoute(context.Background(), "2001:4860:4860::8888", 5, time.Second)
 	if err == nil {
 		t.Fatal("expected error when listenPacket fails (v6)")
 	}
@@ -148,7 +148,7 @@ func TestCanSendPayload_ListenPacketFailure(t *testing.T) {
 			return nil, fmt.Errorf("listen: permission denied")
 		},
 	})
-	ok, bottleneck, err := p.canSendPayload(&net.IPAddr{IP: net.ParseIP("8.8.8.8")}, 100)
+	ok, bottleneck, err := p.canSendPayload(context.Background(), &net.IPAddr{IP: net.ParseIP("8.8.8.8")}, 100)
 	if err == nil {
 		t.Fatal("expected error when listenPacket fails")
 	}
@@ -167,7 +167,7 @@ func TestCanSendPayload_NegativePayload(t *testing.T) {
 			return nil, fmt.Errorf("listen: permission denied")
 		},
 	})
-	_, _, err := p.canSendPayload(&net.IPAddr{IP: net.ParseIP("8.8.8.8")}, -1)
+	_, _, err := p.canSendPayload(context.Background(), &net.IPAddr{IP: net.ParseIP("8.8.8.8")}, -1)
 	// Error is expected (listenPacket fails); we just want the payloadLen < 0 branch covered.
 	if err == nil {
 		t.Fatal("expected error when listenPacket fails")
@@ -242,12 +242,11 @@ func TestProbeHop_ContextCancelled(t *testing.T) {
 			return &net.IPAddr{IP: net.ParseIP("8.8.8.8")}, nil
 		},
 	})
-	traceCh := make(chan traceMsg, 1)
+	p.connV4 = &fakePacketConnV4{}
 	sock := &HopSocket{
-		isV4:    true,
-		sendV4:  &fakeHopConn{},
-		traceCh: traceCh,
-		pinger:  p,
+		isV4:   true,
+		sendV4: &fakeHopConn{},
+		pinger: p,
 	}
 	_, err := p.ProbeHop(ctx, sock, "8.8.8.8", 1, 0x1234, time.Second)
 	if err == nil {

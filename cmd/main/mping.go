@@ -42,8 +42,8 @@ type pingerController interface {
 	Stop()
 	Wait()
 	Close()
-	DiscoverMaxPayload(dest string, start int, min int, logf func(string)) (int, string, error)
-	TraceRoute(dest string, maxHops int, timeout time.Duration) ([]string, error)
+	DiscoverMaxPayload(ctx context.Context, dest string, start int, min int, logf func(string)) (int, string, error)
+	TraceRoute(ctx context.Context, dest string, maxHops int, timeout time.Duration) ([]string, error)
 	SetSource(ip string)
 	SetSize(size int)
 	SetCount(count int)
@@ -768,7 +768,7 @@ func setupPMTU(makePinger func(size int) pingerController, cfg config, ifaceMTU 
 	if ifaceMTU > pmtuHeaderBytes {
 		startPayload = ifaceMTU - pmtuHeaderBytes
 	}
-	maxPayload, bottleneckIP, err := probe.DiscoverMaxPayload(firstHost, startPayload, cfg.packetSize, func(line string) {
+	maxPayload, bottleneckIP, err := probe.DiscoverMaxPayload(context.Background(), firstHost, startPayload, cfg.packetSize, func(line string) {
 		preLogs = append(preLogs, line)
 	})
 	if err != nil {
@@ -1399,7 +1399,7 @@ func printExitSummary(out io.Writer, targets []*stats.TargetStats) {
 }
 
 type tracer interface {
-	TraceRoute(dest string, maxHops int, timeout time.Duration) ([]string, error)
+	TraceRoute(ctx context.Context, dest string, maxHops int, timeout time.Duration) ([]string, error)
 }
 
 func runTraceroutes(ctx context.Context, p tracer, targets []*stats.TargetStats) {
@@ -1420,7 +1420,7 @@ func runTraceroutes(ctx context.Context, p tracer, targets []*stats.TargetStats)
 				defer wg.Done()
 				var hops []string
 				var err error
-				hops, err = p.TraceRoute(t.Host, tracerouteMaxHops, tracerouteHopTimeout)
+				hops, err = p.TraceRoute(ctx, t.Host, tracerouteMaxHops, tracerouteHopTimeout)
 				if err != nil {
 					t.SetTraceHops([]string{"error: " + err.Error()})
 					return

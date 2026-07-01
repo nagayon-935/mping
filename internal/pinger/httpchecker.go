@@ -1,6 +1,8 @@
 package pinger
 
 import (
+	"context"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -13,7 +15,8 @@ type HTTPChecker struct {
 	results  []*stats.HTTPCheckResult
 	interval time.Duration
 	client   *http.Client
-	done     chan struct{}
+	ctx      context.Context
+	cancel   context.CancelFunc
 	stopOnce sync.Once
 }
 
@@ -23,6 +26,7 @@ func NewHTTPChecker(urls []string, interval, timeout time.Duration) *HTTPChecker
 	for i, u := range urls {
 		results[i] = stats.NewHTTPCheckResult(u)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	return &HTTPChecker{
 		results:  results,
 		interval: interval,
@@ -35,7 +39,8 @@ func NewHTTPChecker(urls []string, interval, timeout time.Duration) *HTTPChecker
 				return nil
 			},
 		},
-		done: make(chan struct{}),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 }
 
@@ -53,7 +58,7 @@ func (hc *HTTPChecker) Start() {
 
 // Stop signals all goroutines to exit. Safe to call multiple times.
 func (hc *HTTPChecker) Stop() {
-	hc.stopOnce.Do(func() { close(hc.done) })
+	hc.stopOnce.Do(func() { hc.cancel() })
 }
 
 func (hc *HTTPChecker) loop(r *stats.HTTPCheckResult) {
@@ -62,7 +67,7 @@ func (hc *HTTPChecker) loop(r *stats.HTTPCheckResult) {
 	defer ticker.Stop()
 	for {
 		select {
-		case <-hc.done:
+		case <-hc.ctx.Done():
 			return
 		case <-ticker.C:
 			hc.check(r)
@@ -72,12 +77,18 @@ func (hc *HTTPChecker) loop(r *stats.HTTPCheckResult) {
 
 func (hc *HTTPChecker) check(r *stats.HTTPCheckResult) {
 	start := time.Now()
-	resp, err := hc.client.Get(r.URL) //nolint:noctx
+	req, err := http.NewRequestWithContext(hc.ctx, "GET", r.URL, nil)
+	if err != nil {
+		r.SetResult(0, 0, err)
+		return
+	}
+	resp, err := hc.client.Do(req)
 	rtt := time.Since(start)
 	if err != nil {
 		r.SetResult(0, rtt, err)
 		return
 	}
+	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 	r.SetResult(resp.StatusCode, rtt, nil)
 }

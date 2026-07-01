@@ -1,6 +1,7 @@
 package pinger
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -13,8 +14,8 @@ import (
 )
 
 // canSendPayloadFn is a variable holding canSendPayload to allow overriding in tests.
-var canSendPayloadFn = func(p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
-	return p.canSendPayload(dst, payloadLen)
+var canSendPayloadFn = func(ctx context.Context, p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
+	return p.canSendPayload(ctx, dst, payloadLen)
 }
 
 // DiscoverMaxPayload performs a binary search to find the maximum ICMP payload
@@ -22,7 +23,7 @@ var canSendPayloadFn = func(p *Pinger, dst *net.IPAddr, payloadLen int) (bool, s
 // start is the upper bound to probe; min is the lower bound (usually the
 // configured packet size). IPv6 destinations are not supported.
 // Returns the max payload size, the bottleneck router IP (if detected), and any error.
-func (p *Pinger) DiscoverMaxPayload(dest string, start int, min int, logf func(string)) (int, string, error) {
+func (p *Pinger) DiscoverMaxPayload(ctx context.Context, dest string, start int, min int, logf func(string)) (int, string, error) {
 	if dest == "" {
 		return 0, "", fmt.Errorf("destination is empty")
 	}
@@ -50,8 +51,13 @@ func (p *Pinger) DiscoverMaxPayload(dest string, start int, min int, logf func(s
 	high := start
 	var bottleneckIP string
 	for low < high {
+		select {
+		case <-ctx.Done():
+			return 0, "", ctx.Err()
+		default:
+		}
 		mid := (low + high + 1) / 2
-		ok, hopIP, err := canSendPayloadFn(p, dstAddr, mid)
+		ok, hopIP, err := canSendPayloadFn(ctx, p, dstAddr, mid)
 		if err != nil {
 			return 0, "", err
 		}
@@ -85,7 +91,7 @@ func (p *Pinger) DiscoverMaxPayload(dest string, start int, min int, logf func(s
 // is too large (EMSGSIZE or ICMP Fragmentation Needed), the bottleneck router
 // IP if an ICMP Fragmentation Needed response was received, and an error for
 // unexpected failures.
-func (p *Pinger) canSendPayload(dstAddr *net.IPAddr, payloadLen int) (bool, string, error) {
+func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloadLen int) (bool, string, error) {
 	if payloadLen < 0 {
 		payloadLen = 0
 	}
@@ -115,6 +121,16 @@ func (p *Pinger) canSendPayload(dstAddr *net.IPAddr, payloadLen int) (bool, stri
 		return false, "", err
 	}
 	defer c.Close()
+
+	doneChan := make(chan struct{})
+	defer close(doneChan)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = c.Close()
+		case <-doneChan:
+		}
+	}()
 
 	rc, err := ipv4.NewRawConn(c)
 	if err != nil {
@@ -175,11 +191,14 @@ func (p *Pinger) canSendPayload(dstAddr *net.IPAddr, payloadLen int) (bool, stri
 			}
 		case ipv4.ICMPTypeDestinationUnreachable:
 			if parsed.Code == 4 { // Fragmentation Needed
-				var srcIP string
-				if hdr != nil && hdr.Src != nil {
-					srcIP = hdr.Src.String()
+				id, seq, ok := extractEchoIDSeq(parsed)
+				if ok && id == (p.baseID&0xffff) && seq == 0 {
+					var srcIP string
+					if hdr != nil && hdr.Src != nil {
+						srcIP = hdr.Src.String()
+					}
+					return false, srcIP, nil
 				}
-				return false, srcIP, nil
 			}
 		}
 	}

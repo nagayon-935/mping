@@ -1,6 +1,7 @@
 package pinger
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"testing"
@@ -164,7 +165,7 @@ func TestCheckTCP_Open(t *testing.T) {
 	}()
 
 	addr := ln.Addr().String()
-	status, rtt := checkTCP(addr, time.Second)
+	status, rtt := checkTCP(context.Background(), addr, time.Second)
 	if status != "Open" {
 		t.Errorf("checkTCP: got %q, want %q (rtt=%v)", status, "Open", rtt)
 	}
@@ -182,7 +183,7 @@ func TestCheckTCP_Closed(t *testing.T) {
 	addr := ln.Addr().String()
 	ln.Close()
 
-	status, _ := checkTCP(addr, time.Second)
+	status, _ := checkTCP(context.Background(), addr, time.Second)
 	if status != "Closed" && status != "Filtered" {
 		t.Errorf("checkTCP closed port: got %q, want Closed or Filtered", status)
 	}
@@ -190,7 +191,7 @@ func TestCheckTCP_Closed(t *testing.T) {
 
 func TestCheckTCP_Filtered(t *testing.T) {
 	// Use a non-routable address to trigger timeout
-	status, _ := checkTCP("192.0.2.1:9", 50*time.Millisecond)
+	status, _ := checkTCP(context.Background(), "192.0.2.1:9", 50*time.Millisecond)
 	if status != "Filtered" {
 		t.Logf("checkTCP filtered: got %q (may vary in CI)", status)
 	}
@@ -200,7 +201,7 @@ func TestCheckTCP_Filtered(t *testing.T) {
 
 func TestCheckUDP_OpenFiltered(t *testing.T) {
 	// Non-routable address, UDP won't get ICMP unreachable → Open|Filtered
-	status, _ := checkUDP("192.0.2.1:9", 50*time.Millisecond)
+	status, _ := checkUDP(context.Background(), "192.0.2.1:9", 50*time.Millisecond)
 	if status != "Open|Filtered" && status != "Error" {
 		t.Logf("checkUDP: got %q (may vary by environment)", status)
 	}
@@ -214,7 +215,7 @@ func TestCheckUDP_LocalhostOpen(t *testing.T) {
 	defer conn.Close()
 	addr := conn.LocalAddr().String()
 
-	status, _ := checkUDP(addr, 200*time.Millisecond)
+	status, _ := checkUDP(context.Background(), addr, 200*time.Millisecond)
 	// UDP server exists; likely Open|Filtered or Open depending on OS
 	if status == "Error" {
 		t.Logf("checkUDP local: got Error (OS may not allow UDP dial to self)")
@@ -224,7 +225,7 @@ func TestCheckUDP_LocalhostOpen(t *testing.T) {
 func TestCheckUDP_Closed(t *testing.T) {
 	// Pick a port that is unlikely to be listening
 	addr := "127.0.0.1:54321"
-	status, _ := checkUDP(addr, 50*time.Millisecond)
+	status, _ := checkUDP(context.Background(), addr, 50*time.Millisecond)
 	// On most OSs, this should return Closed (ECONNREFUSED) or Open|Filtered (timeout)
 	// If it returns Closed, we've increased coverage.
 	if status == "Closed" {
@@ -235,7 +236,7 @@ func TestCheckUDP_Closed(t *testing.T) {
 func TestCheckUDP_DialError(t *testing.T) {
 	// An out-of-range port makes net.DialTimeout fail deterministically,
 	// exercising the "Error" return path.
-	status, rtt := checkUDP("127.0.0.1:99999", 50*time.Millisecond)
+	status, rtt := checkUDP(context.Background(), "127.0.0.1:99999", 50*time.Millisecond)
 	if status != "Error" {
 		t.Errorf("checkUDP with invalid port = %q, want Error", status)
 	}

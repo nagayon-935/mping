@@ -391,6 +391,7 @@ func (t *TargetStats) OnFailure(reason string) {
 	t.Loss++
 	t.LastLossTime = time.Now()
 	t.LastError = reason
+	t.appendHistory(0)
 }
 
 func (t *TargetStats) Reset() {

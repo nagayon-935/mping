@@ -80,7 +80,7 @@ type Pinger struct {
 	asnCache map[string]ASNInfo
 	asnMu    sync.RWMutex
 
-	traceChans   []chan traceMsg // one per concurrent TraceRoute call
+	traceChans   map[int]chan traceMsg // keyed by trace ID
 	traceChansMu sync.RWMutex
 	traceCounter atomic.Uint32 // unique traceID per concurrent call
 
@@ -160,6 +160,7 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		Size:            56, // Default payload size (like standard ping)
 		ResolveInterval: 60 * time.Second,
 		AsnEnabled:      opts.AsnEnabled,
+		traceChans:      make(map[int]chan traceMsg),
 		done:            make(chan struct{}),
 		resolveIPAddr:   resolve,
 		now:             now,
@@ -294,15 +295,34 @@ func (p *Pinger) Close() {
 	}
 }
 
+func extractTraceID(msg *icmp.Message) (int, bool) {
+	switch msg.Type {
+	case ipv4.ICMPTypeEchoReply, ipv6.ICMPTypeEchoReply:
+		if echo, ok := msg.Body.(*icmp.Echo); ok {
+			return echo.ID, true
+		}
+	case ipv4.ICMPTypeTimeExceeded, ipv6.ICMPTypeTimeExceeded,
+		ipv4.ICMPTypeDestinationUnreachable, ipv6.ICMPTypeDestinationUnreachable:
+		id, _, ok := extractEchoIDSeq(msg)
+		return id, ok
+	}
+	return 0, false
+}
+
 func (p *Pinger) broadcastTrace(msg *icmp.Message, src net.Addr) {
+	id, ok := extractTraceID(msg)
+	if !ok {
+		return
+	}
 	p.traceChansMu.RLock()
-	for _, ch := range p.traceChans {
+	ch, exists := p.traceChans[id]
+	p.traceChansMu.RUnlock()
+	if exists {
 		select {
 		case ch <- traceMsg{msg, src}:
 		default:
 		}
 	}
-	p.traceChansMu.RUnlock()
 }
 
 // receiverConfig holds IP-version-specific parameters for the unified receiver loop.
@@ -607,9 +627,21 @@ func (p *Pinger) sendProbe(t *stats.TargetStats, id, seq int, payload []byte, ds
 			Data: payload,
 		},
 	}
-	b, err := msg.Marshal(nil)
-	if err != nil {
-		return time.Time{}, false
+	var b []byte
+	var buf []byte
+	var err error
+	if p.Size <= 1400 {
+		buf = marshalBufPool.Get().([]byte)
+		defer marshalBufPool.Put(buf)
+		b, err = msg.Marshal(buf[:0])
+		if err != nil {
+			return time.Time{}, false
+		}
+	} else {
+		b, err = msg.Marshal(nil)
+		if err != nil {
+			return time.Time{}, false
+		}
 	}
 
 	start := time.Now()
@@ -756,4 +788,10 @@ func buildPayload(size int) []byte {
 		copy(payload, payloadSignature)
 	}
 	return payload
+}
+
+var marshalBufPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 1500)
+	},
 }

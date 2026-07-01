@@ -1,6 +1,7 @@
 package pinger
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"time"
@@ -15,7 +16,7 @@ import (
 // When the pinger's shared receiver is running, it registers a broadcast
 // channel to receive Time Exceeded replies without racing with the main
 // receiver goroutine.
-func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]string, error) {
+func (p *Pinger) TraceRoute(ctx context.Context, dest string, maxHops int, timeout time.Duration) ([]string, error) {
 	if dest == "" {
 		return nil, fmt.Errorf("destination is empty")
 	}
@@ -29,14 +30,7 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 
 	isV4 := dstAddr.IP.To4() != nil
 
-	// Register a channel in traceChans when the pinger's receiver is running for
-	// this address family. This avoids the macOS raw-socket race where the pinger's
-	// continuous ReadFrom consumes Time Exceeded replies before our socket can see them.
-	var traceCh chan traceMsg
-	if (isV4 && p.connV4 != nil) || (!isV4 && p.connV6 != nil) {
-		traceCh = p.RegisterTraceChan()
-		defer p.UnregisterTraceChan(traceCh)
-	}
+
 
 	// Open a socket solely for sending TTL-limited probes.
 	var sendV4 *ipv4.PacketConn
@@ -72,7 +66,29 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 	}
 	defer sendConn.Close()
 
+	doneChan := make(chan struct{})
+	defer close(doneChan)
+	go func() {
+		select {
+		case <-ctx.Done():
+			if sendConn != nil {
+				_ = sendConn.Close()
+			}
+		case <-doneChan:
+		}
+	}()
+
 	traceID := (p.baseID + 0x1234 + int(p.traceCounter.Add(1))) & 0xffff
+
+	// Register a channel in traceChans when the pinger's receiver is running for
+	// this address family. This avoids the macOS raw-socket race where the pinger's
+	// continuous ReadFrom consumes Time Exceeded replies before our socket can see them.
+	var traceCh chan traceMsg
+	if (isV4 && p.connV4 != nil) || (!isV4 && p.connV6 != nil) {
+		traceCh = p.RegisterTraceChan(traceID)
+		defer p.UnregisterTraceChan(traceID)
+	}
+
 	hops := make([]string, 0, maxHops)
 
 	// acceptPacket checks whether a received message is a valid reply to the
@@ -111,6 +127,11 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 	buf := make([]byte, probeBufferSize)
 
 	for ttl := 1; ttl <= maxHops; ttl++ {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
 		payload := make([]byte, 8)
 		copy(payload[0:4], traceSignature)
 		payload[4] = byte(traceID >> 8)
@@ -161,6 +182,9 @@ func (p *Pinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]
 		recvLoop:
 			for {
 				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return nil, ctx.Err()
 				case tm := <-traceCh:
 					srcIP, reached, accepted := acceptPacket(tm.parsed, tm.src, ttl)
 					if accepted {
