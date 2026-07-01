@@ -350,7 +350,7 @@ func TestBuildFullColumns(t *testing.T) {
 		IfaceMTU:  1500,
 		LastTTL:   64,
 	}
-	
+
 	// Case 1: dnsEnabled = false, asnEnabled = true
 	cols, src, rate := buildFullColumns(view, "10.0.0.2", "", 56, true, false)
 	if src != "10.0.0.2" {

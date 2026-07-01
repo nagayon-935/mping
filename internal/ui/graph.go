@@ -68,7 +68,6 @@ type GraphView struct {
 	vividCyan tcell.Color
 	vividRed  tcell.Color
 	scrollRow int
-	showZero  bool
 
 	// Auto-scale state (accessed from Draw only — no additional lock needed).
 	currentScale   yScale

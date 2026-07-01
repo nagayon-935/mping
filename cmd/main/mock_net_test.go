@@ -6,16 +6,6 @@ import (
 	"testing"
 )
 
-type mockInterface struct {
-	name  string
-	mtu   int
-	addrs []net.Addr
-}
-
-func (m *mockInterface) Addrs() ([]net.Addr, error) {
-	return m.addrs, nil
-}
-
 func TestGetInterfaceIP(t *testing.T) {
 	// Mock interfaceByName
 	oldInterfaceByName := interfaceByName

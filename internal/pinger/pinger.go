@@ -631,8 +631,9 @@ func (p *Pinger) sendProbe(t *stats.TargetStats, id, seq int, payload []byte, ds
 	var buf []byte
 	var err error
 	if p.Size <= 1400 {
-		buf = marshalBufPool.Get().([]byte)
-		defer marshalBufPool.Put(buf)
+		bufPtr := marshalBufPool.Get().(*[]byte)
+		defer marshalBufPool.Put(bufPtr)
+		buf = *bufPtr
 		b, err = msg.Marshal(buf[:0])
 		if err != nil {
 			return time.Time{}, false
@@ -791,7 +792,8 @@ func buildPayload(size int) []byte {
 }
 
 var marshalBufPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 1500)
+	New: func() any {
+		b := make([]byte, 1500)
+		return &b
 	},
 }

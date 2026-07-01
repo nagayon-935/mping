@@ -55,6 +55,7 @@ type PortChecker struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	stopOnce sync.Once
+	wg       sync.WaitGroup
 }
 
 // NewPortChecker creates a PortChecker and initialises PortResults on each target.
@@ -84,6 +85,7 @@ func (pc *PortChecker) Start() {
 	for i, t := range pc.targets {
 		for j, spec := range pc.specs {
 			result := pc.results[i][j] // use internally stored pointer; never reads t.PortResults
+			pc.wg.Add(1)
 			go pc.loop(t, spec, result)
 		}
 	}
@@ -94,7 +96,13 @@ func (pc *PortChecker) Stop() {
 	pc.stopOnce.Do(func() { pc.cancel() })
 }
 
+// Wait blocks until all check goroutines have exited. Call Stop first.
+func (pc *PortChecker) Wait() {
+	pc.wg.Wait()
+}
+
 func (pc *PortChecker) loop(t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
+	defer pc.wg.Done()
 	pc.check(t, spec, result)
 	ticker := time.NewTicker(pc.interval)
 	defer ticker.Stop()

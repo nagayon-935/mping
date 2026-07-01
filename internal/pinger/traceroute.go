@@ -30,8 +30,6 @@ func (p *Pinger) TraceRoute(ctx context.Context, dest string, maxHops int, timeo
 
 	isV4 := dstAddr.IP.To4() != nil
 
-
-
 	// Open a socket solely for sending TTL-limited probes.
 	var sendV4 *ipv4.PacketConn
 	var sendV6 *ipv6.PacketConn

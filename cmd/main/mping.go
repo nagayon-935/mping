@@ -1045,9 +1045,11 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			pMu.Unlock()
 			if curPort != nil {
 				curPort.Stop()
+				curPort.Wait()
 			}
 			if curHTTP != nil {
 				curHTTP.Stop()
+				curHTTP.Wait()
 			}
 		}
 
@@ -1097,6 +1099,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 				pMu.Unlock()
 				if cur != nil {
 					cur.Stop()
+					cur.Wait()
 				}
 				next := setupHTTPChecker(currentCfg.httpURLs, interval, timeout)
 				pMu.Lock()
@@ -1114,6 +1117,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 				pMu.Unlock()
 				if cur != nil {
 					cur.Stop()
+					cur.Wait()
 				}
 				next := setupPortChecker(targets, portSpecs, interval, timeout)
 				pMu.Lock()
@@ -1240,7 +1244,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 					return nil
 				}
 				return httpChecker.Results()
-			}(),
+			},
 			ASNEnabled:      currentCfg.asnEnabled,
 			Thresholds:      &uiThresholds,
 			ExternalCloseCh: reloadCh,
@@ -1493,7 +1497,7 @@ func expandTargets(hosts []string, groups []ui.TargetGroup, cfg config) ([]strin
 
 		ips := resolvedIPs[host]
 		startIdx := len(expandedHosts)
-		
+
 		rawHost := host
 		for _, ip := range ips {
 			if rawHost != ip {

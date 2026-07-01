@@ -36,9 +36,11 @@ type RunOptions struct {
 	PortEnabled  bool
 	HTTPEnabled  bool
 	ASNEnabled   bool
-	// HTTPResults holds live HTTP health-check results for the HTTP Monitor pane.
+	// HTTPResults returns live HTTP health-check results for the HTTP Monitor
+	// pane. Called on every render tick (rather than once at startup) so it
+	// reflects a checker swapped in by OnResetHTTP after Run has started.
 	// Nil when HTTPEnabled is false.
-	HTTPResults []*stats.HTTPCheckResult
+	HTTPResults func() []*stats.HTTPCheckResult
 	// Thresholds overrides the colour-coding / alert boundaries. Nil keeps the
 	// built-in defaults.
 	Thresholds *Thresholds
@@ -84,7 +86,7 @@ func Run(opts RunOptions) error {
 	mtrEnabled := opts.MTREnabled
 	portEnabled := opts.PortEnabled
 	httpEnabled := opts.HTTPEnabled
-	httpResults := opts.HTTPResults
+	httpResultsFunc := opts.HTTPResults
 	asnEnabled := opts.ASNEnabled
 	onStop := opts.OnStop
 	onRestart := opts.OnRestart
@@ -353,8 +355,7 @@ func Run(opts RunOptions) error {
 		SetWrap(false)
 	header.SetBackgroundColor(tcell.ColorBlack)
 
-	var footer *tview.TextView
-	footer = tview.NewTextView().
+	footer := tview.NewTextView().
 		SetText("Tab: Focus | a: Add host | d: Del host | q: Quit | s: Stop | R: Reset").
 		SetTextAlign(tview.AlignCenter).
 		SetTextColor(tcell.ColorYellow).
@@ -599,6 +600,10 @@ func Run(opts RunOptions) error {
 
 		if httpEnabled && httpView != nil {
 			_, _, availW, _ := httpView.GetInnerRect()
+			var httpResults []*stats.HTTPCheckResult
+			if httpResultsFunc != nil {
+				httpResults = httpResultsFunc()
+			}
 			httpView.SetText(renderHTTPMonitorTable(httpResults, availW, lastHTTPStatuses, &errorLogs, errorView))
 		}
 	}

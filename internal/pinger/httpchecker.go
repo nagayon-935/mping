@@ -18,6 +18,7 @@ type HTTPChecker struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	stopOnce sync.Once
+	wg       sync.WaitGroup
 }
 
 // NewHTTPChecker creates an HTTPChecker for the given URLs.
@@ -52,6 +53,7 @@ func (hc *HTTPChecker) Results() []*stats.HTTPCheckResult {
 // Start launches one goroutine per URL. Safe to call once.
 func (hc *HTTPChecker) Start() {
 	for _, r := range hc.results {
+		hc.wg.Add(1)
 		go hc.loop(r)
 	}
 }
@@ -61,7 +63,13 @@ func (hc *HTTPChecker) Stop() {
 	hc.stopOnce.Do(func() { hc.cancel() })
 }
 
+// Wait blocks until all check goroutines have exited. Call Stop first.
+func (hc *HTTPChecker) Wait() {
+	hc.wg.Wait()
+}
+
 func (hc *HTTPChecker) loop(r *stats.HTTPCheckResult) {
+	defer hc.wg.Done()
 	hc.check(r)
 	ticker := time.NewTicker(hc.interval)
 	defer ticker.Stop()

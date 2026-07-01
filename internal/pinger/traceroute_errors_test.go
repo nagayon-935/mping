@@ -21,7 +21,7 @@ func TestTraceRoute_ValidationAndResolveErrors(t *testing.T) {
 	})
 
 	variants := map[string]traceFunc{
-		"TraceRoute":      p.TraceRoute,
+		"TraceRoute": p.TraceRoute,
 	}
 
 	for name, fn := range variants {

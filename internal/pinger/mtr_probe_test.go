@@ -136,15 +136,15 @@ func TestProbeHop_ViaTraceChan_TimeExceeded(t *testing.T) {
 		resolveIPAddr: func(network, address string) (*net.IPAddr, error) {
 			return &net.IPAddr{IP: net.IPv4(8, 8, 8, 8)}, nil
 		},
-		lookupTXT: func(name string) ([]string, error) { return nil, nil },
+		lookupTXT:  func(name string) ([]string, error) { return nil, nil },
 		traceChans: make(map[int]chan traceMsg),
 	}
 	p.connV4 = &fakePacketConnV4{}
 
 	sock := &HopSocket{
-		sendV4:  &fakeHopConn{},
-		isV4:    true,
-		pinger:  p,
+		sendV4: &fakeHopConn{},
+		isV4:   true,
+		pinger: p,
 	}
 	defer sock.Close()
 
@@ -195,9 +195,9 @@ func TestProbeHop_Timeout(t *testing.T) {
 	}
 
 	sock := &HopSocket{
-		sendV4:  &fakeHopConn{},
-		isV4:    true,
-		pinger:  p,
+		sendV4: &fakeHopConn{},
+		isV4:   true,
+		pinger: p,
 	}
 	defer sock.Close()
 
@@ -217,15 +217,15 @@ func TestProbeHop_CtxCancel(t *testing.T) {
 		resolveIPAddr: func(network, address string) (*net.IPAddr, error) {
 			return &net.IPAddr{IP: net.IPv4(8, 8, 8, 8)}, nil
 		},
-		lookupTXT: func(name string) ([]string, error) { return nil, nil },
+		lookupTXT:  func(name string) ([]string, error) { return nil, nil },
 		traceChans: make(map[int]chan traceMsg),
 	}
 	p.connV4 = &fakePacketConnV4{}
 
 	sock := &HopSocket{
-		sendV4:  &fakeHopConn{},
-		isV4:    true,
-		pinger:  p,
+		sendV4: &fakeHopConn{},
+		isV4:   true,
+		pinger: p,
 	}
 	defer sock.Close()
 
