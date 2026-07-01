@@ -132,6 +132,22 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 		case <-ctx.Done():
 			return
 		case <-rediscoverTicker.C:
+			// Check if target IP has changed after DNS re-resolution and recreate socket
+			v := ts.GetView()
+			currentDest := v.IP
+			if currentDest == "" {
+				currentDest = v.Host
+			}
+			if currentDest != dest {
+				sock.Close()
+				newSock, err := prober.OpenHopSocket(currentDest)
+				if err != nil {
+					return
+				}
+				sock = newSock
+				dest = currentDest
+			}
+
 			prevIPs := mtr.RouteSnapshot()
 			hopCount = discover(ctx, prober, sock, mtr, dest, cfg)
 			if changed, desc := mtr.CheckFlap(prevIPs, time.Now()); changed && cfg.OnFlap != nil {
@@ -143,49 +159,81 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 	}
 }
 
-// discover sends TTL-limited probes from TTL=1 up to maxHops to find hop IPs.
+// discover sends TTL-limited probes from TTL=1 up to maxHops concurrently to find hop IPs.
 // It updates mtr hop IPs and returns the final hop count (TTL at which dest was reached,
 // or maxHops if not reached).
 func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTRStats, dest string, cfg Config) int {
-	traceID := prober.NextTraceID()
-	hopCount := cfg.MaxHops
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	reached := false
+	firstReachedTTL := cfg.MaxHops + 1
+
+	type result struct {
+		ttl   int
+		reply pinger.HopReply
+	}
+	results := make([]result, 0, cfg.MaxHops)
+
 	for ttl := 1; ttl <= cfg.MaxHops; ttl++ {
-		if ctx.Err() != nil {
-			return 0
-		}
-		reply, err := prober.ProbeHop(ctx, sock, dest, ttl, traceID, cfg.HopTimeout)
-		if err != nil || ctx.Err() != nil {
-			return 0
-		}
-		mtr.EnsureLen(ttl)
-		if reply.Responded && reply.SrcIP != "" {
-			info := prober.ASNInfoFor(reply.SrcIP)
-			mtr.SetIP(ttl, reply.SrcIP, info.Number, info.Country, info.Org)
-		}
-		if reply.ReachedDest {
-			hopCount = ttl
-			break
+		wg.Add(1)
+		go func(t int) {
+			defer wg.Done()
+			traceID := prober.NextTraceID()
+			reply, err := prober.ProbeHop(ctx, sock, dest, t, traceID, cfg.HopTimeout)
+			if err != nil || ctx.Err() != nil {
+				return
+			}
+			mu.Lock()
+			results = append(results, result{ttl: t, reply: reply})
+			if reply.ReachedDest {
+				reached = true
+				if t < firstReachedTTL {
+					firstReachedTTL = t
+				}
+			}
+			mu.Unlock()
+		}(ttl)
+	}
+	wg.Wait()
+
+	hopCount := cfg.MaxHops
+	if reached {
+		hopCount = firstReachedTTL
+	}
+
+	// Register hops only up to the discovered hopCount to avoid leaking outer hops
+	for _, res := range results {
+		if res.ttl <= hopCount {
+			mtr.EnsureLen(res.ttl)
+			if res.reply.Responded && res.reply.SrcIP != "" {
+				info := prober.ASNInfoFor(res.reply.SrcIP)
+				mtr.SetIP(res.ttl, res.reply.SrcIP, info.Number, info.Country, info.Org)
+			}
 		}
 	}
+
 	return hopCount
 }
 
-// probe sends one probe per hop for a single round and records results.
+// probe sends one probe per hop concurrently for a single round and records results.
 func probe(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTRStats, dest string, hopCount int, cfg Config) {
-	traceID := prober.NextTraceID()
+	var wg sync.WaitGroup
 	for ttl := 1; ttl <= hopCount; ttl++ {
-		if ctx.Err() != nil {
-			return
-		}
-		reply, err := prober.ProbeHop(ctx, sock, dest, ttl, traceID, cfg.HopTimeout)
-		if err != nil || ctx.Err() != nil {
-			return
-		}
-		if reply.Responded {
-			info := prober.ASNInfoFor(reply.SrcIP)
-			mtr.RecordReply(ttl, reply.SrcIP, info.Number, info.Country, info.Org, reply.RTT)
-		} else {
-			mtr.RecordLoss(ttl)
-		}
+		wg.Add(1)
+		go func(t int) {
+			defer wg.Done()
+			traceID := prober.NextTraceID()
+			reply, err := prober.ProbeHop(ctx, sock, dest, t, traceID, cfg.HopTimeout)
+			if err != nil || ctx.Err() != nil {
+				return
+			}
+			if reply.Responded {
+				info := prober.ASNInfoFor(reply.SrcIP)
+				mtr.RecordReply(t, reply.SrcIP, info.Number, info.Country, info.Org, reply.RTT)
+			} else {
+				mtr.RecordLoss(t)
+			}
+		}(ttl)
 	}
+	wg.Wait()
 }

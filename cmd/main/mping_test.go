@@ -47,7 +47,7 @@ func (f *fakePinger) Wait() {
 	f.waited = true
 }
 
-func (f *fakePinger) DiscoverMaxPayload(dest string, start int, min int, logf func(string)) (int, string, error) {
+func (f *fakePinger) DiscoverMaxPayload(ctx context.Context, dest string, start int, min int, logf func(string)) (int, string, error) {
 	if f.discoverErr != nil {
 		return 0, "", f.discoverErr
 	}
@@ -57,7 +57,7 @@ func (f *fakePinger) DiscoverMaxPayload(dest string, start int, min int, logf fu
 	return f.discoverMTU, f.discoverBottleneckIP, nil
 }
 
-func (f *fakePinger) TraceRoute(dest string, maxHops int, timeout time.Duration) ([]string, error) {
+func (f *fakePinger) TraceRoute(ctx context.Context, dest string, maxHops int, timeout time.Duration) ([]string, error) {
 	if f.traceErr != nil {
 		return nil, f.traceErr
 	}

@@ -1,6 +1,7 @@
 package pinger
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
@@ -210,7 +211,7 @@ func TestPinger_TraceRoute_AsnEnabled(t *testing.T) {
 	var err error
 
 	go func() {
-		hops, err = p.TraceRoute("1.1.1.1", 1, 200*time.Millisecond)
+		hops, err = p.TraceRoute(context.Background(), "1.1.1.1", 1, 200*time.Millisecond)
 		close(done)
 	}()
 
@@ -219,7 +220,10 @@ func TestPinger_TraceRoute_AsnEnabled(t *testing.T) {
 	for time.Since(start) < 2*time.Second {
 		p.traceChansMu.RLock()
 		if len(p.traceChans) > 0 {
-			traceCh = p.traceChans[len(p.traceChans)-1]
+			for _, val := range p.traceChans {
+				traceCh = val
+				break
+			}
 		}
 		p.traceChansMu.RUnlock()
 		if traceCh != nil {
@@ -293,7 +297,7 @@ func TestPinger_TraceRoute_MaxHops(t *testing.T) {
 	})
 	p.connV4 = &fakePacketConnV4{}
 
-	hops, err := p.TraceRoute("1.1.1.1", 2, 10*time.Millisecond)
+	hops, err := p.TraceRoute(context.Background(), "1.1.1.1", 2, 10*time.Millisecond)
 	if err != nil {
 		t.Fatalf("TraceRoute error: %v", err)
 	}

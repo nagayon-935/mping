@@ -140,8 +140,11 @@ func parseInnerEchoIDSeq(data []byte) (int, int, bool) {
 	version := data[0] >> 4
 
 	if version == 4 {
+		if len(data) < 20 {
+			return 0, 0, false
+		}
 		ihl := int(data[0]&0x0f) * 4
-		if ihl <= 0 || len(data) < ihl {
+		if ihl < 20 || len(data) < ihl {
 			return 0, 0, false
 		}
 

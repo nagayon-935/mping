@@ -2,6 +2,7 @@ package pinger
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net"
 	"strings"
@@ -569,10 +570,10 @@ func TestWaitBlocksUntilDone(t *testing.T) {
 
 func TestDiscoverMaxPayloadErrors(t *testing.T) {
 	p := NewPingerWithOptions(nil, Options{})
-	if _, _, err := p.DiscoverMaxPayload("", 1, 0, nil); err == nil {
+	if _, _, err := p.DiscoverMaxPayload(context.Background(), "", 1, 0, nil); err == nil {
 		t.Fatal("expected error for empty dest")
 	}
-	if _, _, err := p.DiscoverMaxPayload("example.com", 0, 0, nil); err == nil {
+	if _, _, err := p.DiscoverMaxPayload(context.Background(), "example.com", 0, 0, nil); err == nil {
 		t.Fatal("expected error for start <= 0")
 	}
 }
@@ -583,7 +584,7 @@ func TestDiscoverMaxPayloadIPv6NotSupported(t *testing.T) {
 			return &net.IPAddr{IP: net.ParseIP("2001:db8::1")}, nil
 		},
 	})
-	size, _, err := p.DiscoverMaxPayload("example.com", 100, 0, nil)
+	size, _, err := p.DiscoverMaxPayload(context.Background(), "example.com", 100, 0, nil)
 	if err == nil {
 		t.Fatal("expected error for ipv6")
 	}
@@ -596,7 +597,7 @@ func TestDiscoverMaxPayloadBinarySearch(t *testing.T) {
 	orig := canSendPayloadFn
 	t.Cleanup(func() { canSendPayloadFn = orig })
 
-	canSendPayloadFn = func(p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
+	canSendPayloadFn = func(ctx context.Context, p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
 		return payloadLen <= 100, "", nil
 	}
 
@@ -605,7 +606,7 @@ func TestDiscoverMaxPayloadBinarySearch(t *testing.T) {
 			return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
 		},
 	})
-	got, _, err := p.DiscoverMaxPayload("example.com", 200, 0, nil)
+	got, _, err := p.DiscoverMaxPayload(context.Background(), "example.com", 200, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -618,7 +619,7 @@ func TestDiscoverMaxPayloadCanSendError(t *testing.T) {
 	orig := canSendPayloadFn
 	t.Cleanup(func() { canSendPayloadFn = orig })
 
-	canSendPayloadFn = func(p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
+	canSendPayloadFn = func(ctx context.Context, p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
 		return false, "", errors.New("send failed")
 	}
 
@@ -627,7 +628,7 @@ func TestDiscoverMaxPayloadCanSendError(t *testing.T) {
 			return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
 		},
 	})
-	if _, _, err := p.DiscoverMaxPayload("example.com", 100, 0, nil); err == nil {
+	if _, _, err := p.DiscoverMaxPayload(context.Background(), "example.com", 100, 0, nil); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -638,7 +639,7 @@ func TestCanSendPayloadListenError(t *testing.T) {
 			return nil, errors.New("listen failed")
 		},
 	})
-	_, _, err := p.canSendPayload(&net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, 0)
+	_, _, err := p.canSendPayload(context.Background(), &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, 0)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -650,7 +651,7 @@ func TestCanSendPayloadRawConnError(t *testing.T) {
 			return &fakeNetPacketConn{}, nil
 		},
 	})
-	_, _, err := p.canSendPayload(&net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, -1)
+	_, _, err := p.canSendPayload(context.Background(), &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, -1)
 	if err == nil {
 		t.Fatal("expected error from raw conn")
 	}
@@ -667,7 +668,7 @@ func TestCanSendPayloadReceiveBufferSufficient(t *testing.T) {
 
 	// Simulate: any payload > 1472 is too large (typical Ethernet limit).
 	// This mirrors what a properly-enforced DF bit would return.
-	canSendPayloadFn = func(p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
+	canSendPayloadFn = func(ctx context.Context, p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
 		return payloadLen <= 1472, "", nil
 	}
 
@@ -677,7 +678,7 @@ func TestCanSendPayloadReceiveBufferSufficient(t *testing.T) {
 		},
 	})
 	// Start well above the limit to ensure the binary search crosses it.
-	got, _, err := p.DiscoverMaxPayload("example.com", 9872, 0, nil)
+	got, _, err := p.DiscoverMaxPayload(context.Background(), "example.com", 9872, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -693,7 +694,7 @@ func TestDiscoverMaxPayloadBottleneckIPTracked(t *testing.T) {
 	t.Cleanup(func() { canSendPayloadFn = orig })
 
 	const bottleneck = "10.0.0.1"
-	canSendPayloadFn = func(p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
+	canSendPayloadFn = func(ctx context.Context, p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
 		if payloadLen > 100 {
 			return false, bottleneck, nil
 		}
@@ -705,7 +706,7 @@ func TestDiscoverMaxPayloadBottleneckIPTracked(t *testing.T) {
 			return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
 		},
 	})
-	_, hopIP, err := p.DiscoverMaxPayload("example.com", 200, 0, nil)
+	_, hopIP, err := p.DiscoverMaxPayload(context.Background(), "example.com", 200, 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -716,10 +717,10 @@ func TestDiscoverMaxPayloadBottleneckIPTracked(t *testing.T) {
 
 func TestTraceRouteInvalidInputs(t *testing.T) {
 	p := NewPingerWithOptions(nil, Options{})
-	if _, err := p.TraceRoute("", 30, 1*time.Second); err == nil {
+	if _, err := p.TraceRoute(context.Background(), "", 30, 1*time.Second); err == nil {
 		t.Fatal("expected error for empty dest")
 	}
-	if _, err := p.TraceRoute("example.com", 0, 1*time.Second); err == nil {
+	if _, err := p.TraceRoute(context.Background(), "example.com", 0, 1*time.Second); err == nil {
 		t.Fatal("expected error for maxHops <= 0")
 	}
 }
@@ -730,7 +731,7 @@ func TestTraceRouteResolveError(t *testing.T) {
 			return nil, errors.New("resolve failed")
 		},
 	})
-	if _, err := p.TraceRoute("example.com", 3, 1*time.Second); err == nil {
+	if _, err := p.TraceRoute(context.Background(), "example.com", 3, 1*time.Second); err == nil {
 		t.Fatal("expected resolve error")
 	}
 }
@@ -744,7 +745,7 @@ func TestTraceRouteListenErrorIPv4(t *testing.T) {
 			return nil, errors.New("listen failed")
 		},
 	})
-	if _, err := p.TraceRoute("example.com", 3, 1*time.Second); err == nil {
+	if _, err := p.TraceRoute(context.Background(), "example.com", 3, 1*time.Second); err == nil {
 		t.Fatal("expected listen error")
 	}
 }
@@ -758,7 +759,7 @@ func TestTraceRouteListenErrorIPv6(t *testing.T) {
 			return nil, errors.New("listen failed")
 		},
 	})
-	if _, err := p.TraceRoute("example.com", 3, 1*time.Second); err == nil {
+	if _, err := p.TraceRoute(context.Background(), "example.com", 3, 1*time.Second); err == nil {
 		t.Fatal("expected listen error")
 	}
 }
@@ -773,7 +774,7 @@ func TestTraceRouteIPv4Timeouts(t *testing.T) {
 		},
 	})
 
-	hops, err := p.TraceRoute("example.com", 3, 10*time.Millisecond)
+	hops, err := p.TraceRoute(context.Background(), "example.com", 3, 10*time.Millisecond)
 	if err != nil {
 		t.Fatalf("TraceRoute: %v", err)
 	}
@@ -1847,7 +1848,7 @@ func TestRunWorkerDoneAfterReply(t *testing.T) {
 func TestDiscoverMaxPayload_NegativeMin(t *testing.T) {
 	orig := canSendPayloadFn
 	t.Cleanup(func() { canSendPayloadFn = orig })
-	canSendPayloadFn = func(p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
+	canSendPayloadFn = func(ctx context.Context, p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
 		return true, "", nil
 	}
 	p := NewPingerWithOptions(nil, Options{
@@ -1856,7 +1857,7 @@ func TestDiscoverMaxPayload_NegativeMin(t *testing.T) {
 		},
 	})
 	// min = -1 should be clamped to 0
-	got, _, err := p.DiscoverMaxPayload("example.com", 50, -1, nil)
+	got, _, err := p.DiscoverMaxPayload(context.Background(), "example.com", 50, -1, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1871,7 +1872,7 @@ func TestDiscoverMaxPayload_ResolveError(t *testing.T) {
 			return nil, errors.New("dns fail")
 		},
 	})
-	_, _, err := p.DiscoverMaxPayload("example.com", 100, 0, nil)
+	_, _, err := p.DiscoverMaxPayload(context.Background(), "example.com", 100, 0, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -1880,7 +1881,7 @@ func TestDiscoverMaxPayload_ResolveError(t *testing.T) {
 func TestDiscoverMaxPayload_LowGreaterThanStart(t *testing.T) {
 	orig := canSendPayloadFn
 	t.Cleanup(func() { canSendPayloadFn = orig })
-	canSendPayloadFn = func(p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
+	canSendPayloadFn = func(ctx context.Context, p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
 		return true, "", nil
 	}
 	p := NewPingerWithOptions(nil, Options{
@@ -1889,7 +1890,7 @@ func TestDiscoverMaxPayload_LowGreaterThanStart(t *testing.T) {
 		},
 	})
 	// min (200) > start (100): low should be clamped to start
-	got, _, err := p.DiscoverMaxPayload("example.com", 100, 200, nil)
+	got, _, err := p.DiscoverMaxPayload(context.Background(), "example.com", 100, 200, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1907,7 +1908,7 @@ func TestDiscoverMaxPayload_LogfPaths(t *testing.T) {
 	logf := func(line string) { logs = append(logs, line) }
 
 	// Alternate ok/fail with bottleneck to hit all logf branches.
-	canSendPayloadFn = func(p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
+	canSendPayloadFn = func(ctx context.Context, p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
 		if payloadLen <= 100 {
 			return true, "", nil
 		}
@@ -1919,7 +1920,7 @@ func TestDiscoverMaxPayload_LogfPaths(t *testing.T) {
 			return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
 		},
 	})
-	got, bottleneck, err := p.DiscoverMaxPayload("example.com", 200, 0, logf)
+	got, bottleneck, err := p.DiscoverMaxPayload(context.Background(), "example.com", 200, 0, logf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1966,7 +1967,7 @@ func TestDiscoverMaxPayload_LogfFailNoBottleneck(t *testing.T) {
 	logf := func(line string) { logs = append(logs, line) }
 
 	// All fail with no bottleneck IP.
-	canSendPayloadFn = func(p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
+	canSendPayloadFn = func(ctx context.Context, p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
 		return false, "", nil
 	}
 
@@ -1975,7 +1976,7 @@ func TestDiscoverMaxPayload_LogfFailNoBottleneck(t *testing.T) {
 			return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
 		},
 	})
-	_, _, err := p.DiscoverMaxPayload("example.com", 200, 0, logf)
+	_, _, err := p.DiscoverMaxPayload(context.Background(), "example.com", 200, 0, logf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2153,10 +2154,13 @@ func TestBroadcastTrace_FullChannel(t *testing.T) {
 	ch <- traceMsg{parsed: &icmp.Message{}}
 
 	p.traceChansMu.Lock()
-	p.traceChans = append(p.traceChans, ch)
+	p.traceChans[0] = ch
 	p.traceChansMu.Unlock()
 
-	msg := &icmp.Message{Type: ipv4.ICMPTypeEchoReply}
+	msg := &icmp.Message{
+		Type: ipv4.ICMPTypeEchoReply,
+		Body: &icmp.Echo{ID: 0},
+	}
 	// Should not block even though ch is full.
 	p.broadcastTrace(msg, &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)})
 
@@ -2223,7 +2227,7 @@ func TestTraceRouteWithTraceCh(t *testing.T) {
 
 	// Run TraceRoute with 1 hop and a very short timeout.
 	// We expect a single "*" because no message is pumped into traceCh.
-	hops, err := p.TraceRoute("example.com", 1, 20*time.Millisecond)
+	hops, err := p.TraceRoute(context.Background(), "example.com", 1, 20*time.Millisecond)
 	if err != nil {
 		t.Fatalf("TraceRoute error: %v", err)
 	}
@@ -2250,7 +2254,7 @@ func TestTraceRouteWithTraceCh_TimeExceeded(t *testing.T) {
 	// pumping the right traceMsg after the ch is registered.
 	done := make(chan []string, 1)
 	go func() {
-		hops, _ := p.TraceRoute("example.com", 2, 200*time.Millisecond)
+		hops, _ := p.TraceRoute(context.Background(), "example.com", 2, 200*time.Millisecond)
 		done <- hops
 	}()
 
@@ -2259,7 +2263,10 @@ func TestTraceRouteWithTraceCh_TimeExceeded(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		p.traceChansMu.RLock()
 		if len(p.traceChans) > 0 {
-			ch = p.traceChans[0]
+			for _, val := range p.traceChans {
+				ch = val
+				break
+			}
 			p.traceChansMu.RUnlock()
 			break
 		}
@@ -2311,7 +2318,7 @@ func TestTraceRouteIPv4ReachedDest(t *testing.T) {
 	})
 	// connV4 is nil so traceCh = nil — uses the fallback (read from send socket).
 
-	hops, err := p.TraceRoute("example.com", 5, 200*time.Millisecond)
+	hops, err := p.TraceRoute(context.Background(), "example.com", 5, 200*time.Millisecond)
 	if err != nil {
 		t.Fatalf("TraceRoute error: %v", err)
 	}
@@ -2345,7 +2352,7 @@ func TestTraceRouteIPv4UnreachableFallback(t *testing.T) {
 		},
 	})
 
-	hops, err := p.TraceRoute("example.com", 2, 50*time.Millisecond)
+	hops, err := p.TraceRoute(context.Background(), "example.com", 2, 50*time.Millisecond)
 	if err != nil {
 		t.Fatalf("TraceRoute error: %v", err)
 	}
@@ -2366,7 +2373,7 @@ func TestTraceRouteIPv4WithSource(t *testing.T) {
 	})
 	p.Source = "10.0.0.1" // exercises the `if p.Source != ""` bindAddr branch
 
-	hops, err := p.TraceRoute("example.com", 1, 10*time.Millisecond)
+	hops, err := p.TraceRoute(context.Background(), "example.com", 1, 10*time.Millisecond)
 	if err != nil {
 		t.Fatalf("TraceRoute error: %v", err)
 	}
@@ -2387,7 +2394,7 @@ func TestTraceRouteIPv6WithSource(t *testing.T) {
 	})
 	p.Source = "2001:db8::2" // exercises the IPv6 Source bind path
 
-	hops, err := p.TraceRoute("example.com", 1, 10*time.Millisecond)
+	hops, err := p.TraceRoute(context.Background(), "example.com", 1, 10*time.Millisecond)
 	if err != nil {
 		t.Fatalf("TraceRoute error: %v", err)
 	}
@@ -2416,7 +2423,7 @@ func TestTraceRouteIPv4TimeExceededFallback(t *testing.T) {
 		},
 	})
 
-	hops, err := p.TraceRoute("example.com", 2, 50*time.Millisecond)
+	hops, err := p.TraceRoute(context.Background(), "example.com", 2, 50*time.Millisecond)
 	if err != nil {
 		t.Fatalf("TraceRoute error: %v", err)
 	}
@@ -2443,7 +2450,7 @@ func TestTraceRouteIPv6Fallback(t *testing.T) {
 	})
 	// connV6 is nil, so traceCh = nil.
 
-	hops, err := p.TraceRoute("example.com", 1, 20*time.Millisecond)
+	hops, err := p.TraceRoute(context.Background(), "example.com", 1, 20*time.Millisecond)
 	if err != nil {
 		t.Fatalf("TraceRoute error: %v", err)
 	}

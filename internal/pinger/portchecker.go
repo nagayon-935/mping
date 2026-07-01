@@ -1,6 +1,7 @@
 package pinger
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -51,7 +52,8 @@ type PortChecker struct {
 	results  [][]*stats.PortCheckResult
 	interval time.Duration
 	timeout  time.Duration
-	done     chan struct{}
+	ctx      context.Context
+	cancel   context.CancelFunc
 	stopOnce sync.Once
 }
 
@@ -65,13 +67,15 @@ func NewPortChecker(targets []*stats.TargetStats, specs []PortSpec, interval, ti
 		}
 		t.SetPortResults(results[i])
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	return &PortChecker{
 		targets:  targets,
 		specs:    specs,
 		results:  results,
 		interval: interval,
 		timeout:  timeout,
-		done:     make(chan struct{}),
+		ctx:      ctx,
+		cancel:   cancel,
 	}
 }
 
@@ -87,7 +91,7 @@ func (pc *PortChecker) Start() {
 
 // Stop signals all goroutines to exit. Safe to call multiple times.
 func (pc *PortChecker) Stop() {
-	pc.stopOnce.Do(func() { close(pc.done) })
+	pc.stopOnce.Do(func() { pc.cancel() })
 }
 
 func (pc *PortChecker) loop(t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
@@ -96,7 +100,7 @@ func (pc *PortChecker) loop(t *stats.TargetStats, spec PortSpec, result *stats.P
 	defer ticker.Stop()
 	for {
 		select {
-		case <-pc.done:
+		case <-pc.ctx.Done():
 			return
 		case <-ticker.C:
 			pc.check(t, spec, result)
@@ -115,19 +119,20 @@ func (pc *PortChecker) check(t *stats.TargetStats, spec PortSpec, result *stats.
 	var rtt time.Duration
 	switch spec.Protocol {
 	case "tcp":
-		status, rtt = checkTCP(addr, pc.timeout)
+		status, rtt = checkTCP(pc.ctx, addr, pc.timeout)
 	case "udp":
-		status, rtt = checkUDP(addr, pc.timeout)
+		status, rtt = checkUDP(pc.ctx, addr, pc.timeout)
 	}
 	result.SetResult(status, rtt)
 }
 
-func checkTCP(addr string, timeout time.Duration) (string, time.Duration) {
+func checkTCP(ctx context.Context, addr string, timeout time.Duration) (string, time.Duration) {
 	start := time.Now()
-	conn, err := net.DialTimeout("tcp", addr, timeout)
+	dialer := &net.Dialer{Timeout: timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	rtt := time.Since(start)
 	if err != nil {
-		if isTimeout(err) {
+		if isTimeout(err) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return "Filtered", rtt
 		}
 		return "Closed", rtt
@@ -136,12 +141,23 @@ func checkTCP(addr string, timeout time.Duration) (string, time.Duration) {
 	return "Open", rtt
 }
 
-func checkUDP(addr string, timeout time.Duration) (string, time.Duration) {
-	conn, err := net.DialTimeout("udp", addr, timeout)
+func checkUDP(ctx context.Context, addr string, timeout time.Duration) (string, time.Duration) {
+	dialer := &net.Dialer{Timeout: timeout}
+	conn, err := dialer.DialContext(ctx, "udp", addr)
 	if err != nil {
 		return "Error", 0
 	}
 	defer conn.Close()
+
+	doneChan := make(chan struct{})
+	defer close(doneChan)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-doneChan:
+		}
+	}()
 
 	start := time.Now()
 	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {

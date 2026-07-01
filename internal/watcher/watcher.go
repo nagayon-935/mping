@@ -48,12 +48,19 @@ func Watch(ctx context.Context, path string, onChange func()) error {
 		return fmt.Errorf("watch directory %q: %w", dir, err)
 	}
 
-	// Start timer in stopped state; it is armed only after the first event.
-	timer := time.NewTimer(debounceDelay)
-	timer.Stop()
-	defer timer.Stop()
+	var timer *time.Timer
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
 
 	for {
+		var timerChan <-chan time.Time
+		if timer != nil {
+			timerChan = timer.C
+		}
+
 		select {
 		case <-ctx.Done():
 			return nil
@@ -67,14 +74,17 @@ func Watch(ctx context.Context, path string, onChange func()) error {
 				continue
 			}
 			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
-				// Drain a pending timer tick before resetting to avoid double-fire.
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
+				if timer == nil {
+					timer = time.NewTimer(debounceDelay)
+				} else {
+					if !timer.Stop() {
+						select {
+						case <-timer.C:
+						default:
+						}
 					}
+					timer.Reset(debounceDelay)
 				}
-				timer.Reset(debounceDelay)
 			}
 
 		case err, ok := <-w.Errors:
@@ -86,7 +96,8 @@ func Watch(ctx context.Context, path string, onChange func()) error {
 			// auto-reload silently broken.
 			return fmt.Errorf("fsnotify: %w", err)
 
-		case <-timer.C:
+		case <-timerChan:
+			timer = nil
 			onChange()
 		}
 	}
