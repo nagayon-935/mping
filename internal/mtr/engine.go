@@ -222,6 +222,10 @@ func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.
 		hopCount = firstReachedTTL
 	}
 
+	// Drop any trailing hops from a previously longer path so the UI doesn't
+	// keep rendering frozen IP/RTT data for hops that no longer exist.
+	mtr.TruncateLen(hopCount)
+
 	// Register hops only up to the discovered hopCount to avoid leaking outer hops
 	for _, res := range results {
 		if res.ttl <= hopCount {

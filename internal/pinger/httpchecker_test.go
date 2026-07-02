@@ -111,6 +111,7 @@ func TestHTTPChecker_StopPreventsFurtherChecks(t *testing.T) {
 	hc.Start()
 	time.Sleep(120 * time.Millisecond)
 	hc.Stop()
+	hc.Wait() // once this returns, the loop goroutine cannot make further requests
 
 	mu.Lock()
 	countAtStop := callCount
@@ -120,7 +121,39 @@ func TestHTTPChecker_StopPreventsFurtherChecks(t *testing.T) {
 	final := callCount
 	mu.Unlock()
 	if final != countAtStop {
-		t.Errorf("callCount changed after Stop: %d → %d", countAtStop, final)
+		t.Errorf("callCount changed after Stop+Wait: %d → %d (loop goroutine outlived Wait)", countAtStop, final)
+	}
+}
+
+// TestHTTPChecker_Wait verifies that Wait() actually joins the per-URL loop
+// goroutines spawned by Start(), rather than just cancelling their context.
+func TestHTTPChecker_Wait(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	hc := NewHTTPChecker([]string{srv.URL}, 5*time.Millisecond, 5*time.Second)
+	hc.Start()
+	time.Sleep(20 * time.Millisecond) // let the loop run at least once
+	hc.Stop()
+
+	done := make(chan struct{})
+	go func() {
+		hc.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait() did not return within timeout after Stop()")
+	}
+
+	before := hc.Results()[0].GetView().UpCount
+	time.Sleep(50 * time.Millisecond)
+	after := hc.Results()[0].GetView().UpCount
+	if before != after {
+		t.Errorf("UpCount changed after Wait() returned: %d -> %d (loop goroutine outlived Wait)", before, after)
 	}
 }
 

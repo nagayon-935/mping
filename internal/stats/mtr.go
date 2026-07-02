@@ -67,6 +67,21 @@ func (m *MTRStats) EnsureLen(n int) {
 	}
 }
 
+// TruncateLen shrinks the hop slice to n entries if it is currently longer,
+// discarding stale trailing hops. Used after a rediscovery finds a shorter
+// path so the UI stops rendering frozen data for hops that no longer exist.
+// This is a no-op when len <= n.
+func (m *MTRStats) TruncateLen(n int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if n < 0 {
+		n = 0
+	}
+	if len(m.hops) > n {
+		m.hops = m.hops[:n]
+	}
+}
+
 // RecordReply records a successful probe response for the hop at ttl.
 // ttl is 1-based.
 func (m *MTRStats) RecordReply(ttl int, ip, asn, country, org string, rtt time.Duration) {

@@ -29,6 +29,13 @@ type fakePinger struct {
 	discoverErr          error
 	traceErr             error
 	logWriterSet         bool
+
+	// blockTraceUntilCtxDone, when set, makes TraceRoute block on ctx.Done()
+	// (simulating a slow/in-flight network trace) instead of returning
+	// immediately. traceRouteReturned, if non-nil, is closed right before
+	// TraceRoute returns, letting a test observe when it actually exited.
+	blockTraceUntilCtxDone bool
+	traceRouteReturned     chan struct{}
 }
 
 func (f *fakePinger) Start(interval, timeout time.Duration) error {
@@ -58,6 +65,13 @@ func (f *fakePinger) DiscoverMaxPayload(ctx context.Context, dest string, start 
 }
 
 func (f *fakePinger) TraceRoute(ctx context.Context, dest string, maxHops int, timeout time.Duration) ([]string, error) {
+	if f.blockTraceUntilCtxDone {
+		<-ctx.Done()
+		if f.traceRouteReturned != nil {
+			close(f.traceRouteReturned)
+		}
+		return nil, ctx.Err()
+	}
 	if f.traceErr != nil {
 		return nil, f.traceErr
 	}
@@ -273,6 +287,39 @@ func TestRunStopRestart(t *testing.T) {
 	}
 	if !fp.started || !fp.closed || !fp.waited {
 		t.Fatalf("expected pinger lifecycle, started=%v closed=%v waited=%v", fp.started, fp.closed, fp.waited)
+	}
+}
+
+// TestRunStop_JoinsTracerouteGoroutine verifies that OnStop (stopAll ->
+// stopPinger) actually waits for the background runTraceroutes goroutine to
+// exit rather than just cancelling its context and returning immediately.
+func TestRunStop_JoinsTracerouteGoroutine(t *testing.T) {
+	origPinger := newPinger
+	origUI := uiRun
+	t.Cleanup(func() {
+		newPinger = origPinger
+		uiRun = origUI
+	})
+
+	returned := make(chan struct{})
+	fp := &fakePinger{blockTraceUntilCtxDone: true, traceRouteReturned: returned}
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		return fp
+	}
+	uiRun = func(opts ui.RunOptions) error {
+		opts.OnStop()
+		select {
+		case <-returned:
+		default:
+			t.Error("OnStop() returned before the in-flight traceroute goroutine exited")
+		}
+		return nil
+	}
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"-T", "-S", "127.0.0.1", "example.com"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
 	}
 }
 
@@ -777,6 +824,81 @@ func TestRunResetPort(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	code := run([]string{"-p", "80/tcp", "-S", "127.0.0.1", "example.com"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
+	}
+}
+
+func TestRunWithHTTP(t *testing.T) {
+	origPinger := newPinger
+	origUI := uiRun
+	t.Cleanup(func() {
+		newPinger = origPinger
+		uiRun = origUI
+	})
+	fp := &fakePinger{}
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		return fp
+	}
+	uiRun = func(opts ui.RunOptions) error {
+		return nil
+	}
+	var out, errOut bytes.Buffer
+	code := run([]string{"-H", "http://127.0.0.1:1", "-S", "127.0.0.1", "example.com"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
+	}
+}
+
+// TestRunResetHTTP verifies that the onResetHTTP callback passed to uiRun is non-nil when
+// HTTP URLs are provided, and that calling it stops (joining the checker's goroutines via
+// Wait, per the fix in httpchecker.go) and swaps in a fresh HTTPChecker whose results are
+// reachable through the live HTTPResults accessor.
+func TestRunResetHTTP(t *testing.T) {
+	origPinger := newPinger
+	origUI := uiRun
+	t.Cleanup(func() {
+		newPinger = origPinger
+		uiRun = origUI
+	})
+
+	fp := &fakePinger{}
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		return fp
+	}
+
+	uiRun = func(opts ui.RunOptions) error {
+		if !opts.HTTPEnabled {
+			t.Error("HTTPEnabled should be true when HTTP URLs given")
+			return nil
+		}
+		if opts.OnResetHTTP == nil {
+			t.Error("OnResetHTTP must not be nil when HTTP URLs are provided")
+			return nil
+		}
+		if opts.HTTPResults == nil {
+			t.Error("HTTPResults must not be nil when HTTP URLs are provided")
+			return nil
+		}
+		before := opts.HTTPResults()
+		if len(before) != 1 {
+			t.Fatalf("HTTPResults before reset: got %d entries, want 1", len(before))
+		}
+		// Calling it must not panic, and must join the old checker's goroutines
+		// before swapping in a new one.
+		opts.OnResetHTTP()
+		after := opts.HTTPResults()
+		if len(after) != 1 {
+			t.Fatalf("HTTPResults after reset: got %d entries, want 1", len(after))
+		}
+		if before[0] == after[0] {
+			t.Error("OnResetHTTP should swap in a new HTTPCheckResult, not reuse the old one")
+		}
+		return nil
+	}
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"-H", "http://127.0.0.1:1", "-S", "127.0.0.1", "example.com"}, &out, &errOut)
 	if code != 0 {
 		t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
 	}

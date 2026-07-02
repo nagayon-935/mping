@@ -109,6 +109,48 @@ func TestMTRStats_EnsureLenShrinks(t *testing.T) {
 	}
 }
 
+func TestMTRStats_TruncateLenShrinks(t *testing.T) {
+	m := NewMTRStats()
+	m.EnsureLen(5)
+	m.RecordReply(1, "10.0.0.1", "", "", "", 10*time.Millisecond)
+	m.RecordReply(5, "10.0.0.5", "", "", "", 50*time.Millisecond)
+
+	m.TruncateLen(2)
+	hops := m.View()
+	if len(hops) != 2 {
+		t.Fatalf("want 2 hops after truncate, got %d", len(hops))
+	}
+	if hops[0].IP != "10.0.0.1" {
+		t.Errorf("hop 0 IP lost after truncate: got %q", hops[0].IP)
+	}
+}
+
+func TestMTRStats_TruncateLenNoOpWhenNotShorter(t *testing.T) {
+	m := NewMTRStats()
+	m.EnsureLen(3)
+	m.RecordReply(3, "10.0.0.3", "", "", "", 10*time.Millisecond)
+
+	m.TruncateLen(5) // n > current length: no-op
+	if hops := m.View(); len(hops) != 3 {
+		t.Errorf("TruncateLen(5) on len-3 slice should be a no-op; want 3, got %d", len(hops))
+	}
+
+	m.TruncateLen(3) // n == current length: no-op
+	if hops := m.View(); len(hops) != 3 {
+		t.Errorf("TruncateLen(3) on len-3 slice should be a no-op; want 3, got %d", len(hops))
+	}
+}
+
+func TestMTRStats_TruncateLenToZero(t *testing.T) {
+	m := NewMTRStats()
+	m.EnsureLen(3)
+
+	m.TruncateLen(0)
+	if hops := m.View(); len(hops) != 0 {
+		t.Errorf("TruncateLen(0) want 0 hops, got %d", len(hops))
+	}
+}
+
 func TestMTRStats_SetIP(t *testing.T) {
 	m := NewMTRStats()
 	m.EnsureLen(1)

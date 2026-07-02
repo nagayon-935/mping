@@ -125,7 +125,7 @@ func TestNewPortChecker_EmptySpecsAndTargets(t *testing.T) {
 	}
 }
 
-// ---- PortChecker.Stop test ----
+// ---- PortChecker.Stop/Wait tests ----
 
 func TestPortChecker_StartStop(t *testing.T) {
 	targets := []*stats.TargetStats{stats.NewTargetStats("host1")}
@@ -143,6 +143,56 @@ func TestPortChecker_StartStop(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Stop() did not return within timeout")
+	}
+}
+
+// TestPortChecker_Wait verifies that Wait() actually joins every per-(target,spec)
+// loop goroutine spawned by Start(), rather than just cancelling their context.
+func TestPortChecker_Wait(t *testing.T) {
+	targets := []*stats.TargetStats{
+		stats.NewTargetStats("host1"),
+		stats.NewTargetStats("host2"),
+	}
+	for _, tgt := range targets {
+		tgt.SetIP("127.0.0.1") // give check() a real address to dial, so loops do actual work
+	}
+	specs := []PortSpec{{Port: 9, Protocol: "tcp"}, {Port: 10, Protocol: "udp"}}
+	pc := NewPortChecker(targets, specs, 5*time.Millisecond, 10*time.Millisecond)
+
+	pc.Start()
+	time.Sleep(20 * time.Millisecond) // let loops run at least once
+	pc.Stop()
+
+	done := make(chan struct{})
+	go func() {
+		pc.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait() did not return within timeout after Stop()")
+	}
+
+	// Once Wait() has returned, no loop goroutine can still be running, so
+	// results must stop changing.
+	snapshot := func() []string {
+		out := make([]string, 0, len(targets)*len(specs))
+		for _, tgt := range targets {
+			for _, r := range tgt.PortResults {
+				status, _, _, _, _ := r.GetResult()
+				out = append(out, status)
+			}
+		}
+		return out
+	}
+	before := snapshot()
+	time.Sleep(50 * time.Millisecond)
+	after := snapshot()
+	for i := range before {
+		if before[i] != after[i] {
+			t.Errorf("result[%d] changed after Wait() returned: %q -> %q (a loop goroutine outlived Wait)", i, before[i], after[i])
+		}
 	}
 }
 

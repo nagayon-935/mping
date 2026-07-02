@@ -703,7 +703,9 @@ func parseHostsFile(path string) (hostsFileYAML, error) {
 	}
 
 	var doc hostsFileYAML
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true) // reject typos/unknown keys instead of silently dropping them
+	if err := dec.Decode(&doc); err != nil && err != io.EOF {
 		return hostsFileYAML{}, fmt.Errorf("parse hosts file %q: %w", path, err)
 	}
 	return doc, nil
@@ -952,13 +954,35 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		var (
 			pMu         sync.Mutex
 			p           pingerController
-			traceCtx    context.Context
 			traceCancel context.CancelFunc
+			traceDone   chan struct{} // closed when the current runTraceroutes goroutine returns
 			portChecker *pinger.PortChecker
 			httpChecker *pinger.HTTPChecker
 			mtrEngine   *mtr.Engine
 			logCh       chan string // route flap and watcher log messages → TUI Log pane
 		)
+
+		// startTraceroutes cancels any previous traceroute goroutine, launches a
+		// new one, and tracks it via traceDone so stopPinger can join it on
+		// shutdown instead of leaving it to be reaped by process exit.
+		// Caller must hold pMu.
+		startTraceroutes := func(pr tracer) {
+			if traceCancel != nil {
+				traceCancel()
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			traceCancel = cancel
+			done := make(chan struct{})
+			traceDone = done
+			// Pass the local ctx rather than storing it in a shared field: a
+			// concurrent resetTrace()/startPinger() call would reassign a
+			// shared field under pMu, racing with this goroutine reading it
+			// later. ctx here is only ever touched by this one goroutine.
+			go func() {
+				defer close(done)
+				runTraceroutes(ctx, pr, targets)
+			}()
+		}
 
 		// onFlap is the shared callback for MTR route-flap events.
 		// logCh must be initialised before startPinger() is called.
@@ -977,11 +1001,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			}
 			pMu.Lock()
 			if currentCfg.trace {
-				if traceCancel != nil {
-					traceCancel()
-				}
-				traceCtx, traceCancel = context.WithCancel(context.Background())
-				go runTraceroutes(traceCtx, next, targets)
+				startTraceroutes(next)
 			}
 			if currentCfg.mtr {
 				if mtrEngine != nil {
@@ -1007,9 +1027,13 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			if traceCancel != nil {
 				traceCancel()
 			}
+			curTraceDone := traceDone
 			curEngine := mtrEngine
 			cur := p
 			pMu.Unlock()
+			if curTraceDone != nil {
+				<-curTraceDone
+			}
 			if curEngine != nil {
 				curEngine.Stop()
 			}
@@ -1056,11 +1080,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		resetTrace := func() {
 			pMu.Lock()
 			cur := p
-			if traceCancel != nil {
-				traceCancel()
-			}
-			traceCtx, traceCancel = context.WithCancel(context.Background())
-			go runTraceroutes(traceCtx, cur, targets)
+			startTraceroutes(cur)
 			pMu.Unlock()
 		}
 

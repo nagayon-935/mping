@@ -359,6 +359,52 @@ func TestEngine_OnFlap_CalledOnRouteChange(t *testing.T) {
 	}
 }
 
+// TestEngine_RediscoverShortensPath_DropsStaleHops verifies that when a
+// rediscovery finds a shorter path than before, the trailing hops from the
+// old (longer) path are dropped rather than left frozen in MTRStats forever.
+func TestEngine_RediscoverShortensPath_DropsStaleHops(t *testing.T) {
+	target := stats.NewTargetStats("8.8.8.8")
+	target.SetIP("8.8.8.8")
+
+	prober := newSwitchingProber(map[int]pinger.HopReply{
+		1: {SrcIP: "10.0.0.1", Responded: true, ReachedDest: false},
+		2: {SrcIP: "8.8.8.8", Responded: true, ReachedDest: true},
+	})
+
+	cfg := Config{
+		ProbeInterval:   10 * time.Millisecond,
+		HopTimeout:      20 * time.Millisecond,
+		RediscoverEvery: 30 * time.Millisecond, // very short for test
+		MaxHops:         5,
+	}
+	eng := NewEngine(prober, []*stats.TargetStats{target}, cfg)
+	eng.Start()
+
+	// Wait for the initial 2-hop discovery.
+	waitForHops(t, target, 2, 500*time.Millisecond)
+
+	// Shorten the path: destination now reachable in a single hop.
+	prober.setReplies(map[int]pinger.HopReply{
+		1: {SrcIP: "8.8.8.8", Responded: true, ReachedDest: true},
+	})
+
+	// Wait for a rediscover cycle to pick up the shorter path.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) && len(target.MTR().View()) != 1 {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	eng.Stop()
+
+	hops := target.MTR().View()
+	if len(hops) != 1 {
+		t.Fatalf("want 1 hop after path shortened, got %d (stale trailing hops not dropped)", len(hops))
+	}
+	if hops[0].IP != "8.8.8.8" {
+		t.Errorf("hop1 IP: want 8.8.8.8, got %q", hops[0].IP)
+	}
+}
+
 func TestEngine_OnFlap_NotCalledOnSameRoute(t *testing.T) {
 	target := stats.NewTargetStats("1.1.1.1")
 	target.SetIP("1.1.1.1")
