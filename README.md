@@ -38,16 +38,16 @@
 
 ## Installation
 
-### Option 1 — Pre-built binary (recommended)
+### Pre-built binary (recommended)
 
 Download the archive for your platform from the [Releases](https://github.com/nagayon-935/mping/releases) page and run the bundled `install.sh`.
 
 #### Linux (amd64)
 
 ```bash
-# Download and extract (replace vX.Y.Z with the latest version)
-curl -LO https://github.com/nagayon-935/mping/releases/download/vX.Y.Z/mping-vX.Y.Z-linux-amd64.tar.gz
-tar -xzf mping-vX.Y.Z-linux-amd64.tar.gz
+# Download and extract (v0.4.5 shown; check the Releases page for the latest version)
+curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-linux-amd64.tar.gz
+tar -xzf mping-v0.4.5-linux-amd64.tar.gz
 
 # Install (grants CAP_NET_RAW via setcap; falls back to setuid if setcap is unavailable)
 sudo ./install.sh
@@ -56,24 +56,24 @@ sudo ./install.sh
 #### Linux (arm64 — e.g. Raspberry Pi, AWS Graviton)
 
 ```bash
-curl -LO https://github.com/nagayon-935/mping/releases/download/vX.Y.Z/mping-vX.Y.Z-linux-arm64.tar.gz
-tar -xzf mping-vX.Y.Z-linux-arm64.tar.gz
+curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-linux-arm64.tar.gz
+tar -xzf mping-v0.4.5-linux-arm64.tar.gz
 sudo ./install.sh
 ```
 
 #### macOS (Intel)
 
 ```bash
-curl -LO https://github.com/nagayon-935/mping/releases/download/vX.Y.Z/mping-vX.Y.Z-darwin-amd64.tar.gz
-tar -xzf mping-vX.Y.Z-darwin-amd64.tar.gz
+curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-darwin-amd64.tar.gz
+tar -xzf mping-v0.4.5-darwin-amd64.tar.gz
 sudo ./install.sh
 ```
 
 #### macOS (Apple Silicon)
 
 ```bash
-curl -LO https://github.com/nagayon-935/mping/releases/download/vX.Y.Z/mping-vX.Y.Z-darwin-arm64.tar.gz
-tar -xzf mping-vX.Y.Z-darwin-arm64.tar.gz
+curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-darwin-arm64.tar.gz
+tar -xzf mping-v0.4.5-darwin-arm64.tar.gz
 sudo ./install.sh
 ```
 
@@ -96,7 +96,7 @@ mping google.com 1.1.1.1
 
 ---
 
-### Option 2 — Build from source
+### Build from source
 
 **Requirements:** Go 1.25 or later
 

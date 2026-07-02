@@ -38,16 +38,16 @@
 
 ## インストール
 
-### オプション 1 — リリース済みバイナリ (推奨)
+### リリース済みバイナリ (推奨)
 
 [Releases](https://github.com/nagayon-935/mping/releases) ページから対応プラットフォームのアーカイブをダウンロードして展開し、同梱の `install.sh` を実行します。
 
 #### Linux (amd64)
 
 ```bash
-# ダウンロードと展開 (vX.Y.Z は最新バージョンに置き換えてください)
-curl -LO https://github.com/nagayon-935/mping/releases/download/vX.Y.Z/mping-vX.Y.Z-linux-amd64.tar.gz
-tar -xzf mping-vX.Y.Z-linux-amd64.tar.gz
+# ダウンロードと展開 (v0.4.5 は例です。最新バージョンは Releases ページで確認してください)
+curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-linux-amd64.tar.gz
+tar -xzf mping-v0.4.5-linux-amd64.tar.gz
 
 # インストール (setcap で CAP_NET_RAW を付与。setcap が無い場合は setuid にフォールバック)
 sudo ./install.sh
@@ -56,24 +56,24 @@ sudo ./install.sh
 #### Linux (arm64 — Raspberry Pi, AWS Graviton など)
 
 ```bash
-curl -LO https://github.com/nagayon-935/mping/releases/download/vX.Y.Z/mping-vX.Y.Z-linux-arm64.tar.gz
-tar -xzf mping-vX.Y.Z-linux-arm64.tar.gz
+curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-linux-arm64.tar.gz
+tar -xzf mping-v0.4.5-linux-arm64.tar.gz
 sudo ./install.sh
 ```
 
 #### macOS (Intel)
 
 ```bash
-curl -LO https://github.com/nagayon-935/mping/releases/download/vX.Y.Z/mping-vX.Y.Z-darwin-amd64.tar.gz
-tar -xzf mping-vX.Y.Z-darwin-amd64.tar.gz
+curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-darwin-amd64.tar.gz
+tar -xzf mping-v0.4.5-darwin-amd64.tar.gz
 sudo ./install.sh
 ```
 
 #### macOS (Apple Silicon)
 
 ```bash
-curl -LO https://github.com/nagayon-935/mping/releases/download/vX.Y.Z/mping-vX.Y.Z-darwin-arm64.tar.gz
-tar -xzf mping-vX.Y.Z-darwin-arm64.tar.gz
+curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-darwin-arm64.tar.gz
+tar -xzf mping-v0.4.5-darwin-arm64.tar.gz
 sudo ./install.sh
 ```
 
@@ -96,7 +96,7 @@ mping google.com 1.1.1.1
 
 ---
 
-### オプション 2 — ソースコードからビルド
+### ソースコードからビルド
 
 **必須要件:** Go 1.25 以上
 
