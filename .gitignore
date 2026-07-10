@@ -40,3 +40,6 @@ mping
 
 # Claude Code local configuration
 CLAUDE.md
+
+# Local-only refactoring/planning notes (kept locally, not pushed)
+/docs/
