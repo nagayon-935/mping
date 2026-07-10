@@ -1326,16 +1326,16 @@ func TestParseArgs_ThresholdDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseArgs: %v", err)
 	}
-	if cfg.rttWarnMs != 50 || cfg.rttCritMs != 200 {
-		t.Errorf("rtt defaults: got warn=%d crit=%d, want 50/200", cfg.rttWarnMs, cfg.rttCritMs)
+	if cfg.thresholds.RTTWarn != 50*time.Millisecond || cfg.thresholds.RTTCrit != 200*time.Millisecond {
+		t.Errorf("rtt defaults: got warn=%v crit=%v, want 50ms/200ms", cfg.thresholds.RTTWarn, cfg.thresholds.RTTCrit)
 	}
-	if cfg.jitterWarnMs != 10 || cfg.jitterCritMs != 50 {
-		t.Errorf("jitter defaults: got warn=%d crit=%d, want 10/50", cfg.jitterWarnMs, cfg.jitterCritMs)
+	if cfg.thresholds.JitterWarn != 10*time.Millisecond || cfg.thresholds.JitterCrit != 50*time.Millisecond {
+		t.Errorf("jitter defaults: got warn=%v crit=%v, want 10ms/50ms", cfg.thresholds.JitterWarn, cfg.thresholds.JitterCrit)
 	}
-	if cfg.lossWarnPct != 20 || cfg.lossCritPct != 80 {
-		t.Errorf("loss defaults: got warn=%g crit=%g, want 20/80", cfg.lossWarnPct, cfg.lossCritPct)
+	if cfg.thresholds.LossWarn != 20 || cfg.thresholds.LossCrit != 80 {
+		t.Errorf("loss defaults: got warn=%g crit=%g, want 20/80", cfg.thresholds.LossWarn, cfg.thresholds.LossCrit)
 	}
-	if err := thresholdsFromCfg(cfg).Validate(); err != nil {
+	if err := cfg.thresholds.Validate(); err != nil {
 		t.Errorf("default thresholds should validate: %v", err)
 	}
 }
@@ -1350,7 +1350,7 @@ func TestParseArgs_ThresholdFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseArgs: %v", err)
 	}
-	th := thresholdsFromCfg(cfg)
+	th := cfg.thresholds
 	if th.RTTWarn != 30*time.Millisecond || th.RTTCrit != 100*time.Millisecond {
 		t.Errorf("rtt: got %v/%v, want 30ms/100ms", th.RTTWarn, th.RTTCrit)
 	}
@@ -1362,7 +1362,7 @@ func TestParseArgs_ThresholdFlags(t *testing.T) {
 	}
 }
 
-func TestApplyThresholdsDoc_YAMLApplied(t *testing.T) {
+func TestOverlayThresholdsDoc_YAMLApplied(t *testing.T) {
 	// No threshold flags set → YAML values apply.
 	cfg, _, fs, _, err := parseArgs([]string{"example.com"})
 	if err != nil {
@@ -1370,37 +1370,37 @@ func TestApplyThresholdsDoc_YAMLApplied(t *testing.T) {
 	}
 	mi := func(v int) *int { return &v }
 	mf := func(v float64) *float64 { return &v }
-	applyThresholdsDoc(&cfg, fs, &thresholdsYAML{
+	cfg.thresholds = overlayThresholdsDoc(cfg.thresholds, fs, &thresholdsYAML{
 		RTTWarn: mi(25), RTTCrit: mi(90),
 		LossWarn: mf(15), LossCrit: mf(60),
 	})
-	if cfg.rttWarnMs != 25 || cfg.rttCritMs != 90 {
-		t.Errorf("rtt from YAML: got %d/%d, want 25/90", cfg.rttWarnMs, cfg.rttCritMs)
+	if cfg.thresholds.RTTWarn != 25*time.Millisecond || cfg.thresholds.RTTCrit != 90*time.Millisecond {
+		t.Errorf("rtt from YAML: got %v/%v, want 25ms/90ms", cfg.thresholds.RTTWarn, cfg.thresholds.RTTCrit)
 	}
-	if cfg.lossWarnPct != 15 || cfg.lossCritPct != 60 {
-		t.Errorf("loss from YAML: got %g/%g, want 15/60", cfg.lossWarnPct, cfg.lossCritPct)
+	if cfg.thresholds.LossWarn != 15 || cfg.thresholds.LossCrit != 60 {
+		t.Errorf("loss from YAML: got %g/%g, want 15/60", cfg.thresholds.LossWarn, cfg.thresholds.LossCrit)
 	}
 	// Untouched fields keep flag defaults.
-	if cfg.jitterWarnMs != 10 || cfg.jitterCritMs != 50 {
-		t.Errorf("jitter should keep defaults: got %d/%d", cfg.jitterWarnMs, cfg.jitterCritMs)
+	if cfg.thresholds.JitterWarn != 10*time.Millisecond || cfg.thresholds.JitterCrit != 50*time.Millisecond {
+		t.Errorf("jitter should keep defaults: got %v/%v", cfg.thresholds.JitterWarn, cfg.thresholds.JitterCrit)
 	}
 }
 
-func TestApplyThresholdsDoc_FlagOverridesYAML(t *testing.T) {
+func TestOverlayThresholdsDoc_FlagOverridesYAML(t *testing.T) {
 	// rtt-warn set on CLI → YAML rtt-warn ignored, others apply.
 	cfg, _, fs, _, err := parseArgs([]string{"--rtt-warn", "40", "example.com"})
 	if err != nil {
 		t.Fatalf("parseArgs: %v", err)
 	}
 	mi := func(v int) *int { return &v }
-	applyThresholdsDoc(&cfg, fs, &thresholdsYAML{
+	cfg.thresholds = overlayThresholdsDoc(cfg.thresholds, fs, &thresholdsYAML{
 		RTTWarn: mi(25), RTTCrit: mi(90),
 	})
-	if cfg.rttWarnMs != 40 {
-		t.Errorf("CLI rtt-warn should win: got %d, want 40", cfg.rttWarnMs)
+	if cfg.thresholds.RTTWarn != 40*time.Millisecond {
+		t.Errorf("CLI rtt-warn should win: got %v, want 40ms", cfg.thresholds.RTTWarn)
 	}
-	if cfg.rttCritMs != 90 {
-		t.Errorf("YAML rtt-crit should apply: got %d, want 90", cfg.rttCritMs)
+	if cfg.thresholds.RTTCrit != 90*time.Millisecond {
+		t.Errorf("YAML rtt-crit should apply: got %v, want 90ms", cfg.thresholds.RTTCrit)
 	}
 }
 

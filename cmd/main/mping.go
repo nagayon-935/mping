@@ -259,13 +259,10 @@ type config struct {
 	dnsServer      string
 	resolveAll     bool
 
-	// Colour-coding / alert thresholds (warn = orange, crit = red).
-	rttWarnMs    int
-	rttCritMs    int
-	jitterWarnMs int
-	jitterCritMs int
-	lossWarnPct  float64
-	lossCritPct  float64
+	// thresholds holds the colour-coding / alert boundaries (warn = orange,
+	// crit = red), unified onto ui.Thresholds directly (TD-10) instead of
+	// six separate ms/pct fields that had to be converted at every use site.
+	thresholds ui.Thresholds
 }
 
 // groupYAML represents a named host group in the YAML config file.
@@ -309,19 +306,6 @@ type thresholdsYAML struct {
 	LossCrit   *float64 `yaml:"loss-crit"`
 }
 
-// thresholdsFromCfg builds a ui.Thresholds from the merged config. RTT/Jitter
-// values are interpreted as milliseconds; loss values as percentages.
-func thresholdsFromCfg(cfg config) ui.Thresholds {
-	return ui.Thresholds{
-		RTTWarn:    time.Duration(cfg.rttWarnMs) * time.Millisecond,
-		RTTCrit:    time.Duration(cfg.rttCritMs) * time.Millisecond,
-		JitterWarn: time.Duration(cfg.jitterWarnMs) * time.Millisecond,
-		JitterCrit: time.Duration(cfg.jitterCritMs) * time.Millisecond,
-		LossWarn:   cfg.lossWarnPct,
-		LossCrit:   cfg.lossCritPct,
-	}
-}
-
 func resolveNetwork(cfg config) string {
 	if cfg.ipv4Only {
 		return "ip4"
@@ -340,91 +324,50 @@ func resolveNetwork(cfg config) string {
 // Returns the ungrouped hosts listed in the document, the raw group definitions,
 // and the updated cfg.
 func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]string, []groupYAML, config, error) {
-	if !fs.Changed("interval") && doc.IntervalMs != nil {
-		cfg.intervalMs = *doc.IntervalMs
-	}
-	if !fs.Changed("timeout") && doc.TimeoutMs != nil {
-		cfg.timeoutMs = *doc.TimeoutMs
-	}
-	if !fs.Changed("output") && doc.OutputFile != nil {
-		cfg.outputFile = *doc.OutputFile
-	}
-	if !fs.Changed("interface") && doc.IfaceName != nil {
-		cfg.ifaceName = *doc.IfaceName
-	}
-	if !fs.Changed("source") && doc.SourceAddr != nil {
-		cfg.sourceAddr = *doc.SourceAddr
-	}
-	if !fs.Changed("size") && doc.PacketSize != nil {
-		cfg.packetSize = *doc.PacketSize
-	}
-	if !fs.Changed("count") && doc.Count != nil {
-		cfg.count = *doc.Count
-	}
-	if !fs.Changed("discovery-mtu") && doc.MtuEnabled != nil {
-		cfg.mtuEnabled = *doc.MtuEnabled
-	}
-	if !fs.Changed("traceroute") && doc.Trace != nil {
-		cfg.trace = *doc.Trace
-	}
-	if !fs.Changed("asn") && doc.AsnEnabled != nil {
-		cfg.asnEnabled = *doc.AsnEnabled
-	}
-	if !fs.Changed("ipv4") && doc.Ipv4Only != nil {
-		cfg.ipv4Only = *doc.Ipv4Only
-	}
-	if !fs.Changed("ipv6") && doc.Ipv6Only != nil {
-		cfg.ipv6Only = *doc.Ipv6Only
-	}
-	if !fs.Changed("port") && len(doc.PortSpecs) > 0 {
-		cfg.portSpecs = doc.PortSpecs
-	}
-	if !fs.Changed("http") && len(doc.HTTPURLs) > 0 {
-		cfg.httpURLs = doc.HTTPURLs
-	}
-	if !fs.Changed("json-output") && doc.JsonOutput != nil {
-		cfg.jsonOutputFile = *doc.JsonOutput
-	}
-	if !fs.Changed("mtr") && doc.Mtr != nil {
-		cfg.mtr = *doc.Mtr
-	}
-	if !fs.Changed("dns-server") && doc.DNSServer != nil {
-		cfg.dnsServer = *doc.DNSServer
-	}
-	if !fs.Changed("resolve-all") && doc.ResolveAll != nil {
-		cfg.resolveAll = *doc.ResolveAll
-	}
-	applyThresholdsDoc(&cfg, fs, doc.Thresholds)
+	syncField(fs, "interval", doc.IntervalMs, &cfg.intervalMs)
+	syncField(fs, "timeout", doc.TimeoutMs, &cfg.timeoutMs)
+	syncField(fs, "output", doc.OutputFile, &cfg.outputFile)
+	syncField(fs, "interface", doc.IfaceName, &cfg.ifaceName)
+	syncField(fs, "source", doc.SourceAddr, &cfg.sourceAddr)
+	syncField(fs, "size", doc.PacketSize, &cfg.packetSize)
+	syncField(fs, "count", doc.Count, &cfg.count)
+	syncField(fs, "discovery-mtu", doc.MtuEnabled, &cfg.mtuEnabled)
+	syncField(fs, "traceroute", doc.Trace, &cfg.trace)
+	syncField(fs, "asn", doc.AsnEnabled, &cfg.asnEnabled)
+	syncField(fs, "ipv4", doc.Ipv4Only, &cfg.ipv4Only)
+	syncField(fs, "ipv6", doc.Ipv6Only, &cfg.ipv6Only)
+	syncSlice(fs, "port", doc.PortSpecs, &cfg.portSpecs)
+	syncSlice(fs, "http", doc.HTTPURLs, &cfg.httpURLs)
+	syncField(fs, "json-output", doc.JsonOutput, &cfg.jsonOutputFile)
+	syncField(fs, "mtr", doc.Mtr, &cfg.mtr)
+	syncField(fs, "dns-server", doc.DNSServer, &cfg.dnsServer)
+	syncField(fs, "resolve-all", doc.ResolveAll, &cfg.resolveAll)
+	cfg.thresholds = overlayThresholdsDoc(cfg.thresholds, fs, doc.Thresholds)
 	if cfg.ipv4Only && cfg.ipv6Only {
 		return nil, nil, cfg, fmt.Errorf("cannot use both -4 and -6")
 	}
 	return doc.Hosts, doc.Groups, cfg, nil
 }
 
-// applyThresholdsDoc applies the YAML thresholds block to cfg, respecting CLI
-// flag overrides (a value is only applied when its flag was not set).
-func applyThresholdsDoc(cfg *config, fs *pflag.FlagSet, th *thresholdsYAML) {
-	if th == nil {
+// syncField applies *docVal into *cfgField when non-nil and its CLI flag
+// wasn't explicitly set on the command line. This is the flag > YAML >
+// default precedence shared by every simple (non-threshold) config field —
+// TD-19②: adding a new config field now costs one call here instead of a
+// bespoke 3-line if-block.
+func syncField[T any](fs *pflag.FlagSet, flag string, docVal *T, cfgField *T) {
+	if fs.Changed(flag) || docVal == nil {
 		return
 	}
-	if !fs.Changed("rtt-warn") && th.RTTWarn != nil {
-		cfg.rttWarnMs = *th.RTTWarn
+	*cfgField = *docVal
+}
+
+// syncSlice is syncField's counterpart for []string fields, which use
+// emptiness rather than nil-ness to mean "not set in the doc".
+func syncSlice(fs *pflag.FlagSet, flag string, docVal []string, cfgField *[]string) {
+	if fs.Changed(flag) || len(docVal) == 0 {
+		return
 	}
-	if !fs.Changed("rtt-crit") && th.RTTCrit != nil {
-		cfg.rttCritMs = *th.RTTCrit
-	}
-	if !fs.Changed("jitter-warn") && th.JitterWarn != nil {
-		cfg.jitterWarnMs = *th.JitterWarn
-	}
-	if !fs.Changed("jitter-crit") && th.JitterCrit != nil {
-		cfg.jitterCritMs = *th.JitterCrit
-	}
-	if !fs.Changed("loss-warn") && th.LossWarn != nil {
-		cfg.lossWarnPct = *th.LossWarn
-	}
-	if !fs.Changed("loss-crit") && th.LossCrit != nil {
-		cfg.lossCritPct = *th.LossCrit
-	}
+	*cfgField = docVal
 }
 
 // mergeHosts merges a hosts-file's configuration into cfg and host list.
@@ -517,7 +460,7 @@ func validateHostsDoc(doc hostsFileYAML) error {
 		}
 	}
 	if doc.Thresholds != nil {
-		th := overlayThresholds(ui.DefaultThresholds(), doc.Thresholds)
+		th := overlayThresholdsDoc(ui.DefaultThresholds(), nil, doc.Thresholds)
 		if err := th.Validate(); err != nil {
 			return fmt.Errorf("thresholds: %w", err)
 		}
@@ -525,28 +468,35 @@ func validateHostsDoc(doc hostsFileYAML) error {
 	return nil
 }
 
-// overlayThresholds returns base with any non-nil fields from the YAML block
-// applied. RTT/Jitter values are milliseconds; loss values are percentages.
-func overlayThresholds(base ui.Thresholds, th *thresholdsYAML) ui.Thresholds {
+// overlayThresholdsDoc returns base with any non-nil fields from th applied.
+// RTT/Jitter values are milliseconds; loss values are percentages. When fs is
+// non-nil, a field is skipped if its CLI flag was explicitly set (used when
+// merging a reload into the running cfg.thresholds, where CLI flags must
+// keep winning). When fs is nil, every non-nil doc field is applied
+// unconditionally (used by validateHostsDoc, which checks a doc's raw values
+// against a baseline and has no fs to consult). This single function
+// replaces the former applyThresholdsDoc/overlayThresholds pair (TD-10).
+func overlayThresholdsDoc(base ui.Thresholds, fs *pflag.FlagSet, th *thresholdsYAML) ui.Thresholds {
 	if th == nil {
 		return base
 	}
-	if th.RTTWarn != nil {
+	changed := func(flag string) bool { return fs != nil && fs.Changed(flag) }
+	if !changed("rtt-warn") && th.RTTWarn != nil {
 		base.RTTWarn = time.Duration(*th.RTTWarn) * time.Millisecond
 	}
-	if th.RTTCrit != nil {
+	if !changed("rtt-crit") && th.RTTCrit != nil {
 		base.RTTCrit = time.Duration(*th.RTTCrit) * time.Millisecond
 	}
-	if th.JitterWarn != nil {
+	if !changed("jitter-warn") && th.JitterWarn != nil {
 		base.JitterWarn = time.Duration(*th.JitterWarn) * time.Millisecond
 	}
-	if th.JitterCrit != nil {
+	if !changed("jitter-crit") && th.JitterCrit != nil {
 		base.JitterCrit = time.Duration(*th.JitterCrit) * time.Millisecond
 	}
-	if th.LossWarn != nil {
+	if !changed("loss-warn") && th.LossWarn != nil {
 		base.LossWarn = *th.LossWarn
 	}
-	if th.LossCrit != nil {
+	if !changed("loss-crit") && th.LossCrit != nil {
 		base.LossCrit = *th.LossCrit
 	}
 	return base
@@ -662,13 +612,18 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 	fs.StringVarP(&cfg.dnsServer, "dns-server", "d", "", "custom DNS server IP to use for hostname resolution")
 	fs.BoolVar(&cfg.resolveAll, "resolve-all", false, "resolve target hostname to all IP addresses and monitor them concurrently")
 
-	// Colour-coding / alert thresholds (warn = orange, crit = red).
-	fs.IntVar(&cfg.rttWarnMs, "rtt-warn", 50, "RTT warn threshold in ms (orange)")
-	fs.IntVar(&cfg.rttCritMs, "rtt-crit", 200, "RTT crit threshold in ms (red)")
-	fs.IntVar(&cfg.jitterWarnMs, "jitter-warn", 10, "jitter warn threshold in ms (orange)")
-	fs.IntVar(&cfg.jitterCritMs, "jitter-crit", 50, "jitter crit threshold in ms (red)")
-	fs.Float64Var(&cfg.lossWarnPct, "loss-warn", 20, "loss warn threshold in percent (orange)")
-	fs.Float64Var(&cfg.lossCritPct, "loss-crit", 80, "loss crit threshold in percent (red)")
+	// Colour-coding / alert thresholds (warn = orange, crit = red). Bound to
+	// local vars rather than cfg directly since cfg.thresholds is a
+	// ui.Thresholds (TD-10): the raw ms/pct values pflag fills in below are
+	// converted once, right after a successful parse.
+	var rttWarnMs, rttCritMs, jitterWarnMs, jitterCritMs int
+	var lossWarnPct, lossCritPct float64
+	fs.IntVar(&rttWarnMs, "rtt-warn", 50, "RTT warn threshold in ms (orange)")
+	fs.IntVar(&rttCritMs, "rtt-crit", 200, "RTT crit threshold in ms (red)")
+	fs.IntVar(&jitterWarnMs, "jitter-warn", 10, "jitter warn threshold in ms (orange)")
+	fs.IntVar(&jitterCritMs, "jitter-crit", 50, "jitter crit threshold in ms (red)")
+	fs.Float64Var(&lossWarnPct, "loss-warn", 20, "loss warn threshold in percent (orange)")
+	fs.Float64Var(&lossCritPct, "loss-crit", 80, "loss crit threshold in percent (red)")
 
 	fs.Usage = func() {
 		fmt.Fprintln(&usageBuf, "Usage: mping [options] host1 host2 ...")
@@ -679,6 +634,15 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 
 	if err := fs.Parse(args); err != nil {
 		return config{}, nil, nil, usageBuf.String(), err
+	}
+
+	cfg.thresholds = ui.Thresholds{
+		RTTWarn:    time.Duration(rttWarnMs) * time.Millisecond,
+		RTTCrit:    time.Duration(rttCritMs) * time.Millisecond,
+		JitterWarn: time.Duration(jitterWarnMs) * time.Millisecond,
+		JitterCrit: time.Duration(jitterCritMs) * time.Millisecond,
+		LossWarn:   lossWarnPct,
+		LossCrit:   lossCritPct,
 	}
 
 	hosts := fs.Args()
@@ -922,7 +886,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			packetSize: packetSizeToUse, preLogs: preLogs, cfg: currentCfg,
 			portCount: len(portSpecs), sup: sup,
 			resetMTR: resetMTR, resetHTTP: resetHTTP, resetPort: resetPort,
-			thresholds: thresholdsFromCfg(currentCfg), sig: sig, logCh: logCh, rc: rc,
+			thresholds: currentCfg.thresholds, sig: sig, logCh: logCh, rc: rc,
 			currentHosts: currentHosts, currentGroups: currentGroups,
 		})
 		if err := uiRun(runOpts); err != nil {

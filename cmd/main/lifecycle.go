@@ -68,7 +68,7 @@ func parseAndLoadHosts(args []string, out, errOut io.Writer) (p startupParams, e
 		fmt.Fprint(errOut, usage)
 		return startupParams{}, 1, false
 	}
-	if err := thresholdsFromCfg(cfg).Validate(); err != nil {
+	if err := cfg.thresholds.Validate(); err != nil {
 		fmt.Fprintf(errOut, "Invalid thresholds: %v\n", err)
 		return startupParams{}, 1, false
 	}

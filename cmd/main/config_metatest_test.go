@@ -48,9 +48,9 @@ func TestApplyDocToCfg_EveryFieldHasEffect(t *testing.T) {
 	}
 }
 
-// TestApplyThresholdsDoc_EveryFieldHasEffect is TestApplyDocToCfg_EveryFieldHasEffect's
-// counterpart for thresholdsYAML, which applyThresholdsDoc merges separately.
-func TestApplyThresholdsDoc_EveryFieldHasEffect(t *testing.T) {
+// TestOverlayThresholdsDoc_EveryFieldHasEffect is TestApplyDocToCfg_EveryFieldHasEffect's
+// counterpart for thresholdsYAML, which overlayThresholdsDoc merges separately.
+func TestOverlayThresholdsDoc_EveryFieldHasEffect(t *testing.T) {
 	thType := reflect.TypeOf(thresholdsYAML{})
 
 	for i := 0; i < thType.NumField(); i++ {
@@ -65,9 +65,9 @@ func TestApplyThresholdsDoc_EveryFieldHasEffect(t *testing.T) {
 			fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 			zero := config{}
 			got := zero
-			applyThresholdsDoc(&got, fs, &th)
+			got.thresholds = overlayThresholdsDoc(got.thresholds, fs, &th)
 			if reflect.DeepEqual(got, zero) {
-				t.Errorf("setting thresholdsYAML.%s had no observable effect on config — is it wired into applyThresholdsDoc?", field.Name)
+				t.Errorf("setting thresholdsYAML.%s had no observable effect on config — is it wired into overlayThresholdsDoc?", field.Name)
 			}
 		})
 	}
