@@ -11,27 +11,28 @@ type ExportSnapshot struct {
 
 // TargetSummary is a JSON-serialisable summary for a single ping target.
 type TargetSummary struct {
-	Host         string        `json:"host"`
-	IP           string        `json:"ip"`
-	ASN          string        `json:"asn,omitempty"`
-	Country      string        `json:"country,omitempty"`
-	Org          string        `json:"org,omitempty"`
-	Sent         int           `json:"sent"`
-	Recv         int           `json:"recv"`
-	Loss         int           `json:"loss"`
-	LossRatePct  float64       `json:"loss_rate_pct"`
-	MinRTTMs     float64       `json:"min_rtt_ms"`
-	AvgRTTMs     float64       `json:"avg_rtt_ms"`
-	MaxRTTMs     float64       `json:"max_rtt_ms"`
-	LastRTTMs    float64       `json:"last_rtt_ms"`
-	JitterMs     float64       `json:"jitter_ms"`
-	LastTTL      int           `json:"last_ttl"`
-	LastError    string        `json:"last_error,omitempty"`
-	LastLossTime *time.Time    `json:"last_loss_time,omitempty"`
-	TraceHops    []string      `json:"trace_hops,omitempty"`
-	PortResults  []PortSummary `json:"port_results,omitempty"`
-	PMTU         int           `json:"pmtu,omitempty"`
-	MTRHops      []HopSummary  `json:"mtr_hops,omitempty"`
+	Host             string        `json:"host"`
+	IP               string        `json:"ip"`
+	ASN              string        `json:"asn,omitempty"`
+	Country          string        `json:"country,omitempty"`
+	Org              string        `json:"org,omitempty"`
+	Sent             int           `json:"sent"`
+	Recv             int           `json:"recv"`
+	Loss             int           `json:"loss"`
+	LossRatePct      float64       `json:"loss_rate_pct"`
+	MinRTTMs         float64       `json:"min_rtt_ms"`
+	AvgRTTMs         float64       `json:"avg_rtt_ms"`
+	MaxRTTMs         float64       `json:"max_rtt_ms"`
+	LastRTTMs        float64       `json:"last_rtt_ms"`
+	JitterMs         float64       `json:"jitter_ms"`
+	LastTTL          int           `json:"last_ttl"`
+	LastError        string        `json:"last_error,omitempty"`
+	LastLossTime     *time.Time    `json:"last_loss_time,omitempty"`
+	TraceHops        []string      `json:"trace_hops,omitempty"`
+	PortResults      []PortSummary `json:"port_results,omitempty"`
+	PMTU             int           `json:"pmtu,omitempty"`
+	PMTUBottleneckIP string        `json:"pmtu_bottleneck_ip,omitempty"`
+	MTRHops          []HopSummary  `json:"mtr_hops,omitempty"`
 }
 
 // HopSummary is a JSON-serialisable summary for a single MTR hop.
@@ -139,27 +140,28 @@ func BuildSnapshot(targets []*TargetStats, httpResults []*HTTPCheckResult) Expor
 		}
 
 		snap.Targets = append(snap.Targets, TargetSummary{
-			Host:         v.Host,
-			IP:           v.IP,
-			ASN:          v.ASN,
-			Country:      v.Country,
-			Org:          v.Org,
-			Sent:         v.Sent,
-			Recv:         v.Recv,
-			Loss:         v.Loss,
-			LossRatePct:  lossRatePct,
-			MinRTTMs:     durationMs(v.MinRTT),
-			AvgRTTMs:     durationMs(v.AvgRTT),
-			MaxRTTMs:     durationMs(v.MaxRTT),
-			LastRTTMs:    durationMs(v.LastRTT),
-			JitterMs:     durationMs(v.Jitter),
-			LastTTL:      v.LastTTL,
-			LastError:    v.LastError,
-			LastLossTime: lastLossTime,
-			TraceHops:    traceHops,
-			PortResults:  portResults,
-			PMTU:         v.PMTU,
-			MTRHops:      mtrHops,
+			Host:             v.Host,
+			IP:               v.IP,
+			ASN:              v.ASN,
+			Country:          v.Country,
+			Org:              v.Org,
+			Sent:             v.Sent,
+			Recv:             v.Recv,
+			Loss:             v.Loss,
+			LossRatePct:      lossRatePct,
+			MinRTTMs:         durationMs(v.MinRTT),
+			AvgRTTMs:         durationMs(v.AvgRTT),
+			MaxRTTMs:         durationMs(v.MaxRTT),
+			LastRTTMs:        durationMs(v.LastRTT),
+			JitterMs:         durationMs(v.Jitter),
+			LastTTL:          v.LastTTL,
+			LastError:        v.LastError,
+			LastLossTime:     lastLossTime,
+			TraceHops:        traceHops,
+			PortResults:      portResults,
+			PMTU:             v.PMTU,
+			PMTUBottleneckIP: v.PMTUBottleneckIP,
+			MTRHops:          mtrHops,
 		})
 	}
 

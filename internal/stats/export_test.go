@@ -121,11 +121,15 @@ func TestBuildSnapshot_TraceHops(t *testing.T) {
 func TestBuildSnapshot_PMTU(t *testing.T) {
 	ts := NewTargetStats("host.local")
 	ts.SetPMTU(1400)
+	ts.SetPMTUBottleneckIP("10.0.0.1")
 
 	snap := BuildSnapshot([]*TargetStats{ts}, nil)
 	st := snap.Targets[0]
 	if st.PMTU != 1400 {
 		t.Errorf("expected PMTU=1400, got %d", st.PMTU)
+	}
+	if st.PMTUBottleneckIP != "10.0.0.1" {
+		t.Errorf("expected PMTUBottleneckIP=10.0.0.1, got %q", st.PMTUBottleneckIP)
 	}
 }
 
