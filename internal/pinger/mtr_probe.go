@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"golang.org/x/net/icmp"
@@ -44,6 +45,18 @@ type HopSocket struct {
 	sendV6 hopSendConnV6
 	isV4   bool
 	pinger *Pinger
+
+	// sendMu serializes IPv4 SetTTL+WriteTo pairs. Unlike IPv6 (which sets
+	// HopLimit per packet via an ipv6.ControlMessage), IPv4's TTL can only be
+	// set as connection-wide socket state (ipv4.ControlMessage.TTL is
+	// receiving-only in golang.org/x/net/ipv4) — so when one HopSocket is
+	// shared across concurrent probes (mtr.discover/probe fire one goroutine
+	// per hop), an unsynchronized SetTTL(ttl) followed by WriteTo can race
+	// against another goroutine's SetTTL, sending the packet with the wrong
+	// TTL. Without this lock, MTR hop discovery observes the same near-hop
+	// answering for every TTL and falsely reports the destination reached
+	// after 2-3 hops.
+	sendMu sync.Mutex
 }
 
 // Close releases the socket.
@@ -167,13 +180,21 @@ func (p *Pinger) probeHopAddr(ctx context.Context, sock *HopSocket, dstAddr *net
 		return HopReply{}, fmt.Errorf("marshal probe: %w", err)
 	}
 
-	sent := time.Now()
+	var sent time.Time
 	if sock.isV4 {
+		// sent is stamped after acquiring sendMu (not before) so a queued
+		// probe's RTT reflects time-on-wire, not time spent waiting for
+		// concurrent siblings sharing this HopSocket to finish their send.
+		sock.sendMu.Lock()
 		_ = sock.sendV4.SetTTL(ttl)
-		if _, err := sock.sendV4.WriteTo(b, nil, dstAddr); err != nil {
+		sent = time.Now()
+		_, err := sock.sendV4.WriteTo(b, nil, dstAddr)
+		sock.sendMu.Unlock()
+		if err != nil {
 			return HopReply{}, fmt.Errorf("send probe ttl=%d: %w", ttl, err)
 		}
 	} else {
+		sent = time.Now()
 		cm := &ipv6.ControlMessage{HopLimit: ttl}
 		if _, err := sock.sendV6.WriteTo(b, cm, dstAddr); err != nil {
 			return HopReply{}, fmt.Errorf("send probe ttl=%d: %w", ttl, err)
