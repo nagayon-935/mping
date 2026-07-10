@@ -218,103 +218,9 @@ func Run(opts RunOptions) error {
 		return cachedWidths
 	}
 
-	var traceView *tview.TextView
-	var tracePane *tview.Flex
-	setTraceBorderColor := func(_ tcell.Color) {}
-
-	if traceEnabled {
-		traceView = tview.NewTextView().
-			SetDynamicColors(true).
-			SetScrollable(true).
-			SetWrap(false)
-		traceView.SetBackgroundColor(tcell.ColorBlack)
-
-		tracePane = tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(traceView, 0, 1, true)
-		tracePane.SetBorder(true).SetBorderColor(tcell.ColorWhite)
-
-		traceBorderColor := tcell.ColorWhite
-		setTraceBorderColor = func(c tcell.Color) {
-			traceBorderColor = c
-			tracePane.SetBorderColor(c)
-		}
-		tracePaneTitle := " Traceroute Monitor "
-		tracePane.SetDrawFunc(makeDoubleBorderDrawFunc(tracePaneTitle, &traceBorderColor))
-	}
-
-	// MTR Monitor pane
-	var mtrView *tview.TextView
-	var mtrPane *tview.Flex
-	setMTRBorderColor := func(_ tcell.Color) {}
-
-	if mtrEnabled {
-		mtrView = tview.NewTextView().
-			SetDynamicColors(true).
-			SetScrollable(true).
-			SetWrap(false)
-		mtrView.SetBackgroundColor(tcell.ColorBlack)
-
-		mtrPane = tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(mtrView, 0, 1, true)
-		mtrPane.SetBorder(true).SetBorderColor(tcell.ColorWhite)
-
-		mtrBorderColor := tcell.ColorWhite
-		setMTRBorderColor = func(c tcell.Color) {
-			mtrBorderColor = c
-			mtrPane.SetBorderColor(c)
-		}
-		mtrPane.SetDrawFunc(makeDoubleBorderDrawFunc(" MTR Monitor ", &mtrBorderColor))
-	}
-
-	// Port Monitor pane
-	var portView *tview.TextView
-	var portPane *tview.Flex
-	setPortBorderColor := func(_ tcell.Color) {}
-
-	if portEnabled {
-		portView = tview.NewTextView().
-			SetDynamicColors(true).
-			SetScrollable(true).
-			SetWrap(false)
-		portView.SetBackgroundColor(tcell.ColorBlack)
-
-		portPane = tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(portView, 0, 1, true)
-		portPane.SetBorder(true).SetBorderColor(tcell.ColorWhite)
-
-		portBorderColor := tcell.ColorWhite
-		setPortBorderColor = func(c tcell.Color) {
-			portBorderColor = c
-			portPane.SetBorderColor(c)
-		}
-		portPane.SetDrawFunc(makeDoubleBorderDrawFunc(" Port Monitor ", &portBorderColor))
-	}
-
-	// HTTP Monitor pane
-	var httpView *tview.TextView
-	var httpPane *tview.Flex
-	setHTTPBorderColor := func(_ tcell.Color) {}
-
-	if httpEnabled {
-		httpView = tview.NewTextView().
-			SetDynamicColors(true).
-			SetScrollable(true).
-			SetWrap(false)
-		httpView.SetBackgroundColor(tcell.ColorBlack)
-
-		httpPane = tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(httpView, 0, 1, true)
-		httpPane.SetBorder(true).SetBorderColor(tcell.ColorWhite)
-
-		httpBorderColor := tcell.ColorWhite
-		setHTTPBorderColor = func(c tcell.Color) {
-			httpBorderColor = c
-			httpPane.SetBorderColor(c)
-		}
-		httpPane.SetDrawFunc(makeDoubleBorderDrawFunc(" HTTP Monitor ", &httpBorderColor))
-	}
-
-	// Error log state
+	// Error log state (declared before the monitor panes below, whose
+	// render closures capture errorLogs/errorView/lastPortStatuses/
+	// lastHTTPStatuses directly).
 	errorLogs := []string{}
 	lastLossTimes := make(map[string]time.Time)
 	alertState := make(map[string]alertFlags)
@@ -324,6 +230,24 @@ func Run(opts RunOptions) error {
 	for _, line := range initialLogs {
 		appendErrorLog(&errorLogs, errorView, line)
 	}
+
+	tracePaneObj := newMonitorPane(traceEnabled, " Traceroute Monitor ", func(availW int) string {
+		return renderTracerouteTable(targets, availW)
+	})
+	mtrPaneObj := newMonitorPane(mtrEnabled, " MTR Monitor ", func(availW int) string {
+		return renderMTRTable(targets, availW, sourceIPv4, sourceIPv6)
+	})
+	portPaneObj := newMonitorPane(portEnabled, " Port Monitor ", func(availW int) string {
+		return renderPortMonitorTable(targets, availW, lastPortStatuses, &errorLogs, errorView)
+	})
+	httpPaneObj := newMonitorPane(httpEnabled, " HTTP Monitor ", func(availW int) string {
+		var httpResults []*stats.HTTPCheckResult
+		if httpResultsFunc != nil {
+			httpResults = httpResultsFunc()
+		}
+		return renderHTTPMonitorTable(httpResults, availW, lastHTTPStatuses, &errorLogs, errorView)
+	})
+	sidePanes := []*monitorPane{tracePaneObj, mtrPaneObj, portPaneObj, httpPaneObj}
 
 	header := tview.NewTextView().
 		SetText(fmt.Sprintf("MPING - Multi Ping Tool | Interval: %dms", interval.Milliseconds())).
@@ -563,28 +487,8 @@ func Run(opts RunOptions) error {
 			}
 		}
 
-		if traceEnabled && traceView != nil {
-			_, _, availW, _ := traceView.GetInnerRect()
-			traceView.SetText(renderTracerouteTable(targets, availW))
-		}
-
-		if mtrEnabled && mtrView != nil {
-			_, _, availW, _ := mtrView.GetInnerRect()
-			mtrView.SetText(renderMTRTable(targets, availW, sourceIPv4, sourceIPv6))
-		}
-
-		if portEnabled && portView != nil {
-			_, _, availW, _ := portView.GetInnerRect()
-			portView.SetText(renderPortMonitorTable(targets, availW, lastPortStatuses, &errorLogs, errorView))
-		}
-
-		if httpEnabled && httpView != nil {
-			_, _, availW, _ := httpView.GetInnerRect()
-			var httpResults []*stats.HTTPCheckResult
-			if httpResultsFunc != nil {
-				httpResults = httpResultsFunc()
-			}
-			httpView.SetText(renderHTTPMonitorTable(httpResults, availW, lastHTTPStatuses, &errorLogs, errorView))
+		for _, mp := range sidePanes {
+			mp.refresh()
 		}
 	}
 
@@ -639,10 +543,9 @@ func Run(opts RunOptions) error {
 				table.SetBorderColor(tcell.ColorWhite)
 				errorView.SetBorderColor(tcell.ColorRed)
 				graphView.SetBorderColor(vividCyan)
-				setTraceBorderColor(tcell.ColorWhite)
-				setMTRBorderColor(tcell.ColorWhite)
-				setPortBorderColor(tcell.ColorWhite)
-				setHTTPBorderColor(tcell.ColorWhite)
+				for _, mp := range sidePanes {
+					mp.setBorderColor(tcell.ColorWhite)
+				}
 			}
 			// Build ordered focus cycle: table → [trace] → [mtr] → [port] → [http] → graph → error → table
 			type focusEntry struct {
@@ -652,13 +555,14 @@ func Run(opts RunOptions) error {
 			}
 			focusCycle := []focusEntry{
 				{true, table, func(c tcell.Color) { table.SetBorderColor(c) }},
-				{traceEnabled && traceView != nil, traceView, setTraceBorderColor},
-				{mtrEnabled && mtrView != nil, mtrView, setMTRBorderColor},
-				{portEnabled && portView != nil, portView, setPortBorderColor},
-				{httpEnabled && httpView != nil, httpView, setHTTPBorderColor},
-				{true, graphView, func(c tcell.Color) { graphView.SetBorderColor(c) }},
-				{true, errorView, func(c tcell.Color) { errorView.SetBorderColor(c) }},
 			}
+			for _, mp := range sidePanes {
+				focusCycle = append(focusCycle, focusEntry{mp.enabled, mp.view, mp.setBorderColor})
+			}
+			focusCycle = append(focusCycle,
+				focusEntry{true, graphView, func(c tcell.Color) { graphView.SetBorderColor(c) }},
+				focusEntry{true, errorView, func(c tcell.Color) { errorView.SetBorderColor(c) }},
+			)
 			focused := app.GetFocus()
 			for i, entry := range focusCycle {
 				if entry.enabled && entry.view == focused {
@@ -818,26 +722,18 @@ func Run(opts RunOptions) error {
 		AddItem(header, 2, 0, false).
 		AddItem(tablePane, 0, 3, true)
 
-	type monitorPane struct{ pane *tview.Flex }
-	var monitorPanes []monitorPane
-	if traceEnabled && tracePane != nil {
-		monitorPanes = append(monitorPanes, monitorPane{tracePane})
-	}
-	if mtrEnabled && mtrPane != nil {
-		monitorPanes = append(monitorPanes, monitorPane{mtrPane})
-	}
-	if portEnabled && portPane != nil {
-		monitorPanes = append(monitorPanes, monitorPane{portPane})
-	}
-	if httpEnabled && httpPane != nil {
-		monitorPanes = append(monitorPanes, monitorPane{httpPane})
+	var activePanes []*tview.Flex
+	for _, mp := range sidePanes {
+		if mp.enabled && mp.pane != nil {
+			activePanes = append(activePanes, mp.pane)
+		}
 	}
 	monitorWeight := 3
-	if len(monitorPanes) > 1 {
+	if len(activePanes) > 1 {
 		monitorWeight = 2
 	}
-	for _, mp := range monitorPanes {
-		flex.AddItem(mp.pane, 0, monitorWeight, false)
+	for _, pane := range activePanes {
+		flex.AddItem(pane, 0, monitorWeight, false)
 	}
 	flex.AddItem(graphView, 0, 3, false).
 		AddItem(errorView, 0, 2, false).
