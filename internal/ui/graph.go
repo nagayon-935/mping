@@ -382,7 +382,7 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 			plotY, plotHeight := adjustPlotArea(graphY, graphHeight)
 			rangeVal := g.currentScale.maxMs // ms
 
-			totalSteps, gy25, gy50, gy75, gy100 := gridStepsForHeight(plotHeight)
+			_, gy25, gy50, gy75, gy100 := gridStepsForHeight(plotHeight)
 			gridSteps := [4]int{gy25, gy50, gy75, gy100}
 
 			gridYPos := make(map[int]bool)
@@ -397,8 +397,6 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 					tview.Print(screen, fmt.Sprintf("%dms", val), graphX+graphWidth+1, py, labelWidth, tview.AlignLeft, tcell.ColorGray)
 				}
 			}
-			_ = gy100 // used via gridSteps
-			_ = totalSteps
 
 			// 0ms label at bottom
 			tview.Print(screen, "0ms", graphX+graphWidth+1, plotY+plotHeight-1, labelWidth, tview.AlignLeft, tcell.ColorGray)

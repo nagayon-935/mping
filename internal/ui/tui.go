@@ -513,10 +513,20 @@ func Run(opts RunOptions) error {
 			}
 		}
 
-		// Pass 1: check for new errors and alert state for all targets.
+		// Pass 1: check for new errors and alert state for all targets, and
+		// cache each target's GetView()/buildFullColumns() result so pass 2
+		// doesn't recompute both a second time per target per tick.
 		now := time.Now()
-		for _, t := range targets {
+		views := make([]stats.TargetView, len(targets))
+		var colsCache [][]string
+		var lossRateCache []float64
+		if !compactLayout {
+			colsCache = make([][]string, len(targets))
+			lossRateCache = make([]float64, len(targets))
+		}
+		for i, t := range targets {
 			view := t.GetView()
+			views[i] = view
 			if !view.LastLossTime.IsZero() {
 				lastTime, exists := lastLossTimes[view.Host]
 				if !exists || view.LastLossTime.After(lastTime) {
@@ -528,13 +538,14 @@ func Run(opts RunOptions) error {
 			}
 			if !compactLayout {
 				cols, rowSourceIP, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize, asnEnabled, dnsEnabled)
+				colsCache[i] = cols
+				lossRateCache[i] = lossRate
 				state := alertState[view.Host]
 				state, msgs := updateAlertState(view, rowSourceIP, lossRate, now, state)
 				for _, msg := range msgs {
 					appendErrorLog(&errorLogs, errorView, msg)
 				}
 				alertState[view.Host] = state
-				_ = cols // cols used below in flat rendering
 			}
 		}
 
@@ -549,25 +560,23 @@ func Run(opts RunOptions) error {
 					setGroupHeaderRow(table, tableRow, len(activeHeaders),
 						row.groupName, memberCount)
 				case groupRowUngrouped, groupRowTarget:
-					view := targets[row.targetIdx].GetView()
-					cols, _, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize, asnEnabled, dnsEnabled)
+					view := views[row.targetIdx]
+					cols := colsCache[row.targetIdx]
+					lossRate := lossRateCache[row.targetIdx]
 					cells := buildFullRowCells(cols, widths, fullAligns, lossRate, view.LastRTT, view.Jitter, rowColor, asnEnabled, dnsEnabled)
 					for c, cell := range cells {
 						table.SetCell(tableRow, c, cell)
 					}
 				}
 			}
-		} else {
-			// Flat rendering (no groups or compact layout).
-			displayIdx := 1
-			for _, t := range targets {
-				view := t.GetView()
-				if compactLayout {
-					continue
-				}
-				row := displayIdx
-				displayIdx++
-				cols, _, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize, asnEnabled, dnsEnabled)
+		} else if !compactLayout {
+			// Flat rendering (no groups, not compact — compact rows were
+			// already rendered earlier via the compactRows loop above).
+			for i := range targets {
+				row := i + 1
+				view := views[i]
+				cols := colsCache[i]
+				lossRate := lossRateCache[i]
 				cells := buildFullRowCells(cols, widths, fullAligns, lossRate, view.LastRTT, view.Jitter, rowColor, asnEnabled, dnsEnabled)
 				for c, cell := range cells {
 					table.SetCell(row, c, cell)
