@@ -35,7 +35,7 @@
 
 依存関係: P0 → P1 → P2 は直列（安全網→掃除→小統合）。P3/P4/P5 は P2 完了後に**相互独立**（並行実施可）。P6 は任意。
 
-### Phase 0: 安全網とリポジトリ衛生（コード挙動の変更なし）
+### Phase 0: 安全網とリポジトリ衛生（コード挙動の変更なし） — ✅ 完了 (PR #41)
 - **対象範囲**: `.github/workflows/ci.yml`, `.gitignore`, リポジトリ直下の残骸, `CLAUDE.md`
 - **実施内容**:
   1. TD-01/DEL-22: `main` の追跡解除 + .gitignore 追記
@@ -46,7 +46,7 @@
 - **完了条件**: 新 CI が main で全緑。`git ls-files` にバイナリなし。
 - **このフェーズの意義**: 以降の全フェーズの回帰検出装置。**これが終わるまで一切のコードリファクタに着手しない。**
 
-### Phase 1: デッドコード削除と即修正バグ
+### Phase 1: デッドコード削除と即修正バグ — ✅ 完了 (PR #41)
 - **対象範囲**: internal/stats, internal/pinger, internal/ui の未使用 API・小バグ
 - **実施内容**:
   1. DEL-03/04/05: `SetASN` / `GetResult` / `GetASNFor` 削除（テスト書き換え込み）
@@ -57,7 +57,7 @@
   6. TD-04: `appendErrorLogRaw` 廃止（HTTP ログ無限伸長の解消）
 - **完了条件**: `deadcode ./...` の報告ゼロ（意図的残置はコメントで明示）。カバレッジがベースライン−2%以内。
 
-### Phase 2: 低リスクの重複統合（パッケージ内で閉じる変更）
+### Phase 2: 低リスクの重複統合（パッケージ内で閉じる変更） — ✅ 完了 (PR #41)
 - **対象範囲**: internal/stats、internal/pinger の一部、internal/ui の小掃除
 - **実施内容**:
   1. TD-06: ジッタ計算ヘルパー統合（stats 内）
@@ -67,12 +67,12 @@
   5. TD-09/11: `updateTable` の二重 GetView 解消、graph.go の痕跡コード除去
 - **完了条件**: 既存テストが（期待値変更を除き）無修正で通る。export_test.go は完全無修正。
 
-### Phase 3: pinger 統合（高リスク・独立）
+### Phase 3: pinger 統合（高リスク・独立） — ✅ 完了 (PR #41、実機でのtraceroute/MTR出力確認済み)
 - **対象範囲**: internal/pinger/traceroute.go + mtr_probe.go
 - **実施内容**: TD-20 — ①受理判定の特性テスト整備 → ②acceptPacket/acceptHopPacket 統合 → ③`TraceRoute` を `ProbeHop` ベースに書き換え（3段階、各段階で実機確認）
 - **完了条件**: traceroute.go ≤100行、受信ロジック1系統。macOS/Linux 実機で `-T`/`-M` の出力が改修前と一致。
 
-### Phase 4: cmd/main 分解（高リスク・独立）
+### Phase 4: cmd/main 分解（高リスク・独立） — ✅ 完了 (PR #41、実機スモークテスト確認済み)
 - **対象範囲**: cmd/main/mping.go
 - **実施内容**:
   1. TD-22: 停止順序・リロードの特性テスト → `supervisor` 抽出 → `reloadCoordinator` 抽出 → `run()` を150行以下に
@@ -82,7 +82,7 @@
   5. （任意）ネットワーク検出ヘルパーの `internal/netutil` 切り出し、ファイル分割（config.go / lifecycle.go / netdetect.go）
 - **完了条件**: `go test -race ./cmd/...` 全緑 + 停止順序テスト・リロードシーケンステストが存在。実機で q/s/S/R キー・YAML リロード・count モードの手動スモーク成功。
 
-### Phase 5: UI 再構築（中リスク・独立）
+### Phase 5: UI 再構築（中リスク・独立） — ✅ 完了 (PR #41、列追加デモ確認済み)
 - **対象範囲**: internal/ui
 - **実施内容**:
   1. TD-21: 描画ゴールデンテスト整備 → `column` 構造体導入 → 並行スライス・マジックインデックス撤廃
@@ -90,7 +90,7 @@
   3. TD-33/34: tui_test.go の機能別分割、`wellKnownServices` の `services.go` 移動
 - **完了条件**: dns×asn×(groups有無)×(compact有無) の組み合わせで描画ゴールデン一致。列追加がデモ可能（試しに1列足して1箇所変更で済むことを確認し、revert）。
 
-### Phase 6（任意）: 型の整理と運用改善
+### Phase 6（任意）: 型の整理と運用改善 — 保留（2026-07-10時点でTD-24/TD-26とも開発の障害になっていないため、YAGNI方針で未着手）
 - **実施内容**: TD-24（`"host (ip)"` 文字列プロトコルの型化）、TD-26（watcher 再起動 or 明示警告）
 - **判断基準**: Phase 4/5 完了後もこれらが実際に開発を妨げている場合のみ着手（YAGNI）。
 

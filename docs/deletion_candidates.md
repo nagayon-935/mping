@@ -17,7 +17,7 @@
 
 ## カテゴリ2: 未使用の関数
 
-### DEL-01 `pinger.NewPinger`
+### DEL-01 `pinger.NewPinger` — ✅ done (PR #41)
 - **概要**: `NewPingerWithOptions(targets, Options{})` の薄いラッパー。本番の生成経路は cmd/main の `newPinger` 変数 → `NewPingerWithOptions` のみ。
 - **該当**: [pinger.go:111–114](../internal/pinger/pinger.go)
 - **根拠**: `deadcode ./...` が `unreachable func: NewPinger` を報告。非テストコードでの呼び出しゼロ（grep `\bNewPinger\b` は定義行のみ）。テストでは多数使用。
@@ -25,7 +25,7 @@
 - **リスク**: 低。`internal/` 配下のため外部モジュールからの import は言語仕様上不可能（隠れた利用者は存在しえない）。テストのコンストラクタとして便利なので、**削除せずテスト専用と割り切って残す選択も妥当**（その場合はコメントで明示）。
 - **LLM 依頼単位**: DEL-02〜05 と合わせて1プロンプト（下記「一括削除プロンプト」参照）。
 
-### DEL-02 `pinger.PortSpec.String()`
+### DEL-02 `pinger.PortSpec.String()` — ✅ done (PR #41)
 - **概要**: `"443/tcp"` 形式のフォーマッタ。本番コードは表示箇所で `fmt.Sprintf("%d/%s", pr.Port, pr.Protocol)` を直接使っており（render_monitors.go:137, 213 等）、この String() を通らない。
 - **該当**: [portchecker.go:21–24](../internal/pinger/portchecker.go)
 - **根拠**: `deadcode` が unreachable と報告。非テスト参照ゼロ（portchecker_test.go:80 のみ）。
@@ -33,7 +33,7 @@
 - **リスク**: 低〜中。fmt.Stringer は暗黙インターフェースのため grep で見えにくい（上記確認必須）。逆に「表示側が String() を使うべき」という統一（削除ではなく採用）も合理的 — **推奨は採用側**（重複フォーマット3箇所を String() 呼び出しに置換）。
 - **LLM 依頼単位**: 1プロンプト(削除 or 採用の判断込み)。
 
-### DEL-03 `stats.TargetStats.SetASN`
+### DEL-03 `stats.TargetStats.SetASN` — ✅ done (PR #41)
 - **概要**: ASN 番号のみを設定する旧セッター。`SetASNInfo(number, country, org)`（stats.go:296）の導入で置き換えられた。
 - **該当**: [stats.go:290–294](../internal/stats/stats.go)
 - **根拠**: 非テスト参照ゼロ（stats_test.go:249 のみ）。本番の呼び出しは `lookupASN` → `SetASNInfo` のみ。
@@ -41,7 +41,7 @@
 - **リスク**: 低。テスト1箇所を `SetASNInfo("AS12345", "", "")` に書き換えるだけ。
 - **LLM 依頼単位**: 一括削除プロンプトに含める。
 
-### DEL-04 `stats.PortCheckResult.GetResult`
+### DEL-04 `stats.PortCheckResult.GetResult` — ✅ done (PR #41)
 - **概要**: 5値タプルを返す旧スナップショット API。`GetView()`（stats.go:84、RTT統計・履歴込み）の導入で置き換えられた。
 - **該当**: [stats.go:77–81](../internal/stats/stats.go)
 - **根拠**: 非テスト参照ゼロ（portchecker_test.go ×3、stats_test.go ×4 のみ）。本番の読み取りは全て `GetView()` 経由。
@@ -49,7 +49,7 @@
 - **リスク**: 低。ただしテスト7箇所の書き換えが必要（`GetView()` のフィールド参照へ機械的に変換）。
 - **LLM 依頼単位**: 一括削除プロンプトに含める。
 
-### DEL-05 `pinger.GetASNFor`
+### DEL-05 `pinger.GetASNFor` — ✅ done (PR #41)
 - **概要**: ASN 番号文字列のみ返す公開ラッパー。MTR アダプタは `GetASNInfoFor`（mtr_probe.go:91）を使っており、こちらは使われていない。
 - **該当**: [mtr_probe.go:82–88](../internal/pinger/mtr_probe.go)
 - **根拠**: 非テスト参照ゼロ（coverage_extra_test.go:99, 119 のみ）。
@@ -71,7 +71,7 @@
 
 ## カテゴリ4: 古い Feature Flag（機能フラグ）
 
-### DEL-10 `GraphView.showPorts`（本番で常に false のフラグ）
+### DEL-10 `GraphView.showPorts`（本番で常に false のフラグ） — ✅ done (PR #41)
 - **概要**: RTT グラフにポートチェックの系列も描く機能フラグ。本番の唯一の生成箇所 [tui.go:111](../internal/ui/tui.go) が `NewGraphView(targets, interval, false)` と定数 false を渡しており、有効化する経路（CLI フラグ・YAML キー）が存在しない。true で動くのはテストのみ。
 - **該当**: [graph.go:66,77,91–103](../internal/ui/graph.go)（`showPorts` フィールド、コンストラクタ引数、`buildSeries` の分岐）、[graph.go:39–60](../internal/ui/graph.go)（`portSeries` 型）
 - **根拠**: `grep -rn 'NewGraphView' --include='*.go' . | grep -v _test.go` → tui.go:111 の1箇所のみ、第3引数リテラル false。
@@ -83,21 +83,21 @@
 
 ## カテゴリ5: 参照されていないリソース（アセット等）
 
-### DEL-20 `.DS_Store`（4ファイル、macOS Finder の残骸）
+### DEL-20 `.DS_Store`（4ファイル、macOS Finder の残骸） — ✅ done (PR #41)
 - **該当**: `./.DS_Store`, `.github/.DS_Store`, `cmd/.DS_Store`, `internal/.DS_Store`
 - **根拠**: macOS Finder が自動生成するメタデータ。git 未追跡（.gitignore 済み）。
 - **確認方法**: `git ls-files | grep DS_Store` が空（= 追跡されていない）を確認済み。
 - **リスク**: なし。`find . -name '.DS_Store' -delete` で即削除可。
 - **LLM 依頼単位**: DEL-21/22 と合わせて1プロンプト（ローカル掃除一括）。
 
-### DEL-21 古いカバレッジ成果物（5ファイル、最古は2026-03）
+### DEL-21 古いカバレッジ成果物（5ファイル、最古は2026-03） — ✅ done (PR #41)
 - **該当**: `cover.out`（4/7）、`coverage.out`（6/26）、`coverage.txt`（3/24）、`profile.cov`（4/17）、`ui_coverage.out`（3/22）
 - **根拠**: いずれも git 未追跡・.gitignore 対象（`*.out` / `coverage.*` / `profile.cov`）。`make coverage` 等の過去実行の残骸で、出力名がバラバラなこと自体が「その場しのぎ実行」の証跡。
 - **確認方法**: `git ls-files | grep -E '\.(out|cov)$|coverage'` が空であること（確認済み）。
 - **リスク**: なし（再生成可能）。今後は `make coverage` の出力名（coverage.out）に統一する運用にすると再発しない。
 - **LLM 依頼単位**: DEL-20/22 と同一プロンプト。
 
-### DEL-22 ローカルビルドバイナリ `mping`（11.8MB、未追跡）と `main`（11.8MB、**追跡中**）
+### DEL-22 ローカルビルドバイナリ `mping`（11.8MB、未追跡）と `main`（11.8MB、**追跡中**） — ✅ done (PR #41)
 - **該当**: `./mping`（未追跡・ignore 済み）、`./main`（**git 追跡中** — [TD-01](./technical_debt_inventory.md) 参照）
 - **根拠**: `git ls-files` に `main` が含まれる（コミット `2ae5535` で混入）。`.gitignore` は `mping` のみ記載で `main` が漏れている。
 - **確認方法**: `git log --oneline -- main` で混入コミット特定済み。`file main` でバイナリ形式確認可。
@@ -108,7 +108,7 @@
 
 ## カテゴリ6: 使われていない設定ファイル
 
-### DEL-30 `test-groups.yaml`（リポジトリ直下にコミットされた手動テスト用設定）
+### DEL-30 `test-groups.yaml`（リポジトリ直下にコミットされた手動テスト用設定） — ✅ done (PR #41)
 - **概要**: グループ表示機能の手動確認用サンプル（Cloudflare/Google DNS/Japan の3グループ + 公開 DNS/ISP の実在 IP）。
 - **該当**: `./test-groups.yaml`（git 追跡中）
 - **根拠**: コード・テスト・CI・README のいずれからも参照されていない（`grep -rn 'test-groups' . --include='*.go' --include='*.yml' --include='*.md'` → 0件。README は `hosts.yaml` という別名の例を掲載）。
@@ -136,7 +136,7 @@
 
 ## カテゴリ8: 過去施策（クローズした機能）の残骸
 
-### DEL-40 `PMTUBottleneckIP` の write-only データ経路
+### DEL-40 `PMTUBottleneckIP` の write-only データ経路 — ✅ done (PR #41)
 - **概要**: PMTU 探索で検出したボトルネックルーターの IP を `TargetStats` に保存する経路が、**書き込まれるだけでどこからも読まれない**。UI のどのペインにも描画されず、JSON エクスポート（export.go の `TargetSummary`）にもフィールドがない。ユーザーへの情報提供は preLogs 経由のログ行（`[PMTU] mtu mismatch at: <ip>`、pmtu.go:83–85）だけで完結しており、構造体への保存経路は残骸化している。
 - **該当**: [stats.go:116](../internal/stats/stats.go)（フィールド）、stats.go:186（View フィールド）、stats.go:252（GetView コピー）、stats.go:329–333（`SetPMTUBottleneckIP`）、[mping.go:783–785](../cmd/main/mping.go)（唯一の書き込み）
 - **根拠**: `grep -rn 'PMTUBottleneckIP' --include='*.go' . | grep -v _test.go` の全ヒットが「定義・コピー・セット」のみで、読み出し（表示・エクスポート）が存在しない。
@@ -144,7 +144,7 @@
 - **リスク**: 低。(A) の場合 stats のフィールド削除 + mping.go 1箇所 + テスト調整。
 - **LLM 依頼単位**: 1プロンプト（A/B 両案の diff 提示 → 人間が選択）。
 
-### DEL-41 `graph.go` の実装変更の痕跡（`_ = gy100` / `_ = totalSteps`）
+### DEL-41 `graph.go` の実装変更の痕跡（`_ = gy100` / `_ = totalSteps`） — ✅ done (PR #41)
 - **該当**: [graph.go:431–432](../internal/ui/graph.go)
 - **根拠**: 戻り値を受けて即座に捨てており、グリッド描画は `gridSteps` 配列経由に移行済み。過去のリファクタの消し忘れ。
 - **リスク**: なし。[TD-11](./technical_debt_inventory.md) として UI 掃除プロンプトに同梱。
