@@ -180,6 +180,12 @@
 ### TD-35 UDP ポートチェックが空ペイロード送信
 [portchecker.go:174](../internal/pinger/portchecker.go) の `conn.Write([]byte{})`。UDP スキャンとして精度が低い（Open|Filtered が大半になる）が、これは UDP の性質であり表示上も明示されている。プロトコル別プローブ（DNS クエリ等）は機能追加であってリファクタリングではない。
 
+### TD-45 4つのモニタ描画関数（traceroute/port/MTR/HTTP）の構造重複 — ✅ done (PR TBD)
+- **概要（architecture_review.md §8-3 由来、当初 technical_debt_inventory.md に未転記だった項目）**: `renderTracerouteTable`（render_monitors.go）・`renderPortMonitorTable`（render_monitors.go）・`renderMTRTable`/`renderMTRTargetTable`（mtr_view.go）・`renderHTTPMonitorTable`（http_view.go）がそれぞれ独自に「compact判定→列幅計算→ヘッダ/罫線→行ループ」を実装している。罫線描画自体は `boxtable.go`（`boxBorder`/`boxHeaderRow`/`boxSpanRow`）で共通化済みだが、それ以外は4関数に分散していた。
+- **調査結果**: 列幅計算・compact判定・行ループはテーブルごとにデータモデルが本質的に異なる（tracerouteは複数行ラップ、MTRはターゲット毎の副テーブル+ラベル行、port/HTTPは行単位）ため、TD-21のような単一の `column` 構造体への統合は複雑さに見合わない（YAGNI）と判断。一方 `renderPortMonitorTable` と `renderHTTPMonitorTable` の「ステータス変化検知→ログ追記」ブロックはロジックが完全に同型で、レイアウトと無関係な純粋ロジックだったため安全に切り出し可能と判断し、共通ヘルパーに統合した。
+- **対応**: ステータス変化ログ検知ロジックのみ共通ヘルパー化。列幅計算・compact判定・行ループの構造重複は意図的に残置（各テーブル固有のレイアウト要件があるため、無理な統合はしない）。
+- **優先度: 低 / リスクレベル: 低**
+
 ---
 
 ## 分類5: 現時点では触らないほうがよい負債
