@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -116,7 +115,7 @@ func httpSinceStr(t time.Time) string {
 // renderHTTPMonitorTable builds the HTTP Monitor pane string.
 // It also detects status changes and appends log messages when errorLogs/errorView
 // are non-nil.
-func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastStatuses map[string]string, errorLogs *[]string, errorView io.Writer) string {
+func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastStatuses map[string]string, errorLogs *[]string, errorView *tview.TextView) string {
 	// Compact: drop Min/Avg/Max/Since when screen is narrow.
 	// +2 accounts for the outer left/right border chars that consume available width.
 	fullFixed := minHTTPURLW + httpStatusColW + httpCodeColW + httpLatColW*4 + httpCountColW*2 + httpSinceColW + 9 + 2
@@ -140,7 +139,7 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 				msg := fmt.Sprintf("[darkgray]%s[-] [white]HTTP %s:[white] %s → %s%s[-]",
 					time.Now().Format("15:04:05"), tview.Escape(v.URL), prev, color, v.Status)
 				if errorView != nil {
-					appendErrorLogRaw(errorLogs, errorView, msg)
+					appendErrorLog(errorLogs, errorView, msg)
 				}
 			}
 			lastStatuses[v.URL] = v.Status
@@ -214,13 +213,4 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 	}
 
 	return sb.String()
-}
-
-// appendErrorLogRaw appends a pre-formatted message to the error log slice and view.
-func appendErrorLogRaw(logs *[]string, view io.Writer, msg string) {
-	*logs = append(*logs, msg)
-	if len(*logs) > errorLogMaxSize {
-		*logs = (*logs)[len(*logs)-errorLogMaxSize:]
-	}
-	fmt.Fprintln(view, msg)
 }
