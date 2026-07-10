@@ -172,19 +172,15 @@ func Run(opts RunOptions) error {
 	headerColor := tcell.ColorYellow
 	rowColor := tcell.ColorWhite
 
+	// dynamicCols is computed once since dnsEnabled/asnEnabled are fixed for
+	// the lifetime of Run(); shared by calcColumnWidths and updateTable so
+	// they can't drift out of sync (see TD-03: updateTable used to hardcode
+	// ASN-only and ignore DNS).
+	dynamicCols := dynamicColumnIndices(dnsEnabled, asnEnabled)
+
 	// Recalculate dynamic column widths based on current output text.
 	calcColumnWidths := func() []int {
 		widths := append([]int(nil), baseWidths...)
-		dynamicCols := []int{0, 1}
-		nextCol := 2
-		if dnsEnabled {
-			dynamicCols = append(dynamicCols, nextCol)
-			nextCol++
-		}
-		if asnEnabled {
-			dynamicCols = append(dynamicCols, nextCol)
-			nextCol++
-		}
 		for _, c := range dynamicCols {
 			maxWidth := runewidth.StringWidth(fullHeaders[c])
 			for _, t := range targets {
@@ -440,10 +436,6 @@ func Run(opts RunOptions) error {
 
 		updatedWidths := calcColumnWidthsCached()
 		dynamicMaxWidths := append([]int(nil), maxWidths...)
-		dynamicCols := []int{0, 1}
-		if asnEnabled {
-			dynamicCols = append(dynamicCols, 2)
-		}
 		for _, c := range dynamicCols {
 			if updatedWidths[c] > dynamicMaxWidths[c] {
 				dynamicMaxWidths[c] = updatedWidths[c]

@@ -336,6 +336,33 @@ func TestBuildCompactLayout(t *testing.T) {
 	}
 }
 
+func TestDynamicColumnIndices(t *testing.T) {
+	tests := []struct {
+		name       string
+		dnsEnabled bool
+		asnEnabled bool
+		want       []int
+	}{
+		{"neither enabled", false, false, []int{0, 1}},
+		{"dns only", true, false, []int{0, 1, 2}},
+		{"asn only", false, true, []int{0, 1, 2}},
+		{"both enabled", true, true, []int{0, 1, 2, 3}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := dynamicColumnIndices(tt.dnsEnabled, tt.asnEnabled)
+			if len(got) != len(tt.want) {
+				t.Fatalf("dynamicColumnIndices(%v, %v) = %v, want %v", tt.dnsEnabled, tt.asnEnabled, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("dynamicColumnIndices(%v, %v) = %v, want %v", tt.dnsEnabled, tt.asnEnabled, got, tt.want)
+				}
+			}
+		})
+	}
+}
+
 func TestBuildFullColumns(t *testing.T) {
 	view := stats.TargetView{
 		Host:      "example.com",

@@ -197,6 +197,25 @@ func mtuString(mtu int) string {
 	return fmt.Sprintf("%d", mtu)
 }
 
+// dynamicColumnIndices returns the indices of the main table columns whose
+// width is derived from current output text (Src IP, Dst IP, and — when
+// enabled — DNS, ASN) rather than a fixed baseWidths entry. The order
+// matches the column layout built in Run(): DNS (if enabled) comes before
+// ASN (if enabled), both after the always-present Src IP / Dst IP columns.
+func dynamicColumnIndices(dnsEnabled, asnEnabled bool) []int {
+	cols := []int{0, 1}
+	next := 2
+	if dnsEnabled {
+		cols = append(cols, next)
+		next++
+	}
+	if asnEnabled {
+		cols = append(cols, next)
+		next++
+	}
+	return cols
+}
+
 func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, packetSize int, asnEnabled bool, dnsEnabled bool) ([]string, string, float64) {
 	lossRate := calcLossRate(view)
 	lossStr := formatLossAgo(view.LastLossTime)
