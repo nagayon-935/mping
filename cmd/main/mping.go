@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,7 +16,6 @@ import (
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 	ui "github.com/nagayon-935/mping/internal/ui"
-	"github.com/nagayon-935/mping/internal/watcher"
 	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
 )
@@ -808,133 +806,42 @@ func setupHTTPChecker(urls []string, interval, timeout time.Duration) *pinger.HT
 }
 
 func run(args []string, out io.Writer, errOut io.Writer) int {
-	// ── 1. Parse command-line arguments ──────────────────────────────────────
-	cfg, hosts, fs, usage, err := parseArgs(args)
-	if err != nil {
-		if errors.Is(err, pflag.ErrHelp) {
-			fmt.Fprint(out, usage)
-			return 0
-		}
-		fmt.Fprint(errOut, usage)
-		return 1
+	sp, code, ok := parseAndLoadHosts(args, out, errOut)
+	if !ok {
+		return code
 	}
+	cfg, hosts, fs := sp.cfg, sp.hosts, sp.fs
+	cliCfg, cliHosts := sp.cliCfg, sp.cliHosts
+	currentGroups := sp.groups
 
-	// Save CLI-only values so reloads can apply fresh YAML over them.
-	cliCfg := cfg
-	cliHosts := append([]string(nil), hosts...)
-
-	// ── 2. Initial YAML merge ────────────────────────────────────────────────
-	var currentGroups []ui.TargetGroup
-	hosts, currentGroups, cfg, err = mergeHosts(cfg, fs, hosts)
-	if err != nil {
-		fmt.Fprintf(errOut, "Error reading hosts file: %v\n", err)
-		return 1
-	}
-	expandedHosts, expandedGroups, err := expandTargets(hosts, currentGroups, cfg)
-	if err != nil {
-		fmt.Fprintf(errOut, "Error expanding targets: %v\n", err)
-		return 1
-	}
-	hosts = expandedHosts
-	currentGroups = expandedGroups
-	if len(hosts) == 0 {
-		fmt.Fprint(errOut, usage)
-		return 1
-	}
-	if err := thresholdsFromCfg(cfg).Validate(); err != nil {
-		fmt.Fprintf(errOut, "Invalid thresholds: %v\n", err)
-		return 1
-	}
-
-	// ── 3. One-time setup ────────────────────────────────────────────────────
-	resNetwork := resolveNetwork(cfg)
-
-	bindIP, displaySourceIPv4, displaySourceIPv6, err := determineSourceIPs(cfg, hosts)
-	if err != nil {
-		fmt.Fprintf(errOut, "Error resolving interface %s: %v\n", cfg.ifaceName, err)
-		return 1
-	}
-	if cfg.ifaceName != "" && bindIP != "" {
-		fmt.Fprintf(out, "Binding to interface %s (%s)\n", cfg.ifaceName, bindIP)
-	}
-
-	// Setup logger once; reloads reuse the same file handle.
-	logFile, err := setupLogger(cfg.outputFile)
-	if err != nil {
-		fmt.Fprintf(errOut, "Error opening log file: %v\n", err)
-		return 1
+	env, code, ok := prepareRunEnv(cfg, hosts, out, errOut)
+	if !ok {
+		return code
 	}
 	var logWriter io.Writer
-	if logFile != nil {
-		defer logFile.Close()
-		logWriter = logFile
+	if env.logFile != nil {
+		defer env.logFile.Close()
+		logWriter = env.logFile
 	}
+	resNetwork, bindIP := env.resNetwork, env.bindIP
+	displaySourceIPv4, displaySourceIPv6 := env.dispV4, env.dispV6
+	portSpecs := env.portSpecs
 
-	// Parse port specs once; port changes require a process restart.
-	var portSpecs []pinger.PortSpec
-	for _, raw := range cfg.portSpecs {
-		spec, err := pinger.ParsePortSpec(raw)
-		if err != nil {
-			fmt.Fprintf(errOut, "Invalid port spec %q: %v\n", raw, err)
-			return 1
-		}
-		portSpecs = append(portSpecs, spec)
-	}
-
-	// ── 4. Reload state ──────────────────────────────────────────────────────
 	rc := newReloadCoordinator(fs, cliCfg, cliHosts)
-
 	currentCfg := cfg
 	currentHosts := hosts
-	// currentGroups is declared above at the mergeHosts call site.
-
 	// targets is declared outside the loop so the exit summary can read it.
 	var targets []*stats.TargetStats
 
-	// ── 5. Main run loop (re-entered on YAML reload) ──────────────────────────
+	// Main run loop (re-entered on YAML reload).
 	for {
 		interval := time.Duration(currentCfg.intervalMs) * time.Millisecond
 		timeout := time.Duration(currentCfg.timeoutMs) * time.Millisecond
 
-		targets = initTargets(currentHosts)
-		for _, t := range targets {
-			hostName := t.Host
-			if idx := strings.Index(hostName, " ("); idx >= 0 && strings.HasSuffix(hostName, ")") {
-				hostName = hostName[:idx]
-			}
-			if net.ParseIP(hostName) == nil {
-				if currentCfg.dnsServer != "" {
-					t.SetDNSServer(currentCfg.dnsServer)
-				} else {
-					t.SetDNSServer("Default")
-				}
-			} else {
-				t.SetDNSServer("-")
-			}
-		}
+		targets = buildTargetsForIteration(currentHosts, currentCfg)
 
 		customResolver := newCustomResolver(currentCfg.dnsServer)
-		opts := pinger.Options{
-			ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {
-				if idx := strings.Index(address, " ("); idx >= 0 && strings.HasSuffix(address, ")") {
-					ipStr := address[idx+2 : len(address)-1]
-					return net.ResolveIPAddr(network, ipStr)
-				}
-				if customResolver != nil && currentCfg.dnsServer != "" {
-					ips, err := customResolver.LookupIP(context.Background(), network, address)
-					if err != nil {
-						return nil, err
-					}
-					if len(ips) == 0 {
-						return nil, &net.DNSError{Err: "no such host", Name: address}
-					}
-					return &net.IPAddr{IP: ips[0]}, nil
-				}
-				return net.ResolveIPAddr(resNetwork, address)
-			},
-			Resolver:   customResolver,
-			AsnEnabled: currentCfg.asnEnabled,
-		}
+		opts := buildPingerOptions(currentCfg, resNetwork, customResolver)
 
 		ifaceMTU, mtuErr := getInterfaceMTU(currentCfg.ifaceName, bindIP, currentHosts[0])
 		if mtuErr == nil {
@@ -971,17 +878,13 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		}
 		sup.setupPortAndHTTP()
 
-		var resetMTR func()
+		var resetMTR, resetHTTP, resetPort func()
 		if currentCfg.mtr {
 			resetMTR = sup.resetMTR
 		}
-
-		var resetHTTP func()
 		if len(currentCfg.httpURLs) > 0 {
 			resetHTTP = sup.resetHTTP
 		}
-
-		var resetPort func()
 		if len(portSpecs) > 0 {
 			resetPort = sup.resetPort
 		}
@@ -999,123 +902,20 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		// sig is closed to signal TUI shutdown, either by the YAML watcher or
 		// by an in-memory add/delete-host request.
 		sig := newReloadSignal()
+		onFileChange := func() { rc.requestFileReload(sig, currentCfg.hostsFile, logCh) }
+		watchCancel, watchDone := startWatcher(currentCfg.hostsFile, onFileChange, logCh)
+		jsonCancel, jsonDone := startJSONWriter(currentCfg.jsonOutputFile, targets, sup.httpResults, errOut)
 
-		// onFileChange is the callback invoked by the watcher after debounce.
-		onFileChange := func() {
-			rc.requestFileReload(sig, currentCfg.hostsFile, logCh)
-		}
-
-		// Start the YAML file watcher (only when -f is specified).
-		watchCancel := func() {}
-		watchDone := make(chan struct{})
-		close(watchDone) // pre-closed: no watcher needed
-		if currentCfg.hostsFile != "" {
-			innerDone := make(chan struct{})
-			watchDone = innerDone
-			watchCtx, cancel := context.WithCancel(context.Background())
-			watchCancel = cancel
-			go func() {
-				defer close(innerDone)
-				if err := watcher.Watch(watchCtx, currentCfg.hostsFile, onFileChange); err != nil {
-					select {
-					case logCh <- fmt.Sprintf("[red][%s] Watcher error: %v[-]",
-						time.Now().Format("15:04:05"), err):
-					default:
-					}
-				}
-			}()
-		}
-
-		// Start the JSON periodic writer (only when -j is specified).
-		jsonCtx, jsonCancel := context.WithCancel(context.Background())
-		jsonDone := make(chan struct{})
-		if currentCfg.jsonOutputFile != "" {
-			go func() {
-				defer close(jsonDone)
-				ticker := time.NewTicker(5 * time.Second)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-ticker.C:
-						if err := writeJSONSnapshot(currentCfg.jsonOutputFile, targets, sup.httpResults()); err != nil {
-							fmt.Fprintf(errOut, "Warning: JSON snapshot write failed: %v\n", err)
-						}
-					case <-jsonCtx.Done():
-						return
-					}
-				}
-			}()
-		} else {
-			close(jsonDone)
-		}
-
-		// ── Run TUI ──────────────────────────────────────────────────────────
-		uiThresholds := thresholdsFromCfg(currentCfg)
-		if err := uiRun(ui.RunOptions{
-			Targets:         targets,
-			Interval:        interval,
-			Timeout:         timeout,
-			DoneCh:          doneCh,
-			SourceIPv4:      displaySourceIPv4,
-			SourceIPv6:      displaySourceIPv6,
-			PacketSize:      packetSizeToUse,
-			InitialLogs:     preLogs,
-			TraceEnabled:    currentCfg.trace,
-			MTREnabled:      currentCfg.mtr,
-			PortEnabled:     len(portSpecs) > 0,
-			HTTPEnabled:     len(currentCfg.httpURLs) > 0,
-			HTTPResults:     sup.httpResults,
-			ASNEnabled:      currentCfg.asnEnabled,
-			Thresholds:      &uiThresholds,
-			ExternalCloseCh: sig.ch,
-			ExternalLogCh:   logCh,
-			OnStop:          sup.stopAll,
-			OnRestart: func() error {
-				sup.stopAll()
-				if err := sup.startPinger(); err != nil {
-					return err
-				}
-				sup.setupPortAndHTTP()
-				return nil
-			},
-			OnResetTrace: sup.resetTrace,
-			OnResetMTR:   resetMTR,
-			OnResetPort:  resetPort,
-			OnResetHTTP:  resetHTTP,
-			OnAddHost: func(host string) error {
-				host = strings.TrimSpace(host)
-				if host == "" {
-					return fmt.Errorf("host cannot be empty")
-				}
-				for _, h := range currentHosts {
-					if h == host {
-						return fmt.Errorf("host %q is already in the list", host)
-					}
-				}
-				newHosts := make([]string, len(currentHosts)+1)
-				copy(newHosts, currentHosts)
-				newHosts[len(currentHosts)] = host
-				rc.requestHostsChange(sig, newHosts)
-				return nil
-			},
-			OnDeleteHost: func(host string) error {
-				newHosts := make([]string, 0, len(currentHosts))
-				for _, h := range currentHosts {
-					if h != host {
-						newHosts = append(newHosts, h)
-					}
-				}
-				if len(newHosts) == len(currentHosts) {
-					return fmt.Errorf("host %q not found", host)
-				}
-				if len(newHosts) == 0 {
-					return fmt.Errorf("cannot delete the last host")
-				}
-				rc.requestHostsChange(sig, newHosts)
-				return nil
-			},
-			Groups: currentGroups,
-		}); err != nil {
+		runOpts := buildRunOptions(runOptionsParams{
+			targets: targets, interval: interval, timeout: timeout, doneCh: doneCh,
+			dispV4: displaySourceIPv4, dispV6: displaySourceIPv6,
+			packetSize: packetSizeToUse, preLogs: preLogs, cfg: currentCfg,
+			portCount: len(portSpecs), sup: sup,
+			resetMTR: resetMTR, resetHTTP: resetHTTP, resetPort: resetPort,
+			thresholds: thresholdsFromCfg(currentCfg), sig: sig, logCh: logCh, rc: rc,
+			currentHosts: currentHosts, currentGroups: currentGroups,
+		})
+		if err := uiRun(runOpts); err != nil {
 			fmt.Fprintf(errOut, "Error running application: %v\n", err)
 			jsonCancel()
 			<-jsonDone
@@ -1124,24 +924,8 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			return 1
 		}
 
-		// ── Cleanup after TUI exits ───────────────────────────────────────────
-		// 1. Stop JSON writer, then write final snapshot once the goroutine has
-		//    exited to avoid concurrent writes to the same .tmp file.
-		jsonCancel()
-		<-jsonDone
-		if currentCfg.jsonOutputFile != "" {
-			if err := writeJSONSnapshot(currentCfg.jsonOutputFile, targets, sup.httpResults()); err != nil {
-				fmt.Fprintf(errOut, "Warning: Final JSON snapshot write failed: %v\n", err)
-			}
-		}
-		// 2. Stop pinger and port checker.
-		sup.stopAll()
-		// 3. Stop file watcher and wait for the goroutine to exit before
-		//    reading the shared reload state.
-		watchCancel()
-		<-watchDone
+		finishIteration(currentCfg, targets, sup, errOut, jsonCancel, jsonDone, watchCancel, watchDone)
 
-		// ── Check if a reload was requested ──────────────────────────────────
 		var reload bool
 		currentHosts, currentGroups, currentCfg, reload = rc.apply(currentCfg, currentHosts, currentGroups)
 		if !reload {
