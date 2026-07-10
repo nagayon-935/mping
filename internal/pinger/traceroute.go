@@ -76,7 +76,7 @@ func (p *Pinger) TraceRoute(ctx context.Context, dest string, maxHops int, timeo
 		}
 	}()
 
-	traceID := (p.baseID + 0x1234 + int(p.traceCounter.Add(1))) & 0xffff
+	traceID := p.NextTraceID()
 
 	// Register a channel in traceChans when the pinger's receiver is running for
 	// this address family. This avoids the macOS raw-socket race where the pinger's
