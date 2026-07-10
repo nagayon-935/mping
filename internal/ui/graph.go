@@ -36,34 +36,10 @@ func (s icmpSeries) seriesSnapshot() ([]time.Duration, time.Duration) {
 	return v.History, v.LastRTT
 }
 
-type portSeries struct {
-	host string
-	t    *stats.TargetStats
-	idx  int // index into PortResults
-}
-
-func (s portSeries) seriesLabel() string {
-	v := s.t.GetView()
-	if s.idx >= len(v.PortResults) {
-		return s.host
-	}
-	pr := v.PortResults[s.idx]
-	return fmt.Sprintf("%s:%d/%s", s.host, pr.Port, pr.Protocol)
-}
-func (s portSeries) seriesSnapshot() ([]time.Duration, time.Duration) {
-	v := s.t.GetView()
-	if s.idx >= len(v.PortResults) {
-		return nil, 0
-	}
-	pr := v.PortResults[s.idx]
-	return pr.History, pr.RTT
-}
-
 // GraphView is a custom primitive for rendering RTT graphs
 type GraphView struct {
 	*tview.Box
 	targets   []*stats.TargetStats
-	showPorts bool
 	interval  time.Duration
 	vividCyan tcell.Color
 	vividRed  tcell.Color
@@ -74,11 +50,10 @@ type GraphView struct {
 	scaleHoldUntil time.Time
 }
 
-func NewGraphView(targets []*stats.TargetStats, interval time.Duration, showPorts bool) *GraphView {
+func NewGraphView(targets []*stats.TargetStats, interval time.Duration) *GraphView {
 	return &GraphView{
 		Box:          tview.NewBox(),
 		targets:      targets,
-		showPorts:    showPorts,
 		interval:     interval,
 		vividCyan:    tcell.NewRGBColor(0, 255, 255),
 		vividRed:     tcell.NewRGBColor(255, 0, 0),
@@ -87,17 +62,11 @@ func NewGraphView(targets []*stats.TargetStats, interval time.Duration, showPort
 }
 
 // buildSeries constructs the list of graphSeries from current target state.
-// Called at the start of each Draw so that dynamically added port results appear.
+// Called at the start of each Draw so that dynamically added targets appear.
 func (g *GraphView) buildSeries() []graphSeries {
 	var out []graphSeries
 	for _, t := range g.targets {
 		out = append(out, icmpSeries{t: t})
-		if g.showPorts {
-			v := t.GetView()
-			for i := range v.PortResults {
-				out = append(out, portSeries{host: v.Host, t: t, idx: i})
-			}
-		}
 	}
 	return out
 }

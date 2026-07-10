@@ -548,7 +548,7 @@ func TestGraphViewInputHandlerScroll(t *testing.T) {
 		stats.NewTargetStats("f"),
 		stats.NewTargetStats("g"),
 	}
-	g := NewGraphView(targets, 1*time.Second, false)
+	g := NewGraphView(targets, 1*time.Second)
 	g.SetRect(0, 0, 80, 10)
 
 	handler := g.InputHandler()
@@ -563,7 +563,7 @@ func TestGraphViewInputHandlerScroll(t *testing.T) {
 }
 
 func TestGraphViewClampScroll(t *testing.T) {
-	g := NewGraphView(nil, 1*time.Second, false)
+	g := NewGraphView(nil, 1*time.Second)
 	g.scrollRow = 10
 	g.clampScroll(2, 2)
 	if g.scrollRow != 0 {
@@ -603,7 +603,7 @@ func TestGraphViewLayoutMinHeight(t *testing.T) {
 		stats.NewTargetStats("e"),
 		stats.NewTargetStats("f"),
 	}
-	g := NewGraphView(targets, 1*time.Second, false)
+	g := NewGraphView(targets, 1*time.Second)
 	numCols, numRowsTotal, visibleRows, _, rowHeight := g.layout(80, 9)
 	if numCols != 2 || numRowsTotal != 3 {
 		t.Fatalf("layout cols/rows: got cols=%d rows=%d", numCols, numRowsTotal)
@@ -653,7 +653,7 @@ func TestGraphViewDraw_EmptyTargets(t *testing.T) {
 	defer screen.Fini()
 	screen.SetSize(80, 24)
 
-	g := NewGraphView(nil, 1*time.Second, false)
+	g := NewGraphView(nil, 1*time.Second)
 	g.SetRect(0, 0, 80, 24)
 
 	defer func() {
@@ -677,7 +677,7 @@ func TestGraphViewDraw_SingleTarget(t *testing.T) {
 	target.OnSuccess(20*time.Millisecond, 64)
 	target.OnSuccess(30*time.Millisecond, 64)
 
-	g := NewGraphView([]*stats.TargetStats{target}, 200*time.Millisecond, false)
+	g := NewGraphView([]*stats.TargetStats{target}, 200*time.Millisecond)
 	g.SetRect(0, 0, 120, 30)
 
 	defer func() {
@@ -704,7 +704,7 @@ func TestGraphViewDraw_MultiTargets(t *testing.T) {
 	}
 	targets[0].OnSuccess(10*time.Millisecond, 64)
 
-	g := NewGraphView(targets, 500*time.Millisecond, false)
+	g := NewGraphView(targets, 500*time.Millisecond)
 	g.SetRect(0, 0, 80, 12)
 
 	g.Draw(screen)
@@ -720,7 +720,7 @@ func TestGraphViewDraw_NarrowWidth(t *testing.T) {
 
 	target := stats.NewTargetStats("example.com")
 	target.OnSuccess(10*time.Millisecond, 64)
-	g := NewGraphView([]*stats.TargetStats{target}, 1*time.Second, false)
+	g := NewGraphView([]*stats.TargetStats{target}, 1*time.Second)
 	g.SetRect(0, 0, 20, 8)
 	g.Draw(screen)
 }
@@ -736,7 +736,7 @@ func TestGraphViewDraw_HeaderText(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	target.OnSuccess(10*time.Millisecond, 64)
 
-	g := NewGraphView([]*stats.TargetStats{target}, 1*time.Second, false)
+	g := NewGraphView([]*stats.TargetStats{target}, 1*time.Second)
 	g.SetRect(0, 0, 80, 10)
 
 	g.Draw(screen)
@@ -912,7 +912,7 @@ func TestGraphViewInputHandlerPgUpPgDn(t *testing.T) {
 	for i := range targets {
 		targets[i] = stats.NewTargetStats("host")
 	}
-	g := NewGraphView(targets, time.Second, false)
+	g := NewGraphView(targets, time.Second)
 	g.SetRect(0, 0, 80, 40)
 
 	handler := g.InputHandler()
@@ -933,7 +933,7 @@ func TestGraphViewInputHandlerPgUpPgDn(t *testing.T) {
 }
 
 func TestGraphViewInputHandlerDefault(t *testing.T) {
-	g := NewGraphView([]*stats.TargetStats{stats.NewTargetStats("a")}, time.Second, false)
+	g := NewGraphView([]*stats.TargetStats{stats.NewTargetStats("a")}, time.Second)
 	g.SetRect(0, 0, 80, 20)
 	handler := g.InputHandler()
 	before := g.scrollRow
@@ -947,7 +947,7 @@ func TestGraphViewInputHandlerDefault(t *testing.T) {
 // ---- clampScroll: numRowsTotal < visibleRows → maxScroll clamped from negative ----
 
 func TestClampScroll_NegativeMaxScroll(t *testing.T) {
-	g := NewGraphView(nil, time.Second, false)
+	g := NewGraphView(nil, time.Second)
 	g.scrollRow = 5
 	// numRowsTotal=1 < visibleRows=3 → maxScroll = -2 → clamped to 0 → scrollRow = 0
 	g.clampScroll(1, 3)
@@ -957,7 +957,7 @@ func TestClampScroll_NegativeMaxScroll(t *testing.T) {
 }
 
 func TestClampScroll_ScrollRowAboveMax(t *testing.T) {
-	g := NewGraphView(nil, time.Second, false)
+	g := NewGraphView(nil, time.Second)
 	g.scrollRow = 10
 	// numRowsTotal=5, visibleRows=2 → maxScroll=3; scrollRow(10) > maxScroll(3) → clamp
 	g.clampScroll(5, 2)
@@ -1002,7 +1002,7 @@ func TestGraphViewLayout_NarrowWidth(t *testing.T) {
 	targets := []*stats.TargetStats{
 		stats.NewTargetStats("a"), stats.NewTargetStats("b"),
 	}
-	g := NewGraphView(targets, time.Second, false)
+	g := NewGraphView(targets, time.Second)
 	// Width too narrow for 2 columns → forced to 1 column
 	numCols, _, _, _, _ := g.layout(20, 20)
 	if numCols != 1 {
@@ -1015,7 +1015,7 @@ func TestGraphViewLayout_ManyTargets(t *testing.T) {
 	for i := range targets {
 		targets[i] = stats.NewTargetStats("host")
 	}
-	g := NewGraphView(targets, time.Second, false)
+	g := NewGraphView(targets, time.Second)
 	// 10 targets with 2 cols → numRowsTotal=5 > graphMaxVisibleRows(3) → cap visibleRows
 	_, _, visibleRows, _, _ := g.layout(80, 60)
 	if visibleRows > graphMaxVisibleRows {
@@ -1025,7 +1025,7 @@ func TestGraphViewLayout_ManyTargets(t *testing.T) {
 
 func TestGraphViewLayout_SmallHeight(t *testing.T) {
 	targets := []*stats.TargetStats{stats.NewTargetStats("a")}
-	g := NewGraphView(targets, time.Second, false)
+	g := NewGraphView(targets, time.Second)
 	// height=1 → initial rowHeight=1 < 2 → clamped to 2
 	numCols, numRows, visRows, _, rowH := g.layout(80, 1)
 	if numCols < 1 || numRows < 0 || visRows < 0 || rowH < 2 {
@@ -1035,7 +1035,7 @@ func TestGraphViewLayout_SmallHeight(t *testing.T) {
 }
 
 func TestGraphViewLayout_ZeroTargets(t *testing.T) {
-	g := NewGraphView(nil, time.Second, false)
+	g := NewGraphView(nil, time.Second)
 	numCols, numRows, visRows, colW, rowH := g.layout(80, 24)
 	if numCols != 1 || numRows != 0 || visRows != 0 || colW != 0 || rowH != 0 {
 		t.Errorf("zero targets: unexpected %d %d %d %d %d", numCols, numRows, visRows, colW, rowH)
@@ -1380,7 +1380,7 @@ func TestProjectDurationsToGraph_WindowOne(t *testing.T) {
 
 func TestGraphViewInputHandlerNoRect(t *testing.T) {
 	targets := []*stats.TargetStats{stats.NewTargetStats("a")}
-	g := NewGraphView(targets, time.Second, false)
+	g := NewGraphView(targets, time.Second)
 	// Do NOT call SetRect → inner rect is (0,0,0,0) → width=0, height=0
 	handler := g.InputHandler()
 	// Should return early after key handling (width <= 0 || height <= 0)
@@ -1390,7 +1390,7 @@ func TestGraphViewInputHandlerNoRect(t *testing.T) {
 
 func TestGraphViewInputHandlerNoTargets(t *testing.T) {
 	// GraphView with no targets → layout returns visibleRows=0 → scrollRow reset to 0
-	g := NewGraphView(nil, time.Second, false)
+	g := NewGraphView(nil, time.Second)
 	g.SetRect(0, 0, 80, 20)
 	g.scrollRow = 5
 	handler := g.InputHandler()
@@ -1407,7 +1407,7 @@ func TestGraphViewLayout_SmallHeightMultiRows(t *testing.T) {
 	for i := range targets {
 		targets[i] = stats.NewTargetStats("host")
 	}
-	g := NewGraphView(targets, time.Second, false)
+	g := NewGraphView(targets, time.Second)
 	// height=3, visibleRows starts at 3, loop will reduce visibleRows and set rowHeight < 2
 	_, _, visRows, _, rowH := g.layout(80, 3)
 	if visRows < 1 {
@@ -1664,7 +1664,7 @@ func TestGraphViewDraw_HighRTT(t *testing.T) {
 	target.IncSent()
 	target.OnSuccess(500*time.Millisecond, 64)
 
-	g := NewGraphView([]*stats.TargetStats{target}, 200*time.Millisecond, false)
+	g := NewGraphView([]*stats.TargetStats{target}, 200*time.Millisecond)
 	g.SetRect(0, 0, 120, 20)
 
 	defer func() {
@@ -1692,7 +1692,7 @@ func TestGraphViewDraw_SmallRTT(t *testing.T) {
 		target.OnSuccess(1*time.Millisecond, 64)
 	}
 
-	g := NewGraphView([]*stats.TargetStats{target}, 200*time.Millisecond, false)
+	g := NewGraphView([]*stats.TargetStats{target}, 200*time.Millisecond)
 	g.SetRect(0, 0, 120, 20)
 
 	defer func() {
@@ -1834,7 +1834,7 @@ func TestGraphViewInputHandler_KeyUp(t *testing.T) {
 	for i := range targets {
 		targets[i] = stats.NewTargetStats("host")
 	}
-	g := NewGraphView(targets, time.Second, false)
+	g := NewGraphView(targets, time.Second)
 	g.SetRect(0, 0, 80, 40)
 	g.scrollRow = 2 // start scrolled down
 
@@ -2141,7 +2141,7 @@ func TestGraphViewDraw_SmallHeightSmallRTT(t *testing.T) {
 		target.OnSuccess(1*time.Millisecond, 64)
 	}
 
-	g := NewGraphView([]*stats.TargetStats{target}, 200*time.Millisecond, false)
+	g := NewGraphView([]*stats.TargetStats{target}, 200*time.Millisecond)
 	g.SetRect(0, 0, 120, 4)
 
 	defer func() {
