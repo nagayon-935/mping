@@ -79,14 +79,6 @@ func (p *Pinger) NextTraceID() int {
 	return (p.baseID + 0x1234 + int(p.traceCounter.Add(1))) & 0xffff
 }
 
-// GetASNFor returns the ASN number string for ip when ASN lookup is enabled.
-func (p *Pinger) GetASNFor(ip string) string {
-	if !p.AsnEnabled {
-		return ""
-	}
-	return p.getASN(ip)
-}
-
 // GetASNInfoFor returns the full ASNInfo for ip when ASN lookup is enabled.
 func (p *Pinger) GetASNInfoFor(ip string) ASNInfo {
 	if !p.AsnEnabled {

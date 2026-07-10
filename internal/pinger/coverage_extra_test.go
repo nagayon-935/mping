@@ -92,12 +92,12 @@ func TestAcceptHopPacket_UnhandledType(t *testing.T) {
 	}
 }
 
-// ── GetASNFor / GetASNInfoFor ───────────────────────────────────────────────
+// ── GetASNInfoFor ────────────────────────────────────────────────────────────
 
 func TestGetASNFor_Disabled(t *testing.T) {
 	p := NewPingerWithOptions(nil, Options{AsnEnabled: false})
-	if got := p.GetASNFor("8.8.8.8"); got != "" {
-		t.Errorf("GetASNFor with ASN disabled = %q, want empty", got)
+	if got := p.GetASNInfoFor("8.8.8.8").Number; got != "" {
+		t.Errorf("GetASNInfoFor with ASN disabled = %q, want empty", got)
 	}
 	if got := p.GetASNInfoFor("8.8.8.8"); got != (ASNInfo{}) {
 		t.Errorf("GetASNInfoFor with ASN disabled = %+v, want zero value", got)
@@ -116,8 +116,8 @@ func TestGetASNFor_Enabled(t *testing.T) {
 	}
 	p := NewPingerWithOptions(nil, Options{AsnEnabled: true, LookupTXT: mockLookup})
 
-	if got := p.GetASNFor("8.8.8.8"); got != "AS15169" {
-		t.Errorf("GetASNFor = %q, want AS15169", got)
+	if got := p.GetASNInfoFor("8.8.8.8").Number; got != "AS15169" {
+		t.Errorf("GetASNInfoFor = %q, want AS15169", got)
 	}
 	info := p.GetASNInfoFor("8.8.8.8")
 	if info.Number != "AS15169" {
