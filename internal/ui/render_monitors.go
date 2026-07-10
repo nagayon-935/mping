@@ -21,6 +21,36 @@ func maxHostWidth(header string, targets []*stats.TargetStats) int {
 	return w + 2
 }
 
+// statusChangeMessage formats a "prev -> new" status-change log line. subject
+// is the pre-formatted, already color-tagged text identifying what changed
+// (e.g. "[white]host[-] [white]443/tcp:[white]"). newStatus is colored green
+// when it equals healthyStatus, yellow otherwise.
+func statusChangeMessage(subject, prevStatus, newStatus, healthyStatus string) string {
+	color := "[yellow]"
+	if newStatus == healthyStatus {
+		color = "[green]"
+	}
+	return fmt.Sprintf("[darkgray]%s[-] %s %s → %s%s[-]",
+		time.Now().Format("15:04:05"), subject, prevStatus, color, newStatus)
+}
+
+// logStatusChangeIfNeeded checks lastStatuses[key] against newStatus and, if
+// it changed, appends a log line built by statusChangeMessage. It always
+// records newStatus under key afterward (a no-op for the initial ""/
+// "Checking..." placeholder status). Shared by the port and HTTP monitor
+// panes, whose status-change detection was previously duplicated verbatim
+// (TD-45).
+func logStatusChangeIfNeeded(lastStatuses map[string]string, key, newStatus, healthyStatus, subject string,
+	errorLogs *[]string, errorView *tview.TextView) {
+	if newStatus == "" || newStatus == "Checking..." {
+		return
+	}
+	if prev, seen := lastStatuses[key]; seen && prev != newStatus && errorView != nil {
+		appendErrorLog(errorLogs, errorView, statusChangeMessage(subject, prev, newStatus, healthyStatus))
+	}
+	lastStatuses[key] = newStatus
+}
+
 // renderTracerouteTable builds the traceroute monitor table string.
 func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
 	hostColW := maxHostWidth("Host", targets)
@@ -171,23 +201,9 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 		}
 		dataTargets = append(dataTargets, t)
 		for _, pr := range view.PortResults {
-			if pr.Status == "" || pr.Status == "Checking..." {
-				continue
-			}
 			key := fmt.Sprintf("%s|%d/%s", view.Host, pr.Port, pr.Protocol)
-			prev, seen := lastPortStatuses[key]
-			if seen && prev != pr.Status {
-				color := "[yellow]"
-				if pr.Status == "Open" {
-					color = "[green]"
-				}
-				now := time.Now()
-				msg := fmt.Sprintf("[darkgray]%s[-] [white]%s[-] [white]%d/%s:[white] %s → %s%s[-]",
-					now.Format("15:04:05"), tview.Escape(view.Host), pr.Port, pr.Protocol,
-					prev, color, pr.Status)
-				appendErrorLog(errorLogs, errorView, msg)
-			}
-			lastPortStatuses[key] = pr.Status
+			subject := fmt.Sprintf("[white]%s[-] [white]%d/%s:[white]", tview.Escape(view.Host), pr.Port, pr.Protocol)
+			logStatusChangeIfNeeded(lastPortStatuses, key, pr.Status, "Open", subject, errorLogs, errorView)
 		}
 	}
 

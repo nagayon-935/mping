@@ -127,22 +127,8 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 	if lastStatuses != nil && errorLogs != nil {
 		for _, r := range results {
 			v := r.GetView()
-			if v.Status == "" || v.Status == "Checking..." {
-				continue
-			}
-			prev, seen := lastStatuses[v.URL]
-			if seen && prev != v.Status {
-				color := "[yellow]"
-				if v.Status == "Up" {
-					color = "[green]"
-				}
-				msg := fmt.Sprintf("[darkgray]%s[-] [white]HTTP %s:[white] %s → %s%s[-]",
-					time.Now().Format("15:04:05"), tview.Escape(v.URL), prev, color, v.Status)
-				if errorView != nil {
-					appendErrorLog(errorLogs, errorView, msg)
-				}
-			}
-			lastStatuses[v.URL] = v.Status
+			subject := fmt.Sprintf("[white]HTTP %s:[white]", tview.Escape(v.URL))
+			logStatusChangeIfNeeded(lastStatuses, v.URL, v.Status, "Up", subject, errorLogs, errorView)
 		}
 	}
 
