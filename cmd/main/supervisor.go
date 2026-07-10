@@ -1,0 +1,242 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/nagayon-935/mping/internal/mtr"
+	"github.com/nagayon-935/mping/internal/pinger"
+	"github.com/nagayon-935/mping/internal/stats"
+)
+
+// supervisorConfig holds the values a supervisor needs for the lifetime of
+// one run() loop iteration. A fresh supervisor is created each time the main
+// loop re-enters (on YAML reload), mirroring the closures it replaces.
+type supervisorConfig struct {
+	makePinger   func(size int) pingerController
+	packetSize   int
+	targets      []*stats.TargetStats
+	interval     time.Duration
+	timeout      time.Duration
+	portSpecs    []pinger.PortSpec
+	httpURLs     []string
+	traceEnabled bool
+	mtrEnabled   bool
+	logCh        chan string
+}
+
+// supervisor owns the pinger/traceroute/MTR/port/HTTP checker lifecycle for
+// one run() loop iteration, and the mutex guarding their shared state
+// (equivalent to run()'s former pMu). TD-22②: extracted out of run() as a
+// behavior-preserving move.
+type supervisor struct {
+	cfg supervisorConfig
+
+	mu          sync.Mutex
+	p           pingerController
+	traceCancel context.CancelFunc
+	traceDone   chan struct{} // closed when the current runTraceroutes goroutine returns
+	portChecker *pinger.PortChecker
+	httpChecker *pinger.HTTPChecker
+	mtrEngine   *mtr.Engine
+}
+
+func newSupervisor(cfg supervisorConfig) *supervisor {
+	return &supervisor{cfg: cfg}
+}
+
+// startTraceroutes cancels any previous traceroute goroutine, launches a new
+// one, and tracks it via s.traceDone so stopPinger can join it on shutdown
+// instead of leaving it to be reaped by process exit. Caller must hold s.mu.
+func (s *supervisor) startTraceroutes(pr tracer) {
+	if s.traceCancel != nil {
+		s.traceCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.traceCancel = cancel
+	done := make(chan struct{})
+	s.traceDone = done
+	// Pass the local ctx rather than storing it in a shared field: a
+	// concurrent resetTrace()/startPinger() call would reassign a shared
+	// field under s.mu, racing with this goroutine reading it later. ctx
+	// here is only ever touched by this one goroutine.
+	go func() {
+		defer close(done)
+		runTraceroutes(ctx, pr, s.cfg.targets)
+	}()
+}
+
+// onFlap is the shared callback for MTR route-flap events.
+func (s *supervisor) onFlap(host, desc string) {
+	select {
+	case s.cfg.logCh <- fmt.Sprintf("[yellow][%s] Route flap %s: %s[-]",
+		time.Now().Format("15:04:05"), host, desc):
+	default:
+	}
+}
+
+// startPinger creates and starts a new pinger, wiring up traceroute/MTR when
+// enabled.
+func (s *supervisor) startPinger() error {
+	next := s.cfg.makePinger(s.cfg.packetSize)
+	if err := next.Start(s.cfg.interval, s.cfg.timeout); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cfg.traceEnabled {
+		s.startTraceroutes(next)
+	}
+	if s.cfg.mtrEnabled {
+		if s.mtrEngine != nil {
+			s.mtrEngine.Stop()
+		}
+		pa, ok := next.(*pingerAdapter)
+		if !ok {
+			return fmt.Errorf("internal: unexpected pinger type %T", next)
+		}
+		adapter := &pingerMTRAdapter{p: pa.Pinger}
+		s.mtrEngine = mtr.NewEngine(adapter, s.cfg.targets, mtr.Config{
+			OnFlap: s.onFlap,
+		})
+		s.mtrEngine.Start()
+	}
+	s.p = next
+	return nil
+}
+
+// setupPortAndHTTP starts the port and HTTP checkers (each a no-op when its
+// spec list is empty).
+func (s *supervisor) setupPortAndHTTP() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
+	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
+}
+
+// stopPinger stops, in order, the traceroute goroutine (joined), the MTR
+// engine, and the pinger itself. Safe to call multiple times.
+func (s *supervisor) stopPinger() {
+	s.mu.Lock()
+	if s.traceCancel != nil {
+		s.traceCancel()
+	}
+	curTraceDone := s.traceDone
+	curEngine := s.mtrEngine
+	cur := s.p
+	s.mu.Unlock()
+	if curTraceDone != nil {
+		<-curTraceDone
+	}
+	if curEngine != nil {
+		curEngine.Stop()
+	}
+	if cur != nil {
+		cur.Stop()
+		cur.Wait()
+	}
+}
+
+// stopAll stops the pinger (and trace/MTR) followed by the port and HTTP
+// checkers. Called from multiple sites (OnStop, OnRestart, error path,
+// normal cleanup) and must be idempotent: Pinger.Stop uses a select-guarded
+// close(done) and PortChecker/HTTPChecker.Stop use sync.Once, so all are
+// safe to call more than once.
+func (s *supervisor) stopAll() {
+	s.stopPinger()
+	s.mu.Lock()
+	curPort := s.portChecker
+	curHTTP := s.httpChecker
+	s.mu.Unlock()
+	if curPort != nil {
+		curPort.Stop()
+		curPort.Wait()
+	}
+	if curHTTP != nil {
+		curHTTP.Stop()
+		curHTTP.Wait()
+	}
+}
+
+func (s *supervisor) resetTrace() {
+	s.mu.Lock()
+	cur := s.p
+	s.startTraceroutes(cur)
+	s.mu.Unlock()
+}
+
+func (s *supervisor) resetMTR() {
+	for _, t := range s.cfg.targets {
+		t.Reset()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	curEngine := s.mtrEngine
+	if curEngine != nil {
+		curEngine.Stop()
+	}
+	cur := s.p
+	pa, ok := cur.(*pingerAdapter)
+	if !ok {
+		return
+	}
+	adapter := &pingerMTRAdapter{p: pa.Pinger}
+	s.mtrEngine = mtr.NewEngine(adapter, s.cfg.targets, mtr.Config{
+		OnFlap: s.onFlap,
+	})
+	s.mtrEngine.Start()
+}
+
+func (s *supervisor) resetHTTP() {
+	s.mu.Lock()
+	cur := s.httpChecker
+	s.httpChecker = nil
+	s.mu.Unlock()
+	if cur != nil {
+		cur.Stop()
+		cur.Wait()
+	}
+	next := setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
+	s.mu.Lock()
+	s.httpChecker = next
+	s.mu.Unlock()
+}
+
+func (s *supervisor) resetPort() {
+	s.mu.Lock()
+	cur := s.portChecker
+	s.portChecker = nil
+	s.mu.Unlock()
+	if cur != nil {
+		cur.Stop()
+		cur.Wait()
+	}
+	next := setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
+	s.mu.Lock()
+	s.portChecker = next
+	s.mu.Unlock()
+}
+
+// httpResults returns the current HTTP checker's results, or nil when no
+// HTTP checker is active.
+func (s *supervisor) httpResults() []*stats.HTTPCheckResult {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.httpChecker == nil {
+		return nil
+	}
+	return s.httpChecker.Results()
+}
+
+// waitPinger blocks until the current pinger finishes (used for
+// count-limited runs).
+func (s *supervisor) waitPinger() {
+	s.mu.Lock()
+	cur := s.p
+	s.mu.Unlock()
+	if cur != nil {
+		cur.Wait()
+	}
+}

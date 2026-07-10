@@ -1,0 +1,351 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/nagayon-935/mping/internal/pinger"
+	"github.com/nagayon-935/mping/internal/stats"
+	ui "github.com/nagayon-935/mping/internal/ui"
+	"github.com/nagayon-935/mping/internal/watcher"
+	"github.com/spf13/pflag"
+)
+
+// TD-22④: the helpers below carve run()'s former parse/setup/per-iteration
+// wiring/cleanup steps out into named functions so run() itself is left as
+// parse → construct → loop-control only.
+
+// startupParams holds everything parseAndLoadHosts derives from argv and the
+// optional YAML hosts file, before any network/logger setup happens.
+type startupParams struct {
+	cfg      config
+	hosts    []string
+	fs       *pflag.FlagSet
+	cliCfg   config
+	cliHosts []string
+	groups   []ui.TargetGroup
+}
+
+// parseAndLoadHosts parses CLI args, merges the YAML hosts file (if any),
+// expands --resolve-all targets, and validates thresholds. On failure it
+// writes the appropriate message to out/errOut itself and returns ok=false
+// with the exit code run() should return immediately.
+func parseAndLoadHosts(args []string, out, errOut io.Writer) (p startupParams, exitCode int, ok bool) {
+	cfg, hosts, fs, usage, err := parseArgs(args)
+	if err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			fmt.Fprint(out, usage)
+			return startupParams{}, 0, false
+		}
+		fmt.Fprint(errOut, usage)
+		return startupParams{}, 1, false
+	}
+
+	cliCfg := cfg
+	cliHosts := append([]string(nil), hosts...)
+
+	var groups []ui.TargetGroup
+	hosts, groups, cfg, err = mergeHosts(cfg, fs, hosts)
+	if err != nil {
+		fmt.Fprintf(errOut, "Error reading hosts file: %v\n", err)
+		return startupParams{}, 1, false
+	}
+	expandedHosts, expandedGroups, err := expandTargets(hosts, groups, cfg)
+	if err != nil {
+		fmt.Fprintf(errOut, "Error expanding targets: %v\n", err)
+		return startupParams{}, 1, false
+	}
+	hosts = expandedHosts
+	groups = expandedGroups
+	if len(hosts) == 0 {
+		fmt.Fprint(errOut, usage)
+		return startupParams{}, 1, false
+	}
+	if err := cfg.thresholds.Validate(); err != nil {
+		fmt.Fprintf(errOut, "Invalid thresholds: %v\n", err)
+		return startupParams{}, 1, false
+	}
+
+	return startupParams{cfg: cfg, hosts: hosts, fs: fs, cliCfg: cliCfg, cliHosts: cliHosts, groups: groups}, 0, true
+}
+
+// runEnv holds the one-time (non-reloadable) environment run() needs for the
+// lifetime of the process: network family, source IP, log file, and parsed
+// port specs.
+type runEnv struct {
+	resNetwork string
+	bindIP     string
+	dispV4     string
+	dispV6     string
+	logFile    *os.File
+	portSpecs  []pinger.PortSpec
+}
+
+// prepareRunEnv resolves the network family and source IP, opens the CSV log
+// file, and parses port specs — all one-time setup that reloads reuse as-is.
+// On failure it writes to errOut itself and returns ok=false with the exit
+// code run() should return immediately. The caller owns closing env.logFile.
+func prepareRunEnv(cfg config, hosts []string, out, errOut io.Writer) (env runEnv, exitCode int, ok bool) {
+	env.resNetwork = resolveNetwork(cfg)
+
+	bindIP, dispV4, dispV6, err := determineSourceIPs(cfg, hosts)
+	if err != nil {
+		fmt.Fprintf(errOut, "Error resolving interface %s: %v\n", cfg.ifaceName, err)
+		return runEnv{}, 1, false
+	}
+	env.bindIP, env.dispV4, env.dispV6 = bindIP, dispV4, dispV6
+	if cfg.ifaceName != "" && bindIP != "" {
+		fmt.Fprintf(out, "Binding to interface %s (%s)\n", cfg.ifaceName, bindIP)
+	}
+
+	logFile, err := setupLogger(cfg.outputFile)
+	if err != nil {
+		fmt.Fprintf(errOut, "Error opening log file: %v\n", err)
+		return runEnv{}, 1, false
+	}
+	env.logFile = logFile
+
+	for _, raw := range cfg.portSpecs {
+		spec, err := pinger.ParsePortSpec(raw)
+		if err != nil {
+			fmt.Fprintf(errOut, "Invalid port spec %q: %v\n", raw, err)
+			return runEnv{}, 1, false
+		}
+		env.portSpecs = append(env.portSpecs, spec)
+	}
+
+	return env, 0, true
+}
+
+// buildTargetsForIteration creates TargetStats for hosts and tags each with
+// its display DNS server (used by the UI's DNS column).
+func buildTargetsForIteration(hosts []string, cfg config) []*stats.TargetStats {
+	targets := initTargets(hosts)
+	for _, t := range targets {
+		hostName := t.Host
+		if idx := strings.Index(hostName, " ("); idx >= 0 && strings.HasSuffix(hostName, ")") {
+			hostName = hostName[:idx]
+		}
+		if net.ParseIP(hostName) == nil {
+			if cfg.dnsServer != "" {
+				t.SetDNSServer(cfg.dnsServer)
+			} else {
+				t.SetDNSServer("Default")
+			}
+		} else {
+			t.SetDNSServer("-")
+		}
+	}
+	return targets
+}
+
+// buildPingerOptions constructs the pinger.Options for one loop iteration,
+// including the address resolver that understands the "host (ip)" display
+// format produced by --resolve-all.
+func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resolver) pinger.Options {
+	return pinger.Options{
+		ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {
+			if idx := strings.Index(address, " ("); idx >= 0 && strings.HasSuffix(address, ")") {
+				ipStr := address[idx+2 : len(address)-1]
+				return net.ResolveIPAddr(network, ipStr)
+			}
+			if customResolver != nil && cfg.dnsServer != "" {
+				ips, err := customResolver.LookupIP(context.Background(), network, address)
+				if err != nil {
+					return nil, err
+				}
+				if len(ips) == 0 {
+					return nil, &net.DNSError{Err: "no such host", Name: address}
+				}
+				return &net.IPAddr{IP: ips[0]}, nil
+			}
+			return net.ResolveIPAddr(resNetwork, address)
+		},
+		Resolver:   customResolver,
+		AsnEnabled: cfg.asnEnabled,
+	}
+}
+
+// checkPortReloadDrift returns a warning message when a reloaded config
+// requests a different --port / port: set than the one the running port
+// checker was actually built from. Port specs are parsed once at startup and
+// never re-applied mid-run (TD-25), so this is a "restart required" nudge
+// rather than a fix: it returns "" when there's no drift.
+func checkPortReloadDrift(activeRaw, reloadedRaw []string) string {
+	if slices.Equal(activeRaw, reloadedRaw) {
+		return ""
+	}
+	return fmt.Sprintf("[yellow][%s] port: change detected in the reloaded config — port checks require a full restart of mping to take effect[-]",
+		time.Now().Format("15:04:05"))
+}
+
+// startWatcher launches the YAML file watcher goroutine when hostsFile is
+// set. When it isn't, it returns a no-op cancel and a pre-closed done
+// channel so callers can treat both cases uniformly.
+func startWatcher(hostsFile string, onFileChange func(), logCh chan<- string) (cancel func(), done chan struct{}) {
+	if hostsFile == "" {
+		done = make(chan struct{})
+		close(done)
+		return func() {}, done
+	}
+	innerDone := make(chan struct{})
+	watchCtx, cancelFn := context.WithCancel(context.Background())
+	go func() {
+		defer close(innerDone)
+		if err := watcher.Watch(watchCtx, hostsFile, onFileChange); err != nil {
+			select {
+			case logCh <- fmt.Sprintf("[red][%s] Watcher error: %v[-]",
+				time.Now().Format("15:04:05"), err):
+			default:
+			}
+		}
+	}()
+	return cancelFn, innerDone
+}
+
+// startJSONWriter launches the periodic JSON snapshot writer goroutine when
+// path is set. When it isn't, it still returns a valid cancel func (safe to
+// call unconditionally) and a pre-closed done channel.
+func startJSONWriter(path string, targets []*stats.TargetStats, httpResults func() []*stats.HTTPCheckResult, errOut io.Writer) (cancel func(), done chan struct{}) {
+	ctx, cancelFn := context.WithCancel(context.Background())
+	doneCh := make(chan struct{})
+	if path == "" {
+		close(doneCh)
+		return cancelFn, doneCh
+	}
+	go func() {
+		defer close(doneCh)
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := writeJSONSnapshot(path, targets, httpResults()); err != nil {
+					fmt.Fprintf(errOut, "Warning: JSON snapshot write failed: %v\n", err)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return cancelFn, doneCh
+}
+
+// runOptionsParams bundles the per-iteration values buildRunOptions needs to
+// construct ui.RunOptions.
+type runOptionsParams struct {
+	targets       []*stats.TargetStats
+	interval      time.Duration
+	timeout       time.Duration
+	doneCh        chan struct{}
+	dispV4        string
+	dispV6        string
+	packetSize    int
+	preLogs       []string
+	cfg           config
+	portCount     int
+	sup           *supervisor
+	resetMTR      func()
+	resetHTTP     func()
+	resetPort     func()
+	thresholds    ui.Thresholds
+	sig           *reloadSignal
+	logCh         chan string
+	rc            *reloadCoordinator
+	currentHosts  []string
+	currentGroups []ui.TargetGroup
+}
+
+// buildRunOptions assembles the ui.RunOptions for one loop iteration,
+// including the OnAddHost/OnDeleteHost callbacks that arm an in-memory
+// reload via the reloadCoordinator.
+func buildRunOptions(p runOptionsParams) ui.RunOptions {
+	return ui.RunOptions{
+		Targets:         p.targets,
+		Interval:        p.interval,
+		Timeout:         p.timeout,
+		DoneCh:          p.doneCh,
+		SourceIPv4:      p.dispV4,
+		SourceIPv6:      p.dispV6,
+		PacketSize:      p.packetSize,
+		InitialLogs:     p.preLogs,
+		TraceEnabled:    p.cfg.trace,
+		MTREnabled:      p.cfg.mtr,
+		PortEnabled:     p.portCount > 0,
+		HTTPEnabled:     len(p.cfg.httpURLs) > 0,
+		HTTPResults:     p.sup.httpResults,
+		ASNEnabled:      p.cfg.asnEnabled,
+		Thresholds:      &p.thresholds,
+		ExternalCloseCh: p.sig.ch,
+		ExternalLogCh:   p.logCh,
+		OnStop:          p.sup.stopAll,
+		OnRestart: func() error {
+			p.sup.stopAll()
+			if err := p.sup.startPinger(); err != nil {
+				return err
+			}
+			p.sup.setupPortAndHTTP()
+			return nil
+		},
+		OnResetTrace: p.sup.resetTrace,
+		OnResetMTR:   p.resetMTR,
+		OnResetPort:  p.resetPort,
+		OnResetHTTP:  p.resetHTTP,
+		OnAddHost: func(host string) error {
+			host = strings.TrimSpace(host)
+			if host == "" {
+				return fmt.Errorf("host cannot be empty")
+			}
+			for _, h := range p.currentHosts {
+				if h == host {
+					return fmt.Errorf("host %q is already in the list", host)
+				}
+			}
+			newHosts := make([]string, len(p.currentHosts)+1)
+			copy(newHosts, p.currentHosts)
+			newHosts[len(p.currentHosts)] = host
+			p.rc.requestHostsChange(p.sig, newHosts)
+			return nil
+		},
+		OnDeleteHost: func(host string) error {
+			newHosts := make([]string, 0, len(p.currentHosts))
+			for _, h := range p.currentHosts {
+				if h != host {
+					newHosts = append(newHosts, h)
+				}
+			}
+			if len(newHosts) == len(p.currentHosts) {
+				return fmt.Errorf("host %q not found", host)
+			}
+			if len(newHosts) == 0 {
+				return fmt.Errorf("cannot delete the last host")
+			}
+			p.rc.requestHostsChange(p.sig, newHosts)
+			return nil
+		},
+		Groups: p.currentGroups,
+	}
+}
+
+// finishIteration performs the standard post-uiRun cleanup: stop the JSON
+// writer and write a final snapshot, stop the pinger/port/HTTP checkers, then
+// stop the file watcher — in that order, joining each before moving on.
+func finishIteration(cfg config, targets []*stats.TargetStats, sup *supervisor, errOut io.Writer, jsonCancel func(), jsonDone chan struct{}, watchCancel func(), watchDone chan struct{}) {
+	jsonCancel()
+	<-jsonDone
+	if cfg.jsonOutputFile != "" {
+		if err := writeJSONSnapshot(cfg.jsonOutputFile, targets, sup.httpResults()); err != nil {
+			fmt.Fprintf(errOut, "Warning: Final JSON snapshot write failed: %v\n", err)
+		}
+	}
+	sup.stopAll()
+	watchCancel()
+	<-watchDone
+}

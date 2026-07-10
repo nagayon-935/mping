@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rivo/tview"
+
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
@@ -136,26 +138,6 @@ func TestHTTPCodeColorTag(t *testing.T) {
 	}
 }
 
-// ---- appendErrorLogRaw ----
-
-func TestAppendErrorLogRaw(t *testing.T) {
-	var buf strings.Builder
-	var logs []string
-
-	appendErrorLogRaw(&logs, &buf, "first message")
-	if len(logs) != 1 || logs[0] != "first message" {
-		t.Errorf("logs = %v, want [\"first message\"]", logs)
-	}
-	if !strings.Contains(buf.String(), "first message") {
-		t.Errorf("writer did not receive message: %q", buf.String())
-	}
-
-	appendErrorLogRaw(&logs, &buf, "second message")
-	if len(logs) != 2 {
-		t.Errorf("expected 2 log entries, got %d", len(logs))
-	}
-}
-
 // ---- renderHTTPMonitorTable status-change log path ----
 
 func TestRenderHTTPMonitorTable_StatusChangeLogsToWriter(t *testing.T) {
@@ -164,10 +146,10 @@ func TestRenderHTTPMonitorTable_StatusChangeLogsToWriter(t *testing.T) {
 	lastStatuses := map[string]string{
 		"https://example.com/health": "Down", // pretend it was Down before
 	}
-	var logBuf strings.Builder
+	logView := tview.NewTextView()
 	var logs []string
 
-	out := renderHTTPMonitorTable([]*stats.HTTPCheckResult{r}, 200, lastStatuses, &logs, &logBuf)
+	out := renderHTTPMonitorTable([]*stats.HTTPCheckResult{r}, 200, lastStatuses, &logs, logView)
 
 	if out == "" {
 		t.Error("expected non-empty output")
@@ -175,8 +157,8 @@ func TestRenderHTTPMonitorTable_StatusChangeLogsToWriter(t *testing.T) {
 	if len(logs) == 0 {
 		t.Error("expected at least one log entry on status change")
 	}
-	if !strings.Contains(logBuf.String(), "example.com") {
-		t.Errorf("log writer missing URL, got: %q", logBuf.String())
+	if !strings.Contains(logView.GetText(false), "example.com") {
+		t.Errorf("log view missing URL, got: %q", logView.GetText(false))
 	}
 	// After the call the status should be updated in lastStatuses.
 	if lastStatuses["https://example.com/health"] != "Up" {

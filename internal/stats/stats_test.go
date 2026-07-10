@@ -78,27 +78,27 @@ func TestPortCheckResult_SetAndGetResult(t *testing.T) {
 	r := &PortCheckResult{Port: 443, Protocol: "tcp", Status: "Checking..."}
 
 	r.SetResult("Open", 10*time.Millisecond)
-	status, rtt, openCount, closedCount, _ := r.GetResult()
-	if status != "Open" {
-		t.Errorf("Status: got %q, want %q", status, "Open")
+	v := r.GetView()
+	if v.Status != "Open" {
+		t.Errorf("Status: got %q, want %q", v.Status, "Open")
 	}
-	if rtt != 10*time.Millisecond {
-		t.Errorf("RTT: got %v, want %v", rtt, 10*time.Millisecond)
+	if v.RTT != 10*time.Millisecond {
+		t.Errorf("RTT: got %v, want %v", v.RTT, 10*time.Millisecond)
 	}
-	if openCount != 1 {
-		t.Errorf("OpenCount: got %d, want 1", openCount)
+	if v.OpenCount != 1 {
+		t.Errorf("OpenCount: got %d, want 1", v.OpenCount)
 	}
-	if closedCount != 0 {
-		t.Errorf("ClosedCount: got %d, want 0", closedCount)
+	if v.ClosedCount != 0 {
+		t.Errorf("ClosedCount: got %d, want 0", v.ClosedCount)
 	}
 
 	r.SetResult("Closed", 5*time.Millisecond)
-	status, _, _, closedCount, _ = r.GetResult()
-	if status != "Closed" {
-		t.Errorf("Status: got %q, want %q", status, "Closed")
+	v = r.GetView()
+	if v.Status != "Closed" {
+		t.Errorf("Status: got %q, want %q", v.Status, "Closed")
 	}
-	if closedCount != 1 {
-		t.Errorf("ClosedCount: got %d, want 1", closedCount)
+	if v.ClosedCount != 1 {
+		t.Errorf("ClosedCount: got %d, want 1", v.ClosedCount)
 	}
 }
 
@@ -108,14 +108,14 @@ func TestPortCheckResult_SetResult_LastChange(t *testing.T) {
 	// Same status: LastChange should not be updated
 	before := r.LastChange
 	r.SetResult("Open", 5*time.Millisecond)
-	_, _, _, _, lastChange := r.GetResult()
+	lastChange := r.GetView().LastChange
 	if lastChange != before {
 		t.Error("LastChange should not update when status is unchanged")
 	}
 
 	// Different status: LastChange should be updated
 	r.SetResult("Closed", 5*time.Millisecond)
-	_, _, _, _, lastChange = r.GetResult()
+	lastChange = r.GetView().LastChange
 	if lastChange.IsZero() {
 		t.Error("LastChange should be set when status changes")
 	}
@@ -136,12 +136,12 @@ func TestPortCheckResult_SetResult_AllStatuses(t *testing.T) {
 	for _, tt := range tests {
 		r := &PortCheckResult{Status: "Checking..."}
 		r.SetResult(tt.status, 0)
-		_, _, open, closed, _ := r.GetResult()
-		if tt.expectOpenInc && open != 1 {
-			t.Errorf("status %q: OpenCount got %d, want 1", tt.status, open)
+		v := r.GetView()
+		if tt.expectOpenInc && v.OpenCount != 1 {
+			t.Errorf("status %q: OpenCount got %d, want 1", tt.status, v.OpenCount)
 		}
-		if tt.expectClosedInc && closed != 1 {
-			t.Errorf("status %q: ClosedCount got %d, want 1", tt.status, closed)
+		if tt.expectClosedInc && v.ClosedCount != 1 {
+			t.Errorf("status %q: ClosedCount got %d, want 1", tt.status, v.ClosedCount)
 		}
 	}
 }
@@ -244,9 +244,9 @@ func TestTargetStatsFailureAndReset(t *testing.T) {
 	}
 }
 
-func TestTargetStats_SetASN(t *testing.T) {
+func TestTargetStats_SetASNInfo(t *testing.T) {
 	tgt := NewTargetStats("example.com")
-	tgt.SetASN("AS12345")
+	tgt.SetASNInfo("AS12345", "", "")
 	view := tgt.GetView()
 	if view.ASN != "AS12345" {
 		t.Errorf("ASN: got %q, want %q", view.ASN, "AS12345")

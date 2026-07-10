@@ -18,11 +18,6 @@ type PortSpec struct {
 	Protocol string // "tcp" or "udp"
 }
 
-// String returns the port spec in "port/proto" format.
-func (s PortSpec) String() string {
-	return fmt.Sprintf("%d/%s", s.Port, s.Protocol)
-}
-
 // ParsePortSpec parses a port specification string.
 // Accepted formats: "443", "443/tcp", "53/udp" (defaults to tcp).
 func ParsePortSpec(s string) (PortSpec, error) {

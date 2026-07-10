@@ -65,25 +65,6 @@ func TestParsePortSpec_InvalidFormats(t *testing.T) {
 	}
 }
 
-// ---- PortSpec.String tests ----
-
-func TestPortSpec_String(t *testing.T) {
-	tests := []struct {
-		spec PortSpec
-		want string
-	}{
-		{PortSpec{Port: 443, Protocol: "tcp"}, "443/tcp"},
-		{PortSpec{Port: 53, Protocol: "udp"}, "53/udp"},
-		{PortSpec{Port: 80, Protocol: "tcp"}, "80/tcp"},
-	}
-	for _, tt := range tests {
-		got := tt.spec.String()
-		if got != tt.want {
-			t.Errorf("PortSpec.String(): got %q, want %q", got, tt.want)
-		}
-	}
-}
-
 // ---- NewPortChecker tests ----
 
 func TestNewPortChecker_InitializesPortResults(t *testing.T) {
@@ -180,8 +161,7 @@ func TestPortChecker_Wait(t *testing.T) {
 		out := make([]string, 0, len(targets)*len(specs))
 		for _, tgt := range targets {
 			for _, r := range tgt.PortResults {
-				status, _, _, _, _ := r.GetResult()
-				out = append(out, status)
+				out = append(out, r.GetView().Status)
 			}
 		}
 		return out
@@ -344,7 +324,7 @@ func TestPortChecker_CheckWithIP(t *testing.T) {
 	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Second, time.Second)
 	pc.check(tgt, spec, result)
 
-	status, _, _, _, _ := result.GetResult()
+	status := result.GetView().Status
 	if status != "Open" {
 		t.Errorf("check: got status %q, want Open", status)
 	}
@@ -361,7 +341,7 @@ func TestPortChecker_CheckSkipsEmptyIP(t *testing.T) {
 	pc.check(tgt, spec, result)
 
 	// Status should remain unchanged since IP was empty
-	status, _, _, _, _ := result.GetResult()
+	status := result.GetView().Status
 	if status != "Checking..." {
 		t.Errorf("check with empty IP: expected status to remain %q, got %q", "Checking...", status)
 	}

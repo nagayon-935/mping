@@ -15,10 +15,7 @@ type HTTPCheckResult struct {
 	DownCount  int
 	LastChange time.Time
 
-	minRTT     time.Duration
-	maxRTT     time.Duration
-	sumRTT     time.Duration
-	rttSamples int
+	rtt rttAccumulator
 
 	mu sync.RWMutex
 }
@@ -75,35 +72,21 @@ func (r *HTTPCheckResult) SetResult(statusCode int, rtt time.Duration, err error
 }
 
 func (r *HTTPCheckResult) recordRTT(rtt time.Duration) {
-	if rtt <= 0 {
-		return
-	}
-	r.rttSamples++
-	r.sumRTT += rtt
-	if r.minRTT == 0 || rtt < r.minRTT {
-		r.minRTT = rtt
-	}
-	if rtt > r.maxRTT {
-		r.maxRTT = rtt
-	}
+	r.rtt.record(rtt)
 }
 
 // GetView returns a thread-safe snapshot.
 func (r *HTTPCheckResult) GetView() HTTPCheckView {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	var avg time.Duration
-	if r.rttSamples > 0 {
-		avg = r.sumRTT / time.Duration(r.rttSamples)
-	}
 	return HTTPCheckView{
 		URL:        r.URL,
 		StatusCode: r.StatusCode,
 		Status:     r.Status,
 		RTT:        r.RTT,
-		MinRTT:     r.minRTT,
-		AvgRTT:     avg,
-		MaxRTT:     r.maxRTT,
+		MinRTT:     r.rtt.min,
+		AvgRTT:     r.rtt.avg(),
+		MaxRTT:     r.rtt.max,
 		UpCount:    r.UpCount,
 		DownCount:  r.DownCount,
 		LastChange: r.LastChange,

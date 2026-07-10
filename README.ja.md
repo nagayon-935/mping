@@ -231,6 +231,8 @@ groups:
       - dns.cloudflare.com
 ```
 
+実行可能なサンプルは [examples/hosts-groups.yaml](examples/hosts-groups.yaml) を参照（`mping -f examples/hosts-groups.yaml`）。
+
 
 ### オプション
 

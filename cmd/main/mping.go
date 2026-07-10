@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,7 +16,6 @@ import (
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 	ui "github.com/nagayon-935/mping/internal/ui"
-	"github.com/nagayon-935/mping/internal/watcher"
 	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
 )
@@ -261,13 +259,10 @@ type config struct {
 	dnsServer      string
 	resolveAll     bool
 
-	// Colour-coding / alert thresholds (warn = orange, crit = red).
-	rttWarnMs    int
-	rttCritMs    int
-	jitterWarnMs int
-	jitterCritMs int
-	lossWarnPct  float64
-	lossCritPct  float64
+	// thresholds holds the colour-coding / alert boundaries (warn = orange,
+	// crit = red), unified onto ui.Thresholds directly (TD-10) instead of
+	// six separate ms/pct fields that had to be converted at every use site.
+	thresholds ui.Thresholds
 }
 
 // groupYAML represents a named host group in the YAML config file.
@@ -311,19 +306,6 @@ type thresholdsYAML struct {
 	LossCrit   *float64 `yaml:"loss-crit"`
 }
 
-// thresholdsFromCfg builds a ui.Thresholds from the merged config. RTT/Jitter
-// values are interpreted as milliseconds; loss values as percentages.
-func thresholdsFromCfg(cfg config) ui.Thresholds {
-	return ui.Thresholds{
-		RTTWarn:    time.Duration(cfg.rttWarnMs) * time.Millisecond,
-		RTTCrit:    time.Duration(cfg.rttCritMs) * time.Millisecond,
-		JitterWarn: time.Duration(cfg.jitterWarnMs) * time.Millisecond,
-		JitterCrit: time.Duration(cfg.jitterCritMs) * time.Millisecond,
-		LossWarn:   cfg.lossWarnPct,
-		LossCrit:   cfg.lossCritPct,
-	}
-}
-
 func resolveNetwork(cfg config) string {
 	if cfg.ipv4Only {
 		return "ip4"
@@ -342,91 +324,50 @@ func resolveNetwork(cfg config) string {
 // Returns the ungrouped hosts listed in the document, the raw group definitions,
 // and the updated cfg.
 func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]string, []groupYAML, config, error) {
-	if !fs.Changed("interval") && doc.IntervalMs != nil {
-		cfg.intervalMs = *doc.IntervalMs
-	}
-	if !fs.Changed("timeout") && doc.TimeoutMs != nil {
-		cfg.timeoutMs = *doc.TimeoutMs
-	}
-	if !fs.Changed("output") && doc.OutputFile != nil {
-		cfg.outputFile = *doc.OutputFile
-	}
-	if !fs.Changed("interface") && doc.IfaceName != nil {
-		cfg.ifaceName = *doc.IfaceName
-	}
-	if !fs.Changed("source") && doc.SourceAddr != nil {
-		cfg.sourceAddr = *doc.SourceAddr
-	}
-	if !fs.Changed("size") && doc.PacketSize != nil {
-		cfg.packetSize = *doc.PacketSize
-	}
-	if !fs.Changed("count") && doc.Count != nil {
-		cfg.count = *doc.Count
-	}
-	if !fs.Changed("discovery-mtu") && doc.MtuEnabled != nil {
-		cfg.mtuEnabled = *doc.MtuEnabled
-	}
-	if !fs.Changed("traceroute") && doc.Trace != nil {
-		cfg.trace = *doc.Trace
-	}
-	if !fs.Changed("asn") && doc.AsnEnabled != nil {
-		cfg.asnEnabled = *doc.AsnEnabled
-	}
-	if !fs.Changed("ipv4") && doc.Ipv4Only != nil {
-		cfg.ipv4Only = *doc.Ipv4Only
-	}
-	if !fs.Changed("ipv6") && doc.Ipv6Only != nil {
-		cfg.ipv6Only = *doc.Ipv6Only
-	}
-	if !fs.Changed("port") && len(doc.PortSpecs) > 0 {
-		cfg.portSpecs = doc.PortSpecs
-	}
-	if !fs.Changed("http") && len(doc.HTTPURLs) > 0 {
-		cfg.httpURLs = doc.HTTPURLs
-	}
-	if !fs.Changed("json-output") && doc.JsonOutput != nil {
-		cfg.jsonOutputFile = *doc.JsonOutput
-	}
-	if !fs.Changed("mtr") && doc.Mtr != nil {
-		cfg.mtr = *doc.Mtr
-	}
-	if !fs.Changed("dns-server") && doc.DNSServer != nil {
-		cfg.dnsServer = *doc.DNSServer
-	}
-	if !fs.Changed("resolve-all") && doc.ResolveAll != nil {
-		cfg.resolveAll = *doc.ResolveAll
-	}
-	applyThresholdsDoc(&cfg, fs, doc.Thresholds)
+	syncField(fs, "interval", doc.IntervalMs, &cfg.intervalMs)
+	syncField(fs, "timeout", doc.TimeoutMs, &cfg.timeoutMs)
+	syncField(fs, "output", doc.OutputFile, &cfg.outputFile)
+	syncField(fs, "interface", doc.IfaceName, &cfg.ifaceName)
+	syncField(fs, "source", doc.SourceAddr, &cfg.sourceAddr)
+	syncField(fs, "size", doc.PacketSize, &cfg.packetSize)
+	syncField(fs, "count", doc.Count, &cfg.count)
+	syncField(fs, "discovery-mtu", doc.MtuEnabled, &cfg.mtuEnabled)
+	syncField(fs, "traceroute", doc.Trace, &cfg.trace)
+	syncField(fs, "asn", doc.AsnEnabled, &cfg.asnEnabled)
+	syncField(fs, "ipv4", doc.Ipv4Only, &cfg.ipv4Only)
+	syncField(fs, "ipv6", doc.Ipv6Only, &cfg.ipv6Only)
+	syncSlice(fs, "port", doc.PortSpecs, &cfg.portSpecs)
+	syncSlice(fs, "http", doc.HTTPURLs, &cfg.httpURLs)
+	syncField(fs, "json-output", doc.JsonOutput, &cfg.jsonOutputFile)
+	syncField(fs, "mtr", doc.Mtr, &cfg.mtr)
+	syncField(fs, "dns-server", doc.DNSServer, &cfg.dnsServer)
+	syncField(fs, "resolve-all", doc.ResolveAll, &cfg.resolveAll)
+	cfg.thresholds = overlayThresholdsDoc(cfg.thresholds, fs, doc.Thresholds)
 	if cfg.ipv4Only && cfg.ipv6Only {
 		return nil, nil, cfg, fmt.Errorf("cannot use both -4 and -6")
 	}
 	return doc.Hosts, doc.Groups, cfg, nil
 }
 
-// applyThresholdsDoc applies the YAML thresholds block to cfg, respecting CLI
-// flag overrides (a value is only applied when its flag was not set).
-func applyThresholdsDoc(cfg *config, fs *pflag.FlagSet, th *thresholdsYAML) {
-	if th == nil {
+// syncField applies *docVal into *cfgField when non-nil and its CLI flag
+// wasn't explicitly set on the command line. This is the flag > YAML >
+// default precedence shared by every simple (non-threshold) config field —
+// TD-19②: adding a new config field now costs one call here instead of a
+// bespoke 3-line if-block.
+func syncField[T any](fs *pflag.FlagSet, flag string, docVal *T, cfgField *T) {
+	if fs.Changed(flag) || docVal == nil {
 		return
 	}
-	if !fs.Changed("rtt-warn") && th.RTTWarn != nil {
-		cfg.rttWarnMs = *th.RTTWarn
+	*cfgField = *docVal
+}
+
+// syncSlice is syncField's counterpart for []string fields, which use
+// emptiness rather than nil-ness to mean "not set in the doc".
+func syncSlice(fs *pflag.FlagSet, flag string, docVal []string, cfgField *[]string) {
+	if fs.Changed(flag) || len(docVal) == 0 {
+		return
 	}
-	if !fs.Changed("rtt-crit") && th.RTTCrit != nil {
-		cfg.rttCritMs = *th.RTTCrit
-	}
-	if !fs.Changed("jitter-warn") && th.JitterWarn != nil {
-		cfg.jitterWarnMs = *th.JitterWarn
-	}
-	if !fs.Changed("jitter-crit") && th.JitterCrit != nil {
-		cfg.jitterCritMs = *th.JitterCrit
-	}
-	if !fs.Changed("loss-warn") && th.LossWarn != nil {
-		cfg.lossWarnPct = *th.LossWarn
-	}
-	if !fs.Changed("loss-crit") && th.LossCrit != nil {
-		cfg.lossCritPct = *th.LossCrit
-	}
+	*cfgField = docVal
 }
 
 // mergeHosts merges a hosts-file's configuration into cfg and host list.
@@ -519,7 +460,7 @@ func validateHostsDoc(doc hostsFileYAML) error {
 		}
 	}
 	if doc.Thresholds != nil {
-		th := overlayThresholds(ui.DefaultThresholds(), doc.Thresholds)
+		th := overlayThresholdsDoc(ui.DefaultThresholds(), nil, doc.Thresholds)
 		if err := th.Validate(); err != nil {
 			return fmt.Errorf("thresholds: %w", err)
 		}
@@ -527,28 +468,35 @@ func validateHostsDoc(doc hostsFileYAML) error {
 	return nil
 }
 
-// overlayThresholds returns base with any non-nil fields from the YAML block
-// applied. RTT/Jitter values are milliseconds; loss values are percentages.
-func overlayThresholds(base ui.Thresholds, th *thresholdsYAML) ui.Thresholds {
+// overlayThresholdsDoc returns base with any non-nil fields from th applied.
+// RTT/Jitter values are milliseconds; loss values are percentages. When fs is
+// non-nil, a field is skipped if its CLI flag was explicitly set (used when
+// merging a reload into the running cfg.thresholds, where CLI flags must
+// keep winning). When fs is nil, every non-nil doc field is applied
+// unconditionally (used by validateHostsDoc, which checks a doc's raw values
+// against a baseline and has no fs to consult). This single function
+// replaces the former applyThresholdsDoc/overlayThresholds pair (TD-10).
+func overlayThresholdsDoc(base ui.Thresholds, fs *pflag.FlagSet, th *thresholdsYAML) ui.Thresholds {
 	if th == nil {
 		return base
 	}
-	if th.RTTWarn != nil {
+	changed := func(flag string) bool { return fs != nil && fs.Changed(flag) }
+	if !changed("rtt-warn") && th.RTTWarn != nil {
 		base.RTTWarn = time.Duration(*th.RTTWarn) * time.Millisecond
 	}
-	if th.RTTCrit != nil {
+	if !changed("rtt-crit") && th.RTTCrit != nil {
 		base.RTTCrit = time.Duration(*th.RTTCrit) * time.Millisecond
 	}
-	if th.JitterWarn != nil {
+	if !changed("jitter-warn") && th.JitterWarn != nil {
 		base.JitterWarn = time.Duration(*th.JitterWarn) * time.Millisecond
 	}
-	if th.JitterCrit != nil {
+	if !changed("jitter-crit") && th.JitterCrit != nil {
 		base.JitterCrit = time.Duration(*th.JitterCrit) * time.Millisecond
 	}
-	if th.LossWarn != nil {
+	if !changed("loss-warn") && th.LossWarn != nil {
 		base.LossWarn = *th.LossWarn
 	}
-	if th.LossCrit != nil {
+	if !changed("loss-crit") && th.LossCrit != nil {
 		base.LossCrit = *th.LossCrit
 	}
 	return base
@@ -664,13 +612,18 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 	fs.StringVarP(&cfg.dnsServer, "dns-server", "d", "", "custom DNS server IP to use for hostname resolution")
 	fs.BoolVar(&cfg.resolveAll, "resolve-all", false, "resolve target hostname to all IP addresses and monitor them concurrently")
 
-	// Colour-coding / alert thresholds (warn = orange, crit = red).
-	fs.IntVar(&cfg.rttWarnMs, "rtt-warn", 50, "RTT warn threshold in ms (orange)")
-	fs.IntVar(&cfg.rttCritMs, "rtt-crit", 200, "RTT crit threshold in ms (red)")
-	fs.IntVar(&cfg.jitterWarnMs, "jitter-warn", 10, "jitter warn threshold in ms (orange)")
-	fs.IntVar(&cfg.jitterCritMs, "jitter-crit", 50, "jitter crit threshold in ms (red)")
-	fs.Float64Var(&cfg.lossWarnPct, "loss-warn", 20, "loss warn threshold in percent (orange)")
-	fs.Float64Var(&cfg.lossCritPct, "loss-crit", 80, "loss crit threshold in percent (red)")
+	// Colour-coding / alert thresholds (warn = orange, crit = red). Bound to
+	// local vars rather than cfg directly since cfg.thresholds is a
+	// ui.Thresholds (TD-10): the raw ms/pct values pflag fills in below are
+	// converted once, right after a successful parse.
+	var rttWarnMs, rttCritMs, jitterWarnMs, jitterCritMs int
+	var lossWarnPct, lossCritPct float64
+	fs.IntVar(&rttWarnMs, "rtt-warn", 50, "RTT warn threshold in ms (orange)")
+	fs.IntVar(&rttCritMs, "rtt-crit", 200, "RTT crit threshold in ms (red)")
+	fs.IntVar(&jitterWarnMs, "jitter-warn", 10, "jitter warn threshold in ms (orange)")
+	fs.IntVar(&jitterCritMs, "jitter-crit", 50, "jitter crit threshold in ms (red)")
+	fs.Float64Var(&lossWarnPct, "loss-warn", 20, "loss warn threshold in percent (orange)")
+	fs.Float64Var(&lossCritPct, "loss-crit", 80, "loss crit threshold in percent (red)")
 
 	fs.Usage = func() {
 		fmt.Fprintln(&usageBuf, "Usage: mping [options] host1 host2 ...")
@@ -681,6 +634,15 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 
 	if err := fs.Parse(args); err != nil {
 		return config{}, nil, nil, usageBuf.String(), err
+	}
+
+	cfg.thresholds = ui.Thresholds{
+		RTTWarn:    time.Duration(rttWarnMs) * time.Millisecond,
+		RTTCrit:    time.Duration(rttCritMs) * time.Millisecond,
+		JitterWarn: time.Duration(jitterWarnMs) * time.Millisecond,
+		JitterCrit: time.Duration(jitterCritMs) * time.Millisecond,
+		LossWarn:   lossWarnPct,
+		LossCrit:   lossCritPct,
 	}
 
 	hosts := fs.Args()
@@ -808,138 +770,48 @@ func setupHTTPChecker(urls []string, interval, timeout time.Duration) *pinger.HT
 }
 
 func run(args []string, out io.Writer, errOut io.Writer) int {
-	// ── 1. Parse command-line arguments ──────────────────────────────────────
-	cfg, hosts, fs, usage, err := parseArgs(args)
-	if err != nil {
-		if errors.Is(err, pflag.ErrHelp) {
-			fmt.Fprint(out, usage)
-			return 0
-		}
-		fmt.Fprint(errOut, usage)
-		return 1
+	sp, code, ok := parseAndLoadHosts(args, out, errOut)
+	if !ok {
+		return code
 	}
+	cfg, hosts, fs := sp.cfg, sp.hosts, sp.fs
+	cliCfg, cliHosts := sp.cliCfg, sp.cliHosts
+	currentGroups := sp.groups
 
-	// Save CLI-only values so reloads can apply fresh YAML over them.
-	cliCfg := cfg
-	cliHosts := append([]string(nil), hosts...)
-
-	// ── 2. Initial YAML merge ────────────────────────────────────────────────
-	var currentGroups []ui.TargetGroup
-	hosts, currentGroups, cfg, err = mergeHosts(cfg, fs, hosts)
-	if err != nil {
-		fmt.Fprintf(errOut, "Error reading hosts file: %v\n", err)
-		return 1
-	}
-	expandedHosts, expandedGroups, err := expandTargets(hosts, currentGroups, cfg)
-	if err != nil {
-		fmt.Fprintf(errOut, "Error expanding targets: %v\n", err)
-		return 1
-	}
-	hosts = expandedHosts
-	currentGroups = expandedGroups
-	if len(hosts) == 0 {
-		fmt.Fprint(errOut, usage)
-		return 1
-	}
-	if err := thresholdsFromCfg(cfg).Validate(); err != nil {
-		fmt.Fprintf(errOut, "Invalid thresholds: %v\n", err)
-		return 1
-	}
-
-	// ── 3. One-time setup ────────────────────────────────────────────────────
-	resNetwork := resolveNetwork(cfg)
-
-	bindIP, displaySourceIPv4, displaySourceIPv6, err := determineSourceIPs(cfg, hosts)
-	if err != nil {
-		fmt.Fprintf(errOut, "Error resolving interface %s: %v\n", cfg.ifaceName, err)
-		return 1
-	}
-	if cfg.ifaceName != "" && bindIP != "" {
-		fmt.Fprintf(out, "Binding to interface %s (%s)\n", cfg.ifaceName, bindIP)
-	}
-
-	// Setup logger once; reloads reuse the same file handle.
-	logFile, err := setupLogger(cfg.outputFile)
-	if err != nil {
-		fmt.Fprintf(errOut, "Error opening log file: %v\n", err)
-		return 1
+	env, code, ok := prepareRunEnv(cfg, hosts, out, errOut)
+	if !ok {
+		return code
 	}
 	var logWriter io.Writer
-	if logFile != nil {
-		defer logFile.Close()
-		logWriter = logFile
+	if env.logFile != nil {
+		defer env.logFile.Close()
+		logWriter = env.logFile
 	}
+	resNetwork, bindIP := env.resNetwork, env.bindIP
+	displaySourceIPv4, displaySourceIPv6 := env.dispV4, env.dispV6
+	portSpecs := env.portSpecs
 
-	// Parse port specs once; port changes require a process restart.
-	var portSpecs []pinger.PortSpec
-	for _, raw := range cfg.portSpecs {
-		spec, err := pinger.ParsePortSpec(raw)
-		if err != nil {
-			fmt.Fprintf(errOut, "Invalid port spec %q: %v\n", raw, err)
-			return 1
-		}
-		portSpecs = append(portSpecs, spec)
-	}
-
-	// ── 4. Reload state ──────────────────────────────────────────────────────
-	var (
-		reloadMu        sync.Mutex
-		reloadRequested bool
-		reloadDoc       hostsFileYAML
-		reloadNewHosts  []string // non-nil when triggered by add/delete (skips applyDocToCfg)
-	)
-
+	rc := newReloadCoordinator(fs, cliCfg, cliHosts)
 	currentCfg := cfg
 	currentHosts := hosts
-	// currentGroups is declared above at the mergeHosts call site.
-
 	// targets is declared outside the loop so the exit summary can read it.
 	var targets []*stats.TargetStats
 
-	// ── 5. Main run loop (re-entered on YAML reload) ──────────────────────────
+	// activePortSpecsRaw is the --port / port: value the running port
+	// checker was actually built from (env.portSpecs is parsed once and
+	// never re-derived on reload; see checkPortReloadDrift, TD-25).
+	activePortSpecsRaw := cfg.portSpecs
+	var pendingPortWarning string
+
+	// Main run loop (re-entered on YAML reload).
 	for {
 		interval := time.Duration(currentCfg.intervalMs) * time.Millisecond
 		timeout := time.Duration(currentCfg.timeoutMs) * time.Millisecond
 
-		targets = initTargets(currentHosts)
-		for _, t := range targets {
-			hostName := t.Host
-			if idx := strings.Index(hostName, " ("); idx >= 0 && strings.HasSuffix(hostName, ")") {
-				hostName = hostName[:idx]
-			}
-			if net.ParseIP(hostName) == nil {
-				if currentCfg.dnsServer != "" {
-					t.SetDNSServer(currentCfg.dnsServer)
-				} else {
-					t.SetDNSServer("Default")
-				}
-			} else {
-				t.SetDNSServer("-")
-			}
-		}
+		targets = buildTargetsForIteration(currentHosts, currentCfg)
 
 		customResolver := newCustomResolver(currentCfg.dnsServer)
-		opts := pinger.Options{
-			ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {
-				if idx := strings.Index(address, " ("); idx >= 0 && strings.HasSuffix(address, ")") {
-					ipStr := address[idx+2 : len(address)-1]
-					return net.ResolveIPAddr(network, ipStr)
-				}
-				if customResolver != nil && currentCfg.dnsServer != "" {
-					ips, err := customResolver.LookupIP(context.Background(), network, address)
-					if err != nil {
-						return nil, err
-					}
-					if len(ips) == 0 {
-						return nil, &net.DNSError{Err: "no such host", Name: address}
-					}
-					return &net.IPAddr{IP: ips[0]}, nil
-				}
-				return net.ResolveIPAddr(resNetwork, address)
-			},
-			Resolver:   customResolver,
-			AsnEnabled: currentCfg.asnEnabled,
-		}
+		opts := buildPingerOptions(currentCfg, resNetwork, customResolver)
 
 		ifaceMTU, mtuErr := getInterfaceMTU(currentCfg.ifaceName, bindIP, currentHosts[0])
 		if mtuErr == nil {
@@ -950,200 +822,45 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 
 		makePinger := makePingerFactory(targets, opts, currentCfg, bindIP, logWriter)
 		packetSizeToUse, preLogs := setupPMTU(makePinger, currentCfg, ifaceMTU, targets, currentHosts[0], errOut)
-
-		var (
-			pMu         sync.Mutex
-			p           pingerController
-			traceCancel context.CancelFunc
-			traceDone   chan struct{} // closed when the current runTraceroutes goroutine returns
-			portChecker *pinger.PortChecker
-			httpChecker *pinger.HTTPChecker
-			mtrEngine   *mtr.Engine
-			logCh       chan string // route flap and watcher log messages → TUI Log pane
-		)
-
-		// startTraceroutes cancels any previous traceroute goroutine, launches a
-		// new one, and tracks it via traceDone so stopPinger can join it on
-		// shutdown instead of leaving it to be reaped by process exit.
-		// Caller must hold pMu.
-		startTraceroutes := func(pr tracer) {
-			if traceCancel != nil {
-				traceCancel()
-			}
-			ctx, cancel := context.WithCancel(context.Background())
-			traceCancel = cancel
-			done := make(chan struct{})
-			traceDone = done
-			// Pass the local ctx rather than storing it in a shared field: a
-			// concurrent resetTrace()/startPinger() call would reassign a
-			// shared field under pMu, racing with this goroutine reading it
-			// later. ctx here is only ever touched by this one goroutine.
-			go func() {
-				defer close(done)
-				runTraceroutes(ctx, pr, targets)
-			}()
+		if pendingPortWarning != "" {
+			preLogs = append(preLogs, pendingPortWarning)
+			pendingPortWarning = ""
 		}
 
-		// onFlap is the shared callback for MTR route-flap events.
-		// logCh must be initialised before startPinger() is called.
-		onFlap := func(host, desc string) {
-			select {
-			case logCh <- fmt.Sprintf("[yellow][%s] Route flap %s: %s[-]",
-				time.Now().Format("15:04:05"), host, desc):
-			default:
-			}
-		}
+		// logCh carries route flap and watcher log messages to the TUI Log
+		// pane; it must exist before the supervisor (whose OnFlap callback
+		// writes to it) is constructed.
+		logCh := make(chan string, 16)
 
-		startPinger := func() error {
-			next := makePinger(packetSizeToUse)
-			if err := next.Start(interval, timeout); err != nil {
-				return err
-			}
-			pMu.Lock()
-			if currentCfg.trace {
-				startTraceroutes(next)
-			}
-			if currentCfg.mtr {
-				if mtrEngine != nil {
-					mtrEngine.Stop()
-				}
-				pa, ok := next.(*pingerAdapter)
-				if !ok {
-					return fmt.Errorf("internal: unexpected pinger type %T", next)
-				}
-				adapter := &pingerMTRAdapter{p: pa.Pinger}
-				mtrEngine = mtr.NewEngine(adapter, targets, mtr.Config{
-					OnFlap: onFlap,
-				})
-				mtrEngine.Start()
-			}
-			p = next
-			pMu.Unlock()
-			return nil
-		}
+		sup := newSupervisor(supervisorConfig{
+			makePinger:   makePinger,
+			packetSize:   packetSizeToUse,
+			targets:      targets,
+			interval:     interval,
+			timeout:      timeout,
+			portSpecs:    portSpecs,
+			httpURLs:     currentCfg.httpURLs,
+			traceEnabled: currentCfg.trace,
+			mtrEnabled:   currentCfg.mtr,
+			logCh:        logCh,
+		})
 
-		stopPinger := func() {
-			pMu.Lock()
-			if traceCancel != nil {
-				traceCancel()
-			}
-			curTraceDone := traceDone
-			curEngine := mtrEngine
-			cur := p
-			pMu.Unlock()
-			if curTraceDone != nil {
-				<-curTraceDone
-			}
-			if curEngine != nil {
-				curEngine.Stop()
-			}
-			if cur != nil {
-				cur.Stop()
-				cur.Wait()
-			}
-		}
-
-		// Initialize logCh before startPinger so OnFlap callbacks never write to a nil channel.
-		logCh = make(chan string, 16)
-
-		if err := startPinger(); err != nil {
+		if err := sup.startPinger(); err != nil {
 			fmt.Fprintf(errOut, "Error starting pinger: %v\n", err)
 			fmt.Fprintln(errOut, "This program requires root privileges (sudo) for raw ICMP sockets.")
 			return 1
 		}
+		sup.setupPortAndHTTP()
 
-		pMu.Lock()
-		portChecker = setupPortChecker(targets, portSpecs, interval, timeout)
-		httpChecker = setupHTTPChecker(currentCfg.httpURLs, interval, timeout)
-		pMu.Unlock()
-
-		// stopAll is called from multiple sites (OnStop, OnRestart, error path,
-		// normal cleanup) and must be idempotent. Pinger.Stop uses a select-guarded
-		// close(done) and PortChecker.Stop uses sync.Once, so both are safe to call
-		// multiple times.
-		stopAll := func() {
-			stopPinger()
-			pMu.Lock()
-			curPort := portChecker
-			curHTTP := httpChecker
-			pMu.Unlock()
-			if curPort != nil {
-				curPort.Stop()
-				curPort.Wait()
-			}
-			if curHTTP != nil {
-				curHTTP.Stop()
-				curHTTP.Wait()
-			}
-		}
-
-		resetTrace := func() {
-			pMu.Lock()
-			cur := p
-			startTraceroutes(cur)
-			pMu.Unlock()
-		}
-
-		var resetMTR func()
+		var resetMTR, resetHTTP, resetPort func()
 		if currentCfg.mtr {
-			resetMTR = func() {
-				for _, t := range targets {
-					t.Reset()
-				}
-				pMu.Lock()
-				curEngine := mtrEngine
-				if curEngine != nil {
-					curEngine.Stop()
-				}
-				cur := p
-				pa, ok := cur.(*pingerAdapter)
-				if !ok {
-					pMu.Unlock()
-					return
-				}
-				adapter := &pingerMTRAdapter{p: pa.Pinger}
-				mtrEngine = mtr.NewEngine(adapter, targets, mtr.Config{
-					OnFlap: onFlap,
-				})
-				mtrEngine.Start()
-				pMu.Unlock()
-			}
+			resetMTR = sup.resetMTR
 		}
-
-		var resetHTTP func()
 		if len(currentCfg.httpURLs) > 0 {
-			resetHTTP = func() {
-				pMu.Lock()
-				cur := httpChecker
-				httpChecker = nil
-				pMu.Unlock()
-				if cur != nil {
-					cur.Stop()
-					cur.Wait()
-				}
-				next := setupHTTPChecker(currentCfg.httpURLs, interval, timeout)
-				pMu.Lock()
-				httpChecker = next
-				pMu.Unlock()
-			}
+			resetHTTP = sup.resetHTTP
 		}
-
-		var resetPort func()
 		if len(portSpecs) > 0 {
-			resetPort = func() {
-				pMu.Lock()
-				cur := portChecker
-				portChecker = nil
-				pMu.Unlock()
-				if cur != nil {
-					cur.Stop()
-					cur.Wait()
-				}
-				next := setupPortChecker(targets, portSpecs, interval, timeout)
-				pMu.Lock()
-				portChecker = next
-				pMu.Unlock()
-			}
+			resetPort = sup.resetPort
 		}
 
 		// doneCh is closed when the pinger finishes (count-limited mode).
@@ -1151,249 +868,44 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		if currentCfg.count > 0 {
 			doneCh = make(chan struct{})
 			go func() {
-				pMu.Lock()
-				cur := p
-				pMu.Unlock()
-				if cur != nil {
-					cur.Wait()
-				}
+				sup.waitPinger()
 				close(doneCh)
 			}()
 		}
 
-		// reloadCh is closed by the YAML watcher to signal TUI shutdown.
-		reloadCh := make(chan struct{})
-		var reloadCloseOnce sync.Once
+		// sig is closed to signal TUI shutdown, either by the YAML watcher or
+		// by an in-memory add/delete-host request.
+		sig := newReloadSignal()
+		onFileChange := func() { rc.requestFileReload(sig, currentCfg.hostsFile, logCh) }
+		watchCancel, watchDone := startWatcher(currentCfg.hostsFile, onFileChange, logCh)
+		jsonCancel, jsonDone := startJSONWriter(currentCfg.jsonOutputFile, targets, sup.httpResults, errOut)
 
-		// onFileChange is the callback invoked by the watcher after debounce.
-		onFileChange := func() {
-			doc, err := parseHostsFile(currentCfg.hostsFile)
-			if err != nil {
-				select {
-				case logCh <- fmt.Sprintf("[red][%s] Reload error: %v[-]",
-					time.Now().Format("15:04:05"), err):
-				default:
-				}
-				return
-			}
-			if err := validateHostsDoc(doc); err != nil {
-				select {
-				case logCh <- fmt.Sprintf("[red][%s] Reload validation error: %v[-]",
-					time.Now().Format("15:04:05"), err):
-				default:
-				}
-				return
-			}
-			reloadMu.Lock()
-			reloadRequested = true
-			reloadDoc = doc
-			reloadMu.Unlock()
-			reloadCloseOnce.Do(func() { close(reloadCh) })
-		}
-
-		// Start the YAML file watcher (only when -f is specified).
-		watchCancel := func() {}
-		watchDone := make(chan struct{})
-		close(watchDone) // pre-closed: no watcher needed
-		if currentCfg.hostsFile != "" {
-			innerDone := make(chan struct{})
-			watchDone = innerDone
-			watchCtx, cancel := context.WithCancel(context.Background())
-			watchCancel = cancel
-			go func() {
-				defer close(innerDone)
-				if err := watcher.Watch(watchCtx, currentCfg.hostsFile, onFileChange); err != nil {
-					select {
-					case logCh <- fmt.Sprintf("[red][%s] Watcher error: %v[-]",
-						time.Now().Format("15:04:05"), err):
-					default:
-					}
-				}
-			}()
-		}
-
-		// Start the JSON periodic writer (only when -j is specified).
-		jsonCtx, jsonCancel := context.WithCancel(context.Background())
-		jsonDone := make(chan struct{})
-		if currentCfg.jsonOutputFile != "" {
-			go func() {
-				defer close(jsonDone)
-				ticker := time.NewTicker(5 * time.Second)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-ticker.C:
-						if err := writeJSONSnapshot(currentCfg.jsonOutputFile, targets, func() []*stats.HTTPCheckResult {
-							pMu.Lock()
-							defer pMu.Unlock()
-							if httpChecker == nil {
-								return nil
-							}
-							return httpChecker.Results()
-						}()); err != nil {
-							fmt.Fprintf(errOut, "Warning: JSON snapshot write failed: %v\n", err)
-						}
-					case <-jsonCtx.Done():
-						return
-					}
-				}
-			}()
-		} else {
-			close(jsonDone)
-		}
-
-		// ── Run TUI ──────────────────────────────────────────────────────────
-		uiThresholds := thresholdsFromCfg(currentCfg)
-		if err := uiRun(ui.RunOptions{
-			Targets:      targets,
-			Interval:     interval,
-			Timeout:      timeout,
-			DoneCh:       doneCh,
-			SourceIPv4:   displaySourceIPv4,
-			SourceIPv6:   displaySourceIPv6,
-			PacketSize:   packetSizeToUse,
-			InitialLogs:  preLogs,
-			TraceEnabled: currentCfg.trace,
-			MTREnabled:   currentCfg.mtr,
-			PortEnabled:  len(portSpecs) > 0,
-			HTTPEnabled:  len(currentCfg.httpURLs) > 0,
-			HTTPResults: func() []*stats.HTTPCheckResult {
-				pMu.Lock()
-				defer pMu.Unlock()
-				if httpChecker == nil {
-					return nil
-				}
-				return httpChecker.Results()
-			},
-			ASNEnabled:      currentCfg.asnEnabled,
-			Thresholds:      &uiThresholds,
-			ExternalCloseCh: reloadCh,
-			ExternalLogCh:   logCh,
-			OnStop:          stopAll,
-			OnRestart: func() error {
-				stopAll()
-				if err := startPinger(); err != nil {
-					return err
-				}
-				pMu.Lock()
-				portChecker = setupPortChecker(targets, portSpecs, interval, timeout)
-				httpChecker = setupHTTPChecker(currentCfg.httpURLs, interval, timeout)
-				pMu.Unlock()
-				return nil
-			},
-			OnResetTrace: resetTrace,
-			OnResetMTR:   resetMTR,
-			OnResetPort:  resetPort,
-			OnResetHTTP:  resetHTTP,
-			OnAddHost: func(host string) error {
-				host = strings.TrimSpace(host)
-				if host == "" {
-					return fmt.Errorf("host cannot be empty")
-				}
-				for _, h := range currentHosts {
-					if h == host {
-						return fmt.Errorf("host %q is already in the list", host)
-					}
-				}
-				newHosts := make([]string, len(currentHosts)+1)
-				copy(newHosts, currentHosts)
-				newHosts[len(currentHosts)] = host
-				reloadMu.Lock()
-				reloadRequested = true
-				reloadNewHosts = newHosts
-				reloadMu.Unlock()
-				reloadCloseOnce.Do(func() { close(reloadCh) })
-				return nil
-			},
-			OnDeleteHost: func(host string) error {
-				newHosts := make([]string, 0, len(currentHosts))
-				for _, h := range currentHosts {
-					if h != host {
-						newHosts = append(newHosts, h)
-					}
-				}
-				if len(newHosts) == len(currentHosts) {
-					return fmt.Errorf("host %q not found", host)
-				}
-				if len(newHosts) == 0 {
-					return fmt.Errorf("cannot delete the last host")
-				}
-				reloadMu.Lock()
-				reloadRequested = true
-				reloadNewHosts = newHosts
-				reloadMu.Unlock()
-				reloadCloseOnce.Do(func() { close(reloadCh) })
-				return nil
-			},
-			Groups: currentGroups,
-		}); err != nil {
+		runOpts := buildRunOptions(runOptionsParams{
+			targets: targets, interval: interval, timeout: timeout, doneCh: doneCh,
+			dispV4: displaySourceIPv4, dispV6: displaySourceIPv6,
+			packetSize: packetSizeToUse, preLogs: preLogs, cfg: currentCfg,
+			portCount: len(portSpecs), sup: sup,
+			resetMTR: resetMTR, resetHTTP: resetHTTP, resetPort: resetPort,
+			thresholds: currentCfg.thresholds, sig: sig, logCh: logCh, rc: rc,
+			currentHosts: currentHosts, currentGroups: currentGroups,
+		})
+		if err := uiRun(runOpts); err != nil {
 			fmt.Fprintf(errOut, "Error running application: %v\n", err)
 			jsonCancel()
 			<-jsonDone
 			watchCancel()
-			stopAll()
+			sup.stopAll()
 			return 1
 		}
 
-		// ── Cleanup after TUI exits ───────────────────────────────────────────
-		// 1. Stop JSON writer, then write final snapshot once the goroutine has
-		//    exited to avoid concurrent writes to the same .tmp file.
-		jsonCancel()
-		<-jsonDone
-		if currentCfg.jsonOutputFile != "" {
-			if err := writeJSONSnapshot(currentCfg.jsonOutputFile, targets, func() []*stats.HTTPCheckResult {
-				pMu.Lock()
-				defer pMu.Unlock()
-				if httpChecker == nil {
-					return nil
-				}
-				return httpChecker.Results()
-			}()); err != nil {
-				fmt.Fprintf(errOut, "Warning: Final JSON snapshot write failed: %v\n", err)
-			}
-		}
-		// 2. Stop pinger and port checker.
-		stopAll()
-		// 3. Stop file watcher and wait for the goroutine to exit before
-		//    reading the shared reload state.
-		watchCancel()
-		<-watchDone
+		finishIteration(currentCfg, targets, sup, errOut, jsonCancel, jsonDone, watchCancel, watchDone)
 
-		// ── Check if a reload was requested ──────────────────────────────────
-		reloadMu.Lock()
-		reload := reloadRequested
-		newHosts := reloadNewHosts
-		if reload {
-			if newHosts != nil {
-				// In-memory add/delete: use the updated host list directly.
-				currentHosts = newHosts
-			} else {
-				// File-based reload: re-apply YAML doc.
-				docHosts, docGroups, newCfg, applyErr := applyDocToCfg(cliCfg, fs, reloadDoc)
-				if applyErr != nil {
-					// Shouldn't happen (validateHostsDoc passed), but be safe.
-					reload = false
-				} else {
-					currentHosts, currentGroups = buildHostsAndGroups(docHosts, docGroups, cliHosts)
-					currentCfg = newCfg
-				}
-			}
-			if reload {
-				expandedHosts, expandedGroups, expandErr := expandTargets(currentHosts, currentGroups, currentCfg)
-				if expandErr == nil {
-					currentHosts = expandedHosts
-					currentGroups = expandedGroups
-				}
-			}
-			reloadRequested = false
-			reloadDoc = hostsFileYAML{}
-			reloadNewHosts = nil
-		}
-		reloadMu.Unlock()
-
+		var reload bool
+		currentHosts, currentGroups, currentCfg, reload = rc.apply(currentCfg, currentHosts, currentGroups)
 		if !reload {
 			break
 		}
+		pendingPortWarning = checkPortReloadDrift(activePortSpecsRaw, currentCfg.portSpecs)
 		// Loop continues: targets are re-initialised with the new currentHosts.
 	}
 

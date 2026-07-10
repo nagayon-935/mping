@@ -20,16 +20,8 @@ type PortCheckResult struct {
 	ClosedCount int
 	LastChange  time.Time
 
-	// RTT statistics for Open responses only.
-	minRTT     time.Duration
-	maxRTT     time.Duration
-	sumRTT     time.Duration
-	rttSamples int
-
-	// Ring buffer for RTT graph (same layout as TargetStats.rttHistory).
-	rttHistory []time.Duration
-	historyIdx int
-	historyLen int
+	// RTT statistics and ring buffer for Open responses only.
+	rtt rttAccumulator
 
 	mu sync.RWMutex
 }
@@ -56,47 +48,23 @@ func (r *PortCheckResult) recordRTT(rtt time.Duration) {
 	if rtt <= 0 {
 		return
 	}
-	r.rttSamples++
-	r.sumRTT += rtt
-	if r.minRTT == 0 || rtt < r.minRTT {
-		r.minRTT = rtt
-	}
-	if rtt > r.maxRTT {
-		r.maxRTT = rtt
-	}
-	if r.rttHistory == nil {
-		r.rttHistory = make([]time.Duration, historySize)
-	}
-	r.rttHistory[r.historyIdx%historySize] = rtt
-	r.historyIdx++
-	if r.historyLen < historySize {
-		r.historyLen++
-	}
-}
-
-func (r *PortCheckResult) GetResult() (status string, rtt time.Duration, openCount, closedCount int, lastChange time.Time) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.Status, r.RTT, r.OpenCount, r.ClosedCount, r.LastChange
+	r.rtt.record(rtt)
+	r.rtt.appendHistory(rtt, historySize)
 }
 
 // GetView returns a thread-safe snapshot including RTT statistics and history.
 func (r *PortCheckResult) GetView() PortCheckView {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	var avg time.Duration
-	if r.rttSamples > 0 {
-		avg = r.sumRTT / time.Duration(r.rttSamples)
-	}
 	return PortCheckView{
 		Port:        r.Port,
 		Protocol:    r.Protocol,
 		Status:      r.Status,
 		RTT:         r.RTT,
-		MinRTT:      r.minRTT,
-		AvgRTT:      avg,
-		MaxRTT:      r.maxRTT,
-		History:     reconstructHistory(r.rttHistory, r.historyIdx, r.historyLen),
+		MinRTT:      r.rtt.min,
+		AvgRTT:      r.rtt.avg(),
+		MaxRTT:      r.rtt.max,
+		History:     r.rtt.historySnapshot(),
 		OpenCount:   r.OpenCount,
 		ClosedCount: r.ClosedCount,
 		LastChange:  r.LastChange,
@@ -121,20 +89,15 @@ type TargetStats struct {
 	Recv             int
 	Loss             int
 	LastRTT          time.Duration
-	MinRTT           time.Duration
-	MaxRTT           time.Duration
-	SumRTT           time.Duration
 	LastTTL          int
 	LastLossTime     time.Time
 	LastError        string
 
+	// RTT statistics and history (ring buffer for Sparkline).
+	rtt rttAccumulator
+
 	// Jitter (RFC 1889)
 	jitter int64 // Stored as nanoseconds for smooth calculation
-
-	// History for Sparkline (ring buffer)
-	rttHistory []time.Duration
-	historyIdx int // write pointer (next slot to write)
-	historyLen int // number of valid entries written (up to historySize)
 
 	mu sync.RWMutex
 }
@@ -206,8 +169,7 @@ type TargetView struct {
 
 func NewTargetStats(host string) *TargetStats {
 	return &TargetStats{
-		Host:       host,
-		rttHistory: make([]time.Duration, historySize),
+		Host: host,
 	}
 }
 
@@ -218,10 +180,10 @@ func (t *TargetStats) GetView() TargetView {
 
 	var avg time.Duration
 	if t.Recv > 0 {
-		avg = t.SumRTT / time.Duration(t.Recv)
+		avg = t.rtt.sum / time.Duration(t.Recv)
 	}
 
-	histCopy := reconstructHistory(t.rttHistory, t.historyIdx, t.historyLen)
+	histCopy := t.rtt.historySnapshot()
 	traceCopy := make([]string, len(t.TraceHops))
 	copy(traceCopy, t.TraceHops)
 	portCopy := make([]PortCheckView, len(t.PortResults))
@@ -260,8 +222,8 @@ func (t *TargetStats) GetView() TargetView {
 		Recv:             t.Recv,
 		Loss:             t.Loss,
 		LastRTT:          t.LastRTT,
-		MinRTT:           t.MinRTT,
-		MaxRTT:           t.MaxRTT,
+		MinRTT:           t.rtt.min,
+		MaxRTT:           t.rtt.max,
 		AvgRTT:           avg,
 		Jitter:           time.Duration(t.jitter),
 		History:          histCopy,
@@ -285,12 +247,6 @@ func (t *TargetStats) SetIP(ip string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.IP = ip
-}
-
-func (t *TargetStats) SetASN(asn string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.ASN = asn
 }
 
 func (t *TargetStats) SetASNInfo(number, country, org string) {
@@ -349,40 +305,18 @@ func (t *TargetStats) OnSuccess(rtt time.Duration, ttl int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	// RFC 1889 Jitter Calculation
-	// J = J + (|D| - J) / 16
+	// RFC 1889 Jitter Calculation: J = J + (|D| - J) / 16
 	if t.Recv > 0 {
-		delta := int64(rtt - t.LastRTT)
-		if delta < 0 {
-			delta = -delta
-		}
-		// t.jitter is stored in nanoseconds
-		t.jitter += (delta - t.jitter) / jitterDivisor
+		t.jitter = updateJitter(t.jitter, rtt, t.LastRTT)
 	}
 
 	t.Recv++
 	t.LastRTT = rtt
 	t.LastTTL = ttl
-	t.SumRTT += rtt
-
-	if t.MinRTT == 0 || rtt < t.MinRTT {
-		t.MinRTT = rtt
-	}
-	if rtt > t.MaxRTT {
-		t.MaxRTT = rtt
-	}
-
-	t.appendHistory(rtt)
+	t.rtt.record(rtt)
+	t.rtt.appendHistory(rtt, historySize)
 
 	t.LastError = ""
-}
-
-func (t *TargetStats) appendHistory(rtt time.Duration) {
-	t.rttHistory[t.historyIdx%historySize] = rtt
-	t.historyIdx++
-	if t.historyLen < historySize {
-		t.historyLen++
-	}
 }
 
 func (t *TargetStats) OnFailure(reason string) {
@@ -391,7 +325,7 @@ func (t *TargetStats) OnFailure(reason string) {
 	t.Loss++
 	t.LastLossTime = time.Now()
 	t.LastError = reason
-	t.appendHistory(0)
+	t.rtt.appendHistory(0, historySize)
 }
 
 func (t *TargetStats) Reset() {
@@ -401,15 +335,10 @@ func (t *TargetStats) Reset() {
 	t.Recv = 0
 	t.Loss = 0
 	t.LastRTT = 0
-	t.MinRTT = 0
-	t.MaxRTT = 0
-	t.SumRTT = 0
 	t.LastTTL = 0
 	t.LastLossTime = time.Time{}
 	t.LastError = ""
-	t.rttHistory = make([]time.Duration, historySize)
-	t.historyIdx = 0
-	t.historyLen = 0
+	t.rtt = rttAccumulator{}
 	if t.mtrStats != nil {
 		t.mtrStats.Reset()
 	}

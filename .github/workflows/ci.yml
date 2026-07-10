@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    name: Run Tests
+    name: Run Tests (Linux)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -20,10 +20,65 @@ jobs:
           go-version: '1.25'
           cache: true
 
-      - name: Test
-        run: go test -v -coverprofile=profile.cov ./...
+      - name: Check formatting
+        run: |
+          fmt_out="$(gofmt -l .)"
+          if [ -n "$fmt_out" ]; then
+            echo "The following files are not gofmt'ed:"
+            echo "$fmt_out"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test (race)
+        run: go test -race -v -coverprofile=profile.cov ./...
 
       - name: Send coverage
         uses: shogo82148/actions-goveralls@v1
         with:
           path-to-profile: profile.cov
+
+  test-macos:
+    name: Run Tests (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test (race)
+        run: go test -race ./...
+
+  lint:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          version: "latest"
+          install-go: false
+
+      - name: govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: '1.25'

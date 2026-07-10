@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
@@ -53,55 +54,6 @@ var tableErrorCandidates = []string{
 	"Parameter Problem",
 	"Missing Required Option",
 	"Bad Length",
-}
-
-var wellKnownServices = map[int]map[string]string{
-	20:    {"tcp": "FTP-Data"},
-	21:    {"tcp": "FTP"},
-	22:    {"tcp": "SSH"},
-	23:    {"tcp": "Telnet"},
-	25:    {"tcp": "SMTP"},
-	53:    {"tcp": "DNS", "udp": "DNS"},
-	67:    {"udp": "DHCP"},
-	68:    {"udp": "DHCP"},
-	80:    {"tcp": "HTTP"},
-	110:   {"tcp": "POP3"},
-	123:   {"udp": "NTP"},
-	143:   {"tcp": "IMAP"},
-	161:   {"udp": "SNMP"},
-	389:   {"tcp": "LDAP"},
-	443:   {"tcp": "HTTPS"},
-	445:   {"tcp": "SMB"},
-	465:   {"tcp": "SMTPS"},
-	514:   {"udp": "Syslog"},
-	587:   {"tcp": "SMTP"},
-	636:   {"tcp": "LDAPS"},
-	993:   {"tcp": "IMAPS"},
-	995:   {"tcp": "POP3S"},
-	1433:  {"tcp": "MSSQL"},
-	1521:  {"tcp": "Oracle"},
-	2181:  {"tcp": "ZooKeeper"},
-	3306:  {"tcp": "MySQL"},
-	3389:  {"tcp": "RDP"},
-	5432:  {"tcp": "PostgreSQL"},
-	5672:  {"tcp": "AMQP"},
-	5900:  {"tcp": "VNC"},
-	6379:  {"tcp": "Redis"},
-	8080:  {"tcp": "HTTP-Alt"},
-	8443:  {"tcp": "HTTPS-Alt"},
-	9200:  {"tcp": "Elasticsearch"},
-	9300:  {"tcp": "Elasticsearch"},
-	11211: {"tcp": "Memcached", "udp": "Memcached"},
-	27017: {"tcp": "MongoDB"},
-}
-
-func portServiceName(port int, protocol string) string {
-	if protos, ok := wellKnownServices[port]; ok {
-		if name, ok := protos[protocol]; ok {
-			return name
-		}
-	}
-	return "Unknown"
 }
 
 func formatRTT(d time.Duration) string {
@@ -195,53 +147,6 @@ func mtuString(mtu int) string {
 		return "-"
 	}
 	return fmt.Sprintf("%d", mtu)
-}
-
-func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, packetSize int, asnEnabled bool, dnsEnabled bool) ([]string, string, float64) {
-	lossRate := calcLossRate(view)
-	lossStr := formatLossAgo(view.LastLossTime)
-	rttStr := formatRTT(view.LastRTT)
-	avgStr := formatRTT(view.AvgRTT)
-	jitterStr := formatRTT(view.Jitter)
-
-	rowSourceIP := displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
-
-	dstDisplay := view.Host
-	if view.Host != view.IP && !strings.Contains(view.Host, " ("+view.IP+")") {
-		dstDisplay = fmt.Sprintf("%s (%s)", view.Host, view.IP)
-	}
-
-	cols := []string{
-		rowSourceIP,
-		dstDisplay, // Dst IP
-	}
-	if dnsEnabled {
-		cols = append(cols, view.DNSServer)
-	}
-	if asnEnabled {
-		asnCol := view.ASN
-		if view.Country != "" {
-			asnCol += " " + view.Country
-		}
-		if view.Org != "" {
-			asnCol += " " + view.Org
-		}
-		cols = append(cols, asnCol)
-	}
-	cols = append(cols,
-		fmt.Sprintf("%d", view.Recv),
-		fmt.Sprintf("%d", view.Loss),
-		fmt.Sprintf("%.1f%%", lossRate),
-		rttStr,
-		avgStr,
-		jitterStr,
-		fmt.Sprintf("%d", packetSize),
-		mtuString(view.IfaceMTU),
-		ttlString(view.LastTTL),
-		formatTableError(view.LastError),
-		lossStr,
-	)
-	return cols, rowSourceIP, lossRate
 }
 
 func lossColorForRate(lossRate float64) tcell.Color {
@@ -352,11 +257,17 @@ func formatCellText(text string, width int, align int) string {
 	return text + pad
 }
 
-func fitWidthsToAvailable(desired, minWidths, maxWidths []int, availableColumnsWidth int) ([]int, bool) {
-	if len(desired) != len(minWidths) || len(desired) != len(maxWidths) {
+// fitWidthsToAvailable clamps desired widths to [minWidths, maxWidths], then
+// shrinks or grows them to sum to exactly availableColumnsWidth (when
+// possible), visiting columns in ascending shrinkPriority/growPriority order
+// — lower values are shrunk/grown first. Every priority slice must be the
+// same length as desired; ties are broken by original index order (stable).
+func fitWidthsToAvailable(desired, minWidths, maxWidths, shrinkPriority, growPriority []int, availableColumnsWidth int) ([]int, bool) {
+	n := len(desired)
+	if n != len(minWidths) || n != len(maxWidths) || n != len(shrinkPriority) || n != len(growPriority) {
 		return nil, false
 	}
-	widths := make([]int, len(desired))
+	widths := make([]int, n)
 	sumMin := 0
 	for i := range desired {
 		if minWidths[i] > maxWidths[i] {
@@ -381,13 +292,10 @@ func fitWidthsToAvailable(desired, minWidths, maxWidths []int, availableColumnsW
 		sum += w
 	}
 
-	shrinkOrder := []int{11, 1, 0, 12, 7, 6, 5, 4, 2, 3, 9, 10, 8}
+	shrinkOrder := indicesByPriority(shrinkPriority)
 	for sum > availableColumnsWidth {
 		changed := false
 		for _, idx := range shrinkOrder {
-			if idx < 0 || idx >= len(widths) {
-				continue
-			}
 			if widths[idx] > minWidths[idx] {
 				widths[idx]--
 				sum--
@@ -402,13 +310,10 @@ func fitWidthsToAvailable(desired, minWidths, maxWidths []int, availableColumnsW
 		}
 	}
 
-	growOrder := []int{1, 0, 11, 12, 2, 5, 6, 7, 4, 3, 8, 9, 10}
+	growOrder := indicesByPriority(growPriority)
 	for sum < availableColumnsWidth {
 		changed := false
 		for _, idx := range growOrder {
-			if idx < 0 || idx >= len(widths) {
-				continue
-			}
 			if widths[idx] < maxWidths[idx] {
 				widths[idx]++
 				sum++
@@ -424,6 +329,17 @@ func fitWidthsToAvailable(desired, minWidths, maxWidths []int, availableColumnsW
 	}
 
 	return widths, true
+}
+
+// indicesByPriority returns 0..len(priority)-1 sorted by ascending priority
+// value (stable, so equal priorities keep their original relative order).
+func indicesByPriority(priority []int) []int {
+	idx := make([]int, len(priority))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(a, b int) bool { return priority[idx[a]] < priority[idx[b]] })
+	return idx
 }
 
 type compactRow struct {
@@ -538,6 +454,12 @@ func displaySourceIPForDst(dstIP, sourceIPv4, sourceIPv6 string) string {
 	return "Auto"
 }
 
+// normalizeWriteIP substitutes the display source IP into raw-socket write
+// errors that still show 0.0.0.0. This covers the auto-detect case: when no
+// -S/-I flag is given, pinger.Source is empty so pinger.applyLastErrSource
+// cannot fill it in, but the UI layer knows the auto-detected source IP
+// (sourceIPv4/sourceIPv6) and can substitute it here at display time. The
+// two functions are not redundant — see the comment on applyLastErrSource.
 func normalizeWriteIP(errMsg, sourceIP string) string {
 	if sourceIP == "" || sourceIP == "Auto" {
 		return errMsg
@@ -584,49 +506,6 @@ func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, 
 	}
 
 	return state, msgs
-}
-
-func buildFullRowCells(cols []string, widths []int, aligns []int, lossRate float64, rtt time.Duration, jitter time.Duration, rowColor tcell.Color, asnEnabled bool, dnsEnabled bool) []*tview.TableCell {
-	cells := make([]*tview.TableCell, len(cols))
-	lossColor := lossColorForRate(lossRate)
-	rttColor := rttColorForRTT(rtt)
-	jitterColor := jitterColorForJitter(jitter)
-
-	for c, col := range cols {
-		text := formatCellText(col, widths[c], aligns[c])
-		cell := tview.NewTableCell(text).
-			SetBackgroundColor(tcell.ColorBlack).
-			SetTextColor(rowColor).
-			SetAlign(aligns[c])
-
-		offset := 0
-		if dnsEnabled {
-			offset++
-		}
-		if asnEnabled {
-			offset++
-		}
-
-		switch c {
-		case 2 + offset: // Success column index
-			// no special color
-		case 3 + offset: // Loss column index
-			// no special color
-		case 4 + offset: // Loss Ratio column index
-			cell.SetTextColor(lossColor).SetAttributes(tcell.AttrBold)
-		case 5 + offset: // RTT column index
-			cell.SetTextColor(rttColor)
-		case 7 + offset: // Jitter column index
-			cell.SetTextColor(jitterColor)
-		case len(cols) - 2: // Error column
-			if text != "" {
-				cell.SetTextColor(vividRed)
-			}
-		}
-
-		cells[c] = cell
-	}
-	return cells
 }
 
 func buildCompactRowCells(values []string, widths []int, aligns []int, rowColor tcell.Color) []*tview.TableCell {

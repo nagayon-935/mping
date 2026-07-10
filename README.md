@@ -237,6 +237,7 @@ groups:
       - dns.cloudflare.com
 ```
 
+See [examples/hosts-groups.yaml](examples/hosts-groups.yaml) for a runnable example (`mping -f examples/hosts-groups.yaml`).
 
 ### Options
 
