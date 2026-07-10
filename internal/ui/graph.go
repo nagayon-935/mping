@@ -205,8 +205,8 @@ func adjustPlotArea(graphY, graphHeight int) (plotY, plotHeight int) {
 	return plotY, plotHeight
 }
 
-func gridStepsForHeight(plotHeight int) (totalSteps, gy25, gy50, gy75, gy100 int) {
-	totalSteps = plotHeight - 1
+func gridStepsForHeight(plotHeight int) (gy25, gy50, gy75, gy100 int) {
+	totalSteps := plotHeight - 1
 	if totalSteps < 1 {
 		totalSteps = 1
 	}
@@ -220,7 +220,7 @@ func gridStepsForHeight(plotHeight int) (totalSteps, gy25, gy50, gy75, gy100 int
 	gy50 = seg[0] + seg[1]
 	gy75 = seg[0] + seg[1] + seg[2]
 	gy100 = totalSteps
-	return totalSteps, gy25, gy50, gy75, gy100
+	return gy25, gy50, gy75, gy100
 }
 
 func (g *GraphView) layout(width, height int) (numCols, numRowsTotal, visibleRows, colWidth, rowHeight int) {
@@ -382,7 +382,7 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 			plotY, plotHeight := adjustPlotArea(graphY, graphHeight)
 			rangeVal := g.currentScale.maxMs // ms
 
-			_, gy25, gy50, gy75, gy100 := gridStepsForHeight(plotHeight)
+			gy25, gy50, gy75, gy100 := gridStepsForHeight(plotHeight)
 			gridSteps := [4]int{gy25, gy50, gy75, gy100}
 
 			gridYPos := make(map[int]bool)

@@ -646,10 +646,10 @@ func TestAdjustPlotArea(t *testing.T) {
 }
 
 func TestGridStepsForHeight(t *testing.T) {
-	totalSteps, gy25, gy50, gy75, gy100 := gridStepsForHeight(9)
-	if totalSteps != 8 || gy25 != 2 || gy50 != 4 || gy75 != 6 || gy100 != 8 {
-		t.Fatalf("unexpected steps: total=%d 25=%d 50=%d 75=%d 100=%d",
-			totalSteps, gy25, gy50, gy75, gy100)
+	gy25, gy50, gy75, gy100 := gridStepsForHeight(9)
+	if gy25 != 2 || gy50 != 4 || gy75 != 6 || gy100 != 8 {
+		t.Fatalf("unexpected steps: 25=%d 50=%d 75=%d 100=%d",
+			gy25, gy50, gy75, gy100)
 	}
 }
 
@@ -1046,12 +1046,12 @@ func TestAdjustPlotArea_HeightOne(t *testing.T) {
 	}
 }
 
-// ---- gridStepsForHeight: height=1 → totalSteps clamped to 1 ----
+// ---- gridStepsForHeight: height=1 → totalSteps (== gy100) clamped to 1 ----
 
 func TestGridStepsForHeight_One(t *testing.T) {
-	totalSteps, _, _, _, _ := gridStepsForHeight(1)
-	if totalSteps != 1 {
-		t.Errorf("expected totalSteps=1 for height=1, got %d", totalSteps)
+	_, _, _, gy100 := gridStepsForHeight(1)
+	if gy100 != 1 {
+		t.Errorf("expected gy100=1 for height=1, got %d", gy100)
 	}
 }
 
