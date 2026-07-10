@@ -833,6 +833,12 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	// targets is declared outside the loop so the exit summary can read it.
 	var targets []*stats.TargetStats
 
+	// activePortSpecsRaw is the --port / port: value the running port
+	// checker was actually built from (env.portSpecs is parsed once and
+	// never re-derived on reload; see checkPortReloadDrift, TD-25).
+	activePortSpecsRaw := cfg.portSpecs
+	var pendingPortWarning string
+
 	// Main run loop (re-entered on YAML reload).
 	for {
 		interval := time.Duration(currentCfg.intervalMs) * time.Millisecond
@@ -852,6 +858,10 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 
 		makePinger := makePingerFactory(targets, opts, currentCfg, bindIP, logWriter)
 		packetSizeToUse, preLogs := setupPMTU(makePinger, currentCfg, ifaceMTU, targets, currentHosts[0], errOut)
+		if pendingPortWarning != "" {
+			preLogs = append(preLogs, pendingPortWarning)
+			pendingPortWarning = ""
+		}
 
 		// logCh carries route flap and watcher log messages to the TUI Log
 		// pane; it must exist before the supervisor (whose OnFlap callback
@@ -931,6 +941,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		if !reload {
 			break
 		}
+		pendingPortWarning = checkPortReloadDrift(activePortSpecsRaw, currentCfg.portSpecs)
 		// Loop continues: targets are re-initialised with the new currentHosts.
 	}
 

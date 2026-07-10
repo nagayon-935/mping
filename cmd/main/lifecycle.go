@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -170,6 +171,19 @@ func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resol
 		Resolver:   customResolver,
 		AsnEnabled: cfg.asnEnabled,
 	}
+}
+
+// checkPortReloadDrift returns a warning message when a reloaded config
+// requests a different --port / port: set than the one the running port
+// checker was actually built from. Port specs are parsed once at startup and
+// never re-applied mid-run (TD-25), so this is a "restart required" nudge
+// rather than a fix: it returns "" when there's no drift.
+func checkPortReloadDrift(activeRaw, reloadedRaw []string) string {
+	if slices.Equal(activeRaw, reloadedRaw) {
+		return ""
+	}
+	return fmt.Sprintf("[yellow][%s] port: change detected in the reloaded config — port checks require a full restart of mping to take effect[-]",
+		time.Now().Format("15:04:05"))
 }
 
 // startWatcher launches the YAML file watcher goroutine when hostsFile is
