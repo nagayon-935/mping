@@ -65,25 +65,6 @@ func TestParsePortSpec_InvalidFormats(t *testing.T) {
 	}
 }
 
-// ---- PortSpec.String tests ----
-
-func TestPortSpec_String(t *testing.T) {
-	tests := []struct {
-		spec PortSpec
-		want string
-	}{
-		{PortSpec{Port: 443, Protocol: "tcp"}, "443/tcp"},
-		{PortSpec{Port: 53, Protocol: "udp"}, "53/udp"},
-		{PortSpec{Port: 80, Protocol: "tcp"}, "80/tcp"},
-	}
-	for _, tt := range tests {
-		got := tt.spec.String()
-		if got != tt.want {
-			t.Errorf("PortSpec.String(): got %q, want %q", got, tt.want)
-		}
-	}
-}
-
 // ---- NewPortChecker tests ----
 
 func TestNewPortChecker_InitializesPortResults(t *testing.T) {

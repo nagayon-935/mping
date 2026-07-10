@@ -109,6 +109,9 @@ type Options struct {
 }
 
 // NewPinger creates a Pinger with default options for the given targets.
+// Production code always goes through NewPingerWithOptions (to inject
+// resolver/listener test doubles); this constructor exists for tests that
+// don't need to override any Options.
 func NewPinger(targets []*stats.TargetStats) *Pinger {
 	return NewPingerWithOptions(targets, Options{})
 }
