@@ -36,7 +36,7 @@ go.work.sum
 
 # exe binary
 mping
-main
+/main
 
 # Claude Code local configuration
 CLAUDE.md
