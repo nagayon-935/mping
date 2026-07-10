@@ -3,6 +3,9 @@ package pinger
 import (
 	"context"
 	"net"
+	"reflect"
+	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -250,5 +253,80 @@ func TestNextTraceID_Unique(t *testing.T) {
 			t.Errorf("duplicate traceID %d at iteration %d", id, i)
 		}
 		ids[id] = true
+	}
+}
+
+// racyTTLConn simulates a real IPv4 raw socket: SetTTL mutates one
+// connection-wide TTL value (there is no per-packet TTL ancillary data on
+// IPv4, unlike IPv6's HopLimit control message — see the "TTL ... receiving
+// only" comment on ipv4.ControlMessage), and WriteTo records whatever TTL is
+// current at the moment it is called. The artificial delay inside SetTTL
+// widens the window between "set" and "write" so a race between concurrent
+// callers sharing one HopSocket becomes reliably observable instead of
+// depending on scheduler luck.
+type racyTTLConn struct {
+	mu      sync.Mutex
+	current int
+	seen    []int
+}
+
+func (f *racyTTLConn) SetTTL(ttl int) error {
+	f.mu.Lock()
+	f.current = ttl
+	f.mu.Unlock()
+	time.Sleep(2 * time.Millisecond)
+	return nil
+}
+
+func (f *racyTTLConn) WriteTo(b []byte, cm *ipv4.ControlMessage, dst net.Addr) (int, error) {
+	f.mu.Lock()
+	f.seen = append(f.seen, f.current)
+	f.mu.Unlock()
+	return len(b), nil
+}
+
+func (f *racyTTLConn) SetReadDeadline(t time.Time) error { return nil }
+func (f *racyTTLConn) ReadFrom(b []byte) (int, *ipv4.ControlMessage, net.Addr, error) {
+	return 0, nil, nil, timeoutOpError()
+}
+func (f *racyTTLConn) Close() error { return nil }
+
+// TestProbeHopAddr_ConcurrentIPv4SendsDoNotRaceOnTTL reproduces the MTR
+// discover()/probe() calling pattern: many goroutines call probeHopAddr
+// concurrently with different TTLs on one shared HopSocket. Each goroutine's
+// WriteTo must observe the TTL it just set, not a value clobbered by another
+// goroutine's concurrent SetTTL — otherwise probes for different hops are
+// sent (and therefore answered) as if they were the same hop, which is
+// exactly the "every hop shows the same nearby IP, route 'completes' after
+// 2-3 hops" symptom reported against MTR.
+func TestProbeHopAddr_ConcurrentIPv4SendsDoNotRaceOnTTL(t *testing.T) {
+	conn := &racyTTLConn{}
+	sock := &HopSocket{isV4: true, sendV4: conn}
+	p := &Pinger{baseID: 0x1000}
+	dstAddr := &net.IPAddr{IP: net.IPv4(8, 8, 8, 8)}
+
+	const n = 10
+	var wg sync.WaitGroup
+	for ttl := 1; ttl <= n; ttl++ {
+		wg.Add(1)
+		go func(ttl int) {
+			defer wg.Done()
+			_, _ = p.probeHopAddr(context.Background(), sock, dstAddr, ttl, p.NextTraceID(), 20*time.Millisecond)
+		}(ttl)
+	}
+	wg.Wait()
+
+	conn.mu.Lock()
+	got := append([]int{}, conn.seen...)
+	conn.mu.Unlock()
+
+	sort.Ints(got)
+	want := make([]int, n)
+	for i := range want {
+		want[i] = i + 1
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("TTL race: WriteTo saw %v, want each hop's own TTL exactly once (%v) — "+
+			"SetTTL+WriteTo must be atomic per call when HopSocket is shared across goroutines", got, want)
 	}
 }
