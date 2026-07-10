@@ -327,7 +327,6 @@ func Run(opts RunOptions) error {
 		app.SetFocus(table)
 	})
 
-	stopRequested := false
 	updateTable = func() {
 		table.Clear()
 
@@ -497,176 +496,37 @@ func Run(opts RunOptions) error {
 	closeAppStop := func() { appStopOnce.Do(func() { close(appStop) }) }
 
 	// Keys
-	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		// Pass all events through when a text input or modal list is focused.
-		switch app.GetFocus() {
-		case addHostInput, deleteHostInput:
-			return event
-		}
-		if app.GetFocus() == table {
-			switch event.Key() {
-			case tcell.KeyUp, tcell.KeyDown, tcell.KeyPgUp, tcell.KeyPgDn:
-				rowOffset, colOffset := table.GetOffset()
-				totalRows := rowCount
-				visibleRows := tableMaxRows + 1
-				maxOffset := totalRows - visibleRows
-				if maxOffset < 0 {
-					maxOffset = 0
-				}
-
-				delta := 0
-				switch event.Key() {
-				case tcell.KeyUp:
-					delta = -1
-				case tcell.KeyDown:
-					delta = 1
-				case tcell.KeyPgUp:
-					delta = -tableMaxRows
-				case tcell.KeyPgDn:
-					delta = tableMaxRows
-				}
-
-				rowOffset += delta
-				if rowOffset < 0 {
-					rowOffset = 0
-				} else if rowOffset > maxOffset {
-					rowOffset = maxOffset
-				}
-
-				table.SetOffset(rowOffset, colOffset)
-				return nil
-			}
-		}
-		switch event.Key() {
-		case tcell.KeyTab:
-			resetAll := func() {
-				table.SetBorderColor(tcell.ColorWhite)
-				errorView.SetBorderColor(tcell.ColorRed)
-				graphView.SetBorderColor(vividCyan)
-				for _, mp := range sidePanes {
-					mp.setBorderColor(tcell.ColorWhite)
-				}
-			}
-			// Build ordered focus cycle: table → [trace] → [mtr] → [port] → [http] → graph → error → table
-			type focusEntry struct {
-				enabled  bool
-				view     tview.Primitive
-				setColor func(tcell.Color)
-			}
-			focusCycle := []focusEntry{
-				{true, table, func(c tcell.Color) { table.SetBorderColor(c) }},
-			}
-			for _, mp := range sidePanes {
-				focusCycle = append(focusCycle, focusEntry{mp.enabled, mp.view, mp.setBorderColor})
-			}
-			focusCycle = append(focusCycle,
-				focusEntry{true, graphView, func(c tcell.Color) { graphView.SetBorderColor(c) }},
-				focusEntry{true, errorView, func(c tcell.Color) { errorView.SetBorderColor(c) }},
-			)
-			focused := app.GetFocus()
-			for i, entry := range focusCycle {
-				if entry.enabled && entry.view == focused {
-					resetAll()
-					for j := 1; j <= len(focusCycle); j++ {
-						next := focusCycle[(i+j)%len(focusCycle)]
-						if next.enabled {
-							app.SetFocus(next.view)
-							next.setColor(tcell.ColorGreen)
-							break
-						}
-					}
-					return nil
-				}
-			}
-			// Fallback: focus table
-			resetAll()
-			app.SetFocus(table)
-			table.SetBorderColor(tcell.ColorGreen)
-			return nil
-		}
-
-		switch event.Rune() {
-		case 'a':
-			if onAddHost != nil {
-				pages.SwitchToPage("addHost")
-				app.SetFocus(addHostInput)
-				return nil
-			}
-		case 'd':
-			if onDeleteHost != nil {
-				pages.SwitchToPage("deleteHost")
-				app.SetFocus(deleteHostInput)
-				return nil
-			}
-		case 'q':
-			closeAppStop() // stop refresh goroutine before screen teardown
-			app.Stop()
-		case 's':
-			if !stopRequested {
-				stopRequested = true
-				appendErrorLog(&errorLogs, errorView, fmt.Sprintf("[yellow][%s] Stop requested by user[-]", time.Now().Format("15:04:05")))
-				if onStop != nil {
-					go onStop()
-				}
-				if footer != nil {
-					footer.SetText("Stopped. Press 'S' to restart, 'q' to quit, 'R' to reset stats")
-					footer.SetTextColor(tcell.ColorYellow)
-				}
-			}
-		case 'S':
-			if stopRequested {
-				appendErrorLog(&errorLogs, errorView, fmt.Sprintf("[yellow][%s] Restart requested by user[-]", time.Now().Format("15:04:05")))
-				if onRestart != nil {
-					go func() {
-						if err := onRestart(); err != nil {
-							app.QueueUpdateDraw(func() {
-								appendErrorLog(&errorLogs, errorView, fmt.Sprintf("[red][%s] Restart failed: %v[-]", time.Now().Format("15:04:05"), err))
-							})
-							return
-						}
-						app.QueueUpdateDraw(func() {
-							stopRequested = false
-							if footer != nil {
-								footer.SetText("Tab: Switch Focus | q: Quit | s: Stop ping | R: Reset stats")
-								footer.SetTextColor(tcell.ColorYellow)
-							}
-						})
-					}()
-				}
-			}
-		case 'R':
-			for _, t := range targets {
-				t.Reset()
-			}
-			// Also clear error log
-			errorLogs = []string{}
-			errorView.SetText("")
-			lastLossTimes = make(map[string]time.Time)
-			alertState = make(map[string]alertFlags)
-			lastPortStatuses = make(map[string]string)
-			lastHTTPStatuses = make(map[string]string)
-			if !stopRequested {
-				if traceEnabled {
-					for _, t := range targets {
-						t.SetTraceHops(nil)
-					}
-					if onResetTrace != nil {
-						go onResetTrace()
-					}
-				}
-				if mtrEnabled && onResetMTR != nil {
-					go onResetMTR()
-				}
-				if portEnabled && onResetPort != nil {
-					go onResetPort()
-				}
-				if httpEnabled && onResetHTTP != nil {
-					go onResetHTTP()
-				}
-			}
-		}
-		return event
-	})
+	app.SetInputCapture(newInputHandler(inputHandlerDeps{
+		app:              app,
+		table:            table,
+		addHostInput:     addHostInput,
+		deleteHostInput:  deleteHostInput,
+		graphView:        graphView,
+		errorView:        errorView,
+		footer:           footer,
+		sidePanes:        sidePanes,
+		pages:            pages,
+		targets:          targets,
+		rowCount:         &rowCount,
+		errorLogs:        &errorLogs,
+		lastLossTimes:    &lastLossTimes,
+		alertState:       &alertState,
+		lastPortStatuses: &lastPortStatuses,
+		lastHTTPStatuses: &lastHTTPStatuses,
+		traceEnabled:     traceEnabled,
+		mtrEnabled:       mtrEnabled,
+		portEnabled:      portEnabled,
+		httpEnabled:      httpEnabled,
+		onStop:           onStop,
+		onRestart:        onRestart,
+		onResetTrace:     onResetTrace,
+		onResetMTR:       onResetMTR,
+		onResetPort:      onResetPort,
+		onResetHTTP:      onResetHTTP,
+		onAddHost:        onAddHost,
+		onDeleteHost:     onDeleteHost,
+		closeAppStop:     closeAppStop,
+	}))
 	// Refresh loop
 	go func() {
 		ticker := time.NewTicker(interval / 2)
