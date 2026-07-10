@@ -951,199 +951,44 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		makePinger := makePingerFactory(targets, opts, currentCfg, bindIP, logWriter)
 		packetSizeToUse, preLogs := setupPMTU(makePinger, currentCfg, ifaceMTU, targets, currentHosts[0], errOut)
 
-		var (
-			pMu         sync.Mutex
-			p           pingerController
-			traceCancel context.CancelFunc
-			traceDone   chan struct{} // closed when the current runTraceroutes goroutine returns
-			portChecker *pinger.PortChecker
-			httpChecker *pinger.HTTPChecker
-			mtrEngine   *mtr.Engine
-			logCh       chan string // route flap and watcher log messages → TUI Log pane
-		)
+		// logCh carries route flap and watcher log messages to the TUI Log
+		// pane; it must exist before the supervisor (whose OnFlap callback
+		// writes to it) is constructed.
+		logCh := make(chan string, 16)
 
-		// startTraceroutes cancels any previous traceroute goroutine, launches a
-		// new one, and tracks it via traceDone so stopPinger can join it on
-		// shutdown instead of leaving it to be reaped by process exit.
-		// Caller must hold pMu.
-		startTraceroutes := func(pr tracer) {
-			if traceCancel != nil {
-				traceCancel()
-			}
-			ctx, cancel := context.WithCancel(context.Background())
-			traceCancel = cancel
-			done := make(chan struct{})
-			traceDone = done
-			// Pass the local ctx rather than storing it in a shared field: a
-			// concurrent resetTrace()/startPinger() call would reassign a
-			// shared field under pMu, racing with this goroutine reading it
-			// later. ctx here is only ever touched by this one goroutine.
-			go func() {
-				defer close(done)
-				runTraceroutes(ctx, pr, targets)
-			}()
-		}
+		sup := newSupervisor(supervisorConfig{
+			makePinger:   makePinger,
+			packetSize:   packetSizeToUse,
+			targets:      targets,
+			interval:     interval,
+			timeout:      timeout,
+			portSpecs:    portSpecs,
+			httpURLs:     currentCfg.httpURLs,
+			traceEnabled: currentCfg.trace,
+			mtrEnabled:   currentCfg.mtr,
+			logCh:        logCh,
+		})
 
-		// onFlap is the shared callback for MTR route-flap events.
-		// logCh must be initialised before startPinger() is called.
-		onFlap := func(host, desc string) {
-			select {
-			case logCh <- fmt.Sprintf("[yellow][%s] Route flap %s: %s[-]",
-				time.Now().Format("15:04:05"), host, desc):
-			default:
-			}
-		}
-
-		startPinger := func() error {
-			next := makePinger(packetSizeToUse)
-			if err := next.Start(interval, timeout); err != nil {
-				return err
-			}
-			pMu.Lock()
-			if currentCfg.trace {
-				startTraceroutes(next)
-			}
-			if currentCfg.mtr {
-				if mtrEngine != nil {
-					mtrEngine.Stop()
-				}
-				pa, ok := next.(*pingerAdapter)
-				if !ok {
-					return fmt.Errorf("internal: unexpected pinger type %T", next)
-				}
-				adapter := &pingerMTRAdapter{p: pa.Pinger}
-				mtrEngine = mtr.NewEngine(adapter, targets, mtr.Config{
-					OnFlap: onFlap,
-				})
-				mtrEngine.Start()
-			}
-			p = next
-			pMu.Unlock()
-			return nil
-		}
-
-		stopPinger := func() {
-			pMu.Lock()
-			if traceCancel != nil {
-				traceCancel()
-			}
-			curTraceDone := traceDone
-			curEngine := mtrEngine
-			cur := p
-			pMu.Unlock()
-			if curTraceDone != nil {
-				<-curTraceDone
-			}
-			if curEngine != nil {
-				curEngine.Stop()
-			}
-			if cur != nil {
-				cur.Stop()
-				cur.Wait()
-			}
-		}
-
-		// Initialize logCh before startPinger so OnFlap callbacks never write to a nil channel.
-		logCh = make(chan string, 16)
-
-		if err := startPinger(); err != nil {
+		if err := sup.startPinger(); err != nil {
 			fmt.Fprintf(errOut, "Error starting pinger: %v\n", err)
 			fmt.Fprintln(errOut, "This program requires root privileges (sudo) for raw ICMP sockets.")
 			return 1
 		}
-
-		pMu.Lock()
-		portChecker = setupPortChecker(targets, portSpecs, interval, timeout)
-		httpChecker = setupHTTPChecker(currentCfg.httpURLs, interval, timeout)
-		pMu.Unlock()
-
-		// stopAll is called from multiple sites (OnStop, OnRestart, error path,
-		// normal cleanup) and must be idempotent. Pinger.Stop uses a select-guarded
-		// close(done) and PortChecker.Stop uses sync.Once, so both are safe to call
-		// multiple times.
-		stopAll := func() {
-			stopPinger()
-			pMu.Lock()
-			curPort := portChecker
-			curHTTP := httpChecker
-			pMu.Unlock()
-			if curPort != nil {
-				curPort.Stop()
-				curPort.Wait()
-			}
-			if curHTTP != nil {
-				curHTTP.Stop()
-				curHTTP.Wait()
-			}
-		}
-
-		resetTrace := func() {
-			pMu.Lock()
-			cur := p
-			startTraceroutes(cur)
-			pMu.Unlock()
-		}
+		sup.setupPortAndHTTP()
 
 		var resetMTR func()
 		if currentCfg.mtr {
-			resetMTR = func() {
-				for _, t := range targets {
-					t.Reset()
-				}
-				pMu.Lock()
-				curEngine := mtrEngine
-				if curEngine != nil {
-					curEngine.Stop()
-				}
-				cur := p
-				pa, ok := cur.(*pingerAdapter)
-				if !ok {
-					pMu.Unlock()
-					return
-				}
-				adapter := &pingerMTRAdapter{p: pa.Pinger}
-				mtrEngine = mtr.NewEngine(adapter, targets, mtr.Config{
-					OnFlap: onFlap,
-				})
-				mtrEngine.Start()
-				pMu.Unlock()
-			}
+			resetMTR = sup.resetMTR
 		}
 
 		var resetHTTP func()
 		if len(currentCfg.httpURLs) > 0 {
-			resetHTTP = func() {
-				pMu.Lock()
-				cur := httpChecker
-				httpChecker = nil
-				pMu.Unlock()
-				if cur != nil {
-					cur.Stop()
-					cur.Wait()
-				}
-				next := setupHTTPChecker(currentCfg.httpURLs, interval, timeout)
-				pMu.Lock()
-				httpChecker = next
-				pMu.Unlock()
-			}
+			resetHTTP = sup.resetHTTP
 		}
 
 		var resetPort func()
 		if len(portSpecs) > 0 {
-			resetPort = func() {
-				pMu.Lock()
-				cur := portChecker
-				portChecker = nil
-				pMu.Unlock()
-				if cur != nil {
-					cur.Stop()
-					cur.Wait()
-				}
-				next := setupPortChecker(targets, portSpecs, interval, timeout)
-				pMu.Lock()
-				portChecker = next
-				pMu.Unlock()
-			}
+			resetPort = sup.resetPort
 		}
 
 		// doneCh is closed when the pinger finishes (count-limited mode).
@@ -1151,12 +996,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		if currentCfg.count > 0 {
 			doneCh = make(chan struct{})
 			go func() {
-				pMu.Lock()
-				cur := p
-				pMu.Unlock()
-				if cur != nil {
-					cur.Wait()
-				}
+				sup.waitPinger()
 				close(doneCh)
 			}()
 		}
@@ -1223,14 +1063,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 				for {
 					select {
 					case <-ticker.C:
-						if err := writeJSONSnapshot(currentCfg.jsonOutputFile, targets, func() []*stats.HTTPCheckResult {
-							pMu.Lock()
-							defer pMu.Unlock()
-							if httpChecker == nil {
-								return nil
-							}
-							return httpChecker.Results()
-						}()); err != nil {
+						if err := writeJSONSnapshot(currentCfg.jsonOutputFile, targets, sup.httpResults()); err != nil {
 							fmt.Fprintf(errOut, "Warning: JSON snapshot write failed: %v\n", err)
 						}
 					case <-jsonCtx.Done():
@@ -1245,43 +1078,33 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		// ── Run TUI ──────────────────────────────────────────────────────────
 		uiThresholds := thresholdsFromCfg(currentCfg)
 		if err := uiRun(ui.RunOptions{
-			Targets:      targets,
-			Interval:     interval,
-			Timeout:      timeout,
-			DoneCh:       doneCh,
-			SourceIPv4:   displaySourceIPv4,
-			SourceIPv6:   displaySourceIPv6,
-			PacketSize:   packetSizeToUse,
-			InitialLogs:  preLogs,
-			TraceEnabled: currentCfg.trace,
-			MTREnabled:   currentCfg.mtr,
-			PortEnabled:  len(portSpecs) > 0,
-			HTTPEnabled:  len(currentCfg.httpURLs) > 0,
-			HTTPResults: func() []*stats.HTTPCheckResult {
-				pMu.Lock()
-				defer pMu.Unlock()
-				if httpChecker == nil {
-					return nil
-				}
-				return httpChecker.Results()
-			},
+			Targets:         targets,
+			Interval:        interval,
+			Timeout:         timeout,
+			DoneCh:          doneCh,
+			SourceIPv4:      displaySourceIPv4,
+			SourceIPv6:      displaySourceIPv6,
+			PacketSize:      packetSizeToUse,
+			InitialLogs:     preLogs,
+			TraceEnabled:    currentCfg.trace,
+			MTREnabled:      currentCfg.mtr,
+			PortEnabled:     len(portSpecs) > 0,
+			HTTPEnabled:     len(currentCfg.httpURLs) > 0,
+			HTTPResults:     sup.httpResults,
 			ASNEnabled:      currentCfg.asnEnabled,
 			Thresholds:      &uiThresholds,
 			ExternalCloseCh: reloadCh,
 			ExternalLogCh:   logCh,
-			OnStop:          stopAll,
+			OnStop:          sup.stopAll,
 			OnRestart: func() error {
-				stopAll()
-				if err := startPinger(); err != nil {
+				sup.stopAll()
+				if err := sup.startPinger(); err != nil {
 					return err
 				}
-				pMu.Lock()
-				portChecker = setupPortChecker(targets, portSpecs, interval, timeout)
-				httpChecker = setupHTTPChecker(currentCfg.httpURLs, interval, timeout)
-				pMu.Unlock()
+				sup.setupPortAndHTTP()
 				return nil
 			},
-			OnResetTrace: resetTrace,
+			OnResetTrace: sup.resetTrace,
 			OnResetMTR:   resetMTR,
 			OnResetPort:  resetPort,
 			OnResetHTTP:  resetHTTP,
@@ -1331,7 +1154,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			jsonCancel()
 			<-jsonDone
 			watchCancel()
-			stopAll()
+			sup.stopAll()
 			return 1
 		}
 
@@ -1341,19 +1164,12 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		jsonCancel()
 		<-jsonDone
 		if currentCfg.jsonOutputFile != "" {
-			if err := writeJSONSnapshot(currentCfg.jsonOutputFile, targets, func() []*stats.HTTPCheckResult {
-				pMu.Lock()
-				defer pMu.Unlock()
-				if httpChecker == nil {
-					return nil
-				}
-				return httpChecker.Results()
-			}()); err != nil {
+			if err := writeJSONSnapshot(currentCfg.jsonOutputFile, targets, sup.httpResults()); err != nil {
 				fmt.Fprintf(errOut, "Warning: Final JSON snapshot write failed: %v\n", err)
 			}
 		}
 		// 2. Stop pinger and port checker.
-		stopAll()
+		sup.stopAll()
 		// 3. Stop file watcher and wait for the goroutine to exit before
 		//    reading the shared reload state.
 		watchCancel()
