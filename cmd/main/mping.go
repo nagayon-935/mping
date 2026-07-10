@@ -882,12 +882,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	}
 
 	// ── 4. Reload state ──────────────────────────────────────────────────────
-	var (
-		reloadMu        sync.Mutex
-		reloadRequested bool
-		reloadDoc       hostsFileYAML
-		reloadNewHosts  []string // non-nil when triggered by add/delete (skips applyDocToCfg)
-	)
+	rc := newReloadCoordinator(fs, cliCfg, cliHosts)
 
 	currentCfg := cfg
 	currentHosts := hosts
@@ -1001,34 +996,13 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			}()
 		}
 
-		// reloadCh is closed by the YAML watcher to signal TUI shutdown.
-		reloadCh := make(chan struct{})
-		var reloadCloseOnce sync.Once
+		// sig is closed to signal TUI shutdown, either by the YAML watcher or
+		// by an in-memory add/delete-host request.
+		sig := newReloadSignal()
 
 		// onFileChange is the callback invoked by the watcher after debounce.
 		onFileChange := func() {
-			doc, err := parseHostsFile(currentCfg.hostsFile)
-			if err != nil {
-				select {
-				case logCh <- fmt.Sprintf("[red][%s] Reload error: %v[-]",
-					time.Now().Format("15:04:05"), err):
-				default:
-				}
-				return
-			}
-			if err := validateHostsDoc(doc); err != nil {
-				select {
-				case logCh <- fmt.Sprintf("[red][%s] Reload validation error: %v[-]",
-					time.Now().Format("15:04:05"), err):
-				default:
-				}
-				return
-			}
-			reloadMu.Lock()
-			reloadRequested = true
-			reloadDoc = doc
-			reloadMu.Unlock()
-			reloadCloseOnce.Do(func() { close(reloadCh) })
+			rc.requestFileReload(sig, currentCfg.hostsFile, logCh)
 		}
 
 		// Start the YAML file watcher (only when -f is specified).
@@ -1093,7 +1067,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			HTTPResults:     sup.httpResults,
 			ASNEnabled:      currentCfg.asnEnabled,
 			Thresholds:      &uiThresholds,
-			ExternalCloseCh: reloadCh,
+			ExternalCloseCh: sig.ch,
 			ExternalLogCh:   logCh,
 			OnStop:          sup.stopAll,
 			OnRestart: func() error {
@@ -1121,11 +1095,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 				newHosts := make([]string, len(currentHosts)+1)
 				copy(newHosts, currentHosts)
 				newHosts[len(currentHosts)] = host
-				reloadMu.Lock()
-				reloadRequested = true
-				reloadNewHosts = newHosts
-				reloadMu.Unlock()
-				reloadCloseOnce.Do(func() { close(reloadCh) })
+				rc.requestHostsChange(sig, newHosts)
 				return nil
 			},
 			OnDeleteHost: func(host string) error {
@@ -1141,11 +1111,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 				if len(newHosts) == 0 {
 					return fmt.Errorf("cannot delete the last host")
 				}
-				reloadMu.Lock()
-				reloadRequested = true
-				reloadNewHosts = newHosts
-				reloadMu.Unlock()
-				reloadCloseOnce.Do(func() { close(reloadCh) })
+				rc.requestHostsChange(sig, newHosts)
 				return nil
 			},
 			Groups: currentGroups,
@@ -1176,37 +1142,8 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		<-watchDone
 
 		// ── Check if a reload was requested ──────────────────────────────────
-		reloadMu.Lock()
-		reload := reloadRequested
-		newHosts := reloadNewHosts
-		if reload {
-			if newHosts != nil {
-				// In-memory add/delete: use the updated host list directly.
-				currentHosts = newHosts
-			} else {
-				// File-based reload: re-apply YAML doc.
-				docHosts, docGroups, newCfg, applyErr := applyDocToCfg(cliCfg, fs, reloadDoc)
-				if applyErr != nil {
-					// Shouldn't happen (validateHostsDoc passed), but be safe.
-					reload = false
-				} else {
-					currentHosts, currentGroups = buildHostsAndGroups(docHosts, docGroups, cliHosts)
-					currentCfg = newCfg
-				}
-			}
-			if reload {
-				expandedHosts, expandedGroups, expandErr := expandTargets(currentHosts, currentGroups, currentCfg)
-				if expandErr == nil {
-					currentHosts = expandedHosts
-					currentGroups = expandedGroups
-				}
-			}
-			reloadRequested = false
-			reloadDoc = hostsFileYAML{}
-			reloadNewHosts = nil
-		}
-		reloadMu.Unlock()
-
+		var reload bool
+		currentHosts, currentGroups, currentCfg, reload = rc.apply(currentCfg, currentHosts, currentGroups)
 		if !reload {
 			break
 		}
