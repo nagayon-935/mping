@@ -107,11 +107,7 @@ func (m *MTRStats) RecordReply(ttl int, ip, asn, country, org string, rtt time.D
 	}
 	// RFC 1889 jitter
 	if h.Recv > 1 {
-		delta := int64(rtt - h.LastRTT)
-		if delta < 0 {
-			delta = -delta
-		}
-		h.jitter += (delta - h.jitter) / jitterDivisor
+		h.jitter = updateJitter(h.jitter, rtt, h.LastRTT)
 	}
 	h.LastRTT = rtt
 	h.SumRTT += rtt
