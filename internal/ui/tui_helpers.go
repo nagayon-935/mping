@@ -557,6 +557,12 @@ func displaySourceIPForDst(dstIP, sourceIPv4, sourceIPv6 string) string {
 	return "Auto"
 }
 
+// normalizeWriteIP substitutes the display source IP into raw-socket write
+// errors that still show 0.0.0.0. This covers the auto-detect case: when no
+// -S/-I flag is given, pinger.Source is empty so pinger.applyLastErrSource
+// cannot fill it in, but the UI layer knows the auto-detected source IP
+// (sourceIPv4/sourceIPv6) and can substitute it here at display time. The
+// two functions are not redundant — see the comment on applyLastErrSource.
 func normalizeWriteIP(errMsg, sourceIP string) string {
 	if sourceIP == "" || sourceIP == "Auto" {
 		return errMsg

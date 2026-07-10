@@ -52,11 +52,9 @@
 ## 分類2: 次の改修時に一緒に直すべき負債
 
 ### TD-05 `"write ip 0.0.0.0->"` 書き換えロジックの層またぎ重複
-- **概要**: `pinger.applyLastErrSource`（[pinger.go:189](../internal/pinger/pinger.go)）と `ui.normalizeWriteIP`（[tui_helpers.go:541](../internal/ui/tui_helpers.go)）が同一の文字列置換を二重実装。
-- **リスク**: エラーメッセージ形式変更時の片側修正漏れ。pinger 側で正規化済みの文字列を UI が再度置換する冗長パス。
-- **修正方針**: 正規化は pinger 層（発生源）に一本化し、UI 側 `normalizeWriteIP` を削除。UI テストの期待値を更新。
-- **影響範囲**: tui_helpers.go / tui_test.go の該当テスト。
-- **優先度: 中 / リスクレベル: 低**
+- **✅ 調査済み（refactor/phase-2, 2026-07-10）: 削除は見送り。** `pinger.applyLastErrSource` は `p.Source != ""`（`-S`/`-I` 明示指定時）のみ動作し、`ui.normalizeWriteIP` は自動検出モード（`p.Source` が空でバインドは `0.0.0.0` だが、UI 側は `detectAutoSourceIPs` で検出済みの表示用送信元 IP を持つ）をカバーする。両者は同じ文字列置換ロジックを持つが**担当するケースが排他的**であり、`tui_test.go:512` は自動検出シナリオを直接検証している。ドキュメント初版の「UI側を削除」という推奨は誤りで、実施すると自動検出時（デフォルト・最頻ケース）にエラーメッセージが `0.0.0.0` のまま表示される回帰を招く。両関数を維持し、意図を明示するコメントを追加した（pinger.go, tui_helpers.go）。
+- **概要（当初の記載、参考）**: `pinger.applyLastErrSource`（[pinger.go:192](../internal/pinger/pinger.go)）と `ui.normalizeWriteIP`（[tui_helpers.go:560](../internal/ui/tui_helpers.go)）が同一の文字列置換を実装。
+- **優先度: 中 / リスクレベル: 低 → 対応不要と判明**
 - **LLM 依頼単位**: 1プロンプト。
 
 ### TD-06 RFC 1889 ジッタ計算の二重実装

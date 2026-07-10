@@ -189,6 +189,12 @@ func (p *Pinger) log(t *stats.TargetStats, seq int, status string, rtt time.Dura
 	}
 }
 
+// applyLastErrSource substitutes the bound source IP into raw-socket write
+// errors, which the kernel reports against 0.0.0.0 regardless of the actual
+// bind address. Only fires when Source was explicitly set (-S/-I); when the
+// source is auto-detected, p.Source is empty here and ui.normalizeWriteIP
+// performs the equivalent substitution at display time using the UI's own
+// detected source IP — the two are not redundant with each other.
 func (p *Pinger) applyLastErrSource(errMsg string) string {
 	if p.Source != "" && strings.Contains(errMsg, "write ip 0.0.0.0->") {
 		return strings.Replace(errMsg, "write ip 0.0.0.0->", "write ip "+p.Source+"->", 1)
