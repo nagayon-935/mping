@@ -198,53 +198,6 @@ func mtuString(mtu int) string {
 	return fmt.Sprintf("%d", mtu)
 }
 
-func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, packetSize int, asnEnabled bool, dnsEnabled bool) ([]string, string, float64) {
-	lossRate := calcLossRate(view)
-	lossStr := formatLossAgo(view.LastLossTime)
-	rttStr := formatRTT(view.LastRTT)
-	avgStr := formatRTT(view.AvgRTT)
-	jitterStr := formatRTT(view.Jitter)
-
-	rowSourceIP := displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
-
-	dstDisplay := view.Host
-	if view.Host != view.IP && !strings.Contains(view.Host, " ("+view.IP+")") {
-		dstDisplay = fmt.Sprintf("%s (%s)", view.Host, view.IP)
-	}
-
-	cols := []string{
-		rowSourceIP,
-		dstDisplay, // Dst IP
-	}
-	if dnsEnabled {
-		cols = append(cols, view.DNSServer)
-	}
-	if asnEnabled {
-		asnCol := view.ASN
-		if view.Country != "" {
-			asnCol += " " + view.Country
-		}
-		if view.Org != "" {
-			asnCol += " " + view.Org
-		}
-		cols = append(cols, asnCol)
-	}
-	cols = append(cols,
-		fmt.Sprintf("%d", view.Recv),
-		fmt.Sprintf("%d", view.Loss),
-		fmt.Sprintf("%.1f%%", lossRate),
-		rttStr,
-		avgStr,
-		jitterStr,
-		fmt.Sprintf("%d", packetSize),
-		mtuString(view.IfaceMTU),
-		ttlString(view.LastTTL),
-		formatTableError(view.LastError),
-		lossStr,
-	)
-	return cols, rowSourceIP, lossRate
-}
-
 func lossColorForRate(lossRate float64) tcell.Color {
 	th := getActiveThresholds()
 	if lossRate > th.LossCrit {
@@ -602,49 +555,6 @@ func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, 
 	}
 
 	return state, msgs
-}
-
-func buildFullRowCells(cols []string, widths []int, aligns []int, lossRate float64, rtt time.Duration, jitter time.Duration, rowColor tcell.Color, asnEnabled bool, dnsEnabled bool) []*tview.TableCell {
-	cells := make([]*tview.TableCell, len(cols))
-	lossColor := lossColorForRate(lossRate)
-	rttColor := rttColorForRTT(rtt)
-	jitterColor := jitterColorForJitter(jitter)
-
-	for c, col := range cols {
-		text := formatCellText(col, widths[c], aligns[c])
-		cell := tview.NewTableCell(text).
-			SetBackgroundColor(tcell.ColorBlack).
-			SetTextColor(rowColor).
-			SetAlign(aligns[c])
-
-		offset := 0
-		if dnsEnabled {
-			offset++
-		}
-		if asnEnabled {
-			offset++
-		}
-
-		switch c {
-		case 2 + offset: // Success column index
-			// no special color
-		case 3 + offset: // Loss column index
-			// no special color
-		case 4 + offset: // Loss Ratio column index
-			cell.SetTextColor(lossColor).SetAttributes(tcell.AttrBold)
-		case 5 + offset: // RTT column index
-			cell.SetTextColor(rttColor)
-		case 7 + offset: // Jitter column index
-			cell.SetTextColor(jitterColor)
-		case len(cols) - 2: // Error column
-			if text != "" {
-				cell.SetTextColor(vividRed)
-			}
-		}
-
-		cells[c] = cell
-	}
-	return cells
 }
 
 func buildCompactRowCells(values []string, widths []int, aligns []int, rowColor tcell.Color) []*tview.TableCell {

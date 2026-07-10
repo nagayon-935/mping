@@ -496,34 +496,37 @@ func Run(opts RunOptions) error {
 		}
 
 		// Pass 1: check for new errors and alert state for all targets, and
-		// cache each target's GetView()/buildFullColumns() result so pass 2
-		// doesn't recompute both a second time per target per tick.
+		// cache each target's rendered cell text so pass 2 doesn't
+		// re-render every column a second time per target per tick.
 		now := time.Now()
 		views := make([]stats.TargetView, len(targets))
-		var colsCache [][]string
-		var lossRateCache []float64
+		var rowCtxCache []columnRowContext
+		var textsCache [][]string
 		if !compactLayout {
-			colsCache = make([][]string, len(targets))
-			lossRateCache = make([]float64, len(targets))
+			rowCtxCache = make([]columnRowContext, len(targets))
+			textsCache = make([][]string, len(targets))
 		}
 		for i, t := range targets {
 			view := t.GetView()
 			views[i] = view
+			rowSourceIP := displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
 			if !view.LastLossTime.IsZero() {
 				lastTime, exists := lastLossTimes[view.Host]
 				if !exists || view.LastLossTime.After(lastTime) {
 					lastLossTimes[view.Host] = view.LastLossTime
-					rowSourceIP := displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
 					msg := buildErrorLogMessage(view, rowSourceIP, view.LastError, view.LastLossTime)
 					appendErrorLog(&errorLogs, errorView, msg)
 				}
 			}
 			if !compactLayout {
-				cols, rowSourceIP, lossRate := buildFullColumns(view, sourceIPv4, sourceIPv6, packetSize, asnEnabled, dnsEnabled)
-				colsCache[i] = cols
-				lossRateCache[i] = lossRate
+				ctx := columnRowContext{
+					view: view, sourceIPv4: sourceIPv4, sourceIPv6: sourceIPv6,
+					packetSize: packetSize, lossRate: calcLossRate(view),
+				}
+				rowCtxCache[i] = ctx
+				textsCache[i] = renderRowTexts(cols, ctx)
 				state := alertState[view.Host]
-				state, msgs := updateAlertState(view, rowSourceIP, lossRate, now, state)
+				state, msgs := updateAlertState(view, rowSourceIP, ctx.lossRate, now, state)
 				for _, msg := range msgs {
 					appendErrorLog(&errorLogs, errorView, msg)
 				}
@@ -542,10 +545,7 @@ func Run(opts RunOptions) error {
 					setGroupHeaderRow(table, tableRow, len(activeHeaders),
 						row.groupName, memberCount)
 				case groupRowUngrouped, groupRowTarget:
-					view := views[row.targetIdx]
-					cols := colsCache[row.targetIdx]
-					lossRate := lossRateCache[row.targetIdx]
-					cells := buildFullRowCells(cols, widths, fullAligns, lossRate, view.LastRTT, view.Jitter, rowColor, asnEnabled, dnsEnabled)
+					cells := renderRowCells(cols, textsCache[row.targetIdx], widths, fullAligns, rowCtxCache[row.targetIdx], rowColor)
 					for c, cell := range cells {
 						table.SetCell(tableRow, c, cell)
 					}
@@ -556,10 +556,7 @@ func Run(opts RunOptions) error {
 			// already rendered earlier via the compactRows loop above).
 			for i := range targets {
 				row := i + 1
-				view := views[i]
-				cols := colsCache[i]
-				lossRate := lossRateCache[i]
-				cells := buildFullRowCells(cols, widths, fullAligns, lossRate, view.LastRTT, view.Jitter, rowColor, asnEnabled, dnsEnabled)
+				cells := renderRowCells(cols, textsCache[i], widths, fullAligns, rowCtxCache[i], rowColor)
 				for c, cell := range cells {
 					table.SetCell(row, c, cell)
 				}

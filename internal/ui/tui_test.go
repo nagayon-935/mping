@@ -374,7 +374,9 @@ func TestMainTableColumns_DynamicFlags(t *testing.T) {
 	}
 }
 
-func TestBuildFullColumns(t *testing.T) {
+// TestRenderRowTexts is TestBuildFullColumns's column-struct-model successor
+// (TD-21③): renderRowTexts + mainTableColumns replace buildFullColumns.
+func TestRenderRowTexts(t *testing.T) {
 	view := stats.TargetView{
 		Host:      "example.com",
 		IP:        "1.1.1.1",
@@ -388,39 +390,42 @@ func TestBuildFullColumns(t *testing.T) {
 		IfaceMTU:  1500,
 		LastTTL:   64,
 	}
+	ctx := columnRowContext{view: view, sourceIPv4: "10.0.0.2", packetSize: 56, lossRate: calcLossRate(view)}
 
 	// Case 1: dnsEnabled = false, asnEnabled = true
-	cols, src, rate := buildFullColumns(view, "10.0.0.2", "", 56, true, false)
-	if src != "10.0.0.2" {
-		t.Fatalf("src: got %q", src)
+	cols := mainTableColumns(false, true)
+	texts := renderRowTexts(cols, ctx)
+	if texts[0] != "10.0.0.2" {
+		t.Fatalf("src: got %q", texts[0])
 	}
-	if rate <= 0 {
-		t.Fatalf("loss rate: got %v", rate)
+	if ctx.lossRate <= 0 {
+		t.Fatalf("loss rate: got %v", ctx.lossRate)
 	}
-	if len(cols) != 14 {
-		t.Fatalf("cols len: got %d", len(cols))
+	if len(texts) != 14 {
+		t.Fatalf("texts len: got %d", len(texts))
 	}
 	// Dst IP should include hostname when host != IP
-	if cols[1] != "example.com (1.1.1.1)" {
-		t.Fatalf("dst ip: got %q", cols[1])
+	if texts[1] != "example.com (1.1.1.1)" {
+		t.Fatalf("dst ip: got %q", texts[1])
 	}
-	if cols[2] != "AS15169" {
-		t.Fatalf("asn: got %q", cols[2])
+	if texts[2] != "AS15169" {
+		t.Fatalf("asn: got %q", texts[2])
 	}
 
 	// Case 2: dnsEnabled = true, asnEnabled = true
-	cols2, _, _ := buildFullColumns(view, "10.0.0.2", "", 56, true, true)
-	if len(cols2) != 15 {
-		t.Fatalf("cols len (dns enabled): got %d", len(cols2))
+	cols2 := mainTableColumns(true, true)
+	texts2 := renderRowTexts(cols2, ctx)
+	if len(texts2) != 15 {
+		t.Fatalf("texts len (dns enabled): got %d", len(texts2))
 	}
-	if cols2[1] != "example.com (1.1.1.1)" {
-		t.Fatalf("dst ip: got %q", cols2[1])
+	if texts2[1] != "example.com (1.1.1.1)" {
+		t.Fatalf("dst ip: got %q", texts2[1])
 	}
-	if cols2[2] != "8.8.8.8" {
-		t.Fatalf("dns: got %q, expected 8.8.8.8", cols2[2])
+	if texts2[2] != "8.8.8.8" {
+		t.Fatalf("dns: got %q, expected 8.8.8.8", texts2[2])
 	}
-	if cols2[3] != "AS15169" {
-		t.Fatalf("asn: got %q", cols2[3])
+	if texts2[3] != "AS15169" {
+		t.Fatalf("asn: got %q", texts2[3])
 	}
 }
 
@@ -449,30 +454,46 @@ func TestColorHelpers(t *testing.T) {
 	}
 }
 
-func TestBuildFullRowCells(t *testing.T) {
+// TestRenderRowCells is TestBuildFullRowCells's column-struct-model
+// successor (TD-21③): renderRowCells replaces buildFullRowCells and its
+// hardcoded "column index + dns/asn offset" color switch — each column now
+// owns its own color logic via column.color.
+func TestRenderRowCells(t *testing.T) {
+	view := stats.TargetView{
+		Host: "d", IP: "d", ASN: "AS123",
+		Recv: 1, Loss: 2,
+		LastRTT: 300 * time.Millisecond, AvgRTT: 300 * time.Millisecond, Jitter: 60 * time.Millisecond,
+		IfaceMTU: 1500, LastTTL: 64,
+		LastError: "err",
+	}
+	ctx := columnRowContext{view: view, packetSize: 56, lossRate: 90.0}
+
 	// Case 1: dnsEnabled = false, asnEnabled = true
-	cols := []string{"s", "d", "AS123", "1", "2", "10.0%", "1ms", "1ms", "1ms", "56", "1500", "64", "err", "1s ago"}
+	cols := mainTableColumns(false, true)
 	widths := make([]int, len(cols))
 	for i := range widths {
 		widths[i] = 5
 	}
 	aligns := make([]int, len(cols))
-	cells := buildFullRowCells(cols, widths, aligns, 90.0, 300*time.Millisecond, 60*time.Millisecond, tcell.ColorWhite, true, false)
+	texts := renderRowTexts(cols, ctx)
+	cells := renderRowCells(cols, texts, widths, aligns, ctx, tcell.ColorWhite)
 	if len(cells) != len(cols) {
 		t.Fatalf("cells len mismatch")
 	}
-	if cells[12].Color == tcell.ColorWhite {
+	errorIdx := columnsByName(cols, "Error")
+	if cells[errorIdx].Color == tcell.ColorWhite {
 		t.Fatalf("expected error cell colored")
 	}
 
 	// Case 2: dnsEnabled = true, asnEnabled = true
-	cols2 := []string{"s", "d", "dns", "AS123", "1", "2", "10.0%", "1ms", "1ms", "1ms", "56", "1500", "64", "err", "1s ago"}
+	cols2 := mainTableColumns(true, true)
 	widths2 := make([]int, len(cols2))
 	for i := range widths2 {
 		widths2[i] = 5
 	}
 	aligns2 := make([]int, len(cols2))
-	cells2 := buildFullRowCells(cols2, widths2, aligns2, 90.0, 300*time.Millisecond, 60*time.Millisecond, tcell.ColorWhite, true, true)
+	texts2 := renderRowTexts(cols2, ctx)
+	cells2 := renderRowCells(cols2, texts2, widths2, aligns2, ctx, tcell.ColorWhite)
 	if len(cells2) != len(cols2) {
 		t.Fatalf("cells len mismatch (dns enabled)")
 	}

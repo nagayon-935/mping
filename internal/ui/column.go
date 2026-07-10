@@ -47,6 +47,9 @@ type column struct {
 	// -rendered text; ok=false means "no override, keep the row's default
 	// color".
 	color func(ctx columnRowContext, text string) (tcell.Color, bool)
+	// bold marks a column whose color override (when it fires) should also
+	// set AttrBold, matching the legacy Loss Ratio column's styling.
+	bold bool
 }
 
 // mainTableColumns returns the Ping Monitor table's column schema in display
@@ -111,7 +114,7 @@ func mainTableColumns(dnsEnabled, asnEnabled bool) []column {
 		},
 		column{
 			name: "Loss Ratio", align: tview.AlignRight, base: 10, min: 6, max: 12,
-			shrinkPriority: 70, growPriority: 80,
+			shrinkPriority: 70, growPriority: 80, bold: true,
 			render: func(ctx columnRowContext) string { return fmt.Sprintf("%.1f%%", ctx.lossRate) },
 			color: func(ctx columnRowContext, text string) (tcell.Color, bool) {
 				return lossColorForRate(ctx.lossRate), true
@@ -198,4 +201,39 @@ func columnsByName(cols []column, name string) int {
 		}
 	}
 	return -1
+}
+
+// renderRowTexts renders every column's cell text for one row from a single
+// shared context, replacing the former buildFullColumns (TD-21③).
+func renderRowTexts(cols []column, ctx columnRowContext) []string {
+	texts := make([]string, len(cols))
+	for i, c := range cols {
+		texts[i] = c.render(ctx)
+	}
+	return texts
+}
+
+// renderRowCells builds formatted, colored table cells for one row from
+// already-rendered text, replacing the former buildFullRowCells and its
+// hardcoded "column index + dns/asn offset" color switch (TD-21③): each
+// column now owns its own color logic, so it can't drift out of sync with
+// where DNS/ASN happen to sit.
+func renderRowCells(cols []column, texts []string, widths, aligns []int, ctx columnRowContext, rowColor tcell.Color) []*tview.TableCell {
+	cells := make([]*tview.TableCell, len(cols))
+	for i, c := range cols {
+		cell := tview.NewTableCell(formatCellText(texts[i], widths[i], aligns[i])).
+			SetBackgroundColor(tcell.ColorBlack).
+			SetTextColor(rowColor).
+			SetAlign(aligns[i])
+		if c.color != nil {
+			if col, ok := c.color(ctx, texts[i]); ok {
+				cell.SetTextColor(col)
+				if c.bold {
+					cell.SetAttributes(tcell.AttrBold)
+				}
+			}
+		}
+		cells[i] = cell
+	}
+	return cells
 }
