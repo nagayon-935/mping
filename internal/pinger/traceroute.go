@@ -91,35 +91,11 @@ func (p *Pinger) TraceRoute(ctx context.Context, dest string, maxHops int, timeo
 
 	// acceptPacket checks whether a received message is a valid reply to the
 	// probe with the given ttl and returns (srcIP, reachedDest, accepted).
+	// Delegates to acceptHopPacket (mtr_probe.go), which implements the same
+	// EchoReply/TimeExceeded/DestinationUnreachable classification used by MTR.
 	acceptPacket := func(parsed *icmp.Message, src net.Addr, ttl int) (string, bool, bool) {
-		srcIP := ""
-		if ipAddr, ok := src.(*net.IPAddr); ok {
-			srcIP = ipAddr.IP.String()
-		} else if udpAddr, ok := src.(*net.UDPAddr); ok {
-			srcIP = udpAddr.IP.String()
-		} else if src != nil {
-			srcIP = src.String()
-		}
-
-		switch parsed.Type {
-		case ipv4.ICMPTypeEchoReply, ipv6.ICMPTypeEchoReply:
-			if echo, ok := parsed.Body.(*icmp.Echo); ok {
-				if echo.ID == traceID && echo.Seq == ttl {
-					return srcIP, true, true
-				}
-			}
-		case ipv4.ICMPTypeTimeExceeded, ipv6.ICMPTypeTimeExceeded:
-			id, seq, ok := extractEchoIDSeq(parsed)
-			if ok && id == traceID && seq == ttl {
-				return srcIP, false, true
-			}
-		case ipv4.ICMPTypeDestinationUnreachable, ipv6.ICMPTypeDestinationUnreachable:
-			id, seq, ok := extractEchoIDSeq(parsed)
-			if ok && id == traceID && seq == ttl {
-				return srcIP, true, true
-			}
-		}
-		return "", false, false
+		reply, accepted := acceptHopPacket(parsed, src, traceID, ttl)
+		return reply.SrcIP, reply.ReachedDest, accepted
 	}
 
 	buf := make([]byte, probeBufferSize)
