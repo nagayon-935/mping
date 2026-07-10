@@ -257,8 +257,9 @@ func TestFitWidthsToAvailable(t *testing.T) {
 	desired := []int{10, 20, 30}
 	min := []int{5, 5, 5}
 	max := []int{50, 50, 50}
+	priority := []int{0, 1, 2}
 
-	widths, ok := fitWidthsToAvailable(desired, min, max, 30)
+	widths, ok := fitWidthsToAvailable(desired, min, max, priority, priority, 30)
 	if !ok {
 		t.Fatalf("fitWidthsToAvailable should succeed")
 	}
@@ -273,12 +274,12 @@ func TestFitWidthsToAvailable(t *testing.T) {
 		t.Fatalf("total width: got %d, want %d", total, 30)
 	}
 
-	_, ok = fitWidthsToAvailable(desired, min, max, 10)
+	_, ok = fitWidthsToAvailable(desired, min, max, priority, priority, 10)
 	if ok {
 		t.Fatalf("fitWidthsToAvailable should fail when available < sum(min)")
 	}
 
-	widths, ok = fitWidthsToAvailable(desired, min, max, 80)
+	widths, ok = fitWidthsToAvailable(desired, min, max, priority, priority, 80)
 	if !ok {
 		t.Fatalf("fitWidthsToAvailable should succeed")
 	}
@@ -336,27 +337,37 @@ func TestBuildCompactLayout(t *testing.T) {
 	}
 }
 
-func TestDynamicColumnIndices(t *testing.T) {
+// TestMainTableColumns_DynamicFlags is TestDynamicColumnIndices's
+// column-struct-model successor (TD-21②): it checks which columns are
+// marked dynamic (width tracks rendered content) rather than returning a
+// separate index list that could drift out of sync with the column slice.
+func TestMainTableColumns_DynamicFlags(t *testing.T) {
 	tests := []struct {
 		name       string
 		dnsEnabled bool
 		asnEnabled bool
-		want       []int
+		want       []string // names of columns expected to be dynamic, in order
 	}{
-		{"neither enabled", false, false, []int{0, 1}},
-		{"dns only", true, false, []int{0, 1, 2}},
-		{"asn only", false, true, []int{0, 1, 2}},
-		{"both enabled", true, true, []int{0, 1, 2, 3}},
+		{"neither enabled", false, false, []string{"Src IP", "Dst IP"}},
+		{"dns only", true, false, []string{"Src IP", "Dst IP", "DNS"}},
+		{"asn only", false, true, []string{"Src IP", "Dst IP", "ASN"}},
+		{"both enabled", true, true, []string{"Src IP", "Dst IP", "DNS", "ASN"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := dynamicColumnIndices(tt.dnsEnabled, tt.asnEnabled)
+			cols := mainTableColumns(tt.dnsEnabled, tt.asnEnabled)
+			var got []string
+			for _, c := range cols {
+				if c.dynamic {
+					got = append(got, c.name)
+				}
+			}
 			if len(got) != len(tt.want) {
-				t.Fatalf("dynamicColumnIndices(%v, %v) = %v, want %v", tt.dnsEnabled, tt.asnEnabled, got, tt.want)
+				t.Fatalf("dynamic columns = %v, want %v", got, tt.want)
 			}
 			for i := range got {
 				if got[i] != tt.want[i] {
-					t.Fatalf("dynamicColumnIndices(%v, %v) = %v, want %v", tt.dnsEnabled, tt.asnEnabled, got, tt.want)
+					t.Fatalf("dynamic columns = %v, want %v", got, tt.want)
 				}
 			}
 		})
@@ -901,7 +912,7 @@ func TestFormatCellText_AlignLeftPadding(t *testing.T) {
 // ---- fitWidthsToAvailable: length mismatch and minWidth > maxWidth ----
 
 func TestFitWidthsToAvailable_LengthMismatch(t *testing.T) {
-	_, ok := fitWidthsToAvailable([]int{10, 20}, []int{5}, []int{50, 50}, 30)
+	_, ok := fitWidthsToAvailable([]int{10, 20}, []int{5}, []int{50, 50}, []int{0, 1}, []int{0, 1}, 30)
 	if ok {
 		t.Error("expected false for length mismatch")
 	}
@@ -909,7 +920,7 @@ func TestFitWidthsToAvailable_LengthMismatch(t *testing.T) {
 
 func TestFitWidthsToAvailable_MinGTMax(t *testing.T) {
 	// minWidths[0]=10 > maxWidths[0]=5 → maxWidths[0] clamped to 10
-	widths, ok := fitWidthsToAvailable([]int{8}, []int{10}, []int{5}, 10)
+	widths, ok := fitWidthsToAvailable([]int{8}, []int{10}, []int{5}, []int{0}, []int{0}, 10)
 	if !ok {
 		t.Fatal("expected ok")
 	}
@@ -1564,7 +1575,7 @@ func TestRunWithLossTarget(t *testing.T) {
 
 func TestFitWidthsToAvailable_GrowPath(t *testing.T) {
 	// desired sum=9 < available=15 → grow loop expands columns
-	widths, ok := fitWidthsToAvailable([]int{3, 3, 3}, []int{2, 2, 2}, []int{10, 10, 10}, 15)
+	widths, ok := fitWidthsToAvailable([]int{3, 3, 3}, []int{2, 2, 2}, []int{10, 10, 10}, []int{0, 1, 2}, []int{0, 1, 2}, 15)
 	if !ok {
 		t.Fatal("expected ok for grow path")
 	}
@@ -1898,7 +1909,7 @@ func TestTruncateToDisplayWidth_ZeroWidthChar(t *testing.T) {
 func TestFitWidthsToAvailable_GrowNoChange(t *testing.T) {
 	// desired=maxWidths=5, available=20, sum(5)=5 < 20
 	// All widths already at max → grow loop fires !changed and breaks
-	widths, ok := fitWidthsToAvailable([]int{5}, []int{1}, []int{5}, 20)
+	widths, ok := fitWidthsToAvailable([]int{5}, []int{1}, []int{5}, []int{0}, []int{0}, 20)
 	if !ok {
 		t.Fatal("expected ok")
 	}

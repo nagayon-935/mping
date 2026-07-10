@@ -134,78 +134,59 @@ func Run(opts RunOptions) error {
 	}
 
 	// Columns: Src IP, Dst IP, DNS, ASN, Success, Loss, Loss Ratio, RTT, Avg, Jitter, Size, MTU, TTL, Error, Last Loss
-	fullHeaders := []string{"Src IP", "Dst IP"}
-	fullAligns := []int{tview.AlignLeft, tview.AlignLeft}
-	baseWidths := []int{6, 6}
-	minWidths := []int{4, 8}
-	maxWidths := []int{45, 60}
-
-	if dnsEnabled {
-		fullHeaders = append(fullHeaders, "DNS")
-		fullAligns = append(fullAligns, tview.AlignLeft)
-		baseWidths = append(baseWidths, 10)
-		minWidths = append(minWidths, 7)
-		maxWidths = append(maxWidths, 15)
+	cols := mainTableColumns(dnsEnabled, asnEnabled)
+	fullHeaders := make([]string, len(cols))
+	fullAligns := make([]int, len(cols))
+	baseWidths := make([]int, len(cols))
+	minWidths := make([]int, len(cols))
+	maxWidths := make([]int, len(cols))
+	shrinkPriorities := make([]int, len(cols))
+	growPriorities := make([]int, len(cols))
+	for i, c := range cols {
+		fullHeaders[i] = c.name
+		fullAligns[i] = c.align
+		baseWidths[i] = c.base
+		minWidths[i] = c.min
+		maxWidths[i] = c.max
+		shrinkPriorities[i] = c.shrinkPriority
+		growPriorities[i] = c.growPriority
 	}
 
-	if asnEnabled {
-		fullHeaders = append(fullHeaders, "ASN")
-		fullAligns = append(fullAligns, tview.AlignRight)
-		baseWidths = append(baseWidths, 4)
-		minWidths = append(minWidths, 4)
-		maxWidths = append(maxWidths, 15)
+	// compactCols mirrors buildCompactLayout's fixed Host/Path/Stats/Error
+	// schema; only its priorities are needed here since headers/min/max come
+	// from buildCompactLayout itself (recomputed every tick from live data).
+	compactCols := compactTableColumns()
+	compactShrinkPriorities := make([]int, len(compactCols))
+	compactGrowPriorities := make([]int, len(compactCols))
+	for i, c := range compactCols {
+		compactShrinkPriorities[i] = c.shrinkPriority
+		compactGrowPriorities[i] = c.growPriority
 	}
 
-	fullHeaders = append(fullHeaders, "Success", "Loss", "Loss Ratio", "RTT", "Avg", "Jitter", "Size", "MTU", "TTL", "Error", "Last Loss")
-	fullAligns = append(fullAligns, tview.AlignRight, tview.AlignRight, tview.AlignRight,
-		tview.AlignRight, tview.AlignRight, tview.AlignRight, // RTTs
-		tview.AlignRight, tview.AlignRight, tview.AlignRight, tview.AlignLeft, tview.AlignLeft)
-	baseWidths = append(baseWidths, 8, 7, 10, 10, 10, 10, 6, 6, 5, 30, 15)
-	minWidths = append(minWidths, 5, 4, 6, 7, 7, 7, 4, 4, 3, 8, 8)
-	maxWidths = append(maxWidths, 10, 10, 12, 12, 12, 12, 8, 8, 6, 30, 18)
-
-	// Update error width index
-	errorIdx := len(fullHeaders) - 2
+	// Update error width index: the Error column's max grows to fit the
+	// widest known error string rather than staying at its static base.
+	errorIdx := columnsByName(cols, "Error")
 	baseWidths[errorIdx] = calcInitialTableErrorWidth(targets, fullHeaders[errorIdx], baseWidths[errorIdx])
 	maxWidths[errorIdx] = baseWidths[errorIdx]
 
 	headerColor := tcell.ColorYellow
 	rowColor := tcell.ColorWhite
 
-	// dynamicCols is computed once since dnsEnabled/asnEnabled are fixed for
-	// the lifetime of Run(); shared by calcColumnWidths and updateTable so
-	// they can't drift out of sync (see TD-03: updateTable used to hardcode
-	// ASN-only and ignore DNS).
-	dynamicCols := dynamicColumnIndices(dnsEnabled, asnEnabled)
-
 	// Recalculate dynamic column widths based on current output text.
 	calcColumnWidths := func() []int {
 		widths := append([]int(nil), baseWidths...)
-		for _, c := range dynamicCols {
-			maxWidth := runewidth.StringWidth(fullHeaders[c])
+		for i, c := range cols {
+			if !c.dynamic {
+				continue
+			}
+			maxWidth := runewidth.StringWidth(c.name)
 			for _, t := range targets {
-				view := t.GetView()
-				value := ""
-				header := fullHeaders[c]
-				switch header {
-				case "Src IP":
-					value = displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
-				case "Dst IP":
-					if view.Host != view.IP && !strings.Contains(view.Host, " ("+view.IP+")") {
-						value = fmt.Sprintf("%s (%s)", view.Host, view.IP)
-					} else {
-						value = view.Host
-					}
-				case "DNS":
-					value = view.DNSServer
-				case "ASN":
-					value = view.ASN
-				}
-				if w := runewidth.StringWidth(value); w > maxWidth {
+				ctx := columnRowContext{view: t.GetView(), sourceIPv4: sourceIPv4, sourceIPv6: sourceIPv6, packetSize: packetSize}
+				if w := runewidth.StringWidth(c.render(ctx)); w > maxWidth {
 					maxWidth = w
 				}
 			}
-			widths[c] = maxWidth
+			widths[i] = maxWidth
 		}
 		return widths
 	}
@@ -436,14 +417,15 @@ func Run(opts RunOptions) error {
 
 		updatedWidths := calcColumnWidthsCached()
 		dynamicMaxWidths := append([]int(nil), maxWidths...)
-		for _, c := range dynamicCols {
-			if updatedWidths[c] > dynamicMaxWidths[c] {
-				dynamicMaxWidths[c] = updatedWidths[c]
+		for i, c := range cols {
+			if c.dynamic && updatedWidths[i] > dynamicMaxWidths[i] {
+				dynamicMaxWidths[i] = updatedWidths[i]
 			}
 		}
-		fitted, ok := fitWidthsToAvailable(updatedWidths, minWidths, dynamicMaxWidths, availableColumnsWidth)
+		fitted, ok := fitWidthsToAvailable(updatedWidths, minWidths, dynamicMaxWidths, shrinkPriorities, growPriorities, availableColumnsWidth)
 
-		compact := buildCompactLayout(targets, packetSize, sourceIPv4, sourceIPv6, baseWidths[errorIdx+1])
+		lastLossBase := cols[columnsByName(cols, "Last Loss")].base
+		compact := buildCompactLayout(targets, packetSize, sourceIPv4, sourceIPv6, lastLossBase)
 		compactRows := compact.rows
 		compactDesired := compact.desired
 		compactHeaders := compact.headers
@@ -454,7 +436,7 @@ func Run(opts RunOptions) error {
 		if compactAvailableColumnsWidth < 0 {
 			compactAvailableColumnsWidth = 0
 		}
-		compactWidths, compactOK := fitWidthsToAvailable(compactDesired, compactMin, compactMax, compactAvailableColumnsWidth)
+		compactWidths, compactOK := fitWidthsToAvailable(compactDesired, compactMin, compactMax, compactShrinkPriorities, compactGrowPriorities, compactAvailableColumnsWidth)
 
 		if ok {
 			compactLayout = false

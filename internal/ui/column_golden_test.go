@@ -117,23 +117,35 @@ func TestColumnGolden_FullLayout(t *testing.T) {
 			wantData:   "║│Auto    │example.com (93.184.216.34)  │         0│        0│        0.0%│           -│           -│           -│      56│       -│     -│                                         │-                │║",
 		},
 		{
+			// DNS's rendered width now comes from the same render func used
+			// for width measurement and cell text (col.render), instead of a
+			// separate header-name switch — so this is 1 char narrower than
+			// the pre-TD-21② capture, whose grow-priority for DNS was
+			// accidentally inherited from whatever column used to sit at
+			// its array index. See the TD-21② commit message.
 			name:       "DNSOnly",
 			dns:        true,
-			wantHeader: "║│Src IP  │Dst IP                       │DNS      │  Success│    Loss│ Loss Ratio│        RTT│        Avg│     Jitter│   Size│    MTU│   TTL│Error                                    │Last Loss      │║",
-			wantData:   "║│Auto    │example.com (93.184.216.34)  │8.8.8.8  │        0│       0│       0.0%│          -│          -│          -│     56│      -│     -│                                         │-              │║",
+			wantHeader: "║│Src IP  │Dst IP                       │DNS     │  Success│    Loss│ Loss Ratio│        RTT│        Avg│     Jitter│   Size│    MTU│   TTL│Error                                    │Last Loss       │║",
+			wantData:   "║│Auto    │example.com (93.184.216.34)  │8.8.8.8 │        0│       0│       0.0%│          -│          -│          -│     56│      -│     -│                                         │-               │║",
 		},
 		{
+			// ASN's width is now measured from the same render func used for
+			// the cell text (number + country + org), instead of a separate
+			// calcColumnWidths switch that only measured the bare number —
+			// so the column is now correctly sized to its full content
+			// instead of truncating to "AS1513...". See the TD-21② commit
+			// message.
 			name:       "ASNOnly",
 			asn:        true,
-			wantHeader: "║│Src IP  │Dst IP                       │      ASN│  Success│    Loss│ Loss Ratio│        RTT│        Avg│     Jitter│   Size│    MTU│   TTL│Error                                    │Last Loss      │║",
-			wantData:   "║│Auto    │example.com (93.184.216.34)  │AS1513...│        0│       0│       0.0%│          -│          -│          -│     56│      -│     -│                                         │-              │║",
+			wantHeader: "║│Src IP │Dst IP                      │                ASN│ Success│   Loss│Loss Ratio│       RTT│       Avg│    Jitter│  Size│   MTU│  TTL│Error                                    │Last Loss       │║",
+			wantData:   "║│Auto   │example.com (93.184.216.34) │AS15133 US EdgeCast│       0│      0│      0.0%│         -│         -│         -│    56│     -│    -│                                         │-               │║",
 		},
 		{
 			name:       "DNSAndASN",
 			dns:        true,
 			asn:        true,
-			wantHeader: "║│Src IP │Dst IP                      │DNS     │    ASN│ Success│    Loss│ Loss Ratio│       RTT│       Avg│    Jitter│  Size│    MTU│   TTL│Error                                    │Last Loss      │║",
-			wantData:   "║│Auto   │example.com (93.184.216.34) │8.8.8.8 │AS15...│       0│       0│       0.0%│         -│         -│         -│    56│      -│     -│                                         │-              │║",
+			wantHeader: "║│Sr...│Dst IP                    │DNS    │               ASN│ Success│   Loss│Loss Ratio│       RTT│       Avg│    Jitter│  Size│   MTU│  TTL│Error                                   │Last Loss     │║",
+			wantData:   "║│Auto │example.com (93.184.216...│8.8.8.8│AS15133 US Edge...│       0│      0│      0.0%│         -│         -│         -│    56│     -│    -│                                        │-             │║",
 		},
 	}
 	for i := range scenarios {
@@ -154,8 +166,10 @@ func TestColumnGolden_FullLayout(t *testing.T) {
 				PacketSize: 56,
 				ASNEnabled: sc.asn,
 			}
-			// extraRows=2: header, border, first data row.
-			rows := captureTableRows(t, opts, 200, 50, "Src IP", 2)
+			// extraRows=2: header, border, first data row. Marker is "Dst IP"
+			// rather than "Src IP" since Src IP can shrink to "Sr..." under
+			// heavy column pressure (DNS+ASN enabled).
+			rows := captureTableRows(t, opts, 200, 50, "Dst IP", 2)
 			if rows[0] != sc.wantHeader {
 				t.Errorf("header mismatch:\n got  %q\n want %q", rows[0], sc.wantHeader)
 			}

@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
@@ -197,25 +198,6 @@ func mtuString(mtu int) string {
 	return fmt.Sprintf("%d", mtu)
 }
 
-// dynamicColumnIndices returns the indices of the main table columns whose
-// width is derived from current output text (Src IP, Dst IP, and — when
-// enabled — DNS, ASN) rather than a fixed baseWidths entry. The order
-// matches the column layout built in Run(): DNS (if enabled) comes before
-// ASN (if enabled), both after the always-present Src IP / Dst IP columns.
-func dynamicColumnIndices(dnsEnabled, asnEnabled bool) []int {
-	cols := []int{0, 1}
-	next := 2
-	if dnsEnabled {
-		cols = append(cols, next)
-		next++
-	}
-	if asnEnabled {
-		cols = append(cols, next)
-		next++
-	}
-	return cols
-}
-
 func buildFullColumns(view stats.TargetView, sourceIPv4, sourceIPv6 string, packetSize int, asnEnabled bool, dnsEnabled bool) ([]string, string, float64) {
 	lossRate := calcLossRate(view)
 	lossStr := formatLossAgo(view.LastLossTime)
@@ -371,11 +353,17 @@ func formatCellText(text string, width int, align int) string {
 	return text + pad
 }
 
-func fitWidthsToAvailable(desired, minWidths, maxWidths []int, availableColumnsWidth int) ([]int, bool) {
-	if len(desired) != len(minWidths) || len(desired) != len(maxWidths) {
+// fitWidthsToAvailable clamps desired widths to [minWidths, maxWidths], then
+// shrinks or grows them to sum to exactly availableColumnsWidth (when
+// possible), visiting columns in ascending shrinkPriority/growPriority order
+// — lower values are shrunk/grown first. Every priority slice must be the
+// same length as desired; ties are broken by original index order (stable).
+func fitWidthsToAvailable(desired, minWidths, maxWidths, shrinkPriority, growPriority []int, availableColumnsWidth int) ([]int, bool) {
+	n := len(desired)
+	if n != len(minWidths) || n != len(maxWidths) || n != len(shrinkPriority) || n != len(growPriority) {
 		return nil, false
 	}
-	widths := make([]int, len(desired))
+	widths := make([]int, n)
 	sumMin := 0
 	for i := range desired {
 		if minWidths[i] > maxWidths[i] {
@@ -400,13 +388,10 @@ func fitWidthsToAvailable(desired, minWidths, maxWidths []int, availableColumnsW
 		sum += w
 	}
 
-	shrinkOrder := []int{11, 1, 0, 12, 7, 6, 5, 4, 2, 3, 9, 10, 8}
+	shrinkOrder := indicesByPriority(shrinkPriority)
 	for sum > availableColumnsWidth {
 		changed := false
 		for _, idx := range shrinkOrder {
-			if idx < 0 || idx >= len(widths) {
-				continue
-			}
 			if widths[idx] > minWidths[idx] {
 				widths[idx]--
 				sum--
@@ -421,13 +406,10 @@ func fitWidthsToAvailable(desired, minWidths, maxWidths []int, availableColumnsW
 		}
 	}
 
-	growOrder := []int{1, 0, 11, 12, 2, 5, 6, 7, 4, 3, 8, 9, 10}
+	growOrder := indicesByPriority(growPriority)
 	for sum < availableColumnsWidth {
 		changed := false
 		for _, idx := range growOrder {
-			if idx < 0 || idx >= len(widths) {
-				continue
-			}
 			if widths[idx] < maxWidths[idx] {
 				widths[idx]++
 				sum++
@@ -443,6 +425,17 @@ func fitWidthsToAvailable(desired, minWidths, maxWidths []int, availableColumnsW
 	}
 
 	return widths, true
+}
+
+// indicesByPriority returns 0..len(priority)-1 sorted by ascending priority
+// value (stable, so equal priorities keep their original relative order).
+func indicesByPriority(priority []int) []int {
+	idx := make([]int, len(priority))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(a, b int) bool { return priority[idx[a]] < priority[idx[b]] })
+	return idx
 }
 
 type compactRow struct {
