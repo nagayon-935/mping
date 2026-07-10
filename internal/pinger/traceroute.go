@@ -3,19 +3,19 @@ package pinger
 import (
 	"context"
 	"fmt"
-	"net"
 	"time"
-
-	"golang.org/x/net/icmp"
-	"golang.org/x/net/ipv4"
-	"golang.org/x/net/ipv6"
 )
 
 // TraceRoute sends TTL-limited ICMP probes to dest and returns the IP address
 // of each hop up to maxHops. Unreachable hops are represented as "*".
-// When the pinger's shared receiver is running, it registers a broadcast
-// channel to receive Time Exceeded replies without racing with the main
-// receiver goroutine.
+//
+// dest is resolved once (not per hop) so every hop probes the same address
+// even if dest is a hostname with multiple records. Each hop is sent via
+// probeHopAddr, the same primitive the MTR engine uses, which registers a
+// broadcast channel with the pinger's shared receiver when it is running (to
+// avoid the macOS raw-socket race where the pinger's continuous ReadFrom
+// consumes Time Exceeded replies before our socket can see them) and falls
+// back to reading its own socket otherwise.
 func (p *Pinger) TraceRoute(ctx context.Context, dest string, maxHops int, timeout time.Duration) ([]string, error) {
 	if dest == "" {
 		return nil, fmt.Errorf("destination is empty")
@@ -28,77 +28,24 @@ func (p *Pinger) TraceRoute(ctx context.Context, dest string, maxHops int, timeo
 		return nil, fmt.Errorf("resolve %s: %w", dest, err)
 	}
 
-	isV4 := dstAddr.IP.To4() != nil
-
-	// Open a socket solely for sending TTL-limited probes.
-	var sendV4 *ipv4.PacketConn
-	var sendV6 *ipv6.PacketConn
-	var sendConn net.PacketConn
-
-	if isV4 {
-		bindAddr := "0.0.0.0"
-		if p.Source != "" {
-			bindAddr = p.Source
-		}
-		c, err := p.listenPacket("ip4:icmp", bindAddr)
-		if err != nil {
-			return nil, fmt.Errorf("open traceroute send socket (v4): %w", err)
-		}
-		sendConn = c
-		sendV4 = ipv4.NewPacketConn(c)
-	} else {
-		bindAddr := "::"
-		if p.Source != "" {
-			bindAddr = p.Source
-		}
-		c, err := p.listenPacket("ip6:ipv6-icmp", bindAddr)
-		if err != nil {
-			return nil, fmt.Errorf("open traceroute send socket (v6): %w", err)
-		}
-		sendConn = c
-		sendV6 = ipv6.NewPacketConn(c)
-		if err := sendV6.SetControlMessage(ipv6.FlagHopLimit, true); err != nil {
-			// Non-fatal: hop limit control message may not be available on all platforms.
-			_ = err
-		}
+	sock, err := p.OpenHopSocket(dest)
+	if err != nil {
+		return nil, fmt.Errorf("open traceroute send socket: %w", err)
 	}
-	defer sendConn.Close()
+	defer sock.Close()
 
 	doneChan := make(chan struct{})
 	defer close(doneChan)
 	go func() {
 		select {
 		case <-ctx.Done():
-			if sendConn != nil {
-				_ = sendConn.Close()
-			}
+			sock.Close()
 		case <-doneChan:
 		}
 	}()
 
 	traceID := p.NextTraceID()
-
-	// Register a channel in traceChans when the pinger's receiver is running for
-	// this address family. This avoids the macOS raw-socket race where the pinger's
-	// continuous ReadFrom consumes Time Exceeded replies before our socket can see them.
-	var traceCh chan traceMsg
-	if (isV4 && p.connV4 != nil) || (!isV4 && p.connV6 != nil) {
-		traceCh = p.RegisterTraceChan(traceID)
-		defer p.UnregisterTraceChan(traceID)
-	}
-
 	hops := make([]string, 0, maxHops)
-
-	// acceptPacket checks whether a received message is a valid reply to the
-	// probe with the given ttl and returns (srcIP, reachedDest, accepted).
-	// Delegates to acceptHopPacket (mtr_probe.go), which implements the same
-	// EchoReply/TimeExceeded/DestinationUnreachable classification used by MTR.
-	acceptPacket := func(parsed *icmp.Message, src net.Addr, ttl int) (string, bool, bool) {
-		reply, accepted := acceptHopPacket(parsed, src, traceID, ttl)
-		return reply.SrcIP, reply.ReachedDest, accepted
-	}
-
-	buf := make([]byte, probeBufferSize)
 
 	for ttl := 1; ttl <= maxHops; ttl++ {
 		select {
@@ -106,134 +53,33 @@ func (p *Pinger) TraceRoute(ctx context.Context, dest string, maxHops int, timeo
 			return nil, ctx.Err()
 		default:
 		}
-		payload := make([]byte, 8)
-		copy(payload[0:4], traceSignature)
-		payload[4] = byte(traceID >> 8)
-		payload[5] = byte(traceID & 0xff)
-		payload[6] = byte(ttl >> 8)
-		payload[7] = byte(ttl & 0xff)
 
-		var probeMsg icmp.Message
-		if isV4 {
-			probeMsg = icmp.Message{
-				Type: ipv4.ICMPTypeEcho,
-				Code: 0,
-				Body: &icmp.Echo{ID: traceID, Seq: ttl, Data: payload},
-			}
-		} else {
-			probeMsg = icmp.Message{
-				Type: ipv6.ICMPTypeEchoRequest,
-				Code: 0,
-				Body: &icmp.Echo{ID: traceID, Seq: ttl, Data: payload},
-			}
-		}
-		b, err := probeMsg.Marshal(nil)
+		reply, err := p.probeHopAddr(ctx, sock, dstAddr, ttl, traceID, timeout)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			// Marshal/send failure for this hop only; keep probing the rest.
 			hops = append(hops, "*")
 			continue
 		}
 
-		if isV4 {
-			_ = sendV4.SetTTL(ttl)
-			if _, err := sendV4.WriteTo(b, nil, dstAddr); err != nil {
-				hops = append(hops, "*")
-				continue
-			}
-		} else {
-			cm := &ipv6.ControlMessage{HopLimit: ttl}
-			if _, err := sendV6.WriteTo(b, cm, dstAddr); err != nil {
-				hops = append(hops, "*")
-				continue
-			}
-		}
-
-		found := false
-		reachedDest := false
-
-		if traceCh != nil {
-			// Receive via the pinger's shared receiver to avoid socket competition.
-			timer := time.NewTimer(timeout)
-		recvLoop:
-			for {
-				select {
-				case <-ctx.Done():
-					timer.Stop()
-					return nil, ctx.Err()
-				case tm := <-traceCh:
-					srcIP, reached, accepted := acceptPacket(tm.parsed, tm.src, ttl)
-					if accepted {
-						if srcIP == "" {
-							srcIP = "*"
-						} else if srcIP != "*" && p.AsnEnabled {
-							if asn := p.getASN(srcIP); asn != "" {
-								srcIP = fmt.Sprintf("%s(%s)", srcIP, asn)
-							}
-						}
-						hops = append(hops, srcIP)
-						found = true
-						reachedDest = reached
-						timer.Stop()
-						break recvLoop
-					}
-				case <-timer.C:
-					break recvLoop
-				}
-			}
-			timer.Stop()
-		} else {
-			// Fallback: read directly from our send socket (pinger not running).
-			deadline := time.Now().Add(timeout)
-			if isV4 {
-				if err = sendV4.SetReadDeadline(deadline); err != nil {
-					hops = append(hops, "*")
-					continue
-				}
-			} else {
-				if err = sendV6.SetReadDeadline(deadline); err != nil {
-					hops = append(hops, "*")
-					continue
-				}
-			}
-			for {
-				var n int
-				var src net.Addr
-				if isV4 {
-					n, _, src, err = sendV4.ReadFrom(buf)
-				} else {
-					n, _, src, err = sendV6.ReadFrom(buf)
-				}
-				if err != nil {
-					break
-				}
-				proto := 1
-				if !isV4 {
-					proto = 58
-				}
-				parsed, err := icmp.ParseMessage(proto, buf[:n])
-				if err != nil {
-					continue
-				}
-				srcIP, reached, accepted := acceptPacket(parsed, src, ttl)
-				if accepted {
-					if srcIP == "" {
-						srcIP = "*"
-					} else if srcIP != "*" && p.AsnEnabled {
-						if asn := p.getASN(srcIP); asn != "" {
-							srcIP = fmt.Sprintf("%s(%s)", srcIP, asn)
-						}
-					}
-					hops = append(hops, srcIP)
-					found = true
-					reachedDest = reached
-					break
-				}
-			}
-		}
-
-		if !found {
+		if !reply.Responded {
 			hops = append(hops, "*")
+			continue
 		}
-		if reachedDest {
+
+		srcIP := reply.SrcIP
+		if srcIP == "" {
+			srcIP = "*"
+		} else if srcIP != "*" && p.AsnEnabled {
+			if asn := p.getASN(srcIP); asn != "" {
+				srcIP = fmt.Sprintf("%s(%s)", srcIP, asn)
+			}
+		}
+		hops = append(hops, srcIP)
+
+		if reply.ReachedDest {
 			break
 		}
 	}

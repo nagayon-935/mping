@@ -136,7 +136,13 @@ func (p *Pinger) ProbeHop(ctx context.Context, sock *HopSocket, dest string, ttl
 	if err != nil {
 		return HopReply{}, fmt.Errorf("resolve %s: %w", dest, err)
 	}
+	return p.probeHopAddr(ctx, sock, dstAddr, ttl, traceID, timeout)
+}
 
+// probeHopAddr is ProbeHop's core logic operating on an already-resolved
+// address. TraceRoute uses this directly (resolving dest once for the whole
+// trace) rather than ProbeHop, which would re-resolve dest on every hop.
+func (p *Pinger) probeHopAddr(ctx context.Context, sock *HopSocket, dstAddr *net.IPAddr, ttl, traceID int, timeout time.Duration) (HopReply, error) {
 	payload := make([]byte, 8)
 	copy(payload[0:4], traceSignature)
 	payload[4] = byte(traceID >> 8)
