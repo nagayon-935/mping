@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"net"
-	"strings"
 	"time"
 )
 
@@ -111,13 +110,10 @@ func hasIPv6Connectivity() bool {
 	return true
 }
 
-func detectAutoSourceIPs(hosts []string) (string, string) {
+func detectAutoSourceIPs(specs []targetSpec) (string, string) {
 	var src4, src6 string
-	for _, host := range hosts {
-		cleanHost := host
-		if idx := strings.Index(host, " ("); idx >= 0 && strings.HasSuffix(host, ")") {
-			cleanHost = host[idx+2 : len(host)-1]
-		}
+	for _, spec := range specs {
+		cleanHost := spec.resolveAddr()
 		if src4 == "" {
 			if ip, err := net.ResolveIPAddr("ip4", cleanHost); err == nil && ip != nil && ip.IP != nil {
 				if out := getPreferredOutboundIPFn(ip.IP.String(), "udp4"); out != "" {

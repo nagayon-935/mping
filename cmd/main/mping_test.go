@@ -207,18 +207,21 @@ func TestGetInterfaceMTU_InvalidIface(t *testing.T) {
 }
 
 func TestDetectAutoSourceIPs_Unresolvable(t *testing.T) {
-	v4, v6 := detectAutoSourceIPs([]string{"invalid.invalid"})
+	v4, v6 := detectAutoSourceIPs([]targetSpec{{Host: "invalid.invalid"}})
 	if v4 != "" || v6 != "" {
 		t.Fatalf("expected empty results, got v4=%q v6=%q", v4, v6)
 	}
 }
 
 func TestDetectAutoSourceIPs_WithResolvedFormat(t *testing.T) {
-	// This test ensures that format like "hostname (IP)" is processed correctly
-	// without crashing and parses the IP inside parentheses.
+	// This test ensures that a pinned targetSpec is processed correctly
+	// without crashing and resolves via its PinnedIP.
 	// Since 127.0.0.1 may or may not resolve to a preferred outbound IP depending on active interfaces,
 	// we just call it to ensure no panics.
-	detectAutoSourceIPs([]string{"localhost (127.0.0.1)", "localhost (::1)"})
+	detectAutoSourceIPs([]targetSpec{
+		{Host: "localhost", PinnedIP: "127.0.0.1"},
+		{Host: "localhost", PinnedIP: "::1"},
+	})
 }
 
 func TestHasIPv6Connectivity(t *testing.T) {
@@ -426,7 +429,7 @@ port:
 		t.Fatalf("mergeHosts: %v", err)
 	}
 
-	if len(gotHosts) != 1 || gotHosts[0] != "example.com" {
+	if len(gotHosts) != 1 || gotHosts[0].Host != "example.com" {
 		t.Errorf("hosts: got %v", gotHosts)
 	}
 	if gotCfg.intervalMs != 2000 {
@@ -1057,7 +1060,7 @@ func TestDetermineSourceIPs_Interface(t *testing.T) {
 
 func TestDetermineSourceIPs_Auto(t *testing.T) {
 	// detectAutoSourceIPs might return empty strings if no network, but it shouldn't fail.
-	_, v4, v6, err := determineSourceIPs(config{}, []string{"8.8.8.8"})
+	_, v4, v6, err := determineSourceIPs(config{}, []targetSpec{{Host: "8.8.8.8"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1065,7 +1068,7 @@ func TestDetermineSourceIPs_Auto(t *testing.T) {
 }
 
 func TestInitTargets(t *testing.T) {
-	hosts := []string{"a", "b"}
+	hosts := []targetSpec{{Host: "a"}, {Host: "b"}}
 	targets := initTargets(hosts)
 	if len(targets) != 2 {
 		t.Fatalf("expected 2 targets, got %d", len(targets))
@@ -1513,8 +1516,8 @@ groups:
 		t.Fatalf("hosts: want %v, got %v", want, hosts)
 	}
 	for i, h := range want {
-		if hosts[i] != h {
-			t.Errorf("hosts[%d]: want %q, got %q", i, h, hosts[i])
+		if hosts[i].Host != h {
+			t.Errorf("hosts[%d]: want %q, got %q", i, h, hosts[i].Host)
 		}
 	}
 	if len(groups) != 2 {
@@ -1551,7 +1554,7 @@ func TestMergeHosts_GroupsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mergeHosts: %v", err)
 	}
-	if len(hosts) != 1 || hosts[0] != "192.168.1.1" {
+	if len(hosts) != 1 || hosts[0].Host != "192.168.1.1" {
 		t.Fatalf("hosts: want [192.168.1.1], got %v", hosts)
 	}
 	if len(groups) != 1 || groups[0].Indices[0] != 0 {
@@ -1849,7 +1852,7 @@ func TestNewCustomResolver(t *testing.T) {
 
 func TestExpandTargets(t *testing.T) {
 	// Without resolveAll
-	hosts := []string{"example.com", "8.8.8.8"}
+	hosts := []targetSpec{{Host: "example.com"}, {Host: "8.8.8.8"}}
 	groups := []ui.TargetGroup{
 		{Name: "G1", Indices: []int{0}},
 	}
@@ -1857,22 +1860,22 @@ func TestExpandTargets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(expandedHosts) != 2 || expandedHosts[0] != "example.com" {
+	if len(expandedHosts) != 2 || expandedHosts[0].Host != "example.com" {
 		t.Errorf("expected original hosts, got %v", expandedHosts)
 	}
 
 	// With resolveAll but already expanded/pinned
-	hostsPinned := []string{"example.com (1.1.1.1)", "8.8.8.8"}
+	hostsPinned := []targetSpec{{Host: "example.com", PinnedIP: "1.1.1.1"}, {Host: "8.8.8.8"}}
 	expandedHostsPinned, _, err := expandTargets(hostsPinned, groups, config{resolveAll: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(expandedHostsPinned) != 2 || expandedHostsPinned[0] != "example.com (1.1.1.1)" {
+	if len(expandedHostsPinned) != 2 || expandedHostsPinned[0].display() != "example.com (1.1.1.1)" {
 		t.Errorf("expected pinned hosts, got %v", expandedHostsPinned)
 	}
 
 	// With resolveAll and a resolvable host (using localhost)
-	hostsLocal := []string{"localhost"}
+	hostsLocal := []targetSpec{{Host: "localhost"}}
 	expandedHostsLocal, _, err := expandTargets(hostsLocal, groups, config{resolveAll: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1882,12 +1885,12 @@ func TestExpandTargets(t *testing.T) {
 	}
 
 	// With resolveAll and an unresolvable host (invalid.invalid)
-	hostsUnresolvable := []string{"invalid.invalid"}
+	hostsUnresolvable := []targetSpec{{Host: "invalid.invalid"}}
 	expandedHostsUnres, _, err := expandTargets(hostsUnresolvable, groups, config{resolveAll: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(expandedHostsUnres) != 1 || expandedHostsUnres[0] != "invalid.invalid" {
+	if len(expandedHostsUnres) != 1 || expandedHostsUnres[0].Host != "invalid.invalid" {
 		t.Errorf("expected unresolvable host to remain as is, got %v", expandedHostsUnres)
 	}
 }

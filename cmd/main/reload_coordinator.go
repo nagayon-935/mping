@@ -40,7 +40,7 @@ type reloadCoordinator struct {
 	mu        sync.Mutex
 	requested bool
 	doc       hostsFileYAML
-	newHosts  []string // non-nil when triggered by add/delete (skips applyDocToCfg)
+	newHosts  []targetSpec // non-nil when triggered by add/delete (skips applyDocToCfg)
 }
 
 func newReloadCoordinator(fs *pflag.FlagSet, cliCfg config, cliHosts []string) *reloadCoordinator {
@@ -77,7 +77,7 @@ func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile stri
 
 // requestHostsChange arms an in-memory reload (OnAddHost/OnDeleteHost),
 // bypassing the YAML doc entirely.
-func (rc *reloadCoordinator) requestHostsChange(sig *reloadSignal, newHosts []string) {
+func (rc *reloadCoordinator) requestHostsChange(sig *reloadSignal, newHosts []targetSpec) {
 	rc.mu.Lock()
 	rc.requested = true
 	rc.newHosts = newHosts
@@ -92,7 +92,7 @@ func (rc *reloadCoordinator) requestHostsChange(sig *reloadSignal, newHosts []st
 // re-expansion failure, TD-47). Must be called only after the previous
 // iteration's pinger, port checker, HTTP checker, and watcher have all been
 // stopped and joined.
-func (rc *reloadCoordinator) apply(currentCfg config, currentHosts []string, currentGroups []ui.TargetGroup) ([]string, []ui.TargetGroup, config, bool, string) {
+func (rc *reloadCoordinator) apply(currentCfg config, currentHosts []targetSpec, currentGroups []ui.TargetGroup) ([]targetSpec, []ui.TargetGroup, config, bool, string) {
 	rc.mu.Lock()
 	reload := rc.requested
 	newHosts := rc.newHosts
