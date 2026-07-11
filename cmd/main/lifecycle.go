@@ -201,7 +201,7 @@ func startWatcher(hostsFile string, onFileChange func(), logCh chan<- string) (c
 		defer close(innerDone)
 		if err := watcher.Watch(watchCtx, hostsFile, onFileChange); err != nil {
 			select {
-			case logCh <- fmt.Sprintf("[red][%s] Watcher error: %v[-]",
+			case logCh <- fmt.Sprintf("[red][%s] Watcher error: %v — auto-reload disabled, restart mping to re-enable[-]",
 				time.Now().Format("15:04:05"), err):
 			default:
 			}
