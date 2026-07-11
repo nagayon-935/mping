@@ -16,7 +16,7 @@ import (
 func wireHostInputs(
 	app *tview.Application, table *tview.Table, pages *tview.Pages,
 	addHostInput, deleteHostInput *tview.InputField,
-	errorLogs *[]string, errorView *tview.TextView,
+	vs *viewState,
 	onAddHost, onDeleteHost func(host string) error,
 ) {
 	addHostInput.SetDoneFunc(func(key tcell.Key) {
@@ -27,7 +27,7 @@ func wireHostInputs(
 				go func() {
 					if err := onAddHost(host); err != nil {
 						app.QueueUpdateDraw(func() {
-							appendErrorLog(errorLogs, errorView, fmt.Sprintf("[red][%s] Add host error: %v[-]",
+							vs.appendLog(fmt.Sprintf("[red][%s] Add host error: %v[-]",
 								time.Now().Format("15:04:05"), err))
 						})
 					}
@@ -48,7 +48,7 @@ func wireHostInputs(
 				go func() {
 					if err := onDeleteHost(host); err != nil {
 						app.QueueUpdateDraw(func() {
-							appendErrorLog(errorLogs, errorView, fmt.Sprintf("[red][%s] Delete host error: %v[-]",
+							vs.appendLog(fmt.Sprintf("[red][%s] Delete host error: %v[-]",
 								time.Now().Format("15:04:05"), err))
 						})
 					}
@@ -71,7 +71,7 @@ func startRefreshLoop(
 	app *tview.Application, tr *tableRenderer, footer *tview.TextView,
 	interval time.Duration, updateTickerCh chan time.Duration,
 	externalLogCh <-chan string, externalCloseCh <-chan struct{}, doneCh chan struct{},
-	errorLogs *[]string, errorView *tview.TextView,
+	vs *viewState,
 	closeAppStop func(), appStop chan struct{},
 ) {
 	go func() {
@@ -95,14 +95,13 @@ func startRefreshLoop(
 				// Deliver external log messages (e.g. watcher validation errors)
 				// immediately to the Log pane without waiting for the next tick.
 				app.QueueUpdateDraw(func() {
-					appendErrorLog(errorLogs, errorView, msg)
+					vs.appendLog(msg)
 				})
 			case <-externalCloseCh:
 				// External reload requested (e.g. YAML file changed).
 				app.QueueUpdateDraw(func() {
-					appendErrorLog(errorLogs, errorView,
-						fmt.Sprintf("[yellow][%s] Reloading configuration...[-]",
-							time.Now().Format("15:04:05")))
+					vs.appendLog(fmt.Sprintf("[yellow][%s] Reloading configuration...[-]",
+						time.Now().Format("15:04:05")))
 				})
 				closeAppStop()
 				app.Stop()
