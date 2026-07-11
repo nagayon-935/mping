@@ -240,10 +240,18 @@ func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.
 	return hopCount
 }
 
-// probe sends one probe per hop concurrently for a single round and records results.
+// probe sends one probe per hop concurrently for a single round and records
+// results. Hops that have never had a responder IP recorded (rendered as
+// "*" in the UI) are skipped: continuous per-tick probing wouldn't reveal
+// anything discover()/rediscovery hasn't already tried, and would just log
+// permanent 100% loss for a hop the user never learned the address of. The
+// row stays visible via the hop slot discover() already created.
 func probe(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTRStats, dest string, hopCount int, cfg Config) {
 	var wg sync.WaitGroup
 	for ttl := 1; ttl <= hopCount; ttl++ {
+		if !mtr.HasIP(ttl) {
+			continue
+		}
 		wg.Add(1)
 		go func(t int) {
 			defer wg.Done()

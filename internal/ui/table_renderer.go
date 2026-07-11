@@ -14,11 +14,10 @@ import (
 // calculation, and row rendering — the state and logic that used to live as
 // ~15 local variables plus the ~160-line updateTable closure inside Run().
 //
-// errorLogs/lastLossTimes/alertState/lastPortStatuses/lastHTTPStatuses are
-// pointers to state Run() also shares with the key handler
-// (inputHandlerDeps), not state tableRenderer owns outright: both sides must
-// observe the same reassignment (e.g. the 'R' key resetting errorLogs to a
-// fresh slice).
+// vs is state Run() also shares with the key handler (inputHandlerDeps) and
+// the monitor pane render closures, not state tableRenderer owns outright:
+// all sides must observe the same reassignment (e.g. the 'R' key resetting
+// errorLogs to a fresh slice) — see viewState (TD-51).
 //
 // TD-23③: this is Run()'s "tableRenderer type" — update() replaces the
 // updateTable closure.
@@ -46,7 +45,6 @@ type tableRenderer struct {
 
 	table     *tview.Table
 	tablePane *tview.Flex
-	errorView *tview.TextView
 	sidePanes []*monitorPane
 
 	// Mutable render state, recomputed every tick.
@@ -59,11 +57,7 @@ type tableRenderer struct {
 	cachedWidths  []int
 	lastTermWidth int
 
-	errorLogs        *[]string
-	lastLossTimes    *map[string]time.Time
-	alertState       *map[string]alertFlags
-	lastPortStatuses *map[string]string
-	lastHTTPStatuses *map[string]string
+	vs *viewState
 }
 
 // newTableRenderer builds the column schema (from mainTableColumns, keyed
@@ -72,9 +66,7 @@ type tableRenderer struct {
 // max width, and primes the initial column widths and log lines.
 func newTableRenderer(
 	targets []*stats.TargetStats, sourceIPv4, sourceIPv6 string, packetSize int, asnEnabled bool, groups []TargetGroup,
-	table *tview.Table, tablePane *tview.Flex, errorView *tview.TextView, initialLogs []string,
-	errorLogs *[]string, lastLossTimes *map[string]time.Time, alertState *map[string]alertFlags,
-	lastPortStatuses *map[string]string, lastHTTPStatuses *map[string]string,
+	table *tview.Table, tablePane *tview.Flex, initialLogs []string, vs *viewState,
 ) *tableRenderer {
 	dnsEnabled := false
 	for _, t := range targets {
@@ -98,13 +90,9 @@ func newTableRenderer(
 		growPriorities:   make([]int, len(cols)),
 		headerColor:      tcell.ColorYellow,
 		rowColor:         tcell.ColorWhite,
-		table:            table, tablePane: tablePane, errorView: errorView,
-		lastTermWidth:    -1,
-		errorLogs:        errorLogs,
-		lastLossTimes:    lastLossTimes,
-		alertState:       alertState,
-		lastPortStatuses: lastPortStatuses,
-		lastHTTPStatuses: lastHTTPStatuses,
+		table:            table, tablePane: tablePane,
+		lastTermWidth: -1,
+		vs:            vs,
 	}
 	for i, c := range cols {
 		tr.fullHeaders[i] = c.name
@@ -140,7 +128,7 @@ func newTableRenderer(
 	tr.rowCount = len(targets) + 1
 
 	for _, line := range initialLogs {
-		appendErrorLog(tr.errorLogs, errorView, line)
+		tr.vs.appendLog(line)
 	}
 
 	return tr
@@ -283,11 +271,11 @@ func (tr *tableRenderer) update() {
 		views[i] = view
 		rowSourceIP := displaySourceIPForDst(view.IP, tr.sourceIPv4, tr.sourceIPv6)
 		if !view.LastLossTime.IsZero() {
-			lastTime, exists := (*tr.lastLossTimes)[view.Host]
+			lastTime, exists := tr.vs.lastLossTimes[view.Host]
 			if !exists || view.LastLossTime.After(lastTime) {
-				(*tr.lastLossTimes)[view.Host] = view.LastLossTime
+				tr.vs.lastLossTimes[view.Host] = view.LastLossTime
 				msg := buildErrorLogMessage(view, rowSourceIP, view.LastError, view.LastLossTime)
-				appendErrorLog(tr.errorLogs, tr.errorView, msg)
+				tr.vs.appendLog(msg)
 			}
 		}
 		if !tr.compactLayout {
@@ -297,12 +285,12 @@ func (tr *tableRenderer) update() {
 			}
 			rowCtxCache[i] = ctx
 			textsCache[i] = renderRowTexts(tr.cols, ctx)
-			state := (*tr.alertState)[view.Host]
+			state := tr.vs.alertState[view.Host]
 			state, msgs := updateAlertState(view, rowSourceIP, ctx.lossRate, now, state)
 			for _, msg := range msgs {
-				appendErrorLog(tr.errorLogs, tr.errorView, msg)
+				tr.vs.appendLog(msg)
 			}
-			(*tr.alertState)[view.Host] = state
+			tr.vs.alertState[view.Host] = state
 		}
 	}
 

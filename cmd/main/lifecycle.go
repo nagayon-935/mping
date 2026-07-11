@@ -26,7 +26,7 @@ import (
 // optional YAML hosts file, before any network/logger setup happens.
 type startupParams struct {
 	cfg      config
-	hosts    []string
+	hosts    []targetSpec
 	fs       *pflag.FlagSet
 	cliCfg   config
 	cliHosts []string
@@ -38,7 +38,7 @@ type startupParams struct {
 // writes the appropriate message to out/errOut itself and returns ok=false
 // with the exit code run() should return immediately.
 func parseAndLoadHosts(args []string, out, errOut io.Writer) (p startupParams, exitCode int, ok bool) {
-	cfg, hosts, fs, usage, err := parseArgs(args)
+	cfg, cliHostsRaw, fs, usage, err := parseArgs(args)
 	if err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
 			fmt.Fprint(out, usage)
@@ -49,10 +49,10 @@ func parseAndLoadHosts(args []string, out, errOut io.Writer) (p startupParams, e
 	}
 
 	cliCfg := cfg
-	cliHosts := append([]string(nil), hosts...)
+	cliHosts := append([]string(nil), cliHostsRaw...)
 
 	var groups []ui.TargetGroup
-	hosts, groups, cfg, err = mergeHosts(cfg, fs, hosts)
+	hosts, groups, cfg, err := mergeHosts(cfg, fs, cliHostsRaw)
 	if err != nil {
 		fmt.Fprintf(errOut, "Error reading hosts file: %v\n", err)
 		return startupParams{}, 1, false
@@ -92,7 +92,7 @@ type runEnv struct {
 // file, and parses port specs — all one-time setup that reloads reuse as-is.
 // On failure it writes to errOut itself and returns ok=false with the exit
 // code run() should return immediately. The caller owns closing env.logFile.
-func prepareRunEnv(cfg config, hosts []string, out, errOut io.Writer) (env runEnv, exitCode int, ok bool) {
+func prepareRunEnv(cfg config, hosts []targetSpec, out, errOut io.Writer) (env runEnv, exitCode int, ok bool) {
 	env.resNetwork = resolveNetwork(cfg)
 
 	bindIP, dispV4, dispV6, err := determineSourceIPs(cfg, hosts)
@@ -126,13 +126,10 @@ func prepareRunEnv(cfg config, hosts []string, out, errOut io.Writer) (env runEn
 
 // buildTargetsForIteration creates TargetStats for hosts and tags each with
 // its display DNS server (used by the UI's DNS column).
-func buildTargetsForIteration(hosts []string, cfg config) []*stats.TargetStats {
-	targets := initTargets(hosts)
-	for _, t := range targets {
-		hostName := t.Host
-		if idx := strings.Index(hostName, " ("); idx >= 0 && strings.HasSuffix(hostName, ")") {
-			hostName = hostName[:idx]
-		}
+func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetStats {
+	targets := initTargets(specs)
+	for i, t := range targets {
+		hostName := specs[i].Host
 		if net.ParseIP(hostName) == nil {
 			if cfg.dnsServer != "" {
 				t.SetDNSServer(cfg.dnsServer)
@@ -147,14 +144,20 @@ func buildTargetsForIteration(hosts []string, cfg config) []*stats.TargetStats {
 }
 
 // buildPingerOptions constructs the pinger.Options for one loop iteration,
-// including the address resolver that understands the "host (ip)" display
-// format produced by --resolve-all.
-func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resolver) pinger.Options {
+// including the address resolver. specs supplies a pinned-IP lookup (keyed
+// by targetSpec.display(), the same string used for stats.TargetStats.Host)
+// so --resolve-all entries resolve straight to their pinned IP.
+func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resolver, specs []targetSpec) pinger.Options {
+	pinned := make(map[string]string, len(specs))
+	for _, s := range specs {
+		if s.PinnedIP != "" {
+			pinned[s.display()] = s.PinnedIP
+		}
+	}
 	return pinger.Options{
 		ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {
-			if idx := strings.Index(address, " ("); idx >= 0 && strings.HasSuffix(address, ")") {
-				ipStr := address[idx+2 : len(address)-1]
-				return net.ResolveIPAddr(network, ipStr)
+			if ip, ok := pinned[address]; ok {
+				return net.ResolveIPAddr(network, ip)
 			}
 			if customResolver != nil && cfg.dnsServer != "" {
 				ips, err := customResolver.LookupIP(context.Background(), network, address)
@@ -201,7 +204,7 @@ func startWatcher(hostsFile string, onFileChange func(), logCh chan<- string) (c
 		defer close(innerDone)
 		if err := watcher.Watch(watchCtx, hostsFile, onFileChange); err != nil {
 			select {
-			case logCh <- fmt.Sprintf("[red][%s] Watcher error: %v[-]",
+			case logCh <- fmt.Sprintf("[red][%s] Watcher error: %v — auto-reload disabled, restart mping to re-enable[-]",
 				time.Now().Format("15:04:05"), err):
 			default:
 			}
@@ -259,7 +262,7 @@ type runOptionsParams struct {
 	sig           *reloadSignal
 	logCh         chan string
 	rc            *reloadCoordinator
-	currentHosts  []string
+	currentHosts  []targetSpec
 	currentGroups []ui.TargetGroup
 }
 
@@ -304,20 +307,20 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 				return fmt.Errorf("host cannot be empty")
 			}
 			for _, h := range p.currentHosts {
-				if h == host {
+				if h.display() == host {
 					return fmt.Errorf("host %q is already in the list", host)
 				}
 			}
-			newHosts := make([]string, len(p.currentHosts)+1)
+			newHosts := make([]targetSpec, len(p.currentHosts)+1)
 			copy(newHosts, p.currentHosts)
-			newHosts[len(p.currentHosts)] = host
+			newHosts[len(p.currentHosts)] = targetSpec{Host: host}
 			p.rc.requestHostsChange(p.sig, newHosts)
 			return nil
 		},
 		OnDeleteHost: func(host string) error {
-			newHosts := make([]string, 0, len(p.currentHosts))
+			newHosts := make([]targetSpec, 0, len(p.currentHosts))
 			for _, h := range p.currentHosts {
-				if h != host {
+				if h.display() != host {
 					newHosts = append(newHosts, h)
 				}
 			}

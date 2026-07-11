@@ -40,7 +40,7 @@ type reloadCoordinator struct {
 	mu        sync.Mutex
 	requested bool
 	doc       hostsFileYAML
-	newHosts  []string // non-nil when triggered by add/delete (skips applyDocToCfg)
+	newHosts  []targetSpec // non-nil when triggered by add/delete (skips applyDocToCfg)
 }
 
 func newReloadCoordinator(fs *pflag.FlagSet, cliCfg config, cliHosts []string) *reloadCoordinator {
@@ -77,7 +77,7 @@ func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile stri
 
 // requestHostsChange arms an in-memory reload (OnAddHost/OnDeleteHost),
 // bypassing the YAML doc entirely.
-func (rc *reloadCoordinator) requestHostsChange(sig *reloadSignal, newHosts []string) {
+func (rc *reloadCoordinator) requestHostsChange(sig *reloadSignal, newHosts []targetSpec) {
 	rc.mu.Lock()
 	rc.requested = true
 	rc.newHosts = newHosts
@@ -87,9 +87,12 @@ func (rc *reloadCoordinator) requestHostsChange(sig *reloadSignal, newHosts []st
 
 // apply consumes any pending reload request and returns the updated hosts,
 // groups, and cfg, plus whether the main loop should re-enter (true) or exit
-// (false). Must be called only after the previous iteration's pinger, port
-// checker, HTTP checker, and watcher have all been stopped and joined.
-func (rc *reloadCoordinator) apply(currentCfg config, currentHosts []string, currentGroups []ui.TargetGroup) ([]string, []ui.TargetGroup, config, bool) {
+// (false), plus a non-empty TUI Log warning when the reload succeeded but
+// with a caveat the user should know about (currently: --resolve-all
+// re-expansion failure, TD-47). Must be called only after the previous
+// iteration's pinger, port checker, HTTP checker, and watcher have all been
+// stopped and joined.
+func (rc *reloadCoordinator) apply(currentCfg config, currentHosts []targetSpec, currentGroups []ui.TargetGroup) ([]targetSpec, []ui.TargetGroup, config, bool, string) {
 	rc.mu.Lock()
 	reload := rc.requested
 	newHosts := rc.newHosts
@@ -97,7 +100,7 @@ func (rc *reloadCoordinator) apply(currentCfg config, currentHosts []string, cur
 	rc.mu.Unlock()
 
 	if !reload {
-		return currentHosts, currentGroups, currentCfg, false
+		return currentHosts, currentGroups, currentCfg, false, ""
 	}
 
 	if newHosts != nil {
@@ -115,10 +118,18 @@ func (rc *reloadCoordinator) apply(currentCfg config, currentHosts []string, cur
 		}
 	}
 
+	var warning string
 	if reload {
 		if expandedHosts, expandedGroups, expandErr := expandTargets(currentHosts, currentGroups, currentCfg); expandErr == nil {
 			currentHosts = expandedHosts
 			currentGroups = expandedGroups
+		} else if currentCfg.resolveAll {
+			// expandTargets only does work (and can fail) when resolve-all is
+			// set; otherwise it's a passthrough. Keeping the pre-expansion
+			// host list here means resolve-all silently shrinks to one entry
+			// per host unless the user is told (TD-47).
+			warning = fmt.Sprintf("[yellow][%s] resolve-all: failed to re-expand hosts after reload (%v) — keeping previous resolution[-]",
+				time.Now().Format("15:04:05"), expandErr)
 		}
 	}
 
@@ -128,5 +139,5 @@ func (rc *reloadCoordinator) apply(currentCfg config, currentHosts []string, cur
 	rc.newHosts = nil
 	rc.mu.Unlock()
 
-	return currentHosts, currentGroups, currentCfg, reload
+	return currentHosts, currentGroups, currentCfg, reload, warning
 }

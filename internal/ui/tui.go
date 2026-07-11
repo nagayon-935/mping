@@ -126,15 +126,9 @@ func Run(opts RunOptions) error {
 		AddItem(table, 0, 1, true)
 	tablePane.SetBorder(true).SetTitle(" Ping Monitor ").SetBorderColor(tcell.ColorWhite)
 
-	// Render state shared between tableRenderer and the key handler
-	// (declared before the monitor panes below, whose render closures
-	// capture errorLogs/errorView/lastPortStatuses/lastHTTPStatuses
-	// directly).
-	errorLogs := []string{}
-	lastLossTimes := make(map[string]time.Time)
-	alertState := make(map[string]alertFlags)
-	lastPortStatuses := make(map[string]string)
-	lastHTTPStatuses := make(map[string]string)
+	// Render state shared between tableRenderer, the key handler, and the
+	// monitor pane render closures below (TD-51).
+	vs := newViewState(errorView)
 
 	tracePaneObj := newMonitorPane(traceEnabled, " Traceroute Monitor ", func(availW int) string {
 		return renderTracerouteTable(targets, availW)
@@ -143,20 +137,19 @@ func Run(opts RunOptions) error {
 		return renderMTRTable(targets, availW, sourceIPv4, sourceIPv6)
 	})
 	portPaneObj := newMonitorPane(portEnabled, " Port Monitor ", func(availW int) string {
-		return renderPortMonitorTable(targets, availW, lastPortStatuses, &errorLogs, errorView)
+		return renderPortMonitorTable(targets, availW, vs.lastPortStatuses, &vs.errorLogs, vs.errorView)
 	})
 	httpPaneObj := newMonitorPane(httpEnabled, " HTTP Monitor ", func(availW int) string {
 		var httpResults []*stats.HTTPCheckResult
 		if httpResultsFunc != nil {
 			httpResults = httpResultsFunc()
 		}
-		return renderHTTPMonitorTable(httpResults, availW, lastHTTPStatuses, &errorLogs, errorView)
+		return renderHTTPMonitorTable(httpResults, availW, vs.lastHTTPStatuses, &vs.errorLogs, vs.errorView)
 	})
 	sidePanes := []*monitorPane{tracePaneObj, mtrPaneObj, portPaneObj, httpPaneObj}
 
 	tr := newTableRenderer(targets, sourceIPv4, sourceIPv6, packetSize, asnEnabled, groups,
-		table, tablePane, errorView, initialLogs,
-		&errorLogs, &lastLossTimes, &alertState, &lastPortStatuses, &lastHTTPStatuses)
+		table, tablePane, initialLogs, vs)
 	tr.sidePanes = sidePanes
 
 	header := tview.NewTextView().
@@ -194,7 +187,7 @@ func Run(opts RunOptions) error {
 
 	updateTickerCh := make(chan time.Duration, 1)
 
-	wireHostInputs(app, table, pages, addHostInput, deleteHostInput, &errorLogs, errorView, onAddHost, onDeleteHost)
+	wireHostInputs(app, table, pages, addHostInput, deleteHostInput, vs, onAddHost, onDeleteHost)
 
 	appStop := make(chan struct{})
 	var appStopOnce sync.Once
@@ -202,38 +195,33 @@ func Run(opts RunOptions) error {
 
 	// Keys
 	app.SetInputCapture(newInputHandler(inputHandlerDeps{
-		app:              app,
-		table:            table,
-		addHostInput:     addHostInput,
-		deleteHostInput:  deleteHostInput,
-		graphView:        graphView,
-		errorView:        errorView,
-		footer:           footer,
-		sidePanes:        sidePanes,
-		pages:            pages,
-		targets:          targets,
-		rowCount:         &tr.rowCount,
-		errorLogs:        &errorLogs,
-		lastLossTimes:    &lastLossTimes,
-		alertState:       &alertState,
-		lastPortStatuses: &lastPortStatuses,
-		lastHTTPStatuses: &lastHTTPStatuses,
-		traceEnabled:     traceEnabled,
-		mtrEnabled:       mtrEnabled,
-		portEnabled:      portEnabled,
-		httpEnabled:      httpEnabled,
-		onStop:           onStop,
-		onRestart:        onRestart,
-		onResetTrace:     onResetTrace,
-		onResetMTR:       onResetMTR,
-		onResetPort:      onResetPort,
-		onResetHTTP:      onResetHTTP,
-		onAddHost:        onAddHost,
-		onDeleteHost:     onDeleteHost,
-		closeAppStop:     closeAppStop,
+		app:             app,
+		table:           table,
+		addHostInput:    addHostInput,
+		deleteHostInput: deleteHostInput,
+		graphView:       graphView,
+		footer:          footer,
+		sidePanes:       sidePanes,
+		pages:           pages,
+		targets:         targets,
+		rowCount:        &tr.rowCount,
+		vs:              vs,
+		traceEnabled:    traceEnabled,
+		mtrEnabled:      mtrEnabled,
+		portEnabled:     portEnabled,
+		httpEnabled:     httpEnabled,
+		onStop:          onStop,
+		onRestart:       onRestart,
+		onResetTrace:    onResetTrace,
+		onResetMTR:      onResetMTR,
+		onResetPort:     onResetPort,
+		onResetHTTP:     onResetHTTP,
+		onAddHost:       onAddHost,
+		onDeleteHost:    onDeleteHost,
+		closeAppStop:    closeAppStop,
 	}))
 	startRefreshLoop(app, tr, footer, interval, updateTickerCh, externalLogCh, externalCloseCh, doneCh,
-		&errorLogs, errorView, closeAppStop, appStop)
+		vs, closeAppStop, appStop)
 
 	flex := buildLayout(header, tablePane, sidePanes, graphView, errorView, pages)
 

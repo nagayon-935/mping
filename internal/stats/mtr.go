@@ -131,6 +131,16 @@ func (m *MTRStats) RecordLoss(ttl int) {
 	h.Sent++
 }
 
+// HasIP reports whether the hop at ttl has ever had a responder IP recorded
+// (i.e. would render as something other than "*"). ttl is 1-based; an
+// out-of-range ttl reports false.
+func (m *MTRStats) HasIP(ttl int) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	h := m.hopAt(ttl)
+	return h != nil && h.IP != ""
+}
+
 // SetIP updates the responder identity for the hop at ttl without a sample.
 // Used during discovery when no RTT measurement was taken.
 // ttl is 1-based.

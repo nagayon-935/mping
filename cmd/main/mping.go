@@ -105,139 +105,6 @@ var newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerCo
 
 var uiRun = func(opts ui.RunOptions) error { return ui.Run(opts) }
 
-var (
-	interfaceByName = net.InterfaceByName
-	netInterfaces   = net.Interfaces
-)
-
-func getInterfaceIP(ifaceName string, wantIPv6 bool) (string, error) {
-	iface, err := interfaceByName(ifaceName)
-	if err != nil {
-		return "", fmt.Errorf("lookup interface %q: %w", ifaceName, err)
-	}
-	addrs, err := iface.Addrs()
-	if err != nil {
-		return "", fmt.Errorf("get addresses for interface %q: %w", ifaceName, err)
-	}
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			isV4 := ipnet.IP.To4() != nil
-			if wantIPv6 && !isV4 {
-				return ipnet.IP.String(), nil
-			}
-			if !wantIPv6 && isV4 {
-				return ipnet.IP.String(), nil
-			}
-		}
-	}
-	ver := "IPv4"
-	if wantIPv6 {
-		ver = "IPv6"
-	}
-	return "", fmt.Errorf("no %s address found for interface %s", ver, ifaceName)
-}
-
-func getInterfaceMTU(ifaceName, sourceIP, firstHost string) (int, error) {
-	if ifaceName != "" {
-		iface, err := interfaceByName(ifaceName)
-		if err != nil {
-			return 0, fmt.Errorf("get interface %q: %w", ifaceName, err)
-		}
-		return iface.MTU, nil
-	}
-
-	lookupIP := sourceIP
-	// If sourceIP is empty, we can't easily guess the outgoing interface MTU without a route lookup.
-	// We'll skip complex route lookup here.
-	if lookupIP == "" {
-		// Fallback: Try to guess based on first host reachability
-		lookupIP = getPreferredOutboundIP(firstHost, "udp")
-	}
-	if lookupIP == "" {
-		return 0, fmt.Errorf("no interface to infer MTU from")
-	}
-
-	ifaces, err := netInterfaces()
-	if err != nil {
-		return 0, fmt.Errorf("list interfaces: %w", err)
-	}
-	for _, iface := range ifaces {
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			if ipnet, ok := addr.(*net.IPNet); ok {
-				if ipnet.IP.String() == lookupIP {
-					return iface.MTU, nil
-				}
-			}
-		}
-	}
-	return 0, fmt.Errorf("interface for %s not found", lookupIP)
-}
-
-var getPreferredOutboundIPFn = getPreferredOutboundIP
-
-// getPreferredOutboundIP determines the preferred local IP address for reaching a remote host.
-func getPreferredOutboundIP(remoteAddr, network string) string {
-	// network should be "udp", "udp4", or "udp6"
-	dialer := &net.Dialer{Timeout: 200 * time.Millisecond}
-	conn, err := dialer.Dial(network, net.JoinHostPort(remoteAddr, probePort))
-	if err != nil {
-		return ""
-	}
-	defer conn.Close()
-
-	localAddr, ok := conn.LocalAddr().(*net.UDPAddr)
-	if !ok {
-		return ""
-	}
-	return localAddr.IP.String()
-}
-
-func hasIPv6Connectivity() bool {
-	// Use Cloudflare's public IPv6 DNS address to probe for outbound IPv6 route
-	out := getPreferredOutboundIPFn("2606:4700:4700::1111", "udp6")
-	if out == "" {
-		return false
-	}
-	ip := net.ParseIP(out)
-	if ip == nil || ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() {
-		return false
-	}
-	return true
-}
-
-func detectAutoSourceIPs(hosts []string) (string, string) {
-	var src4, src6 string
-	for _, host := range hosts {
-		cleanHost := host
-		if idx := strings.Index(host, " ("); idx >= 0 && strings.HasSuffix(host, ")") {
-			cleanHost = host[idx+2 : len(host)-1]
-		}
-		if src4 == "" {
-			if ip, err := net.ResolveIPAddr("ip4", cleanHost); err == nil && ip != nil && ip.IP != nil {
-				if out := getPreferredOutboundIPFn(ip.IP.String(), "udp4"); out != "" {
-					src4 = out
-				}
-			}
-		}
-		if src6 == "" {
-			if ip, err := net.ResolveIPAddr("ip6", cleanHost); err == nil && ip != nil && ip.IP != nil {
-				remote := ip.String()
-				if out := getPreferredOutboundIPFn(remote, "udp6"); out != "" {
-					src6 = out
-				}
-			}
-		}
-		if src4 != "" && src6 != "" {
-			break
-		}
-	}
-	return src4, src6
-}
-
 type config struct {
 	intervalMs     int
 	timeoutMs      int
@@ -373,9 +240,13 @@ func syncSlice(fs *pflag.FlagSet, flag string, docVal []string, cfgField *[]stri
 // mergeHosts merges a hosts-file's configuration into cfg and host list.
 // It returns the full host list (ungrouped hosts first, then group hosts),
 // the TargetGroup slice for grouped display, and the merged config.
-func mergeHosts(cfg config, fs *pflag.FlagSet, hosts []string) ([]string, []ui.TargetGroup, config, error) {
+func mergeHosts(cfg config, fs *pflag.FlagSet, hosts []string) ([]targetSpec, []ui.TargetGroup, config, error) {
 	if cfg.hostsFile == "" {
-		return hosts, nil, cfg, nil
+		specs := make([]targetSpec, len(hosts))
+		for i, h := range hosts {
+			specs[i] = targetSpec{Host: h}
+		}
+		return specs, nil, cfg, nil
 	}
 	doc, err := parseHostsFile(cfg.hostsFile)
 	if err != nil {
@@ -392,12 +263,18 @@ func mergeHosts(cfg config, fs *pflag.FlagSet, hosts []string) ([]string, []ui.T
 // buildHostsAndGroups assembles the final host list and TargetGroup slice.
 // Ungrouped hosts (docHosts + cliHosts) come first; group hosts are appended
 // after, with indices pointing into the combined slice.
-func buildHostsAndGroups(docHosts []string, docGroups []groupYAML, cliHosts []string) ([]string, []ui.TargetGroup) {
-	allHosts := append(append([]string(nil), docHosts...), cliHosts...)
+func buildHostsAndGroups(docHosts []string, docGroups []groupYAML, cliHosts []string) ([]targetSpec, []ui.TargetGroup) {
+	allHostStrs := append(append([]string(nil), docHosts...), cliHosts...)
+	allHosts := make([]targetSpec, len(allHostStrs))
+	for i, h := range allHostStrs {
+		allHosts[i] = targetSpec{Host: h}
+	}
 	var uiGroups []ui.TargetGroup
 	for _, g := range docGroups {
 		startIdx := len(allHosts)
-		allHosts = append(allHosts, g.Hosts...)
+		for _, h := range g.Hosts {
+			allHosts = append(allHosts, targetSpec{Host: h})
+		}
 		indices := make([]int, len(g.Hosts))
 		for j := range g.Hosts {
 			indices[j] = startIdx + j
@@ -522,7 +399,7 @@ func writeJSONSnapshot(path string, targets []*stats.TargetStats, httpResults []
 	return nil
 }
 
-func determineSourceIPs(cfg config, hosts []string) (string, string, string, error) {
+func determineSourceIPs(cfg config, hosts []targetSpec) (string, string, string, error) {
 	bindIP := ""
 	displaySourceIPv4 := ""
 	displaySourceIPv6 := ""
@@ -554,10 +431,10 @@ func determineSourceIPs(cfg config, hosts []string) (string, string, string, err
 	return bindIP, displaySourceIPv4, displaySourceIPv6, nil
 }
 
-func initTargets(hosts []string) []*stats.TargetStats {
-	targets := make([]*stats.TargetStats, 0, len(hosts))
-	for _, host := range hosts {
-		targets = append(targets, stats.NewTargetStats(host))
+func initTargets(specs []targetSpec) []*stats.TargetStats {
+	targets := make([]*stats.TargetStats, 0, len(specs))
+	for _, spec := range specs {
+		targets = append(targets, stats.NewTargetStats(spec.display()))
 	}
 	return targets
 }
@@ -801,7 +678,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	// checker was actually built from (env.portSpecs is parsed once and
 	// never re-derived on reload; see checkPortReloadDrift, TD-25).
 	activePortSpecsRaw := cfg.portSpecs
-	var pendingPortWarning string
+	var pendingWarnings []string
 
 	// Main run loop (re-entered on YAML reload).
 	for {
@@ -811,9 +688,9 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		targets = buildTargetsForIteration(currentHosts, currentCfg)
 
 		customResolver := newCustomResolver(currentCfg.dnsServer)
-		opts := buildPingerOptions(currentCfg, resNetwork, customResolver)
+		opts := buildPingerOptions(currentCfg, resNetwork, customResolver, currentHosts)
 
-		ifaceMTU, mtuErr := getInterfaceMTU(currentCfg.ifaceName, bindIP, currentHosts[0])
+		ifaceMTU, mtuErr := getInterfaceMTU(currentCfg.ifaceName, bindIP, currentHosts[0].resolveAddr())
 		if mtuErr == nil {
 			for _, t := range targets {
 				t.SetIfaceMTU(ifaceMTU)
@@ -821,10 +698,10 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		}
 
 		makePinger := makePingerFactory(targets, opts, currentCfg, bindIP, logWriter)
-		packetSizeToUse, preLogs := setupPMTU(makePinger, currentCfg, ifaceMTU, targets, currentHosts[0], errOut)
-		if pendingPortWarning != "" {
-			preLogs = append(preLogs, pendingPortWarning)
-			pendingPortWarning = ""
+		packetSizeToUse, preLogs := setupPMTU(makePinger, currentCfg, ifaceMTU, targets, currentHosts[0].display(), errOut)
+		if len(pendingWarnings) > 0 {
+			preLogs = append(preLogs, pendingWarnings...)
+			pendingWarnings = nil
 		}
 
 		// logCh carries route flap and watcher log messages to the TUI Log
@@ -901,11 +778,17 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		finishIteration(currentCfg, targets, sup, errOut, jsonCancel, jsonDone, watchCancel, watchDone)
 
 		var reload bool
-		currentHosts, currentGroups, currentCfg, reload = rc.apply(currentCfg, currentHosts, currentGroups)
+		var expandWarning string
+		currentHosts, currentGroups, currentCfg, reload, expandWarning = rc.apply(currentCfg, currentHosts, currentGroups)
 		if !reload {
 			break
 		}
-		pendingPortWarning = checkPortReloadDrift(activePortSpecsRaw, currentCfg.portSpecs)
+		if portWarning := checkPortReloadDrift(activePortSpecsRaw, currentCfg.portSpecs); portWarning != "" {
+			pendingWarnings = append(pendingWarnings, portWarning)
+		}
+		if expandWarning != "" {
+			pendingWarnings = append(pendingWarnings, expandWarning)
+		}
 		// Loop continues: targets are re-initialised with the new currentHosts.
 	}
 
@@ -983,9 +866,9 @@ func runTraceroutes(ctx context.Context, p tracer, targets []*stats.TargetStats)
 	}
 }
 
-func expandTargets(hosts []string, groups []ui.TargetGroup, cfg config) ([]string, []ui.TargetGroup, error) {
+func expandTargets(specs []targetSpec, groups []ui.TargetGroup, cfg config) ([]targetSpec, []ui.TargetGroup, error) {
 	if !cfg.resolveAll {
-		return hosts, groups, nil
+		return specs, groups, nil
 	}
 
 	resolver := newCustomResolver(cfg.dnsServer)
@@ -993,20 +876,20 @@ func expandTargets(hosts []string, groups []ui.TargetGroup, cfg config) ([]strin
 	defer cancel()
 
 	resolvedIPs := make(map[string][]string)
-	for _, host := range hosts {
-		if idx := strings.Index(host, " ("); idx >= 0 && strings.HasSuffix(host, ")") {
+	for _, spec := range specs {
+		if spec.PinnedIP != "" {
 			continue
 		}
-		rawHost := host
+		rawHost := spec.Host
 		if net.ParseIP(rawHost) != nil {
-			resolvedIPs[host] = []string{rawHost}
+			resolvedIPs[spec.Host] = []string{rawHost}
 			continue
 		}
 
 		network := resolveNetwork(cfg)
 		ips, err := resolver.LookupIP(ctx, network, rawHost)
 		if err != nil || len(ips) == 0 {
-			resolvedIPs[host] = []string{rawHost}
+			resolvedIPs[spec.Host] = []string{rawHost}
 			continue
 		}
 
@@ -1014,32 +897,31 @@ func expandTargets(hosts []string, groups []ui.TargetGroup, cfg config) ([]strin
 		for _, ip := range ips {
 			ipStrs = append(ipStrs, ip.String())
 		}
-		resolvedIPs[host] = ipStrs
+		resolvedIPs[spec.Host] = ipStrs
 	}
 
-	var expandedHosts []string
+	var expandedSpecs []targetSpec
 	expansionMap := make(map[int][]int)
 
-	for i, host := range hosts {
-		if idx := strings.Index(host, " ("); idx >= 0 && strings.HasSuffix(host, ")") {
-			expandedHosts = append(expandedHosts, host)
-			expansionMap[i] = []int{len(expandedHosts) - 1}
+	for i, spec := range specs {
+		if spec.PinnedIP != "" {
+			expandedSpecs = append(expandedSpecs, spec)
+			expansionMap[i] = []int{len(expandedSpecs) - 1}
 			continue
 		}
 
-		ips := resolvedIPs[host]
-		startIdx := len(expandedHosts)
+		ips := resolvedIPs[spec.Host]
+		startIdx := len(expandedSpecs)
 
-		rawHost := host
 		for _, ip := range ips {
-			if rawHost != ip {
-				expandedHosts = append(expandedHosts, fmt.Sprintf("%s (%s)", rawHost, ip))
+			if spec.Host != ip {
+				expandedSpecs = append(expandedSpecs, targetSpec{Host: spec.Host, PinnedIP: ip})
 			} else {
-				expandedHosts = append(expandedHosts, ip)
+				expandedSpecs = append(expandedSpecs, targetSpec{Host: ip})
 			}
 		}
 
-		endIdx := len(expandedHosts)
+		endIdx := len(expandedSpecs)
 		var indices []int
 		for j := startIdx; j < endIdx; j++ {
 			indices = append(indices, j)
@@ -1059,7 +941,7 @@ func expandTargets(hosts []string, groups []ui.TargetGroup, cfg config) ([]strin
 		})
 	}
 
-	return expandedHosts, expandedGroups, nil
+	return expandedSpecs, expandedGroups, nil
 }
 
 func main() {

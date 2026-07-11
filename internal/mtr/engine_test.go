@@ -150,6 +150,42 @@ func TestEngine_StarHopInMiddle(t *testing.T) {
 	}
 }
 
+func TestEngine_SkipsProbingUnknownHops(t *testing.T) {
+	target := stats.NewTargetStats("8.8.8.8")
+	target.SetIP("8.8.8.8")
+
+	prober := newFakeProber(map[int]pinger.HopReply{
+		1: {SrcIP: "10.0.0.1", Responded: true},
+		// hop 2 never responds during discovery or after (stays as *)
+		3: {SrcIP: "8.8.8.8", Responded: true, ReachedDest: true},
+	})
+
+	cfg := Config{
+		ProbeInterval:   15 * time.Millisecond,
+		HopTimeout:      30 * time.Millisecond,
+		RediscoverEvery: 10 * time.Minute,
+		MaxHops:         5,
+	}
+	eng := NewEngine(prober, []*stats.TargetStats{target}, cfg)
+	eng.Start()
+
+	waitForHops(t, target, 3, 500*time.Millisecond)
+	// Let several continuous probe ticks elapse (hop1/hop3 keep responding).
+	waitForSent(t, target, 5, 500*time.Millisecond)
+	eng.Stop()
+
+	hops := target.MTR().View()
+	if len(hops) < 3 {
+		t.Fatalf("want at least 3 hops, got %d", len(hops))
+	}
+	if hops[1].IP != "" {
+		t.Fatalf("hop2 IP: want empty (* hop), got %q", hops[1].IP)
+	}
+	if hops[1].Sent != 0 {
+		t.Errorf("hop2 Sent: want 0 (continuous probing must skip unknown-IP hops), got %d", hops[1].Sent)
+	}
+}
+
 func TestEngine_LossAccumulation(t *testing.T) {
 	target := stats.NewTargetStats("1.1.1.1")
 	target.SetIP("1.1.1.1")

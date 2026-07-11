@@ -25,18 +25,13 @@ type inputHandlerDeps struct {
 	addHostInput    *tview.InputField
 	deleteHostInput *tview.InputField
 	graphView       *GraphView
-	errorView       *tview.TextView
 	footer          *tview.TextView
 	sidePanes       []*monitorPane
 	pages           *tview.Pages
 	targets         []*stats.TargetStats
 
-	rowCount         *int
-	errorLogs        *[]string
-	lastLossTimes    *map[string]time.Time
-	alertState       *map[string]alertFlags
-	lastPortStatuses *map[string]string
-	lastHTTPStatuses *map[string]string
+	rowCount *int
+	vs       *viewState
 
 	traceEnabled bool
 	mtrEnabled   bool
@@ -106,7 +101,7 @@ func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.Even
 		case tcell.KeyTab:
 			resetAll := func() {
 				d.table.SetBorderColor(tcell.ColorWhite)
-				d.errorView.SetBorderColor(tcell.ColorRed)
+				d.vs.errorView.SetBorderColor(tcell.ColorRed)
 				d.graphView.SetBorderColor(vividCyan)
 				for _, mp := range d.sidePanes {
 					mp.setBorderColor(tcell.ColorWhite)
@@ -126,7 +121,7 @@ func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.Even
 			}
 			focusCycle = append(focusCycle,
 				focusEntry{true, d.graphView, func(c tcell.Color) { d.graphView.SetBorderColor(c) }},
-				focusEntry{true, d.errorView, func(c tcell.Color) { d.errorView.SetBorderColor(c) }},
+				focusEntry{true, d.vs.errorView, func(c tcell.Color) { d.vs.errorView.SetBorderColor(c) }},
 			)
 			focused := d.app.GetFocus()
 			for i, entry := range focusCycle {
@@ -169,7 +164,7 @@ func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.Even
 		case 's':
 			if !stopRequested {
 				stopRequested = true
-				appendErrorLog(d.errorLogs, d.errorView, fmt.Sprintf("[yellow][%s] Stop requested by user[-]", time.Now().Format("15:04:05")))
+				d.vs.appendLog(fmt.Sprintf("[yellow][%s] Stop requested by user[-]", time.Now().Format("15:04:05")))
 				if d.onStop != nil {
 					go d.onStop()
 				}
@@ -180,12 +175,12 @@ func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.Even
 			}
 		case 'S':
 			if stopRequested {
-				appendErrorLog(d.errorLogs, d.errorView, fmt.Sprintf("[yellow][%s] Restart requested by user[-]", time.Now().Format("15:04:05")))
+				d.vs.appendLog(fmt.Sprintf("[yellow][%s] Restart requested by user[-]", time.Now().Format("15:04:05")))
 				if d.onRestart != nil {
 					go func() {
 						if err := d.onRestart(); err != nil {
 							d.app.QueueUpdateDraw(func() {
-								appendErrorLog(d.errorLogs, d.errorView, fmt.Sprintf("[red][%s] Restart failed: %v[-]", time.Now().Format("15:04:05"), err))
+								d.vs.appendLog(fmt.Sprintf("[red][%s] Restart failed: %v[-]", time.Now().Format("15:04:05"), err))
 							})
 							return
 						}
@@ -203,13 +198,8 @@ func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.Even
 			for _, t := range d.targets {
 				t.Reset()
 			}
-			// Also clear error log
-			*d.errorLogs = []string{}
-			d.errorView.SetText("")
-			*d.lastLossTimes = make(map[string]time.Time)
-			*d.alertState = make(map[string]alertFlags)
-			*d.lastPortStatuses = make(map[string]string)
-			*d.lastHTTPStatuses = make(map[string]string)
+			// Also clear error log and per-host render state.
+			d.vs.reset()
 			if !stopRequested {
 				if d.traceEnabled {
 					for _, t := range d.targets {
