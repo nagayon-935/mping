@@ -190,33 +190,45 @@ func (s *supervisor) resetMTR() {
 }
 
 func (s *supervisor) resetHTTP() {
-	s.mu.Lock()
-	cur := s.httpChecker
-	s.httpChecker = nil
-	s.mu.Unlock()
-	if cur != nil {
-		cur.Stop()
-		cur.Wait()
-	}
-	next := setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
-	s.mu.Lock()
-	s.httpChecker = next
-	s.mu.Unlock()
+	resetChecker(&s.mu, &s.httpChecker, func() *pinger.HTTPChecker {
+		return setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
+	})
 }
 
 func (s *supervisor) resetPort() {
-	s.mu.Lock()
-	cur := s.portChecker
-	s.portChecker = nil
-	s.mu.Unlock()
-	if cur != nil {
+	resetChecker(&s.mu, &s.portChecker, func() *pinger.PortChecker {
+		return setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
+	})
+}
+
+// checkerStopper is implemented by *pinger.PortChecker and
+// *pinger.HTTPChecker: the two supervisor-owned checkers that share an
+// identical stop-then-replace reset lifecycle.
+type checkerStopper interface {
+	comparable
+	Stop()
+	Wait()
+}
+
+// resetChecker stops the current value at *field (if any) and swaps in a
+// freshly created replacement. mu guards only the field read/write, not the
+// Stop/Wait/create calls — this reproduces resetHTTP/resetPort's original
+// unlocked window (TD-46①: behavior-preserving dedup; the theoretical
+// concurrent-stopAll race in that window is tracked separately as TD-46②).
+func resetChecker[T checkerStopper](mu *sync.Mutex, field *T, create func() T) {
+	mu.Lock()
+	cur := *field
+	var zero T
+	*field = zero
+	mu.Unlock()
+	if cur != zero {
 		cur.Stop()
 		cur.Wait()
 	}
-	next := setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
-	s.mu.Lock()
-	s.portChecker = next
-	s.mu.Unlock()
+	next := create()
+	mu.Lock()
+	*field = next
+	mu.Unlock()
 }
 
 // httpResults returns the current HTTP checker's results, or nil when no
