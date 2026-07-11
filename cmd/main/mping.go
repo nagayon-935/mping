@@ -668,7 +668,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	// checker was actually built from (env.portSpecs is parsed once and
 	// never re-derived on reload; see checkPortReloadDrift, TD-25).
 	activePortSpecsRaw := cfg.portSpecs
-	var pendingPortWarning string
+	var pendingWarnings []string
 
 	// Main run loop (re-entered on YAML reload).
 	for {
@@ -689,9 +689,9 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 
 		makePinger := makePingerFactory(targets, opts, currentCfg, bindIP, logWriter)
 		packetSizeToUse, preLogs := setupPMTU(makePinger, currentCfg, ifaceMTU, targets, currentHosts[0], errOut)
-		if pendingPortWarning != "" {
-			preLogs = append(preLogs, pendingPortWarning)
-			pendingPortWarning = ""
+		if len(pendingWarnings) > 0 {
+			preLogs = append(preLogs, pendingWarnings...)
+			pendingWarnings = nil
 		}
 
 		// logCh carries route flap and watcher log messages to the TUI Log
@@ -768,11 +768,17 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		finishIteration(currentCfg, targets, sup, errOut, jsonCancel, jsonDone, watchCancel, watchDone)
 
 		var reload bool
-		currentHosts, currentGroups, currentCfg, reload = rc.apply(currentCfg, currentHosts, currentGroups)
+		var expandWarning string
+		currentHosts, currentGroups, currentCfg, reload, expandWarning = rc.apply(currentCfg, currentHosts, currentGroups)
 		if !reload {
 			break
 		}
-		pendingPortWarning = checkPortReloadDrift(activePortSpecsRaw, currentCfg.portSpecs)
+		if portWarning := checkPortReloadDrift(activePortSpecsRaw, currentCfg.portSpecs); portWarning != "" {
+			pendingWarnings = append(pendingWarnings, portWarning)
+		}
+		if expandWarning != "" {
+			pendingWarnings = append(pendingWarnings, expandWarning)
+		}
 		// Loop continues: targets are re-initialised with the new currentHosts.
 	}
 
