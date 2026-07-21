@@ -290,6 +290,23 @@ See [examples/hosts-groups.yaml](examples/hosts-groups.yaml) for a runnable exam
 
 > **Note:** Adding or deleting a host resets all statistics for all targets, equivalent to a YAML configuration reload.
 
+## Shell completion
+
+mping generates its own bash/zsh/fish completion scripts from its live flag set, so completion for flags never drifts from `mping --help`. Flag names, `-f`/`-o`/`-j` file paths, and `-I` network interface names all tab-complete once installed.
+
+```bash
+# bash — add to ~/.bashrc
+source <(mping completion bash)
+
+# zsh — write once to a directory on $fpath, then start a new shell
+mping completion zsh > "${fpath[1]}/_mping"
+
+# fish
+mping completion fish > ~/.config/fish/completions/mping.fish
+```
+
+> **Note:** `completion` is a reserved subcommand name and can't be used as a target hostname.
+
 ## TUI columns
 
 * **Src IP** — Local IP address used for sending.

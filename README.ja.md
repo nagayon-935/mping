@@ -285,6 +285,23 @@ groups:
 
 > **注意:** ホストの追加・削除を行うと、全ターゲットの統計情報がリセットされます (YAML 設定リロードと同等の動作)。
 
+## シェル補完
+
+mping は自身が保持するフラグ定義から bash/zsh/fish 用の補完スクリプトをその場で生成するため、`mping --help` とフラグ補完がずれることはありません。フラグ名に加え、`-f`/`-o`/`-j` のファイルパスと `-I` のネットワークインターフェース名も補完対象です。
+
+```bash
+# bash — ~/.bashrc に追記
+source <(mping completion bash)
+
+# zsh — $fpath 上のディレクトリに一度書き出し、新しいシェルを起動する
+mping completion zsh > "${fpath[1]}/_mping"
+
+# fish
+mping completion fish > ~/.config/fish/completions/mping.fish
+```
+
+> **注意:** `completion` は予約されたサブコマンド名のため、ホスト名として使用できません。
+
 ## 表示項目 (TUI カラム)
 
 * **Src IP**: 送信に使用されているローカル IP アドレス。

@@ -462,13 +462,21 @@ func setupLogger(path string) (*os.File, error) {
 	return f, nil
 }
 
-func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) {
-	var cfg config
-	var usageBuf bytes.Buffer
+// thresholdFlags holds the raw ms/pct values pflag fills in for the
+// colour-coding / alert thresholds (warn = orange, crit = red). These are
+// bound to local vars rather than cfg directly since cfg.thresholds is a
+// ui.Thresholds (TD-10): the raw values are converted to ui.Thresholds once,
+// right after a successful parse (see parseArgs).
+type thresholdFlags struct {
+	rttWarnMs, rttCritMs, jitterWarnMs, jitterCritMs int
+	lossWarnPct, lossCritPct                         float64
+}
 
-	fs := pflag.NewFlagSet("mping", pflag.ContinueOnError)
-	fs.SetOutput(&usageBuf)
-
+// registerFlags declares every mping flag on fs, binding values into cfg and
+// th. This is the single source of truth for the CLI's flag surface: both
+// parseArgs (real runs) and the completion generator (cmd/main/completion.go)
+// call it so the two can never drift apart.
+func registerFlags(fs *pflag.FlagSet, cfg *config, th *thresholdFlags) {
 	fs.IntVarP(&cfg.intervalMs, "interval", "i", 1000, "ping interval in ms")
 	fs.IntVarP(&cfg.timeoutMs, "timeout", "t", 1000, "ping timeout in ms")
 	fs.StringVarP(&cfg.outputFile, "output", "o", "", "log output file path (csv format)")
@@ -489,18 +497,23 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 	fs.StringVarP(&cfg.dnsServer, "dns-server", "d", "", "custom DNS server IP to use for hostname resolution")
 	fs.BoolVar(&cfg.resolveAll, "resolve-all", false, "resolve target hostname to all IP addresses and monitor them concurrently")
 
-	// Colour-coding / alert thresholds (warn = orange, crit = red). Bound to
-	// local vars rather than cfg directly since cfg.thresholds is a
-	// ui.Thresholds (TD-10): the raw ms/pct values pflag fills in below are
-	// converted once, right after a successful parse.
-	var rttWarnMs, rttCritMs, jitterWarnMs, jitterCritMs int
-	var lossWarnPct, lossCritPct float64
-	fs.IntVar(&rttWarnMs, "rtt-warn", 50, "RTT warn threshold in ms (orange)")
-	fs.IntVar(&rttCritMs, "rtt-crit", 200, "RTT crit threshold in ms (red)")
-	fs.IntVar(&jitterWarnMs, "jitter-warn", 10, "jitter warn threshold in ms (orange)")
-	fs.IntVar(&jitterCritMs, "jitter-crit", 50, "jitter crit threshold in ms (red)")
-	fs.Float64Var(&lossWarnPct, "loss-warn", 20, "loss warn threshold in percent (orange)")
-	fs.Float64Var(&lossCritPct, "loss-crit", 80, "loss crit threshold in percent (red)")
+	fs.IntVar(&th.rttWarnMs, "rtt-warn", 50, "RTT warn threshold in ms (orange)")
+	fs.IntVar(&th.rttCritMs, "rtt-crit", 200, "RTT crit threshold in ms (red)")
+	fs.IntVar(&th.jitterWarnMs, "jitter-warn", 10, "jitter warn threshold in ms (orange)")
+	fs.IntVar(&th.jitterCritMs, "jitter-crit", 50, "jitter crit threshold in ms (red)")
+	fs.Float64Var(&th.lossWarnPct, "loss-warn", 20, "loss warn threshold in percent (orange)")
+	fs.Float64Var(&th.lossCritPct, "loss-crit", 80, "loss crit threshold in percent (red)")
+}
+
+func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) {
+	var cfg config
+	var th thresholdFlags
+	var usageBuf bytes.Buffer
+
+	fs := pflag.NewFlagSet("mping", pflag.ContinueOnError)
+	fs.SetOutput(&usageBuf)
+
+	registerFlags(fs, &cfg, &th)
 
 	fs.Usage = func() {
 		fmt.Fprintln(&usageBuf, "Usage: mping [options] host1 host2 ...")
@@ -514,12 +527,12 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 	}
 
 	cfg.thresholds = ui.Thresholds{
-		RTTWarn:    time.Duration(rttWarnMs) * time.Millisecond,
-		RTTCrit:    time.Duration(rttCritMs) * time.Millisecond,
-		JitterWarn: time.Duration(jitterWarnMs) * time.Millisecond,
-		JitterCrit: time.Duration(jitterCritMs) * time.Millisecond,
-		LossWarn:   lossWarnPct,
-		LossCrit:   lossCritPct,
+		RTTWarn:    time.Duration(th.rttWarnMs) * time.Millisecond,
+		RTTCrit:    time.Duration(th.rttCritMs) * time.Millisecond,
+		JitterWarn: time.Duration(th.jitterWarnMs) * time.Millisecond,
+		JitterCrit: time.Duration(th.jitterCritMs) * time.Millisecond,
+		LossWarn:   th.lossWarnPct,
+		LossCrit:   th.lossCritPct,
 	}
 
 	hosts := fs.Args()
@@ -647,6 +660,13 @@ func setupHTTPChecker(urls []string, interval, timeout time.Duration) *pinger.HT
 }
 
 func run(args []string, out io.Writer, errOut io.Writer) int {
+	if len(args) > 0 && args[0] == "completion" {
+		return runCompletion(args[1:], out, errOut)
+	}
+	if len(args) > 0 && args[0] == "__complete-interfaces" {
+		return runCompleteInterfaces(out)
+	}
+
 	sp, code, ok := parseAndLoadHosts(args, out, errOut)
 	if !ok {
 		return code
