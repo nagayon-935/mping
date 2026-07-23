@@ -266,6 +266,54 @@ func TestRunTableScrollKeys(t *testing.T) {
 	}
 }
 
+// TestRunTableScrollKeys_ManyTargets_Virtualized is the P1 fix's end-to-end
+// smoke test: with enough targets that virtualization actually windows the
+// render (well beyond tableMaxRows+margin), scrolling all the way to the
+// bottom and back via keys must not crash or hang the app.
+func TestRunTableScrollKeys_ManyTargets_Virtualized(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	const numTargets = 100
+	targets := make([]*stats.TargetStats, numTargets)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats("host")
+		targets[i].SetIP("10.0.0.1")
+		targets[i].IncSent()
+		targets[i].OnSuccess(10*time.Millisecond, 64)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run(RunOptions{Targets: targets, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, PacketSize: 56})
+	}()
+
+	screen := <-screenCh
+	time.Sleep(20 * time.Millisecond)
+	// Scroll all the way to the bottom, then back to the top.
+	for i := 0; i < numTargets/tableMaxRows+2; i++ {
+		screen.InjectKey(tcell.KeyPgDn, 0, tcell.ModNone)
+	}
+	time.Sleep(10 * time.Millisecond)
+	for i := 0; i < numTargets/tableMaxRows+2; i++ {
+		screen.InjectKey(tcell.KeyPgUp, 0, tcell.ModNone)
+	}
+	time.Sleep(10 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}
+
 // ---- Run: onRestart returning error ----
 
 func TestRunRestartError(t *testing.T) {

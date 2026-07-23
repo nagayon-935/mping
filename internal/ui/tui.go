@@ -206,6 +206,7 @@ func Run(opts RunOptions) error {
 		targets:         targets,
 		rowCount:        &tr.rowCount,
 		vs:              vs,
+		forceUpdate:     tr.update,
 		traceEnabled:    traceEnabled,
 		mtrEnabled:      mtrEnabled,
 		portEnabled:     portEnabled,
