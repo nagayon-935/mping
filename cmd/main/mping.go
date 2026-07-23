@@ -47,6 +47,10 @@ type pingerController interface {
 	SetCount(count int)
 	SetResolveInterval(interval time.Duration)
 	SetLogWriter(w io.Writer)
+	// MTRProber returns an mtr.HopProber view onto this controller, used to
+	// wire up the MTR engine without the caller needing to downcast to a
+	// concrete pinger type.
+	MTRProber() mtr.HopProber
 }
 
 type pingerAdapter struct {
@@ -75,6 +79,10 @@ func (p *pingerAdapter) SetLogWriter(w io.Writer) {
 
 func (p *pingerAdapter) Close() {
 	p.Pinger.Close()
+}
+
+func (p *pingerAdapter) MTRProber() mtr.HopProber {
+	return &pingerMTRAdapter{p: p.Pinger}
 }
 
 // pingerMTRAdapter wraps *pinger.Pinger to satisfy mtr.HopProber.

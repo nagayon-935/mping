@@ -93,12 +93,7 @@ func (s *supervisor) startPinger() error {
 		if s.mtrEngine != nil {
 			s.mtrEngine.Stop()
 		}
-		pa, ok := next.(*pingerAdapter)
-		if !ok {
-			return fmt.Errorf("internal: unexpected pinger type %T", next)
-		}
-		adapter := &pingerMTRAdapter{p: pa.Pinger}
-		s.mtrEngine = mtr.NewEngine(adapter, s.cfg.targets, mtr.Config{
+		s.mtrEngine = mtr.NewEngine(next.MTRProber(), s.cfg.targets, mtr.Config{
 			OnFlap: s.onFlap,
 		})
 		s.mtrEngine.Start()
@@ -117,7 +112,14 @@ func (s *supervisor) setupPortAndHTTP() {
 }
 
 // stopPinger stops, in order, the traceroute goroutine (joined), the MTR
-// engine, and the pinger itself. Safe to call multiple times.
+// engine, and the pinger itself — Stop() (signal), Wait() (join), then
+// Close() (release the raw ICMP socket). Close is called only after Wait
+// returns, so the receiver goroutine is guaranteed to have already exited
+// before its socket fd is closed out from under it. Without this, YAML
+// reloads and add/delete-host swaps left each old pinger's raw socket for
+// the GC finalizer to close non-deterministically instead of releasing it
+// immediately. Safe to call multiple times (Close is idempotent, see
+// pinger.Pinger.Close).
 func (s *supervisor) stopPinger() {
 	s.mu.Lock()
 	if s.traceCancel != nil {
@@ -136,6 +138,7 @@ func (s *supervisor) stopPinger() {
 	if cur != nil {
 		cur.Stop()
 		cur.Wait()
+		cur.Close()
 	}
 }
 
@@ -178,12 +181,10 @@ func (s *supervisor) resetMTR() {
 		curEngine.Stop()
 	}
 	cur := s.p
-	pa, ok := cur.(*pingerAdapter)
-	if !ok {
+	if cur == nil {
 		return
 	}
-	adapter := &pingerMTRAdapter{p: pa.Pinger}
-	s.mtrEngine = mtr.NewEngine(adapter, s.cfg.targets, mtr.Config{
+	s.mtrEngine = mtr.NewEngine(cur.MTRProber(), s.cfg.targets, mtr.Config{
 		OnFlap: s.onFlap,
 	})
 	s.mtrEngine.Start()
