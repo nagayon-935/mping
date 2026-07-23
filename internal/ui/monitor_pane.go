@@ -21,6 +21,13 @@ type monitorPane struct {
 	// render returns this pane's text content for the given available
 	// width; called once per refresh tick.
 	render func(availW int) string
+	// lastText caches the most recently applied SetText content so refresh
+	// can skip the call (and tview's internal re-tagging/re-wrap) when
+	// render() produces byte-for-byte the same string as last tick. render()
+	// itself still runs every tick — this only saves the tview-side reparse,
+	// which is why several panes (those that embed a live "N ago" timestamp)
+	// won't hit this cache on most ticks.
+	lastText string
 }
 
 // newMonitorPane constructs a monitor pane. When enabled is false, view and
@@ -54,10 +61,17 @@ func newMonitorPane(enabled bool, title string, render func(availW int) string) 
 }
 
 // refresh re-renders the pane's content in place. No-op when disabled.
+// Skips the SetText call (but still calls render()) when the content is
+// unchanged since the last tick, to avoid tview re-parsing identical text.
 func (mp *monitorPane) refresh() {
 	if !mp.enabled || mp.view == nil {
 		return
 	}
 	_, _, availW, _ := mp.view.GetInnerRect()
-	mp.view.SetText(mp.render(availW))
+	text := mp.render(availW)
+	if text == mp.lastText {
+		return
+	}
+	mp.lastText = text
+	mp.view.SetText(text)
 }

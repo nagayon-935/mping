@@ -62,6 +62,15 @@ func (a *rttAccumulator) historySnapshot() []time.Duration {
 	return reconstructHistory(a.history, a.historyIdx, a.historyLen)
 }
 
+// historySnapshotWindow returns only the trailing n entries (or fewer, if
+// fewer than n have been recorded), avoiding the full-buffer copy
+// historySnapshot always does. Intended for callers like the RTT graph that
+// only ever display a fixed trailing window regardless of how large the
+// underlying ring buffer is.
+func (a *rttAccumulator) historySnapshotWindow(n int) []time.Duration {
+	return reconstructHistoryWindow(a.history, a.historyIdx, a.historyLen, n)
+}
+
 // updateJitter applies one RFC 1889 §A.8 smoothing step and returns the new
 // jitter value in nanoseconds. Shared by TargetStats.OnSuccess and
 // MTRStats.RecordReply; each caller keeps its own "is this the first sample"
