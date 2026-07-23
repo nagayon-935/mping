@@ -26,14 +26,21 @@ type graphSeries interface {
 	seriesSnapshot() (history []time.Duration, lastRTT time.Duration)
 }
 
-type icmpSeries struct{ t *stats.TargetStats }
-
-func (s icmpSeries) seriesLabel() string {
-	return s.t.GetView().Host
+// icmpSeries holds a pre-fetched snapshot rather than a live
+// *stats.TargetStats reference: buildSeries takes exactly one
+// GetViewWindow() call per target, and seriesLabel/seriesSnapshot below
+// just read the already-fetched fields instead of each re-fetching from
+// TargetStats (previously 3 separate GetView() calls per target per Draw —
+// one for the label, one directly, one via windowMax's own snapshot call).
+type icmpSeries struct {
+	label   string
+	history []time.Duration
+	lastRTT time.Duration
 }
+
+func (s icmpSeries) seriesLabel() string { return s.label }
 func (s icmpSeries) seriesSnapshot() ([]time.Duration, time.Duration) {
-	v := s.t.GetView()
-	return v.History, v.LastRTT
+	return s.history, s.lastRTT
 }
 
 // GraphView is a custom primitive for rendering RTT graphs
@@ -65,12 +72,18 @@ func NewGraphView(targets []*stats.TargetStats, interval time.Duration) *GraphVi
 	}
 }
 
-// buildSeries constructs the list of graphSeries from current target state.
-// Called at the start of each Draw so that dynamically added targets appear.
-func (g *GraphView) buildSeries() []graphSeries {
+// buildSeries constructs the list of graphSeries from current target state,
+// fetching exactly one GetViewWindow(historyWindow) snapshot per target.
+// Called at the start of each Draw so that dynamically added targets
+// appear. historyWindow should be the same trailing-window size Draw is
+// about to plot (timeBasedWidth) — GetViewWindow already truncates to it,
+// so windowMax/projectDurationsToGraph's own truncation below becomes a
+// no-op rather than doing real work on a multi-thousand-entry buffer.
+func (g *GraphView) buildSeries(historyWindow int) []graphSeries {
 	var out []graphSeries
 	for _, t := range g.targets {
-		out = append(out, icmpSeries{t: t})
+		v := t.GetViewWindow(historyWindow)
+		out = append(out, icmpSeries{label: v.Host, history: v.History, lastRTT: v.LastRTT})
 	}
 	return out
 }
@@ -228,7 +241,11 @@ func gridStepsForHeight(plotHeight int) (gy25, gy50, gy75, gy100 int) {
 }
 
 func (g *GraphView) layout(width, height int) (numCols, numRowsTotal, visibleRows, colWidth, rowHeight int) {
-	numTargets := len(g.buildSeries())
+	// Only the count is needed here (not the fetched history/label data),
+	// and buildSeries maps 1:1 onto g.targets with no filtering, so read
+	// the count directly rather than fetching a GetViewWindow snapshot per
+	// target just to throw it away.
+	numTargets := len(g.targets)
 	if numTargets == 0 || width <= 0 || height <= 0 {
 		return 1, 0, 0, 0, 0
 	}
@@ -321,15 +338,17 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 		}
 	}
 
-	series := g.buildSeries()
-	if len(series) == 0 {
-		return
-	}
-
-	// Compute time-based window width once (shared across all cells).
+	// Compute time-based window width first so buildSeries can fetch
+	// exactly this many trailing history points per target via
+	// GetViewWindow, instead of the full history ring.
 	timeBasedWidth := int(graphWindowSeconds * time.Second / g.interval)
 	if timeBasedWidth < 1 {
 		timeBasedWidth = 1
+	}
+
+	series := g.buildSeries(timeBasedWidth)
+	if len(series) == 0 {
+		return
 	}
 
 	// Update auto-scale from current window maximum across all series.

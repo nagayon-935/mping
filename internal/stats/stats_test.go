@@ -1,9 +1,58 @@
 package stats
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
+
+// TestTargetStats_GetViewWindow_MatchesGetViewExceptHistory guards the P2
+// fix: GetViewWindow must produce the exact same TargetView as GetView for
+// every field except History, which should be truncated to the trailing n
+// entries instead of the full ring.
+func TestTargetStats_GetViewWindow_MatchesGetViewExceptHistory(t *testing.T) {
+	tgt := NewTargetStats("example.com")
+	tgt.SetIP("1.1.1.1")
+	tgt.SetASNInfo("AS15169", "US", "Google LLC")
+	for i := 1; i <= 50; i++ {
+		tgt.IncSent()
+		tgt.OnSuccess(time.Duration(i)*time.Millisecond, 64)
+	}
+
+	full := tgt.GetView()
+	windowed := tgt.GetViewWindow(10)
+
+	if len(windowed.History) != 10 {
+		t.Fatalf("windowed History length: got %d, want 10", len(windowed.History))
+	}
+	wantTail := full.History[len(full.History)-10:]
+	for i := range wantTail {
+		if windowed.History[i] != wantTail[i] {
+			t.Fatalf("windowed History[%d]: got %v, want %v", i, windowed.History[i], wantTail[i])
+		}
+	}
+
+	// Every other field must be identical; neutralize History (already
+	// checked above) before comparing the rest via reflect.DeepEqual, since
+	// TargetView contains slice fields and can't use ==/!=.
+	windowed.History = full.History
+	if !reflect.DeepEqual(windowed, full) {
+		t.Fatalf("GetViewWindow diverged from GetView on a field other than History:\n got:  %+v\n want: %+v", windowed, full)
+	}
+}
+
+// TestTargetStats_GetViewWindow_FewerSamplesThanWindow verifies the
+// pass-through case (n larger than the amount of history recorded so far).
+func TestTargetStats_GetViewWindow_FewerSamplesThanWindow(t *testing.T) {
+	tgt := NewTargetStats("example.com")
+	tgt.IncSent()
+	tgt.OnSuccess(5*time.Millisecond, 64)
+
+	view := tgt.GetViewWindow(100)
+	if len(view.History) != 1 || view.History[0] != 5*time.Millisecond {
+		t.Fatalf("History: got %v, want [5ms]", view.History)
+	}
+}
 
 func TestTargetStatsSuccessStatsAndView(t *testing.T) {
 	tgt := NewTargetStats("example.com")

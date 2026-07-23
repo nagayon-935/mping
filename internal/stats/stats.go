@@ -209,17 +209,17 @@ func NewTargetStats(host string) *TargetStats {
 	}
 }
 
-// GetView returns a thread-safe snapshot of the current statistics.
-func (t *TargetStats) GetView() TargetView {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
+// viewLocked builds a TargetView, obtaining the History field from
+// historyFn. Caller must already hold t.mu (a read lock is sufficient).
+// Shared by GetView (full history) and GetViewWindow (trailing window
+// only) so the two stay in sync automatically.
+func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 	var avg time.Duration
 	if t.Recv > 0 {
 		avg = t.rtt.sum / time.Duration(t.Recv)
 	}
 
-	histCopy := t.rtt.historySnapshot()
+	histCopy := historyFn()
 	traceCopy := make([]string, len(t.TraceHops))
 	copy(traceCopy, t.TraceHops)
 	portCopy := make([]PortCheckView, len(t.PortResults))
@@ -267,6 +267,27 @@ func (t *TargetStats) GetView() TargetView {
 		LastLossTime:     t.LastLossTime,
 		LastError:        t.LastError,
 	}
+}
+
+// GetView returns a thread-safe snapshot of the current statistics,
+// including the full RTT history ring (up to historySize entries).
+func (t *TargetStats) GetView() TargetView {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.viewLocked(t.rtt.historySnapshot)
+}
+
+// GetViewWindow is like GetView, but History only contains the trailing n
+// entries instead of the full ring (see rttAccumulator.historySnapshotWindow).
+// Prefer this over GetView for callers that only ever display a fixed
+// trailing window regardless of how large historySize is — e.g. the RTT
+// graph, which only ever plots a ~30s window of points.
+func (t *TargetStats) GetViewWindow(n int) TargetView {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.viewLocked(func() []time.Duration {
+		return t.rtt.historySnapshotWindow(n)
+	})
 }
 
 // MTR returns the MTRStats for this target, creating it lazily on first call.
