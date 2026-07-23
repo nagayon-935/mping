@@ -494,7 +494,11 @@ func (p *Pinger) resolveTarget(t *stats.TargetStats) *net.IPAddr {
 	ipStr := addr.String()
 	t.SetIP(ipStr)
 	if p.AsnEnabled {
-		go p.lookupASN(t, ipStr)
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			p.lookupASN(t, ipStr)
+		}()
 	}
 	return addr
 }
@@ -506,7 +510,18 @@ type ASNInfo struct {
 	Org     string // "Google LLC"
 }
 
+// lookupASN performs a (potentially slow, uncancellable) Team Cymru DNS
+// lookup for ipStr and records the result on t. Guarded by p.done so that a
+// lookup queued just before Stop() doesn't fire a lookup that outlives it;
+// an already in-flight DNS query is not interrupted (getASNInfo has no
+// cancellation seam), but the wg.Add/Done in resolveTarget's caller ensures
+// Wait() still blocks until it finishes.
 func (p *Pinger) lookupASN(t *stats.TargetStats, ipStr string) {
+	select {
+	case <-p.done:
+		return
+	default:
+	}
 	info := p.getASNInfo(ipStr)
 	if info.Number != "" {
 		t.SetASNInfo(info.Number, info.Country, info.Org)

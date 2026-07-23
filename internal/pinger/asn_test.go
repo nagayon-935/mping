@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -283,6 +284,81 @@ func TestPinger_TraceRoute_AsnEnabled(t *testing.T) {
 
 	if !strings.Contains(hops[0], "AS12345") {
 		t.Errorf("expected ASN in hop output, got %q", hops[0])
+	}
+}
+
+// TestResolveTarget_TracksASNGoroutineInWaitGroup verifies the F2 fix:
+// resolveTarget's ASN lookup goroutine is added to p.wg, so Wait() blocks
+// until the (slow, uncancellable) DNS lookup finishes rather than letting
+// it outlive the pinger.
+func TestResolveTarget_TracksASNGoroutineInWaitGroup(t *testing.T) {
+	started := make(chan struct{})
+	var startOnce sync.Once
+	release := make(chan struct{})
+	mockLookup := func(query string) ([]string, error) {
+		startOnce.Do(func() { close(started) })
+		<-release
+		return []string{"15169 | 8.8.8.0/24 | US | arin | 1992-12-01"}, nil
+	}
+	target := stats.NewTargetStats("8.8.8.8")
+	p := NewPingerWithOptions(nil, Options{
+		AsnEnabled: true,
+		LookupTXT:  mockLookup,
+		ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {
+			return &net.IPAddr{IP: net.ParseIP("8.8.8.8")}, nil
+		},
+	})
+
+	p.resolveTarget(target)
+
+	select {
+	case <-started:
+	case <-time.After(1 * time.Second):
+		t.Fatal("ASN lookup goroutine never started")
+	}
+
+	waitDone := make(chan struct{})
+	go func() {
+		p.wg.Wait()
+		close(waitDone)
+	}()
+
+	select {
+	case <-waitDone:
+		t.Fatal("wg.Wait() returned before the in-flight ASN lookup finished")
+	case <-time.After(50 * time.Millisecond):
+		// expected: Wait() is still blocked on the lookup goroutine.
+	}
+
+	close(release)
+
+	select {
+	case <-waitDone:
+		// success: Wait() unblocked once the lookup goroutine finished.
+	case <-time.After(1 * time.Second):
+		t.Fatal("wg.Wait() did not return after the ASN lookup completed")
+	}
+}
+
+// TestLookupASN_ReturnsEarlyAfterStop verifies the F2 fix's early-exit guard:
+// once p.done is closed, lookupASN must not perform a new DNS lookup.
+func TestLookupASN_ReturnsEarlyAfterStop(t *testing.T) {
+	called := false
+	mockLookup := func(query string) ([]string, error) {
+		called = true
+		return []string{"15169 | 8.8.8.0/24 | US | arin | 1992-12-01"}, nil
+	}
+	target := stats.NewTargetStats("8.8.8.8")
+	p := NewPingerWithOptions(nil, Options{AsnEnabled: true, LookupTXT: mockLookup})
+	p.Stop()
+
+	p.lookupASN(target, "8.8.8.8")
+
+	if called {
+		t.Error("lookupASN invoked LookupTXT after Stop(); expected early return")
+	}
+	if got := target.GetView().ASN; got != "" {
+		t.Errorf("ASN should remain unset after Stop(), got %q", got)
 	}
 }
 
