@@ -136,6 +136,68 @@ func TestFormatLossAgo(t *testing.T) {
 	}
 }
 
+// newTestTableRenderer builds a tableRenderer wired up the same way Run()
+// does, sized directly via SetRect so update() can be driven without a full
+// Application/Screen (mirroring the pattern already used for GraphView in
+// graph_view_test.go).
+func newTestTableRenderer(targets []*stats.TargetStats, width int) *tableRenderer {
+	table := tview.NewTable().SetBorders(true).SetSelectable(false, false).SetFixed(1, 1)
+	tablePane := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(table, 0, 1, true)
+	tablePane.SetBorder(true).SetTitle(" Ping Monitor ").SetBorderColor(tcell.ColorWhite)
+	tablePane.SetRect(0, 0, width, 30)
+
+	errorView := tview.NewTextView()
+	vs := newViewState(errorView)
+
+	return newTableRenderer(targets, "10.0.0.1", "", 56, false, nil, table, tablePane, nil, vs)
+}
+
+// TestTableRendererUpdate_SkipsCompactWhenFullLayoutFits guards the P3 fix:
+// when the full-width layout fits (width=200, matching makeSimScreen's
+// proven-wide value in run_refresh_test.go), update() must resolve to the
+// full (non-compact) layout — buildCompactLayout's per-target GetView() work
+// is now only computed as a fallback, so this pins the "skip" branch's
+// observable outcome (compactLayout stays false, rowCount == len(targets)+1)
+// even though the skip itself isn't directly instrumented.
+func TestTableRendererUpdate_SkipsCompactWhenFullLayoutFits(t *testing.T) {
+	targets := make([]*stats.TargetStats, 3)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats("host")
+		targets[i].SetIP("10.0.0.1")
+		targets[i].IncSent()
+		targets[i].OnSuccess(10*time.Millisecond, 64)
+	}
+	tr := newTestTableRenderer(targets, 200)
+	tr.update()
+
+	if tr.compactLayout {
+		t.Fatal("expected full layout when terminal is wide, got compactLayout=true")
+	}
+	if tr.rowCount != len(targets)+1 {
+		t.Errorf("rowCount: got %d, want %d", tr.rowCount, len(targets)+1)
+	}
+}
+
+// TestTableRendererUpdate_FallsBackToCompactWhenNarrow is the companion
+// case: when the full layout doesn't fit (width=70, matching
+// makeNarrowSimScreen's proven-narrow value), update() must still fall back
+// to the compact layout exactly as before the P3 change.
+func TestTableRendererUpdate_FallsBackToCompactWhenNarrow(t *testing.T) {
+	targets := make([]*stats.TargetStats, 3)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats("host")
+		targets[i].SetIP("10.0.0.1")
+		targets[i].IncSent()
+		targets[i].OnSuccess(10*time.Millisecond, 64)
+	}
+	tr := newTestTableRenderer(targets, 70)
+	tr.update()
+
+	if !tr.compactLayout {
+		t.Fatal("expected compact layout fallback when terminal is narrow, got compactLayout=false")
+	}
+}
+
 func TestBuildCompactLayout(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	target.OnSuccess(12*time.Millisecond, 64)

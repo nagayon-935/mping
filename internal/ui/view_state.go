@@ -12,6 +12,14 @@ import (
 // parameter list), inputHandlerDeps (five more individual pointer fields),
 // and the port/HTTP monitor pane render closures. A single *viewState now
 // flows to all three instead (TD-51).
+//
+// Concurrency invariant: none of viewState's fields are guarded by a mutex.
+// This is safe only because every mutation happens on tview's single
+// draw/event-loop goroutine — the goroutine that runs app.Run(), on which
+// QueueUpdateDraw callbacks, Draw(), and the SetInputCapture key handler are
+// all dispatched serially. No other goroutine may read or write through a
+// *viewState; if a future change needs to touch it from elsewhere (e.g. a
+// background checker), it must go through QueueUpdateDraw first.
 type viewState struct {
 	errorView        *tview.TextView
 	errorLogs        []string

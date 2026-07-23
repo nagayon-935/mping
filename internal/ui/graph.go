@@ -45,7 +45,11 @@ type GraphView struct {
 	vividRed  tcell.Color
 	scrollRow int
 
-	// Auto-scale state (accessed from Draw only — no additional lock needed).
+	// Auto-scale state. Accessed from Draw only, which — like the rest of
+	// the ui package's mutable render state (see viewState, tableRenderer)
+	// — runs exclusively on tview's single draw/event-loop goroutine. No
+	// additional lock is needed, and none may be assumed safe if this state
+	// is ever touched from elsewhere.
 	currentScale   yScale
 	scaleHoldUntil time.Time
 }

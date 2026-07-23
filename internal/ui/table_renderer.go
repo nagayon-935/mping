@@ -21,6 +21,11 @@ import (
 //
 // TD-23③: this is Run()'s "tableRenderer type" — update() replaces the
 // updateTable closure.
+//
+// Concurrency invariant: like viewState, every field below is mutated only
+// from tview's single draw/event-loop goroutine (update() runs inside
+// QueueUpdateDraw); no mutex guards them and none may be added from another
+// goroutine without first hopping through QueueUpdateDraw.
 type tableRenderer struct {
 	targets    []*stats.TargetStats
 	sourceIPv4 string
@@ -185,18 +190,26 @@ func (tr *tableRenderer) update() {
 	}
 	fitted, ok := fitWidthsToAvailable(updatedWidths, tr.minWidths, dynamicMaxWidths, tr.shrinkPriorities, tr.growPriorities, availableColumnsWidth)
 
-	compact := buildCompactLayout(tr.targets, tr.packetSize, tr.sourceIPv4, tr.sourceIPv6, tr.lastLossBase)
-	compactRows := compact.rows
-	compactDesired := compact.desired
-	compactHeaders := compact.headers
-	compactAligns := compact.aligns
-	compactMin := compact.min
-	compactMax := compact.max
-	compactAvailableColumnsWidth := availableTableWidth - (len(compactHeaders) + 1)
-	if compactAvailableColumnsWidth < 0 {
-		compactAvailableColumnsWidth = 0
+	// The compact layout is only a fallback for when the full layout
+	// doesn't fit. buildCompactLayout calls GetView() once per target to
+	// compute it, so skip it entirely in the common case (ok == true)
+	// rather than computing and discarding it every tick.
+	var compactRows []compactRow
+	var compactHeaders []string
+	var compactAligns []int
+	var compactWidths []int
+	compactOK := false
+	if !ok {
+		compact := buildCompactLayout(tr.targets, tr.packetSize, tr.sourceIPv4, tr.sourceIPv6, tr.lastLossBase)
+		compactRows = compact.rows
+		compactHeaders = compact.headers
+		compactAligns = compact.aligns
+		compactAvailableColumnsWidth := availableTableWidth - (len(compactHeaders) + 1)
+		if compactAvailableColumnsWidth < 0 {
+			compactAvailableColumnsWidth = 0
+		}
+		compactWidths, compactOK = fitWidthsToAvailable(compact.desired, compact.min, compact.max, tr.compactShrinkPriorities, tr.compactGrowPriorities, compactAvailableColumnsWidth)
 	}
-	compactWidths, compactOK := fitWidthsToAvailable(compactDesired, compactMin, compactMax, tr.compactShrinkPriorities, tr.compactGrowPriorities, compactAvailableColumnsWidth)
 
 	if ok {
 		tr.compactLayout = false
