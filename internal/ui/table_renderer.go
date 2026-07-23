@@ -127,7 +127,7 @@ func newTableRenderer(
 	tr.maxWidths[errorIdx] = tr.baseWidths[errorIdx]
 	tr.lastLossBase = cols[columnsByName(cols, "Last Loss")].base
 
-	tr.widths = tr.calcColumnWidths()
+	tr.widths = tr.calcColumnWidths(fetchViews(targets))
 	tr.activeHeaders = append([]string(nil), tr.fullHeaders...)
 	tr.activeAligns = append([]int(nil), tr.fullAligns...)
 	tr.rowCount = len(targets) + 1
@@ -140,16 +140,18 @@ func newTableRenderer(
 }
 
 // calcColumnWidths recalculates dynamic column widths based on current
-// output text (Src/Dst IP, DNS, ASN).
-func (tr *tableRenderer) calcColumnWidths() []int {
+// output text (Src/Dst IP, DNS, ASN). views must be the same length as
+// tr.targets, in the same order (one GetView() snapshot per target, taken
+// once per tick by the caller rather than re-fetched here).
+func (tr *tableRenderer) calcColumnWidths(views []stats.TargetView) []int {
 	widths := append([]int(nil), tr.baseWidths...)
 	for i, c := range tr.cols {
 		if !c.dynamic {
 			continue
 		}
 		maxWidth := runewidth.StringWidth(c.name)
-		for _, t := range tr.targets {
-			ctx := columnRowContext{view: t.GetView(), sourceIPv4: tr.sourceIPv4, sourceIPv6: tr.sourceIPv6, packetSize: tr.packetSize}
+		for _, view := range views {
+			ctx := columnRowContext{view: view, sourceIPv4: tr.sourceIPv4, sourceIPv6: tr.sourceIPv6, packetSize: tr.packetSize}
 			if w := runewidth.StringWidth(c.render(ctx)); w > maxWidth {
 				maxWidth = w
 			}
@@ -160,13 +162,25 @@ func (tr *tableRenderer) calcColumnWidths() []int {
 }
 
 // calcColumnWidthsCached recalculates only when the terminal width changes.
-func (tr *tableRenderer) calcColumnWidthsCached() []int {
+func (tr *tableRenderer) calcColumnWidthsCached(views []stats.TargetView) []int {
 	_, _, curTermWidth, _ := tr.tablePane.GetInnerRect()
 	if tr.cachedWidths == nil || curTermWidth != tr.lastTermWidth {
-		tr.cachedWidths = tr.calcColumnWidths()
+		tr.cachedWidths = tr.calcColumnWidths(views)
 		tr.lastTermWidth = curTermWidth
 	}
 	return tr.cachedWidths
+}
+
+// fetchViews takes one GetView() snapshot per target, in order. Called once
+// per tick (or once at construction) so every consumer within that tick —
+// width calculation, compact layout, row rendering — shares the same
+// snapshot instead of each re-fetching it independently.
+func fetchViews(targets []*stats.TargetStats) []stats.TargetView {
+	views := make([]stats.TargetView, len(targets))
+	for i, t := range targets {
+		views[i] = t.GetView()
+	}
+	return views
 }
 
 // update re-renders the Ping Monitor table (full or compact layout, flat or
@@ -175,13 +189,20 @@ func (tr *tableRenderer) update() {
 	tr.table.Clear()
 	tr.tablePane.SetTitle(" Ping Monitor ")
 
+	// One GetView() snapshot per target for this whole tick — width calc,
+	// compact layout, and row rendering below all read from this same
+	// slice instead of each calling GetView() independently (P2: GetView()
+	// copies the full RTT history ring, so this collapses what used to be
+	// 10+ redundant calls per target per tick down to exactly one).
+	views := fetchViews(tr.targets)
+
 	_, _, availableTableWidth, _ := tr.tablePane.GetInnerRect()
 	availableColumnsWidth := availableTableWidth - (len(tr.fullHeaders) + 1)
 	if availableColumnsWidth < 0 {
 		availableColumnsWidth = 0
 	}
 
-	updatedWidths := tr.calcColumnWidthsCached()
+	updatedWidths := tr.calcColumnWidthsCached(views)
 	dynamicMaxWidths := append([]int(nil), tr.maxWidths...)
 	for i, c := range tr.cols {
 		if c.dynamic && updatedWidths[i] > dynamicMaxWidths[i] {
@@ -191,16 +212,15 @@ func (tr *tableRenderer) update() {
 	fitted, ok := fitWidthsToAvailable(updatedWidths, tr.minWidths, dynamicMaxWidths, tr.shrinkPriorities, tr.growPriorities, availableColumnsWidth)
 
 	// The compact layout is only a fallback for when the full layout
-	// doesn't fit. buildCompactLayout calls GetView() once per target to
-	// compute it, so skip it entirely in the common case (ok == true)
-	// rather than computing and discarding it every tick.
+	// doesn't fit; skip computing it entirely in the common case (ok ==
+	// true) rather than computing and discarding it every tick.
 	var compactRows []compactRow
 	var compactHeaders []string
 	var compactAligns []int
 	var compactWidths []int
 	compactOK := false
 	if !ok {
-		compact := buildCompactLayout(tr.targets, tr.packetSize, tr.sourceIPv4, tr.sourceIPv6, tr.lastLossBase)
+		compact := buildCompactLayout(views, tr.packetSize, tr.sourceIPv4, tr.sourceIPv6, tr.lastLossBase)
 		compactRows = compact.rows
 		compactHeaders = compact.headers
 		compactAligns = compact.aligns
@@ -270,18 +290,17 @@ func (tr *tableRenderer) update() {
 
 	// Pass 1: check for new errors and alert state for all targets, and
 	// cache each target's rendered cell text so pass 2 doesn't re-render
-	// every column a second time per target per tick.
+	// every column a second time per target per tick. Reuses the views
+	// slice fetched once at the top of update() rather than re-fetching.
 	now := time.Now()
-	views := make([]stats.TargetView, len(tr.targets))
 	var rowCtxCache []columnRowContext
 	var textsCache [][]string
 	if !tr.compactLayout {
 		rowCtxCache = make([]columnRowContext, len(tr.targets))
 		textsCache = make([][]string, len(tr.targets))
 	}
-	for i, t := range tr.targets {
-		view := t.GetView()
-		views[i] = view
+	for i := range tr.targets {
+		view := views[i]
 		rowSourceIP := displaySourceIPForDst(view.IP, tr.sourceIPv4, tr.sourceIPv6)
 		if !view.LastLossTime.IsZero() {
 			lastTime, exists := tr.vs.lastLossTimes[view.Host]

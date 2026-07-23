@@ -198,11 +198,37 @@ func TestTableRendererUpdate_FallsBackToCompactWhenNarrow(t *testing.T) {
 	}
 }
 
+// BenchmarkTableRendererUpdate_100Targets is the P2 fix's alloc-reduction
+// proof: run with `go test -bench=. -benchmem` and compare against the
+// pre-P2 commit — GetView() previously ran once per target for width calc,
+// once per target in Pass 1, and (before the P3 fix) again inside
+// buildCompactLayout, each copying up to historySize RTT history entries.
+// After P2, each target's GetView() runs exactly once per update() call.
+func BenchmarkTableRendererUpdate_100Targets(b *testing.B) {
+	const numTargets = 100
+	targets := make([]*stats.TargetStats, numTargets)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats("host")
+		targets[i].SetIP("10.0.0.1")
+		for j := 0; j < 500; j++ {
+			targets[i].IncSent()
+			targets[i].OnSuccess(time.Duration(j)*time.Millisecond, 64)
+		}
+	}
+	tr := newTestTableRenderer(targets, 200)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		tr.update()
+	}
+}
+
 func TestBuildCompactLayout(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	target.OnSuccess(12*time.Millisecond, 64)
 	target.SetIfaceMTU(1500)
-	layout := buildCompactLayout([]*stats.TargetStats{target}, 56, "10.0.0.2", "", 20)
+	layout := buildCompactLayout([]stats.TargetView{target.GetView()}, 56, "10.0.0.2", "", 20)
 	if len(layout.rows) != 2 {
 		t.Fatalf("rows: got %d", len(layout.rows))
 	}

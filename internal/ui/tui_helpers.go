@@ -368,7 +368,7 @@ type alertFlags struct {
 	jitterRed bool
 }
 
-func buildCompactLayout(targets []*stats.TargetStats, packetSize int, sourceIPv4, sourceIPv6 string, errorMaxWidth int) compactLayout {
+func buildCompactLayout(views []stats.TargetView, packetSize int, sourceIPv4, sourceIPv6 string, errorMaxWidth int) compactLayout {
 	headers := []string{"Host", "Path", "Stats", "Error"}
 	aligns := []int{tview.AlignLeft, tview.AlignLeft, tview.AlignLeft, tview.AlignLeft}
 	desired := []int{
@@ -380,9 +380,8 @@ func buildCompactLayout(targets []*stats.TargetStats, packetSize int, sourceIPv4
 	min := []int{8, 16, 18, 8}
 	max := []int{40, 80, 80, errorMaxWidth}
 
-	rows := make([]compactRow, 0, len(targets)*2)
-	for _, t := range targets {
-		view := t.GetView()
+	rows := make([]compactRow, 0, len(views)*2)
+	for _, view := range views {
 		lossRate := calcLossRate(view)
 		lossStr := formatLossAgo(view.LastLossTime)
 		rttStr := formatRTT(view.LastRTT)
