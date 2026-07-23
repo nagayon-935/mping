@@ -27,6 +27,7 @@ type PortCheckResult struct {
 }
 
 func (r *PortCheckResult) SetResult(status string, rtt time.Duration) {
+	defer bumpGeneration()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if status != r.Status {
@@ -301,12 +302,14 @@ func (t *TargetStats) MTR() *MTRStats {
 }
 
 func (t *TargetStats) SetIP(ip string) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.IP = ip
 }
 
 func (t *TargetStats) SetASNInfo(number, country, org string) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.ASN = number
@@ -315,12 +318,14 @@ func (t *TargetStats) SetASNInfo(number, country, org string) {
 }
 
 func (t *TargetStats) SetDNSServer(dnsServer string) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.DNSServer = dnsServer
 }
 
 func (t *TargetStats) SetTraceHops(hops []string) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.TraceHops = make([]string, len(hops))
@@ -328,18 +333,21 @@ func (t *TargetStats) SetTraceHops(hops []string) {
 }
 
 func (t *TargetStats) SetIfaceMTU(mtu int) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.IfaceMTU = mtu
 }
 
 func (t *TargetStats) SetPMTU(pmtu int) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.PMTU = pmtu
 }
 
 func (t *TargetStats) SetPMTUBottleneckIP(ip string) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.PMTUBottleneckIP = ip
@@ -347,18 +355,21 @@ func (t *TargetStats) SetPMTUBottleneckIP(ip string) {
 
 // SetPortResults replaces the port check results slice atomically.
 func (t *TargetStats) SetPortResults(results []*PortCheckResult) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.PortResults = results
 }
 
 func (t *TargetStats) IncSent() {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.Sent++
 }
 
 func (t *TargetStats) OnSuccess(rtt time.Duration, ttl int) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -377,6 +388,7 @@ func (t *TargetStats) OnSuccess(rtt time.Duration, ttl int) {
 }
 
 func (t *TargetStats) OnFailure(reason string) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.Loss++
@@ -386,6 +398,7 @@ func (t *TargetStats) OnFailure(reason string) {
 }
 
 func (t *TargetStats) Reset() {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.Sent = 0
