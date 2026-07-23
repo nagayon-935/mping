@@ -59,6 +59,7 @@ func NewMTRStats() *MTRStats {
 // EnsureLen grows the hop slice to n entries if it is currently shorter.
 // Existing hop data is preserved; this is a no-op when len >= n.
 func (m *MTRStats) EnsureLen(n int) {
+	defer bumpGeneration()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for len(m.hops) < n {
@@ -72,6 +73,7 @@ func (m *MTRStats) EnsureLen(n int) {
 // path so the UI stops rendering frozen data for hops that no longer exist.
 // This is a no-op when len <= n.
 func (m *MTRStats) TruncateLen(n int) {
+	defer bumpGeneration()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if n < 0 {
@@ -85,6 +87,7 @@ func (m *MTRStats) TruncateLen(n int) {
 // RecordReply records a successful probe response for the hop at ttl.
 // ttl is 1-based.
 func (m *MTRStats) RecordReply(ttl int, ip, asn, country, org string, rtt time.Duration) {
+	defer bumpGeneration()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	h := m.hopAt(ttl)
@@ -122,6 +125,7 @@ func (m *MTRStats) RecordReply(ttl int, ip, asn, country, org string, rtt time.D
 // RecordLoss records a probe timeout (no response) for the hop at ttl.
 // ttl is 1-based.
 func (m *MTRStats) RecordLoss(ttl int) {
+	defer bumpGeneration()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	h := m.hopAt(ttl)
@@ -145,6 +149,7 @@ func (m *MTRStats) HasIP(ttl int) bool {
 // Used during discovery when no RTT measurement was taken.
 // ttl is 1-based.
 func (m *MTRStats) SetIP(ttl int, ip, asn, country, org string) {
+	defer bumpGeneration()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	h := m.hopAt(ttl)
@@ -229,6 +234,7 @@ func (m *MTRStats) CheckFlap(prevIPs []string, now time.Time) (bool, string) {
 	}
 
 	desc := buildFlapDesc(prevIPs, cur)
+	bumpGeneration()
 	m.flapCount++
 	m.lastFlapAt = now
 	m.lastFlapDesc = desc
@@ -280,6 +286,7 @@ func buildFlapDesc(prev, cur []string) string {
 
 // Reset clears all hop data.
 func (m *MTRStats) Reset() {
+	defer bumpGeneration()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.hops = nil
