@@ -15,6 +15,12 @@ const (
 	defaultProbeInterval   = 1 * time.Second
 	defaultHopTimeout      = 1 * time.Second
 	defaultRediscoverEvery = 10 * time.Minute
+	// defaultMaxConcurrentProbes bounds the number of ProbeHop calls in
+	// flight at once across the whole Engine (all targets combined). Without
+	// this, discover()'s per-TTL fan-out (up to MaxHops goroutines) times a
+	// large host count can burst to thousands of simultaneous goroutines and
+	// heavy contention on the shared pinger's trace-channel registry.
+	defaultMaxConcurrentProbes = 50
 )
 
 // HopSocket is the interface satisfied by *pinger.HopSocket.
@@ -38,6 +44,11 @@ type Config struct {
 	ProbeInterval   time.Duration
 	HopTimeout      time.Duration
 	RediscoverEvery time.Duration
+	// MaxConcurrentProbes bounds the number of ProbeHop calls in flight at
+	// once across the entire Engine (all targets combined, not per target —
+	// a per-target limit would still allow NumTargets × MaxHops goroutines
+	// at once). Defaults to defaultMaxConcurrentProbes when <= 0.
+	MaxConcurrentProbes int
 	// OnFlap is called (in the engine goroutine) when a route change is detected.
 	// host is TargetStats.Host; desc summarises what changed.
 	OnFlap func(host, desc string)
@@ -57,6 +68,9 @@ func (c *Config) withDefaults() Config {
 	if out.RediscoverEvery <= 0 {
 		out.RediscoverEvery = defaultRediscoverEvery
 	}
+	if out.MaxConcurrentProbes <= 0 {
+		out.MaxConcurrentProbes = defaultMaxConcurrentProbes
+	}
 	return out
 }
 
@@ -65,6 +79,9 @@ type Engine struct {
 	prober  HopProber
 	targets []*stats.TargetStats
 	cfg     Config
+	// sem bounds total concurrent ProbeHop calls across all targets; see
+	// Config.MaxConcurrentProbes.
+	sem chan struct{}
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -72,10 +89,12 @@ type Engine struct {
 
 // NewEngine creates an Engine. Call Start to begin probing.
 func NewEngine(prober HopProber, targets []*stats.TargetStats, cfg Config) *Engine {
+	resolved := cfg.withDefaults()
 	return &Engine{
 		prober:  prober,
 		targets: targets,
-		cfg:     cfg.withDefaults(),
+		cfg:     resolved,
+		sem:     make(chan struct{}, resolved.MaxConcurrentProbes),
 	}
 }
 
@@ -87,7 +106,7 @@ func (e *Engine) Start() {
 		e.wg.Add(1)
 		go func(ts *stats.TargetStats) {
 			defer e.wg.Done()
-			runTarget(ctx, e.prober, ts, e.cfg)
+			runTarget(ctx, e.prober, ts, e.cfg, e.sem)
 		}(t)
 	}
 }
@@ -101,7 +120,7 @@ func (e *Engine) Stop() {
 }
 
 // runTarget is the per-target goroutine: discover hops, then continuously probe.
-func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg Config) {
+func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg Config, sem chan struct{}) {
 	v := ts.GetView()
 	dest := v.IP
 	if dest == "" {
@@ -117,7 +136,7 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 	mtr := ts.MTR()
 
 	// Initial discovery
-	hopCount := discover(ctx, prober, sock, mtr, dest, cfg)
+	hopCount := discover(ctx, prober, sock, mtr, dest, cfg, sem)
 	if hopCount == 0 || ctx.Err() != nil {
 		return
 	}
@@ -149,7 +168,7 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 			}
 
 			prevIPs := mtr.RouteSnapshot()
-			newHopCount := discover(ctx, prober, sock, mtr, dest, cfg)
+			newHopCount := discover(ctx, prober, sock, mtr, dest, cfg, sem)
 			if newHopCount == 0 || ctx.Err() != nil {
 				// Round was cancelled mid-flight (e.g. Stop() racing this
 				// tick); discover() registered nothing this round, so
@@ -163,15 +182,17 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 				cfg.OnFlap(ts.Host, desc)
 			}
 		case <-probeTicker.C:
-			probe(ctx, prober, sock, mtr, dest, hopCount, cfg)
+			probe(ctx, prober, sock, mtr, dest, hopCount, cfg, sem)
 		}
 	}
 }
 
 // discover sends TTL-limited probes from TTL=1 up to maxHops concurrently to find hop IPs.
 // It updates mtr hop IPs and returns the final hop count (TTL at which dest was reached,
-// or maxHops if not reached).
-func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTRStats, dest string, cfg Config) int {
+// or maxHops if not reached). sem bounds concurrent ProbeHop calls across the
+// whole Engine; a nil sem (only in tests bypassing NewEngine) disables the
+// bound.
+func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTRStats, dest string, cfg Config, sem chan struct{}) int {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	reached := false
@@ -187,6 +208,11 @@ func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.
 		wg.Add(1)
 		go func(t int) {
 			defer wg.Done()
+			if !acquire(ctx, sem) {
+				return
+			}
+			defer release(sem)
+
 			traceID := prober.NextTraceID()
 			reply, err := prober.ProbeHop(ctx, sock, dest, t, traceID, cfg.HopTimeout)
 			if err != nil || ctx.Err() != nil {
@@ -245,8 +271,9 @@ func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.
 // "*" in the UI) are skipped: continuous per-tick probing wouldn't reveal
 // anything discover()/rediscovery hasn't already tried, and would just log
 // permanent 100% loss for a hop the user never learned the address of. The
-// row stays visible via the hop slot discover() already created.
-func probe(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTRStats, dest string, hopCount int, cfg Config) {
+// row stays visible via the hop slot discover() already created. sem bounds
+// concurrent ProbeHop calls across the whole Engine; see discover.
+func probe(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTRStats, dest string, hopCount int, cfg Config, sem chan struct{}) {
 	var wg sync.WaitGroup
 	for ttl := 1; ttl <= hopCount; ttl++ {
 		if !mtr.HasIP(ttl) {
@@ -255,6 +282,11 @@ func probe(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTR
 		wg.Add(1)
 		go func(t int) {
 			defer wg.Done()
+			if !acquire(ctx, sem) {
+				return
+			}
+			defer release(sem)
+
 			traceID := prober.NextTraceID()
 			reply, err := prober.ProbeHop(ctx, sock, dest, t, traceID, cfg.HopTimeout)
 			if err != nil || ctx.Err() != nil {
@@ -269,4 +301,31 @@ func probe(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTR
 		}(ttl)
 	}
 	wg.Wait()
+}
+
+// acquire blocks until it obtains a slot in sem or ctx is cancelled,
+// whichever comes first, returning false in the latter case (the caller
+// should then return without calling release). A nil sem disables the
+// bound entirely (acquire always succeeds immediately) — used only by
+// tests that construct discover/probe calls without going through
+// NewEngine/Start.
+func acquire(ctx context.Context, sem chan struct{}) bool {
+	if sem == nil {
+		return true
+	}
+	select {
+	case sem <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// release returns the slot acquire took. No-op when sem is nil, mirroring
+// acquire's bypass.
+func release(sem chan struct{}) {
+	if sem == nil {
+		return
+	}
+	<-sem
 }
