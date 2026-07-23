@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nagayon-935/mping/internal/mtr"
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/nagayon-935/mping/internal/ui"
@@ -29,6 +30,14 @@ type fakePinger struct {
 	discoverErr          error
 	traceErr             error
 	logWriterSet         bool
+
+	// stopCalled/closeCalled track Stop() and Close() independently (unlike
+	// the single "closed" flag both also set, kept for backward
+	// compatibility with existing assertions), so tests can verify Close()
+	// specifically ran — e.g. after stopPinger() — rather than merely that
+	// either of the two happened.
+	stopCalled  bool
+	closeCalled bool
 
 	// blockTraceUntilCtxDone, when set, makes TraceRoute block on ctx.Done()
 	// (simulating a slow/in-flight network trace) instead of returning
@@ -48,6 +57,7 @@ func (f *fakePinger) Start(interval, timeout time.Duration) error {
 
 func (f *fakePinger) Close() {
 	f.closed = true
+	f.closeCalled = true
 }
 
 func (f *fakePinger) Wait() {
@@ -82,8 +92,16 @@ func (f *fakePinger) SetSource(ip string)                       {}
 func (f *fakePinger) SetSize(size int)                          {}
 func (f *fakePinger) SetCount(count int)                        {}
 func (f *fakePinger) SetResolveInterval(interval time.Duration) {}
-func (f *fakePinger) Stop()                                     { f.closed = true }
-func (f *fakePinger) SetLogWriter(w io.Writer)                  { f.logWriterSet = true }
+func (f *fakePinger) Stop() {
+	f.closed = true
+	f.stopCalled = true
+}
+func (f *fakePinger) SetLogWriter(w io.Writer) { f.logWriterSet = true }
+
+// MTRProber returns nil: none of the tests using fakePinger enable MTR
+// through it (mtrEnabled gates every call site of MTRProber), so a real
+// HopProber is never required here.
+func (f *fakePinger) MTRProber() mtr.HopProber { return nil }
 
 func TestGetPreferredOutboundIP_Localhost(t *testing.T) {
 	ip := getPreferredOutboundIP("127.0.0.1", "udp4")
