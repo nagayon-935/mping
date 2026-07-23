@@ -136,6 +136,42 @@ func reconstructHistory(buf []time.Duration, idx, length int) []time.Duration {
 	return out
 }
 
+// reconstructHistoryWindow returns only the trailing min(n, length) entries
+// (oldest-to-newest order, same convention as reconstructHistory), without
+// allocating or copying the full ring first. Used by callers (e.g. the RTT
+// graph) that only ever need a fixed trailing window rather than the whole
+// multi-thousand-entry history — historySize is sized for the longest
+// possible display window, but most callers need far fewer points.
+func reconstructHistoryWindow(buf []time.Duration, idx, length, n int) []time.Duration {
+	if length == 0 || buf == nil || n <= 0 {
+		return nil
+	}
+	size := len(buf)
+	effLen := length
+	if n < effLen {
+		effLen = n
+	}
+	if length < size {
+		// No wraparound yet: buf[:length] is already chronological order.
+		out := make([]time.Duration, effLen)
+		copy(out, buf[length-effLen:length])
+		return out
+	}
+	// Full ring buffer: idx%size is both the next-write position and the
+	// oldest entry's position. The trailing effLen entries occupy the
+	// effLen slots immediately before idx%size, wrapping at most once.
+	windowStart := ((idx-effLen)%size + size) % size
+	out := make([]time.Duration, effLen)
+	if windowStart+effLen <= size {
+		copy(out, buf[windowStart:windowStart+effLen])
+	} else {
+		first := size - windowStart
+		copy(out, buf[windowStart:size])
+		copy(out[first:], buf[:effLen-first])
+	}
+	return out
+}
+
 // TargetView represents a read-only snapshot of the stats for UI rendering.
 type TargetView struct {
 	Host             string
