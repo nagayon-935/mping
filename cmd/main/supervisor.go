@@ -211,24 +211,26 @@ type checkerStopper interface {
 }
 
 // resetChecker stops the current value at *field (if any) and swaps in a
-// freshly created replacement. mu guards only the field read/write, not the
-// Stop/Wait/create calls — this reproduces resetHTTP/resetPort's original
-// unlocked window (TD-46①: behavior-preserving dedup; the theoretical
-// concurrent-stopAll race in that window is tracked separately as TD-46②).
+// freshly created replacement, holding mu across the entire stop→create→
+// assign sequence (matching resetMTR's pattern below, which already holds
+// mu across mtrEngine.Stop()+NewEngine()+Start()). TD-46②: this closes the
+// unlocked window resetHTTP/resetPort previously had, where a concurrent
+// stopAll() could read *field as nil mid-reset and skip stopping the
+// newly-created checker — stopAll also takes mu (see stopAll/stopPinger
+// above), so it now blocks until reset finishes and then correctly stops
+// the replacement. Stop/Wait on a port/HTTP checker just joins its own
+// goroutines and doesn't call back into supervisor, so holding mu across
+// them cannot deadlock.
 func resetChecker[T checkerStopper](mu *sync.Mutex, field *T, create func() T) {
 	mu.Lock()
+	defer mu.Unlock()
 	cur := *field
 	var zero T
-	*field = zero
-	mu.Unlock()
 	if cur != zero {
 		cur.Stop()
 		cur.Wait()
 	}
-	next := create()
-	mu.Lock()
-	*field = next
-	mu.Unlock()
+	*field = create()
 }
 
 // httpResults returns the current HTTP checker's results, or nil when no
