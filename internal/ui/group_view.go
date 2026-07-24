@@ -77,6 +77,11 @@ func buildGroupRows(
 	return rows
 }
 
+// groupHeaderBackground distinguishes a group header row from the plain
+// black-background data rows around it, so it reads as a section divider
+// instead of a row with missing data.
+var groupHeaderBackground = tcell.ColorDarkSlateGray
+
 // setGroupHeaderRow fills a table row with a group header separator.
 func setGroupHeaderRow(table *tview.Table, tableRow int, colCount int,
 	groupName string, memberCount int,
@@ -84,11 +89,16 @@ func setGroupHeaderRow(table *tview.Table, tableRow int, colCount int,
 	label := fmt.Sprintf(" ▸ %s  (%d hosts)", groupName, memberCount)
 
 	first := tview.NewTableCell(label).
+		SetTextColor(tcell.ColorYellow).
 		SetAttributes(tcell.AttrBold).
 		SetSelectable(false).
-		SetExpansion(1)
+		SetExpansion(1).
+		SetBackgroundColor(groupHeaderBackground)
 	table.SetCell(tableRow, 0, first)
 	for c := 1; c < colCount; c++ {
-		table.SetCell(tableRow, c, tview.NewTableCell("").SetSelectable(false))
+		table.SetCell(tableRow, c, tview.NewTableCell("").
+			SetSelectable(false).
+			SetExpansion(1).
+			SetBackgroundColor(groupHeaderBackground))
 	}
 }

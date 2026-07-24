@@ -3,6 +3,8 @@ package ui
 import (
 	"testing"
 
+	"github.com/rivo/tview"
+
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
@@ -82,6 +84,31 @@ func TestBuildGroupRows_MultipleGroups(t *testing.T) {
 	}
 	if rows[3].kind != groupRowTarget || rows[3].targetIdx != 1 {
 		t.Errorf("row3: %+v", rows[3])
+	}
+}
+
+// ── setGroupHeaderRow ────────────────────────────────────────────────────────
+
+func TestSetGroupHeaderRow_BannerBackground(t *testing.T) {
+	table := tview.NewTable()
+	const colCount = 4
+	setGroupHeaderRow(table, 0, colCount, "Cloudflare", 2)
+
+	for c := range colCount {
+		_, bg, _ := table.GetCell(0, c).Style.Decompose()
+		if bg != groupHeaderBackground {
+			t.Errorf("col %d: background = %v, want %v", c, bg, groupHeaderBackground)
+		}
+	}
+
+	labelCell := table.GetCell(0, 0)
+	if labelCell.Text == "" {
+		t.Error("label cell should contain the group name/count text")
+	}
+	for c := 1; c < colCount; c++ {
+		if got := table.GetCell(0, c).Text; got != "" {
+			t.Errorf("col %d: want empty text, got %q", c, got)
+		}
 	}
 }
 
