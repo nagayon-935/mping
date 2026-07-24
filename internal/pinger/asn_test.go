@@ -44,6 +44,7 @@ func TestPinger_ASNLookupDirect(t *testing.T) {
 		AsnEnabled: true,
 		LookupTXT:  mockLookup,
 	})
+	p.asnJitter = func() time.Duration { return 0 }
 
 	// Test IPv4 lookup — backward-compat string method
 	asn := p.getASN("8.8.8.8")
@@ -88,6 +89,7 @@ func TestGetASNInfo_ExtractsCountryAndOrg(t *testing.T) {
 		return nil, fmt.Errorf("not found")
 	}
 	p := NewPingerWithOptions(nil, Options{AsnEnabled: true, LookupTXT: mockLookup})
+	p.asnJitter = func() time.Duration { return 0 }
 
 	info := p.getASNInfo("8.8.8.8")
 	if info.Number != "AS15169" {
@@ -109,6 +111,7 @@ func TestGetASNInfo_OrgLookupFails_StillReturnsCountry(t *testing.T) {
 		return nil, fmt.Errorf("asn lookup fail")
 	}
 	p := NewPingerWithOptions(nil, Options{AsnEnabled: true, LookupTXT: mockLookup})
+	p.asnJitter = func() time.Duration { return 0 }
 
 	info := p.getASNInfo("8.8.8.8")
 	if info.Number != "AS15169" {
@@ -132,6 +135,7 @@ func TestGetASNInfo_CachesFullInfo(t *testing.T) {
 		return []string{"64512 | EXAMPLE - Example Corp, DE | 2000-01-01"}, nil
 	}
 	p := NewPingerWithOptions(nil, Options{AsnEnabled: true, LookupTXT: mockLookup})
+	p.asnJitter = func() time.Duration { return 0 }
 
 	_ = p.getASNInfo("10.0.0.1")
 	countAfterFirst := callCount
@@ -146,6 +150,7 @@ func TestGetASNInfo_NA_ReturnsEmpty(t *testing.T) {
 		return []string{"NA | 1.1.1.0/24 | US | arin | 1992-12-01"}, nil
 	}
 	p := NewPingerWithOptions(nil, Options{AsnEnabled: true, LookupTXT: mockLookup})
+	p.asnJitter = func() time.Duration { return 0 }
 
 	info := p.getASNInfo("1.1.1.1")
 	if info.Number != "" || info.Country != "" || info.Org != "" {
@@ -162,6 +167,7 @@ func TestPinger_LookupASN(t *testing.T) {
 		AsnEnabled: true,
 		LookupTXT:  mockLookup,
 	})
+	p.asnJitter = func() time.Duration { return 0 }
 	p.lookupASN(target, "8.8.8.8")
 	if target.GetView().ASN != "AS15169" {
 		t.Errorf("lookupASN did not set ASN on target")
@@ -308,6 +314,7 @@ func TestResolveTarget_TracksASNGoroutineInWaitGroup(t *testing.T) {
 			return &net.IPAddr{IP: net.ParseIP("8.8.8.8")}, nil
 		},
 	})
+	p.asnJitter = func() time.Duration { return 0 }
 
 	p.resolveTarget(target)
 
@@ -350,6 +357,7 @@ func TestLookupASN_ReturnsEarlyAfterStop(t *testing.T) {
 	}
 	target := stats.NewTargetStats("8.8.8.8")
 	p := NewPingerWithOptions(nil, Options{AsnEnabled: true, LookupTXT: mockLookup})
+	p.asnJitter = func() time.Duration { return 0 }
 	p.Stop()
 
 	p.lookupASN(target, "8.8.8.8")
@@ -359,6 +367,53 @@ func TestLookupASN_ReturnsEarlyAfterStop(t *testing.T) {
 	}
 	if got := target.GetView().ASN; got != "" {
 		t.Errorf("ASN should remain unset after Stop(), got %q", got)
+	}
+}
+
+// TestLookupTXTBounded_TimesOut verifies that a Cymru DNS query that never
+// returns doesn't hang getASNInfo forever (the default net/Resolver-based
+// lookupTXT has no timeout of its own).
+func TestLookupTXTBounded_TimesOut(t *testing.T) {
+	orig := asnLookupTimeout
+	asnLookupTimeout = 20 * time.Millisecond
+	defer func() { asnLookupTimeout = orig }()
+
+	blocked := make(chan struct{})
+	defer close(blocked)
+	p := NewPingerWithOptions(nil, Options{
+		LookupTXT: func(query string) ([]string, error) {
+			<-blocked
+			return []string{"15169 | 8.8.8.0/24 | US | arin | 1992-12-01"}, nil
+		},
+	})
+
+	txts, err := p.lookupTXTBounded("8.8.8.8.origin.asn.cymru.com")
+	if err == nil {
+		t.Fatal("expected a timeout error, got nil")
+	}
+	if txts != nil {
+		t.Errorf("expected nil txts on timeout, got %v", txts)
+	}
+}
+
+// TestGetASNInfo_JitterZero_ReturnsImmediately verifies that with jitter
+// disabled (the deterministic test configuration), getASNInfo doesn't add
+// any artificial delay before its first DNS query.
+func TestGetASNInfo_JitterZero_ReturnsImmediately(t *testing.T) {
+	p := NewPingerWithOptions(nil, Options{
+		LookupTXT: func(query string) ([]string, error) {
+			return []string{"15169 | 8.8.8.0/24 | US | arin | 1992-12-01"}, nil
+		},
+	})
+	p.asnJitter = func() time.Duration { return 0 }
+
+	start := time.Now()
+	info := p.getASNInfo("8.8.8.8")
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Errorf("getASNInfo took %s with zero jitter, expected near-instant", elapsed)
+	}
+	if info.Number != "AS15169" {
+		t.Errorf("Number: want AS15169, got %q", info.Number)
 	}
 }
 
