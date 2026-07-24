@@ -30,6 +30,34 @@ func buildMTRTarget(host, ip string, hops []stats.HopView) *stats.TargetStats {
 	return t
 }
 
+func TestMtrIPStr(t *testing.T) {
+	tests := []struct {
+		name string
+		hop  stats.HopView
+		want string
+	}{
+		{"star hop", stats.HopView{IP: ""}, "*"},
+		{"no ASN", stats.HopView{IP: "10.0.0.1"}, "10.0.0.1"},
+		{
+			"ASN with operator name",
+			stats.HopView{IP: "8.8.8.8", ASN: "AS15169", Country: "US", Org: "Google LLC"},
+			"8.8.8.8 (AS15169 Google LLC)",
+		},
+		{
+			"ASN without operator name falls back to AS number only",
+			stats.HopView{IP: "8.8.4.4", ASN: "AS15169", Country: "US"},
+			"8.8.4.4 (AS15169)",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := mtrIPStr(tt.hop); got != tt.want {
+				t.Errorf("mtrIPStr(%+v) = %q, want %q", tt.hop, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRenderMTRTable_BasicStructure(t *testing.T) {
 	target := buildMTRTarget("8.8.8.8", "8.8.8.8", []stats.HopView{
 		{TTL: 1, IP: "192.168.1.1", Sent: 10, Recv: 10, AvgRTT: 2 * time.Millisecond},

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"os"
 	"strings"
@@ -27,7 +28,14 @@ const (
 	pmtuProbeTimeout    = 300 * time.Millisecond // generous enough for WAN RTTs, short enough for interactive use
 	payloadSignature    = "MPING"                // identifies our probes in packet captures
 	traceSignature      = "TRC-"                 // 4-byte prefix distinguishing traceroute probes from ping probes
+
+	asnJitterMax = 2 * time.Second // spreads concurrent targets' ASN lookups to avoid bursting Cymru's public server
 )
+
+// asnLookupTimeout bounds each Cymru DNS TXT query, since neither net.LookupTXT
+// nor a *net.Resolver wrapped with context.Background() has a timeout of its
+// own. A var (not const) so tests can shrink it instead of waiting 3s.
+var asnLookupTimeout = 3 * time.Second
 
 // PacketConnV4 interface matches *ipv4.PacketConn methods we use
 type PacketConnV4 interface {
@@ -77,8 +85,9 @@ type Pinger struct {
 	mapMu       sync.RWMutex
 	baseID      int
 
-	asnCache map[string]ASNInfo
-	asnMu    sync.RWMutex
+	asnCache  map[string]ASNInfo
+	asnMu     sync.RWMutex
+	asnJitter func() time.Duration // returns a random delay to stagger concurrent Cymru lookups; overridden to 0 in tests
 
 	traceChans   map[int]chan traceMsg // keyed by trace ID
 	traceChansMu sync.RWMutex
@@ -169,6 +178,7 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		now:             now,
 		listenPacket:    listen,
 		lookupTXT:       lookup,
+		asnJitter:       func() time.Duration { return time.Duration(rand.Int63n(int64(asnJitterMax))) },
 	}
 }
 
@@ -545,6 +555,14 @@ func (p *Pinger) getASNInfo(ipStr string) ASNInfo {
 		return ASNInfo{}
 	}
 
+	if j := p.asnJitter(); j > 0 {
+		select {
+		case <-time.After(j):
+		case <-p.done:
+			return ASNInfo{}
+		}
+	}
+
 	var originQuery string
 	if ip4 := ip.To4(); ip4 != nil {
 		originQuery = fmt.Sprintf("%d.%d.%d.%d.origin.asn.cymru.com", ip4[3], ip4[2], ip4[1], ip4[0])
@@ -557,7 +575,7 @@ func (p *Pinger) getASNInfo(ipStr string) ASNInfo {
 		originQuery = sb.String()
 	}
 
-	txts, err := p.lookupTXT(originQuery)
+	txts, err := p.lookupTXTBounded(originQuery)
 	if err != nil || len(txts) == 0 {
 		return ASNInfo{}
 	}
@@ -592,8 +610,29 @@ func (p *Pinger) getASNInfo(ipStr string) ASNInfo {
 	return info
 }
 
+// lookupTXTBounded wraps p.lookupTXT with asnLookupTimeout. The lookup
+// goroutine is left to finish into a buffered channel on timeout rather than
+// being interrupted.
+func (p *Pinger) lookupTXTBounded(name string) ([]string, error) {
+	type result struct {
+		txts []string
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		txts, err := p.lookupTXT(name)
+		ch <- result{txts, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.txts, r.err
+	case <-time.After(asnLookupTimeout):
+		return nil, fmt.Errorf("asn lookup for %q timed out after %s", name, asnLookupTimeout)
+	}
+}
+
 func (p *Pinger) lookupOrg(asnNumber string) string {
-	txts, err := p.lookupTXT(asnNumber + ".asn.cymru.com")
+	txts, err := p.lookupTXTBounded(asnNumber + ".asn.cymru.com")
 	if err != nil || len(txts) == 0 {
 		return ""
 	}

@@ -172,16 +172,12 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, 
 	}
 }
 
-// mtrIPStr returns the display string for a hop's IP/ASN/country.
+// mtrIPStr returns the display string for a hop's IP/ASN/operator name.
 func mtrIPStr(h stats.HopView) string {
 	if h.IP == "" {
 		return "*"
 	}
-	if h.ASN != "" {
-		annotation := h.ASN
-		if h.Country != "" {
-			annotation += " " + h.Country
-		}
+	if annotation := stats.FormatASN(h.ASN, h.Org); annotation != "" {
 		return fmt.Sprintf("%s (%s)", h.IP, annotation)
 	}
 	return h.IP

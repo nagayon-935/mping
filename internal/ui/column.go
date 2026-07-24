@@ -90,14 +90,7 @@ func mainTableColumns(dnsEnabled, asnEnabled bool) []column {
 			name: "ASN", align: tview.AlignRight, base: 4, min: 4, max: 15,
 			dynamic: true, shrinkPriority: 27, growPriority: 17,
 			render: func(ctx columnRowContext) string {
-				s := ctx.view.ASN
-				if ctx.view.Country != "" {
-					s += " " + ctx.view.Country
-				}
-				if ctx.view.Org != "" {
-					s += " " + ctx.view.Org
-				}
-				return s
+				return stats.FormatASN(ctx.view.ASN, ctx.view.Org)
 			},
 		})
 	}

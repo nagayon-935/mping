@@ -130,22 +130,22 @@ func TestColumnGolden_FullLayout(t *testing.T) {
 		},
 		{
 			// ASN's width is now measured from the same render func used for
-			// the cell text (number + country + org), instead of a separate
-			// calcColumnWidths switch that only measured the bare number —
-			// so the column is now correctly sized to its full content
-			// instead of truncating to "AS1513...". See the TD-21② commit
-			// message.
+			// the cell text (number + operator name — country code is no
+			// longer shown), instead of a separate calcColumnWidths switch
+			// that only measured the bare number — so the column is now
+			// correctly sized to its full content instead of truncating to
+			// "AS1513...". See the TD-21② commit message.
 			name:       "ASNOnly",
 			asn:        true,
-			wantHeader: "║│Src IP │Dst IP                      │                ASN│ Success│   Loss│Loss Ratio│       RTT│       Avg│    Jitter│  Size│   MTU│  TTL│Error                                    │Last Loss       │║",
-			wantData:   "║│Auto   │example.com (93.184.216.34) │AS15133 US EdgeCast│       0│      0│      0.0%│         -│         -│         -│    56│     -│    -│                                         │-               │║",
+			wantHeader: "║│Src IP │Dst IP                      │             ASN│  Success│   Loss│Loss Ratio│        RTT│        Avg│    Jitter│  Size│   MTU│  TTL│Error                                    │Last Loss       │║",
+			wantData:   "║│Auto   │example.com (93.184.216.34) │AS15133 EdgeCast│        0│      0│      0.0%│          -│          -│         -│    56│     -│    -│                                         │-               │║",
 		},
 		{
 			name:       "DNSAndASN",
 			dns:        true,
 			asn:        true,
-			wantHeader: "║│Sr...│Dst IP                    │DNS    │               ASN│ Success│   Loss│Loss Ratio│       RTT│       Avg│    Jitter│  Size│   MTU│  TTL│Error                                   │Last Loss     │║",
-			wantData:   "║│Auto │example.com (93.184.216...│8.8.8.8│AS15133 US Edge...│       0│      0│      0.0%│         -│         -│         -│    56│     -│    -│                                        │-             │║",
+			wantHeader: "║│Src IP│Dst IP                    │DNS    │             ASN│ Success│   Loss│Loss Ratio│       RTT│       Avg│    Jitter│  Size│   MTU│  TTL│Error                                   │Last Loss      │║",
+			wantData:   "║│Auto  │example.com (93.184.216...│8.8.8.8│AS15133 EdgeCast│       0│      0│      0.0%│         -│         -│         -│    56│     -│    -│                                        │-              │║",
 		},
 	}
 	for i := range scenarios {

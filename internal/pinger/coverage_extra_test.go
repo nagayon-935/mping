@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"testing"
+	"time"
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
@@ -115,6 +116,7 @@ func TestGetASNFor_Enabled(t *testing.T) {
 		return nil, fmt.Errorf("not found")
 	}
 	p := NewPingerWithOptions(nil, Options{AsnEnabled: true, LookupTXT: mockLookup})
+	p.asnJitter = func() time.Duration { return 0 }
 
 	if got := p.GetASNInfoFor("8.8.8.8").Number; got != "AS15169" {
 		t.Errorf("GetASNInfoFor = %q, want AS15169", got)
