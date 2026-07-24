@@ -285,19 +285,7 @@ func (tr *tableRenderer) update() {
 	}
 
 	// Header
-	for i, h := range tr.activeHeaders {
-		text := formatCellText(h, tr.widths[i], tr.activeAligns[i])
-		cell := tview.NewTableCell(text).
-			SetBackgroundColor(tcell.ColorBlack).
-			SetTextColor(tr.headerColor).
-			SetAttributes(tcell.AttrBold).
-			SetSelectable(false).
-			SetAlign(tr.activeAligns[i])
-		if i == len(tr.activeHeaders)-1 {
-			cell.SetExpansion(1)
-		}
-		tr.table.SetCell(0, i, cell)
-	}
+	setHeaderRow(tr.table, 0, tr.activeHeaders, tr.widths, tr.activeAligns, tr.headerColor)
 
 	pickCompact := func(right, left string) string {
 		if right != "" {
@@ -376,10 +364,14 @@ func (tr *tableRenderer) update() {
 			row := tr.groupRowMap[rowIdx]
 			tableRow := rowIdx + 1
 			switch row.kind {
+			case groupRowSpacer:
+				setGroupSpacerRow(tr.table, tableRow, len(tr.activeHeaders))
 			case groupRowHeader:
 				memberCount := len(tr.groups[row.groupIdx].Indices)
 				setGroupHeaderRow(tr.table, tableRow, len(tr.activeHeaders),
 					row.groupName, memberCount)
+			case groupRowSubHeader:
+				setHeaderRow(tr.table, tableRow, tr.activeHeaders, tr.widths, tr.activeAligns, tr.headerColor)
 			case groupRowUngrouped, groupRowTarget:
 				cells := renderRowCells(tr.cols, textsCache[row.targetIdx], tr.widths, tr.fullAligns, rowCtxCache[row.targetIdx], tr.rowColor)
 				for c, cell := range cells {

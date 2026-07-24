@@ -206,7 +206,9 @@ func TestColumnGolden_Groups(t *testing.T) {
 	const (
 		wantHeader        = "║│Src IP            │Dst IP                             │   Success│    Loss│ Loss Ratio│         RTT│        Avg│     Jitter│   Size│    MTU│   TTL│Error                                    │Last L…│║"
 		wantUngrouped     = "║│Auto              │standalone.example.com (10.0.0.1)  │         0│       0│       0.0%│           -│          -│          -│     56│      -│     -│                                         │-     …│║"
+		wantSpacer        = "║│                  │                                   │          │        │           │            │           │           │       │       │      │                                         │       │║"
 		wantGroupHeader   = "║│ ▸ core  (1 hosts)│                                   │          │        │           │            │           │           │       │       │      │                                         │       │║"
+		wantSubHeader     = wantHeader
 		wantGroupedTarget = "║│Auto              │grouped.example.com (10.0.0.2)     │         0│       0│       0.0%│           -│          -│          -│     56│      -│     -│                                         │-     …│║"
 	)
 	ungrouped := stats.NewTargetStats("standalone.example.com")
@@ -221,18 +223,26 @@ func TestColumnGolden_Groups(t *testing.T) {
 		Groups:     []TargetGroup{{Name: "core", Indices: []int{1}}},
 	}
 	// Row order (each logical row followed by a border line):
-	// header, border, ungrouped-target, border, group-header, border, grouped-target.
-	rows := captureTableRows(t, opts, 200, 50, "Src IP", 6)
+	// header, border, ungrouped-target, border, spacer, border,
+	// group-header (banner), border, subheader (column header repeated),
+	// border, grouped-target.
+	rows := captureTableRows(t, opts, 200, 50, "Src IP", 10)
 	if rows[0] != wantHeader {
 		t.Errorf("header mismatch:\n got  %q\n want %q", rows[0], wantHeader)
 	}
 	if rows[2] != wantUngrouped {
 		t.Errorf("ungrouped row mismatch:\n got  %q\n want %q", rows[2], wantUngrouped)
 	}
-	if rows[4] != wantGroupHeader {
-		t.Errorf("group header row mismatch:\n got  %q\n want %q", rows[4], wantGroupHeader)
+	if rows[4] != wantSpacer {
+		t.Errorf("spacer row mismatch:\n got  %q\n want %q", rows[4], wantSpacer)
 	}
-	if rows[6] != wantGroupedTarget {
-		t.Errorf("grouped target row mismatch:\n got  %q\n want %q", rows[6], wantGroupedTarget)
+	if rows[6] != wantGroupHeader {
+		t.Errorf("group header row mismatch:\n got  %q\n want %q", rows[6], wantGroupHeader)
+	}
+	if rows[8] != wantSubHeader {
+		t.Errorf("subheader row mismatch:\n got  %q\n want %q", rows[8], wantSubHeader)
+	}
+	if rows[10] != wantGroupedTarget {
+		t.Errorf("grouped target row mismatch:\n got  %q\n want %q", rows[10], wantGroupedTarget)
 	}
 }
