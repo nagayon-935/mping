@@ -27,6 +27,7 @@ type PortCheckResult struct {
 }
 
 func (r *PortCheckResult) SetResult(status string, rtt time.Duration) {
+	defer bumpGeneration()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if status != r.Status {
@@ -209,17 +210,17 @@ func NewTargetStats(host string) *TargetStats {
 	}
 }
 
-// GetView returns a thread-safe snapshot of the current statistics.
-func (t *TargetStats) GetView() TargetView {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
+// viewLocked builds a TargetView, obtaining the History field from
+// historyFn. Caller must already hold t.mu (a read lock is sufficient).
+// Shared by GetView (full history) and GetViewWindow (trailing window
+// only) so the two stay in sync automatically.
+func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 	var avg time.Duration
 	if t.Recv > 0 {
 		avg = t.rtt.sum / time.Duration(t.Recv)
 	}
 
-	histCopy := t.rtt.historySnapshot()
+	histCopy := historyFn()
 	traceCopy := make([]string, len(t.TraceHops))
 	copy(traceCopy, t.TraceHops)
 	portCopy := make([]PortCheckView, len(t.PortResults))
@@ -269,6 +270,27 @@ func (t *TargetStats) GetView() TargetView {
 	}
 }
 
+// GetView returns a thread-safe snapshot of the current statistics,
+// including the full RTT history ring (up to historySize entries).
+func (t *TargetStats) GetView() TargetView {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.viewLocked(t.rtt.historySnapshot)
+}
+
+// GetViewWindow is like GetView, but History only contains the trailing n
+// entries instead of the full ring (see rttAccumulator.historySnapshotWindow).
+// Prefer this over GetView for callers that only ever display a fixed
+// trailing window regardless of how large historySize is — e.g. the RTT
+// graph, which only ever plots a ~30s window of points.
+func (t *TargetStats) GetViewWindow(n int) TargetView {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.viewLocked(func() []time.Duration {
+		return t.rtt.historySnapshotWindow(n)
+	})
+}
+
 // MTR returns the MTRStats for this target, creating it lazily on first call.
 func (t *TargetStats) MTR() *MTRStats {
 	t.mu.Lock()
@@ -280,12 +302,14 @@ func (t *TargetStats) MTR() *MTRStats {
 }
 
 func (t *TargetStats) SetIP(ip string) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.IP = ip
 }
 
 func (t *TargetStats) SetASNInfo(number, country, org string) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.ASN = number
@@ -294,12 +318,14 @@ func (t *TargetStats) SetASNInfo(number, country, org string) {
 }
 
 func (t *TargetStats) SetDNSServer(dnsServer string) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.DNSServer = dnsServer
 }
 
 func (t *TargetStats) SetTraceHops(hops []string) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.TraceHops = make([]string, len(hops))
@@ -307,18 +333,21 @@ func (t *TargetStats) SetTraceHops(hops []string) {
 }
 
 func (t *TargetStats) SetIfaceMTU(mtu int) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.IfaceMTU = mtu
 }
 
 func (t *TargetStats) SetPMTU(pmtu int) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.PMTU = pmtu
 }
 
 func (t *TargetStats) SetPMTUBottleneckIP(ip string) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.PMTUBottleneckIP = ip
@@ -326,18 +355,21 @@ func (t *TargetStats) SetPMTUBottleneckIP(ip string) {
 
 // SetPortResults replaces the port check results slice atomically.
 func (t *TargetStats) SetPortResults(results []*PortCheckResult) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.PortResults = results
 }
 
 func (t *TargetStats) IncSent() {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.Sent++
 }
 
 func (t *TargetStats) OnSuccess(rtt time.Duration, ttl int) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -356,6 +388,7 @@ func (t *TargetStats) OnSuccess(rtt time.Duration, ttl int) {
 }
 
 func (t *TargetStats) OnFailure(reason string) {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.Loss++
@@ -365,6 +398,7 @@ func (t *TargetStats) OnFailure(reason string) {
 }
 
 func (t *TargetStats) Reset() {
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.Sent = 0

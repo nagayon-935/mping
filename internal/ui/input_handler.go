@@ -32,6 +32,13 @@ type inputHandlerDeps struct {
 
 	rowCount *int
 	vs       *viewState
+	// forceUpdate re-renders the table immediately after a scroll key
+	// changes the offset, rather than waiting for the next (possibly
+	// dirty-gated, see run_support.go's shouldRedraw) refresh tick — table
+	// rows are now rendered only within the visible scroll window, so
+	// without this a scroll could momentarily show blank rows until the
+	// next tick populates them.
+	forceUpdate func()
 
 	traceEnabled bool
 	mtrEnabled   bool
@@ -94,6 +101,9 @@ func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.Even
 				}
 
 				d.table.SetOffset(rowOffset, colOffset)
+				if d.forceUpdate != nil {
+					d.forceUpdate()
+				}
 				return nil
 			}
 		}

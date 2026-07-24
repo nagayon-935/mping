@@ -127,6 +127,41 @@ func TestGraphViewLayoutMinHeight(t *testing.T) {
 	}
 }
 
+// BenchmarkGraphViewDraw_20Targets_LongHistory is the P2 fix's
+// alloc-reduction proof for GraphView: before the fix, each target's
+// history was fetched (and fully copied, up to historySize entries) 3
+// separate times per Draw call (seriesLabel, windowMax's own snapshot
+// call, and the per-cell draw loop's snapshot call). After the fix,
+// buildSeries fetches a windowed snapshot exactly once per target per
+// Draw. Run with `go test -bench=. -benchmem`.
+func BenchmarkGraphViewDraw_20Targets_LongHistory(b *testing.B) {
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		b.Fatalf("screen init: %v", err)
+	}
+	defer screen.Fini()
+	screen.SetSize(160, 40)
+
+	const numTargets = 20
+	targets := make([]*stats.TargetStats, numTargets)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats("host")
+		for j := 0; j < 3000; j++ {
+			targets[i].IncSent()
+			targets[i].OnSuccess(time.Duration(j%200)*time.Millisecond, 64)
+		}
+	}
+
+	g := NewGraphView(targets, 200*time.Millisecond)
+	g.SetRect(0, 0, 160, 40)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		g.Draw(screen)
+	}
+}
+
 func TestGraphViewDraw_EmptyTargets(t *testing.T) {
 	screen := tcell.NewSimulationScreen("UTF-8")
 	if err := screen.Init(); err != nil {

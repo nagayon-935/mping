@@ -7,7 +7,25 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+
+	"github.com/nagayon-935/mping/internal/stats"
 )
+
+// redrawFloor is the maximum time the refresh loop will go without
+// redrawing even when stats.Generation() hasn't changed. This exists for
+// visual changes that aren't captured by the dirty counter — chiefly the
+// RTT graph's auto-scale shrink, which fires on a wall-clock hold timer
+// (graphScaleHoldSecs) rather than on new data arriving.
+const redrawFloor = 1 * time.Second
+
+// shouldRedraw reports whether the refresh loop should redraw on this tick:
+// either something tracked by stats.Generation() changed since the last
+// redraw, or redrawFloor has elapsed regardless (see redrawFloor's doc
+// comment). Extracted as a pure function so the gating decision itself is
+// unit-testable without a real ticker/goroutine.
+func shouldRedraw(gen, lastGen uint64, sinceLastRedraw time.Duration) bool {
+	return gen != lastGen || sinceLastRedraw >= redrawFloor
+}
 
 // wireHostInputs sets the Enter/Escape behavior for the add-host and
 // delete-host input fields: Enter invokes the corresponding callback (if
@@ -80,6 +98,14 @@ func startRefreshLoop(
 			ticker.Reset(fastUIRefresh)
 		}
 		defer ticker.Stop()
+
+		// lastGen/lastRedraw gate redraws to ticks where something actually
+		// changed (stats.Generation() advanced) or redrawFloor has elapsed
+		// since the last redraw — see redrawFloor's doc comment for why the
+		// floor is needed on top of the generation check.
+		var lastGen uint64
+		lastRedraw := time.Now()
+
 		for {
 			select {
 			case newInterval := <-updateTickerCh:
@@ -90,6 +116,13 @@ func startRefreshLoop(
 					ticker = time.NewTicker(newInterval / 2)
 				}
 			case <-ticker.C:
+				now := time.Now()
+				gen := stats.Generation()
+				if !shouldRedraw(gen, lastGen, now.Sub(lastRedraw)) {
+					continue
+				}
+				lastGen = gen
+				lastRedraw = now
 				app.QueueUpdateDraw(tr.update)
 			case msg := <-externalLogCh:
 				// Deliver external log messages (e.g. watcher validation errors)

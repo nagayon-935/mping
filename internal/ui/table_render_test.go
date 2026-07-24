@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -198,11 +199,112 @@ func TestTableRendererUpdate_FallsBackToCompactWhenNarrow(t *testing.T) {
 	}
 }
 
+// TestTableRendererUpdate_VirtualizesOffscreenRows guards the P1 fix: only
+// rows within the visible scroll window (plus rowRenderMargin on each side)
+// should actually get SetCell'd; targets far outside that window must be
+// left empty despite rowCount still reflecting every target.
+func TestTableRendererUpdate_VirtualizesOffscreenRows(t *testing.T) {
+	const numTargets = 100
+	targets := make([]*stats.TargetStats, numTargets)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats(fmt.Sprintf("host%03d", i))
+		targets[i].SetIP("10.0.0.1")
+		targets[i].IncSent()
+		targets[i].OnSuccess(10*time.Millisecond, 64)
+	}
+	tr := newTestTableRenderer(targets, 200)
+
+	const midOffset = 50
+	tr.table.SetOffset(midOffset, 0)
+	tr.update()
+
+	if tr.rowCount != numTargets+1 {
+		t.Fatalf("rowCount: got %d, want %d (logical total must be unaffected by windowing)", tr.rowCount, numTargets+1)
+	}
+
+	// A target far before the window (e.g. row 1, target index 0) must be
+	// empty: outside [midOffset-margin, midOffset+tableMaxRows+1+margin).
+	if got := tr.table.GetCell(1, 0).Text; got != "" {
+		t.Errorf("row 1 (far above window): expected empty cell, got %q", got)
+	}
+	// A target far after the window (last target) must also be empty.
+	lastRow := numTargets
+	if got := tr.table.GetCell(lastRow, 0).Text; got != "" {
+		t.Errorf("row %d (far below window): expected empty cell, got %q", lastRow, got)
+	}
+	// A target inside the scrolled-to window must be populated.
+	inWindowRow := midOffset + 1 // table row for target index == midOffset
+	if got := tr.table.GetCell(inWindowRow, 0).Text; got == "" {
+		t.Errorf("row %d (inside window): expected populated cell, got empty", inWindowRow)
+	}
+	// The header row (0) must always render regardless of scroll position.
+	if got := tr.table.GetCell(0, 0).Text; got == "" {
+		t.Error("header row: expected populated cell, got empty")
+	}
+}
+
+// BenchmarkTableRendererUpdate_500Targets_Scrolled is the P1 fix's
+// windowed-rendering proof. Pass 1 (GetView, alert/log tracking) still
+// necessarily scans every target regardless of scroll position — that
+// part of the per-tick cost scales with total target count no matter what,
+// and correctly so, since an off-screen host's loss/alert state must still
+// be tracked. What P1 caps is Pass 2's cell-rendering work: regardless of
+// how far numTargets exceeds tableMaxRows, only the visible-plus-margin
+// window's rows are ever SetCell'd here (~16-21 rows), rather than all
+// 500. Compare this benchmark's allocs/op against a version of update()
+// without the windowing (e.g. checking out the prior commit) to see that
+// difference directly — this run alone mainly confirms Pass 2 doesn't
+// panic or misbehave at a large scrolled offset.
+func BenchmarkTableRendererUpdate_500Targets_Scrolled(b *testing.B) {
+	const numTargets = 500
+	targets := make([]*stats.TargetStats, numTargets)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats("host")
+		targets[i].SetIP("10.0.0.1")
+		targets[i].IncSent()
+		targets[i].OnSuccess(10*time.Millisecond, 64)
+	}
+	tr := newTestTableRenderer(targets, 200)
+	tr.table.SetOffset(250, 0)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		tr.update()
+	}
+}
+
+// BenchmarkTableRendererUpdate_100Targets is the P2 fix's alloc-reduction
+// proof: run with `go test -bench=. -benchmem` and compare against the
+// pre-P2 commit — GetView() previously ran once per target for width calc,
+// once per target in Pass 1, and (before the P3 fix) again inside
+// buildCompactLayout, each copying up to historySize RTT history entries.
+// After P2, each target's GetView() runs exactly once per update() call.
+func BenchmarkTableRendererUpdate_100Targets(b *testing.B) {
+	const numTargets = 100
+	targets := make([]*stats.TargetStats, numTargets)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats("host")
+		targets[i].SetIP("10.0.0.1")
+		for j := 0; j < 500; j++ {
+			targets[i].IncSent()
+			targets[i].OnSuccess(time.Duration(j)*time.Millisecond, 64)
+		}
+	}
+	tr := newTestTableRenderer(targets, 200)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		tr.update()
+	}
+}
+
 func TestBuildCompactLayout(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	target.OnSuccess(12*time.Millisecond, 64)
 	target.SetIfaceMTU(1500)
-	layout := buildCompactLayout([]*stats.TargetStats{target}, 56, "10.0.0.2", "", 20)
+	layout := buildCompactLayout([]stats.TargetView{target.GetView()}, 56, "10.0.0.2", "", 20)
 	if len(layout.rows) != 2 {
 		t.Fatalf("rows: got %d", len(layout.rows))
 	}

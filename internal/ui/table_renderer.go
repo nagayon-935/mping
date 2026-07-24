@@ -127,7 +127,7 @@ func newTableRenderer(
 	tr.maxWidths[errorIdx] = tr.baseWidths[errorIdx]
 	tr.lastLossBase = cols[columnsByName(cols, "Last Loss")].base
 
-	tr.widths = tr.calcColumnWidths()
+	tr.widths = tr.calcColumnWidths(fetchViews(targets))
 	tr.activeHeaders = append([]string(nil), tr.fullHeaders...)
 	tr.activeAligns = append([]int(nil), tr.fullAligns...)
 	tr.rowCount = len(targets) + 1
@@ -140,16 +140,18 @@ func newTableRenderer(
 }
 
 // calcColumnWidths recalculates dynamic column widths based on current
-// output text (Src/Dst IP, DNS, ASN).
-func (tr *tableRenderer) calcColumnWidths() []int {
+// output text (Src/Dst IP, DNS, ASN). views must be the same length as
+// tr.targets, in the same order (one GetView() snapshot per target, taken
+// once per tick by the caller rather than re-fetched here).
+func (tr *tableRenderer) calcColumnWidths(views []stats.TargetView) []int {
 	widths := append([]int(nil), tr.baseWidths...)
 	for i, c := range tr.cols {
 		if !c.dynamic {
 			continue
 		}
 		maxWidth := runewidth.StringWidth(c.name)
-		for _, t := range tr.targets {
-			ctx := columnRowContext{view: t.GetView(), sourceIPv4: tr.sourceIPv4, sourceIPv6: tr.sourceIPv6, packetSize: tr.packetSize}
+		for _, view := range views {
+			ctx := columnRowContext{view: view, sourceIPv4: tr.sourceIPv4, sourceIPv6: tr.sourceIPv6, packetSize: tr.packetSize}
 			if w := runewidth.StringWidth(c.render(ctx)); w > maxWidth {
 				maxWidth = w
 			}
@@ -160,13 +162,53 @@ func (tr *tableRenderer) calcColumnWidths() []int {
 }
 
 // calcColumnWidthsCached recalculates only when the terminal width changes.
-func (tr *tableRenderer) calcColumnWidthsCached() []int {
+func (tr *tableRenderer) calcColumnWidthsCached(views []stats.TargetView) []int {
 	_, _, curTermWidth, _ := tr.tablePane.GetInnerRect()
 	if tr.cachedWidths == nil || curTermWidth != tr.lastTermWidth {
-		tr.cachedWidths = tr.calcColumnWidths()
+		tr.cachedWidths = tr.calcColumnWidths(views)
 		tr.lastTermWidth = curTermWidth
 	}
 	return tr.cachedWidths
+}
+
+// rowRenderMargin extends the rendered row window beyond what's strictly
+// visible on each side, so a single scroll step (input_handler.go's
+// Up/Down/PgUp/PgDn) lands within an already-rendered range even before
+// its forced synchronous update() call (see inputHandlerDeps.forceUpdate)
+// completes — a cheap extra safety net, not the primary mechanism.
+const rowRenderMargin = 5
+
+// visibleRowWindow returns the [start, end) range of data-row indices
+// (0-based — matching indices into tr.targets, tr.groupRowMap, or
+// compactRows depending on layout) that should actually be rendered this
+// tick, given the table's current scroll offset. offsetRow is the table's
+// GetOffset() row (0-based, counting from the first data row below the
+// fixed header). totalDataRows is the logical total row count for whichever
+// layout is active — tr.rowCount minus 1, i.e. NOT reduced by windowing,
+// so input_handler.go's maxOffset scroll math (which reads tr.rowCount)
+// stays correct regardless of how few rows are actually rendered.
+func visibleRowWindow(offsetRow, totalDataRows int) (start, end int) {
+	start = offsetRow - rowRenderMargin
+	if start < 0 {
+		start = 0
+	}
+	end = offsetRow + tableMaxRows + 1 + rowRenderMargin
+	if end > totalDataRows {
+		end = totalDataRows
+	}
+	return start, end
+}
+
+// fetchViews takes one GetView() snapshot per target, in order. Called once
+// per tick (or once at construction) so every consumer within that tick —
+// width calculation, compact layout, row rendering — shares the same
+// snapshot instead of each re-fetching it independently.
+func fetchViews(targets []*stats.TargetStats) []stats.TargetView {
+	views := make([]stats.TargetView, len(targets))
+	for i, t := range targets {
+		views[i] = t.GetView()
+	}
+	return views
 }
 
 // update re-renders the Ping Monitor table (full or compact layout, flat or
@@ -175,13 +217,25 @@ func (tr *tableRenderer) update() {
 	tr.table.Clear()
 	tr.tablePane.SetTitle(" Ping Monitor ")
 
+	// The current scroll offset, used below to render only the visible
+	// (plus margin) row window instead of every row regardless of scroll
+	// position — see visibleRowWindow.
+	offsetRow, _ := tr.table.GetOffset()
+
+	// One GetView() snapshot per target for this whole tick — width calc,
+	// compact layout, and row rendering below all read from this same
+	// slice instead of each calling GetView() independently (P2: GetView()
+	// copies the full RTT history ring, so this collapses what used to be
+	// 10+ redundant calls per target per tick down to exactly one).
+	views := fetchViews(tr.targets)
+
 	_, _, availableTableWidth, _ := tr.tablePane.GetInnerRect()
 	availableColumnsWidth := availableTableWidth - (len(tr.fullHeaders) + 1)
 	if availableColumnsWidth < 0 {
 		availableColumnsWidth = 0
 	}
 
-	updatedWidths := tr.calcColumnWidthsCached()
+	updatedWidths := tr.calcColumnWidthsCached(views)
 	dynamicMaxWidths := append([]int(nil), tr.maxWidths...)
 	for i, c := range tr.cols {
 		if c.dynamic && updatedWidths[i] > dynamicMaxWidths[i] {
@@ -191,16 +245,15 @@ func (tr *tableRenderer) update() {
 	fitted, ok := fitWidthsToAvailable(updatedWidths, tr.minWidths, dynamicMaxWidths, tr.shrinkPriorities, tr.growPriorities, availableColumnsWidth)
 
 	// The compact layout is only a fallback for when the full layout
-	// doesn't fit. buildCompactLayout calls GetView() once per target to
-	// compute it, so skip it entirely in the common case (ok == true)
-	// rather than computing and discarding it every tick.
+	// doesn't fit; skip computing it entirely in the common case (ok ==
+	// true) rather than computing and discarding it every tick.
 	var compactRows []compactRow
 	var compactHeaders []string
 	var compactAligns []int
 	var compactWidths []int
 	compactOK := false
 	if !ok {
-		compact := buildCompactLayout(tr.targets, tr.packetSize, tr.sourceIPv4, tr.sourceIPv6, tr.lastLossBase)
+		compact := buildCompactLayout(views, tr.packetSize, tr.sourceIPv4, tr.sourceIPv6, tr.lastLossBase)
 		compactRows = compact.rows
 		compactHeaders = compact.headers
 		compactAligns = compact.aligns
@@ -253,7 +306,9 @@ func (tr *tableRenderer) update() {
 		return left
 	}
 	if tr.compactLayout {
-		for i, r := range compactRows {
+		start, end := visibleRowWindow(offsetRow, len(compactRows))
+		for i := start; i < end; i++ {
+			r := compactRows[i]
 			row := i + 1
 			values := []string{
 				pickCompact(r.hostR, r.hostL),
@@ -270,18 +325,17 @@ func (tr *tableRenderer) update() {
 
 	// Pass 1: check for new errors and alert state for all targets, and
 	// cache each target's rendered cell text so pass 2 doesn't re-render
-	// every column a second time per target per tick.
+	// every column a second time per target per tick. Reuses the views
+	// slice fetched once at the top of update() rather than re-fetching.
 	now := time.Now()
-	views := make([]stats.TargetView, len(tr.targets))
 	var rowCtxCache []columnRowContext
 	var textsCache [][]string
 	if !tr.compactLayout {
 		rowCtxCache = make([]columnRowContext, len(tr.targets))
 		textsCache = make([][]string, len(tr.targets))
 	}
-	for i, t := range tr.targets {
-		view := t.GetView()
-		views[i] = view
+	for i := range tr.targets {
+		view := views[i]
 		rowSourceIP := displaySourceIPForDst(view.IP, tr.sourceIPv4, tr.sourceIPv6)
 		if !view.LastLossTime.IsZero() {
 			lastTime, exists := tr.vs.lastLossTimes[view.Host]
@@ -307,10 +361,19 @@ func (tr *tableRenderer) update() {
 		}
 	}
 
-	// Pass 2: render table rows.
+	// Pass 2: render table rows. Only the visible (plus margin) row window
+	// is actually SetCell'd — rowCount above stays the full logical count
+	// regardless, so input_handler.go's scroll math is unaffected by how
+	// few rows this pass renders.
 	if len(tr.groups) > 0 && !tr.compactLayout {
-		// Group-aware rendering: header → [targets] per group.
-		for rowIdx, row := range tr.groupRowMap {
+		// Group-aware rendering: header → [targets] per group. Windowed by
+		// table-row index (tr.groupRowMap), not target index, since group
+		// header rows don't correspond to a target — a header that falls
+		// inside the window must still render even if all its members
+		// don't.
+		start, end := visibleRowWindow(offsetRow, len(tr.groupRowMap))
+		for rowIdx := start; rowIdx < end; rowIdx++ {
+			row := tr.groupRowMap[rowIdx]
 			tableRow := rowIdx + 1
 			switch row.kind {
 			case groupRowHeader:
@@ -327,7 +390,8 @@ func (tr *tableRenderer) update() {
 	} else if !tr.compactLayout {
 		// Flat rendering (no groups, not compact — compact rows were
 		// already rendered earlier via the compactRows loop above).
-		for i := range tr.targets {
+		start, end := visibleRowWindow(offsetRow, len(tr.targets))
+		for i := start; i < end; i++ {
 			row := i + 1
 			cells := renderRowCells(tr.cols, textsCache[i], tr.widths, tr.fullAligns, rowCtxCache[i], tr.rowColor)
 			for c, cell := range cells {
