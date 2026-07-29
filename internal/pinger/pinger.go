@@ -541,6 +541,11 @@ func (p *Pinger) resolveTarget(t *stats.TargetStats) *net.IPAddr {
 	if err != nil {
 		// A stop is not a ping failure: recording one here would inflate
 		// the loss count printed by printExitSummary on the way out.
+		//
+		// Everything else collapses to a generic "DNS Error" on purpose:
+		// LastError is surfaced in a narrow TUI column, so the detail
+		// resolveIPAddrBounded formats (which host, which timeout) is
+		// deliberately dropped here rather than truncated on screen.
 		if !errors.Is(err, errPingerStopped) {
 			t.OnFailure("DNS Error")
 		}

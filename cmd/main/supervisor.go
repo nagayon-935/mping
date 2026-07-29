@@ -86,8 +86,12 @@ func (s *supervisor) onFlap(host, desc string) {
 // enabled. next.Start() stays outside s.mu because it opens raw sockets and
 // spawns goroutines while touching no supervisor state; the swap itself is
 // done under s.mu, and any pinger it supersedes is released afterwards —
-// outside s.mu, since Wait() can block for up to pinger's resolveTimeout and
-// holding mu that long would stall httpResults() and freeze the TUI.
+// outside s.mu, because httpResults() takes the same mutex on every UI
+// refresh tick, so holding it across the join would visibly stall the TUI.
+// prev.Stop() runs before prev.Wait(), and every blocking helper in the
+// pinger short-circuits on p.done, so the join is bounded by
+// receiverReadTimeout (1s — the receiver loop's read-deadline poll), not by
+// resolveTimeout or asnLookupTimeout.
 func (s *supervisor) startPinger() error {
 	next := s.cfg.makePinger(s.cfg.packetSize)
 	if err := next.Start(s.cfg.interval, s.cfg.timeout); err != nil {
@@ -240,7 +244,7 @@ type checkerStopper interface {
 
 // resetChecker stops the current value at *field (if any) and swaps in a
 // freshly created replacement, holding mu across the entire stop→create→
-// assign sequence (matching resetMTR's pattern below, which already holds
+// assign sequence (matching resetMTR's pattern above, which already holds
 // mu across mtrEngine.Stop()+NewEngine()+Start()). TD-46②: this closes the
 // unlocked window resetHTTP/resetPort previously had, where a concurrent
 // stopAll() could read *field as nil mid-reset and skip stopping the
@@ -251,10 +255,12 @@ type checkerStopper interface {
 // them cannot deadlock.
 //
 // stopped is read under the same mu: when stopAll has already torn the
-// supervisor down, we stop the old checker but do NOT create a replacement,
-// because nothing would ever stop it. Without this, a reset that interleaved
-// with stopAll's read-then-release pattern leaked the new checker's
-// goroutines and sockets.
+// supervisor down, we stop the old checker, zero *field, and do NOT create a
+// replacement, because nothing would ever stop it. Without this, a reset that
+// interleaved with stopAll's read-then-release pattern leaked the new
+// checker's goroutines and sockets. Zeroing the field is visible in the UI —
+// httpResults() returns nil for a nil checker, blanking the HTTP pane — which
+// is the correct post-shutdown state.
 func resetChecker[T checkerStopper](mu *sync.Mutex, stopped *bool, field *T, create func() T) {
 	mu.Lock()
 	defer mu.Unlock()
