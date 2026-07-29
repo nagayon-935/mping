@@ -37,6 +37,12 @@ const (
 // own. A var (not const) so tests can shrink it instead of waiting 3s.
 var asnLookupTimeout = 3 * time.Second
 
+// errPingerStopped is returned by the bounded lookup helpers when Stop()
+// closed p.done while a call was in flight. Callers use it to distinguish
+// "we are shutting down" from a genuine DNS failure, so shutdown doesn't
+// record a spurious loss against the target.
+var errPingerStopped = errors.New("pinger stopped")
+
 // PacketConnV4 interface matches *ipv4.PacketConn methods we use
 type PacketConnV4 interface {
 	ReadFrom(b []byte) (int, *ipv4.ControlMessage, net.Addr, error)
@@ -612,9 +618,11 @@ func (p *Pinger) getASNInfo(ipStr string) ASNInfo {
 	return info
 }
 
-// lookupTXTBounded wraps p.lookupTXT with asnLookupTimeout. The lookup
-// goroutine is left to finish into a buffered channel on timeout rather than
-// being interrupted.
+// lookupTXTBounded wraps p.lookupTXT with asnLookupTimeout and aborts early
+// when Stop() closes p.done. The lookup goroutine is left to finish into a
+// buffered channel rather than being interrupted — net.LookupTXT has no
+// cancellation seam — but the caller is released immediately so Wait()
+// doesn't stall the shutdown path.
 func (p *Pinger) lookupTXTBounded(name string) ([]string, error) {
 	type result struct {
 		txts []string
@@ -628,6 +636,8 @@ func (p *Pinger) lookupTXTBounded(name string) ([]string, error) {
 	select {
 	case r := <-ch:
 		return r.txts, r.err
+	case <-p.done:
+		return nil, errPingerStopped
 	case <-time.After(asnLookupTimeout):
 		return nil, fmt.Errorf("asn lookup for %q timed out after %s", name, asnLookupTimeout)
 	}

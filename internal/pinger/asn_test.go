@@ -2,6 +2,7 @@ package pinger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -367,6 +368,42 @@ func TestLookupASN_ReturnsEarlyAfterStop(t *testing.T) {
 	}
 	if got := target.GetView().ASN; got != "" {
 		t.Errorf("ASN should remain unset after Stop(), got %q", got)
+	}
+}
+
+// TestLookupTXTBoundedUnblocksOnStop verifies an in-flight Cymru lookup
+// stops blocking as soon as Stop() closes p.done, instead of holding
+// Wait() for the full asnLookupTimeout. resolveTarget registers ASN lookup
+// goroutines on p.wg, so without this the shutdown path (supervisor's
+// cur.Wait()) stalls for up to two lookup timeouts.
+func TestLookupTXTBoundedUnblocksOnStop(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+
+	p := NewPingerWithOptions(nil, Options{
+		LookupTXT: func(string) ([]string, error) {
+			<-release // simulates a DNS server that never answers
+			return nil, nil
+		},
+	})
+
+	returned := make(chan error, 1)
+	go func() {
+		_, err := p.lookupTXTBounded("1.0.0.10.origin.asn.cymru.com")
+		returned <- err
+	}()
+
+	// Let the lookup goroutine get into its blocking call.
+	time.Sleep(20 * time.Millisecond)
+	p.Stop()
+
+	select {
+	case err := <-returned:
+		if !errors.Is(err, errPingerStopped) {
+			t.Fatalf("expected errPingerStopped, got %v", err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("lookupTXTBounded did not return within 1s of Stop()")
 	}
 }
 
