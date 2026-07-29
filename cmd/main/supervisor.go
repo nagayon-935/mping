@@ -224,22 +224,14 @@ func (s *supervisor) handle(c command) error {
 		if s.state != stateRunning {
 			return nil
 		}
-		if s.portChecker != nil {
-			s.portChecker.Stop()
-			s.portChecker.Wait()
-		}
-		s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
+		s.restartPortChecker()
 		return nil
 
 	case cmdResetHTTP:
 		if s.state != stateRunning {
 			return nil
 		}
-		if s.httpChecker != nil {
-			s.httpChecker.Stop()
-			s.httpChecker.Wait()
-		}
-		s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
+		s.restartHTTPChecker()
 		return nil
 
 	case cmdTerminate:
@@ -265,9 +257,10 @@ func (s *supervisor) handle(c command) error {
 // httpResults() no longer shares anything with this call — it reads a
 // snapshot published by the loop instead. prev is nil only on the very first
 // start; on every later start (cmdRestart from stateRunning always tears the
-// previous pinger down via tearDownAll before calling startAll, and the UI's
-// `restarting` guard in internal/ui/input_handler.go blocks a second
-// concurrent OnRestart from racing in) prev is a pinger tearDownAll already
+// previous pinger down via tearDownAll before calling startAll, and handle()
+// only ever runs on the single command goroutine in loop()
+// (supervisor_loop.go), which drains s.cmds one at a time, so a second
+// concurrent cmdRestart cannot race in) prev is a pinger tearDownAll already
 // stopped, so releasing it again here is an idempotent no-op rather than a
 // real join — Pinger.Stop is sync.Once-guarded and Pinger.Close reuses that
 // same guard (pinger.go).
@@ -349,6 +342,26 @@ func (s *supervisor) restartMTR() {
 		OnFlap: s.onFlap,
 	})
 	s.mtrEngine.Start()
+}
+
+// restartPortChecker stops any existing port checker and replaces it with a
+// freshly configured one.
+func (s *supervisor) restartPortChecker() {
+	if s.portChecker != nil {
+		s.portChecker.Stop()
+		s.portChecker.Wait()
+	}
+	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
+}
+
+// restartHTTPChecker stops any existing HTTP checker and replaces it with a
+// freshly configured one.
+func (s *supervisor) restartHTTPChecker() {
+	if s.httpChecker != nil {
+		s.httpChecker.Stop()
+		s.httpChecker.Wait()
+	}
+	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
 }
 
 func (s *supervisor) startPinger() error { return s.do(cmdStart) }

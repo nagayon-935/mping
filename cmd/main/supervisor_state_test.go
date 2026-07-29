@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
@@ -110,6 +111,18 @@ func TestHandle_ResetAfterTerminateCreatesNothing(t *testing.T) {
 	sup, _ := newStateTestSupervisor(t)
 	sup.cfg.mtrEnabled = true
 	sup.cfg.traceEnabled = true
+	// portSpecs/httpURLs must be non-empty so startAll actually creates a
+	// port checker and an HTTP checker below — otherwise cmdResetPort/
+	// cmdResetHTTP would have nothing to (wrongly) replace and the guard
+	// would go untested. Both values are chosen so their check goroutines
+	// never do real network I/O: the fixture target has no IP set, so
+	// PortChecker.check() short-circuits on ip == "" before dialing; the
+	// HTTP URL "://no-scheme" fails to parse, so http.NewRequestWithContext
+	// returns an error inside HTTPChecker.check() before any request is
+	// sent. The 1s interval from newStateTestSupervisor never fires during
+	// this test either way.
+	sup.cfg.portSpecs = []pinger.PortSpec{{Port: 443, Protocol: "tcp"}}
+	sup.cfg.httpURLs = []string{"://no-scheme"}
 
 	if err := doCmd(t, sup, cmdStart); err != nil {
 		t.Fatalf("cmdStart: %v", err)
@@ -120,6 +133,12 @@ func TestHandle_ResetAfterTerminateCreatesNothing(t *testing.T) {
 
 	engineAfter := sup.mtrEngine
 	traceDoneAfter := sup.traceDone
+	portCheckerAfter := sup.portChecker
+	httpCheckerAfter := sup.httpChecker
+	if portCheckerAfter == nil || httpCheckerAfter == nil {
+		t.Fatalf("fixture failed to create checkers before terminate: portChecker=%v httpChecker=%v",
+			portCheckerAfter, httpCheckerAfter)
+	}
 
 	for _, k := range []cmdKind{cmdResetTrace, cmdResetMTR, cmdResetPort, cmdResetHTTP} {
 		if err := doCmd(t, sup, k); err != nil {
@@ -132,6 +151,12 @@ func TestHandle_ResetAfterTerminateCreatesNothing(t *testing.T) {
 	}
 	if sup.traceDone != traceDoneAfter {
 		t.Error("resetTrace after terminate started a new traceroute goroutine")
+	}
+	if sup.portChecker != portCheckerAfter {
+		t.Error("resetPort after terminate installed a new port checker")
+	}
+	if sup.httpChecker != httpCheckerAfter {
+		t.Error("resetHTTP after terminate installed a new HTTP checker")
 	}
 	if sup.state != stateTerminated {
 		t.Errorf("state = %v, want stateTerminated", sup.state)
