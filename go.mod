@@ -1,6 +1,6 @@
 module github.com/nagayon-935/mping
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/fsnotify/fsnotify v1.10.1

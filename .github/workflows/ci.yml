@@ -17,7 +17,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.25'
+          go-version: '1.26'
           cache: true
 
       - name: Check formatting
@@ -51,7 +51,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.25'
+          go-version: '1.26'
           cache: true
 
       - name: Build
@@ -70,7 +70,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.25'
+          go-version: '1.26'
           cache: true
 
       - name: staticcheck
@@ -82,4 +82,4 @@ jobs:
       - name: govulncheck
         uses: golang/govulncheck-action@v1
         with:
-          go-version-input: '1.25'
+          go-version-input: '1.26'
