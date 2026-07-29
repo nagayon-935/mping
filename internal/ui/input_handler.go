@@ -62,7 +62,14 @@ type inputHandlerDeps struct {
 // (nothing outside the key handler reads or writes it), so it lives here
 // rather than in inputHandlerDeps.
 func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.EventKey {
+	// stopRequested and restarting are owned entirely by the returned
+	// closure and are only ever touched on tview's event-loop goroutine
+	// (both the input capture and QueueUpdateDraw callbacks run there), so
+	// they need no synchronisation. restarting gates re-entry: stopRequested
+	// stays true for the whole restart, so without it a second 'S' press
+	// mid-restart starts a second pinger.
 	stopRequested := false
+	restarting := false
 
 	return func(event *tcell.EventKey) *tcell.EventKey {
 		// Pass all events through when a text input or modal list is focused.
@@ -184,17 +191,18 @@ func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.Even
 				}
 			}
 		case 'S':
-			if stopRequested {
+			if stopRequested && !restarting {
+				restarting = true
 				d.vs.appendLog(fmt.Sprintf("[yellow][%s] Restart requested by user[-]", time.Now().Format("15:04:05")))
 				if d.onRestart != nil {
 					go func() {
-						if err := d.onRestart(); err != nil {
-							d.app.QueueUpdateDraw(func() {
-								d.vs.appendLog(fmt.Sprintf("[red][%s] Restart failed: %v[-]", time.Now().Format("15:04:05"), err))
-							})
-							return
-						}
+						err := d.onRestart()
 						d.app.QueueUpdateDraw(func() {
+							restarting = false
+							if err != nil {
+								d.vs.appendLog(fmt.Sprintf("[red][%s] Restart failed: %v[-]", time.Now().Format("15:04:05"), err))
+								return
+							}
 							stopRequested = false
 							if d.footer != nil {
 								d.footer.SetText("Tab: Switch Focus | q: Quit | s: Stop ping | R: Reset stats")
@@ -202,6 +210,8 @@ func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.Even
 							}
 						})
 					}()
+				} else {
+					restarting = false
 				}
 			}
 		case 'R':

@@ -41,6 +41,11 @@ type supervisor struct {
 	portChecker *pinger.PortChecker
 	httpChecker *pinger.HTTPChecker
 	mtrEngine   *mtr.Engine
+	// stopped records that stopAll has torn this supervisor down, so a
+	// reset racing with shutdown doesn't install a checker nobody will
+	// stop (see resetChecker). Cleared by startPinger/setupPortAndHTTP on
+	// restart. Guarded by mu.
+	stopped bool
 }
 
 func newSupervisor(cfg supervisorConfig) *supervisor {
@@ -78,14 +83,19 @@ func (s *supervisor) onFlap(host, desc string) {
 }
 
 // startPinger creates and starts a new pinger, wiring up traceroute/MTR when
-// enabled.
+// enabled. next.Start() stays outside s.mu because it opens raw sockets and
+// spawns goroutines while touching no supervisor state; the swap itself is
+// done under s.mu, and any pinger it supersedes is released afterwards —
+// outside s.mu, since Wait() can block for up to pinger's resolveTimeout and
+// holding mu that long would stall httpResults() and freeze the TUI.
 func (s *supervisor) startPinger() error {
 	next := s.cfg.makePinger(s.cfg.packetSize)
 	if err := next.Start(s.cfg.interval, s.cfg.timeout); err != nil {
 		return err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	prev := s.p
+	s.stopped = false
 	if s.cfg.traceEnabled {
 		s.startTraceroutes(next)
 	}
@@ -99,6 +109,17 @@ func (s *supervisor) startPinger() error {
 		s.mtrEngine.Start()
 	}
 	s.p = next
+	s.mu.Unlock()
+
+	// Release whatever we just superseded. In the normal OnRestart flow
+	// stopAll already stopped it, so this is a cheap no-op (Stop and Close
+	// are idempotent). In a concurrent double-start it is what keeps the
+	// loser's raw socket and worker goroutines from leaking.
+	if prev != nil && prev != next {
+		prev.Stop()
+		prev.Wait()
+		prev.Close()
+	}
 	return nil
 }
 
