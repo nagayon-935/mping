@@ -2,6 +2,7 @@ package pinger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -367,6 +368,91 @@ func TestLookupASN_ReturnsEarlyAfterStop(t *testing.T) {
 	}
 	if got := target.GetView().ASN; got != "" {
 		t.Errorf("ASN should remain unset after Stop(), got %q", got)
+	}
+}
+
+// TestLookupTXTBoundedUnblocksOnStop verifies an in-flight Cymru lookup
+// stops blocking as soon as Stop() closes p.done, instead of holding
+// Wait() for the full asnLookupTimeout. resolveTarget registers ASN lookup
+// goroutines on p.wg, so without this the shutdown path (supervisor's
+// cur.Wait()) stalls for up to two lookup timeouts.
+func TestLookupTXTBoundedUnblocksOnStop(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+
+	p := NewPingerWithOptions(nil, Options{
+		LookupTXT: func(string) ([]string, error) {
+			<-release // simulates a DNS server that never answers
+			return nil, nil
+		},
+	})
+
+	returned := make(chan error, 1)
+	go func() {
+		_, err := p.lookupTXTBounded("1.0.0.10.origin.asn.cymru.com")
+		returned <- err
+	}()
+
+	// Let the lookup goroutine get into its blocking call.
+	time.Sleep(20 * time.Millisecond)
+	p.Stop()
+
+	select {
+	case err := <-returned:
+		if !errors.Is(err, errPingerStopped) {
+			t.Fatalf("expected errPingerStopped, got %v", err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("lookupTXTBounded did not return within 1s of Stop()")
+	}
+}
+
+// TestGetASNInfo_StopDuringOrgLookupDoesNotCache verifies that when Stop()
+// closes p.done while the second (org) Cymru query is in flight, getASNInfo
+// discards the result instead of caching a partial record: a real ASN/
+// country from the completed origin query paired with a bogus empty Org
+// that would be indistinguishable from a genuine "no org found" response.
+func TestGetASNInfo_StopDuringOrgLookupDoesNotCache(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+
+	mockLookup := func(query string) ([]string, error) {
+		if strings.Contains(query, "origin") {
+			return []string{"15169 | 8.8.8.0/24 | US | arin | 1992-12-01"}, nil
+		}
+		// org lookup: simulate a DNS server that never answers, so it is
+		// still in flight when Stop() fires below.
+		<-release
+		return []string{"15169 | GOOGLE - Google LLC, US | 1992-12-01"}, nil
+	}
+
+	p := NewPingerWithOptions(nil, Options{LookupTXT: mockLookup})
+	p.asnJitter = func() time.Duration { return 0 }
+
+	returned := make(chan ASNInfo, 1)
+	go func() {
+		returned <- p.getASNInfo("8.8.8.8")
+	}()
+
+	// Let the origin lookup complete and the org lookup get into its
+	// blocking call.
+	time.Sleep(20 * time.Millisecond)
+	p.Stop()
+
+	select {
+	case info := <-returned:
+		if info != (ASNInfo{}) {
+			t.Fatalf("expected zero-value ASNInfo after Stop() mid-org-lookup, got %+v", info)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("getASNInfo did not return within 1s of Stop()")
+	}
+
+	p.asnMu.RLock()
+	_, cached := p.asnCache["8.8.8.8"]
+	p.asnMu.RUnlock()
+	if cached {
+		t.Error("expected no cache entry for 8.8.8.8 after Stop() aborted the org lookup")
 	}
 }
 

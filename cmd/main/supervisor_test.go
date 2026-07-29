@@ -40,6 +40,7 @@ func (f *fakeCheckerStopper) Wait() { f.waited = true }
 // to stop", letting the newly-created checker's goroutines leak (TD-46②).
 func TestResetChecker_NoObservableNilWindow(t *testing.T) {
 	var mu sync.Mutex
+	var stopped bool
 	field := &fakeCheckerStopper{slow: true}
 
 	const iterations = 200
@@ -50,7 +51,7 @@ func TestResetChecker_NoObservableNilWindow(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			resetChecker(&mu, &field, func() *fakeCheckerStopper {
+			resetChecker(&mu, &stopped, &field, func() *fakeCheckerStopper {
 				return &fakeCheckerStopper{slow: true}
 			})
 		}()
@@ -76,11 +77,12 @@ func TestResetChecker_NoObservableNilWindow(t *testing.T) {
 // freshly created one, independent of the locking change above.
 func TestResetChecker_StopsOldAndInstallsNew(t *testing.T) {
 	var mu sync.Mutex
+	var stopped bool
 	old := &fakeCheckerStopper{}
 	field := old
 	created := &fakeCheckerStopper{}
 
-	resetChecker(&mu, &field, func() *fakeCheckerStopper { return created })
+	resetChecker(&mu, &stopped, &field, func() *fakeCheckerStopper { return created })
 
 	if !old.stopped || !old.waited {
 		t.Errorf("expected old checker to be Stop()/Wait()ed, got stopped=%v waited=%v", old.stopped, old.waited)
@@ -94,12 +96,42 @@ func TestResetChecker_StopsOldAndInstallsNew(t *testing.T) {
 // Stop/Wait on a nil previous value (the "first setup" case).
 func TestResetChecker_NilFieldSkipsStop(t *testing.T) {
 	var mu sync.Mutex
+	var stopped bool
 	var field *fakeCheckerStopper
 	created := &fakeCheckerStopper{}
 
-	resetChecker(&mu, &field, func() *fakeCheckerStopper { return created })
+	resetChecker(&mu, &stopped, &field, func() *fakeCheckerStopper { return created })
 
 	if field != created {
 		t.Errorf("expected field to hold the newly created checker, got %p want %p", field, created)
+	}
+}
+
+// TestResetChecker_SkipsCreateAfterShutdown verifies a reset racing with
+// shutdown cannot resurrect a checker nobody will ever stop. stopAll reads
+// the field under mu and then stops it after releasing mu, so a resetChecker
+// that ran in between used to install a brand-new checker after stopAll had
+// already passed it by — leaking its goroutines and sockets. Reachable by
+// pressing 'R' (which fires each reset in its own goroutine) then 'q'.
+func TestResetChecker_SkipsCreateAfterShutdown(t *testing.T) {
+	var mu sync.Mutex
+	stopped := true // shutdown already happened
+	old := &fakeCheckerStopper{}
+	field := old
+	createCalls := 0
+
+	resetChecker(&mu, &stopped, &field, func() *fakeCheckerStopper {
+		createCalls++
+		return &fakeCheckerStopper{}
+	})
+
+	if createCalls != 0 {
+		t.Errorf("expected no checker to be created after shutdown, got %d creations", createCalls)
+	}
+	if field != nil {
+		t.Errorf("expected field to be cleared after shutdown, got %p", field)
+	}
+	if !old.stopped || !old.waited {
+		t.Errorf("expected the previous checker to still be stopped, got stopped=%v waited=%v", old.stopped, old.waited)
 	}
 }

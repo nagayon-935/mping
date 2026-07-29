@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -1201,6 +1202,40 @@ func TestPingerStop(t *testing.T) {
 	p.Stop()
 	// Second Stop should be a no-op (already closed)
 	p.Stop()
+}
+
+// TestPingerStopConcurrent verifies Stop() is safe to call from multiple
+// goroutines at once. The UI fires `go sup.stopAll()` from the 's' key
+// handler (internal/ui/input_handler.go) while run()'s post-uiRun
+// finishIteration path calls sup.stopAll() on the main goroutine, so two
+// concurrent Stop() calls on the same *Pinger are reachable in practice.
+// The previous select-guarded close was a check-then-act and panicked with
+// "close of closed channel" when both goroutines passed the guard.
+func TestPingerStopConcurrent(t *testing.T) {
+	const iterations = 200
+	const goroutines = 4
+
+	for i := 0; i < iterations; i++ {
+		p := NewPinger(nil)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for g := 0; g < goroutines; g++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				p.Stop()
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		select {
+		case <-p.done:
+		default:
+			t.Fatalf("iteration %d: done channel was not closed", i)
+		}
+	}
 }
 
 // ---- parseInnerEchoIDSeq additional branches ----
@@ -2542,5 +2577,46 @@ func TestRunReceiverV4FallbackParseShortData(t *testing.T) {
 	case <-done:
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("runReceiverV4 did not stop")
+	}
+}
+
+// TestResolveTargetUnblocksOnStop verifies a hung DNS resolution does not
+// hold the shutdown path. resolveIPAddr takes no context and cannot be
+// cancelled — with an unresponsive --dns-server the real resolver was
+// measured blocking ~40s — so resolveTarget must bound it and bail out as
+// soon as Stop() closes p.done. runWorker calls resolveTarget on p.wg's
+// goroutines, so anything it blocks on also blocks Pinger.Wait().
+func TestResolveTargetUnblocksOnStop(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+
+	p := NewPingerWithOptions(nil, Options{
+		ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {
+			<-release // simulates a DNS server that never answers
+			return nil, nil
+		},
+	})
+	target := stats.NewTargetStats("example.com")
+
+	returned := make(chan *net.IPAddr, 1)
+	go func() { returned <- p.resolveTarget(target) }()
+
+	// Let the resolve goroutine get into its blocking call.
+	time.Sleep(20 * time.Millisecond)
+	p.Stop()
+
+	select {
+	case addr := <-returned:
+		if addr != nil {
+			t.Fatalf("expected nil address on stop, got %v", addr)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("resolveTarget did not return within 1s of Stop()")
+	}
+
+	// Shutdown must not be recorded as a ping failure: OnFailure bumps Loss
+	// and would pollute the exit summary printed by printExitSummary.
+	if v := target.GetView(); v.Loss != 0 {
+		t.Errorf("expected no loss recorded on shutdown, got Loss=%d LastError=%q", v.Loss, v.LastError)
 	}
 }

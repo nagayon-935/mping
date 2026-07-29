@@ -41,6 +41,11 @@ type supervisor struct {
 	portChecker *pinger.PortChecker
 	httpChecker *pinger.HTTPChecker
 	mtrEngine   *mtr.Engine
+	// stopped records that stopAll has torn this supervisor down, so a
+	// reset racing with shutdown doesn't install a checker nobody will
+	// stop (see resetChecker). Cleared by startPinger/setupPortAndHTTP on
+	// restart. Guarded by mu.
+	stopped bool
 }
 
 func newSupervisor(cfg supervisorConfig) *supervisor {
@@ -78,14 +83,23 @@ func (s *supervisor) onFlap(host, desc string) {
 }
 
 // startPinger creates and starts a new pinger, wiring up traceroute/MTR when
-// enabled.
+// enabled. next.Start() stays outside s.mu because it opens raw sockets and
+// spawns goroutines while touching no supervisor state; the swap itself is
+// done under s.mu, and any pinger it supersedes is released afterwards —
+// outside s.mu, because httpResults() takes the same mutex on every UI
+// refresh tick, so holding it across the join would visibly stall the TUI.
+// prev.Stop() runs before prev.Wait(), and every blocking helper in the
+// pinger short-circuits on p.done, so the join is bounded by
+// receiverReadTimeout (1s — the receiver loop's read-deadline poll), not by
+// resolveTimeout or asnLookupTimeout.
 func (s *supervisor) startPinger() error {
 	next := s.cfg.makePinger(s.cfg.packetSize)
 	if err := next.Start(s.cfg.interval, s.cfg.timeout); err != nil {
 		return err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	prev := s.p
+	s.stopped = false
 	if s.cfg.traceEnabled {
 		s.startTraceroutes(next)
 	}
@@ -99,6 +113,17 @@ func (s *supervisor) startPinger() error {
 		s.mtrEngine.Start()
 	}
 	s.p = next
+	s.mu.Unlock()
+
+	// Release whatever we just superseded. In the normal OnRestart flow
+	// stopAll already stopped it, so this is a cheap no-op (Stop and Close
+	// are idempotent). In a concurrent double-start it is what keeps the
+	// loser's raw socket and worker goroutines from leaking.
+	if prev != nil && prev != next {
+		prev.Stop()
+		prev.Wait()
+		prev.Close()
+	}
 	return nil
 }
 
@@ -107,6 +132,7 @@ func (s *supervisor) startPinger() error {
 func (s *supervisor) setupPortAndHTTP() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.stopped = false
 	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
 	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
 }
@@ -144,22 +170,27 @@ func (s *supervisor) stopPinger() {
 
 // stopAll stops the pinger (and trace/MTR) followed by the port and HTTP
 // checkers. Called from multiple sites (OnStop, OnRestart, error path,
-// normal cleanup) and must be idempotent: Pinger.Stop uses a select-guarded
-// close(done) and PortChecker/HTTPChecker.Stop use sync.Once, so all are
-// safe to call more than once.
+// normal cleanup) and must be safe both to call more than once and to call
+// concurrently: Pinger.Stop, PortChecker.Stop and HTTPChecker.Stop all
+// guard their close/cancel with sync.Once.
+//
+// The checker teardown holds mu across Stop/Wait — matching resetChecker —
+// so a concurrent reset can't slip a freshly created checker past us. The
+// stopped flag then keeps a reset that arrives after us from creating one.
+// Both checkers' Wait() is bounded by their own check timeout and neither
+// calls back into supervisor, so holding mu here cannot deadlock.
 func (s *supervisor) stopAll() {
 	s.stopPinger()
 	s.mu.Lock()
-	curPort := s.portChecker
-	curHTTP := s.httpChecker
-	s.mu.Unlock()
-	if curPort != nil {
-		curPort.Stop()
-		curPort.Wait()
+	defer s.mu.Unlock()
+	s.stopped = true
+	if s.portChecker != nil {
+		s.portChecker.Stop()
+		s.portChecker.Wait()
 	}
-	if curHTTP != nil {
-		curHTTP.Stop()
-		curHTTP.Wait()
+	if s.httpChecker != nil {
+		s.httpChecker.Stop()
+		s.httpChecker.Wait()
 	}
 }
 
@@ -191,13 +222,13 @@ func (s *supervisor) resetMTR() {
 }
 
 func (s *supervisor) resetHTTP() {
-	resetChecker(&s.mu, &s.httpChecker, func() *pinger.HTTPChecker {
+	resetChecker(&s.mu, &s.stopped, &s.httpChecker, func() *pinger.HTTPChecker {
 		return setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
 	})
 }
 
 func (s *supervisor) resetPort() {
-	resetChecker(&s.mu, &s.portChecker, func() *pinger.PortChecker {
+	resetChecker(&s.mu, &s.stopped, &s.portChecker, func() *pinger.PortChecker {
 		return setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
 	})
 }
@@ -213,7 +244,7 @@ type checkerStopper interface {
 
 // resetChecker stops the current value at *field (if any) and swaps in a
 // freshly created replacement, holding mu across the entire stop→create→
-// assign sequence (matching resetMTR's pattern below, which already holds
+// assign sequence (matching resetMTR's pattern above, which already holds
 // mu across mtrEngine.Stop()+NewEngine()+Start()). TD-46②: this closes the
 // unlocked window resetHTTP/resetPort previously had, where a concurrent
 // stopAll() could read *field as nil mid-reset and skip stopping the
@@ -222,7 +253,15 @@ type checkerStopper interface {
 // the replacement. Stop/Wait on a port/HTTP checker just joins its own
 // goroutines and doesn't call back into supervisor, so holding mu across
 // them cannot deadlock.
-func resetChecker[T checkerStopper](mu *sync.Mutex, field *T, create func() T) {
+//
+// stopped is read under the same mu: when stopAll has already torn the
+// supervisor down, we stop the old checker, zero *field, and do NOT create a
+// replacement, because nothing would ever stop it. Without this, a reset that
+// interleaved with stopAll's read-then-release pattern leaked the new
+// checker's goroutines and sockets. Zeroing the field is visible in the UI —
+// httpResults() returns nil for a nil checker, blanking the HTTP pane — which
+// is the correct post-shutdown state.
+func resetChecker[T checkerStopper](mu *sync.Mutex, stopped *bool, field *T, create func() T) {
 	mu.Lock()
 	defer mu.Unlock()
 	cur := *field
@@ -230,6 +269,10 @@ func resetChecker[T checkerStopper](mu *sync.Mutex, field *T, create func() T) {
 	if cur != zero {
 		cur.Stop()
 		cur.Wait()
+	}
+	if *stopped {
+		*field = zero
+		return
 	}
 	*field = create()
 }

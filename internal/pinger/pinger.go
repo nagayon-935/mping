@@ -37,6 +37,19 @@ const (
 // own. A var (not const) so tests can shrink it instead of waiting 3s.
 var asnLookupTimeout = 3 * time.Second
 
+// errPingerStopped is returned by the bounded lookup helpers when Stop()
+// closed p.done while a call was in flight. Callers use it to distinguish
+// "we are shutting down" from a genuine DNS failure, so shutdown doesn't
+// record a spurious loss against the target.
+var errPingerStopped = errors.New("pinger stopped")
+
+// resolveTimeout bounds each target DNS resolution. resolveIPAddr takes no
+// context, and neither net.ResolveIPAddr nor a *net.Resolver driven with
+// context.Background() has a timeout of its own — an unresponsive
+// --dns-server was measured blocking ~40s. A var (not const) so tests can
+// shrink it, matching asnLookupTimeout.
+var resolveTimeout = 5 * time.Second
+
 // PacketConnV4 interface matches *ipv4.PacketConn methods we use
 type PacketConnV4 interface {
 	ReadFrom(b []byte) (int, *ipv4.ControlMessage, net.Addr, error)
@@ -95,8 +108,9 @@ type Pinger struct {
 
 	LogWriter io.Writer // Optional logger
 
-	done chan struct{} // Signal to close receiver
-	wg   sync.WaitGroup
+	done     chan struct{} // Signal to close receiver
+	stopOnce sync.Once     // guards close(done); Stop may be called concurrently
+	wg       sync.WaitGroup
 
 	resolveIPAddr resolveIPAddrFunc
 	now           func() time.Time
@@ -212,15 +226,16 @@ func (p *Pinger) applyLastErrSource(errMsg string) string {
 	return errMsg
 }
 
+// Stop signals the receiver and worker goroutines to exit. Safe to call
+// from multiple goroutines concurrently and any number of times, matching
+// PortChecker.Stop and HTTPChecker.Stop. The UI reaches this concurrently:
+// the 's' key handler runs stopAll in its own goroutine while run()'s
+// cleanup path calls stopAll on the main goroutine.
 func (p *Pinger) Stop() {
-	if p.done != nil {
-		select {
-		case <-p.done:
-			// Already closed
-		default:
-			close(p.done)
-		}
+	if p.done == nil {
+		return
 	}
+	p.stopOnce.Do(func() { close(p.done) })
 }
 
 func (p *Pinger) Start(interval, timeout time.Duration) error {
@@ -493,11 +508,50 @@ func (p *Pinger) handleICMPError(msg *icmp.Message, errorStringFn func(icmp.Type
 	}
 }
 
+// resolveIPAddrBounded wraps p.resolveIPAddr with resolveTimeout and aborts
+// early when Stop() closes p.done. Mirrors lookupTXTBounded: the resolver
+// goroutine is left to finish into a buffered channel (resolveIPAddrFunc
+// has no cancellation seam) while the caller is released immediately, so a
+// hung resolver cannot stall Pinger.Wait() and with it the whole shutdown.
+func (p *Pinger) resolveIPAddrBounded(network, address string) (*net.IPAddr, error) {
+	type result struct {
+		addr *net.IPAddr
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		addr, err := p.resolveIPAddr(network, address)
+		ch <- result{addr, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.addr, r.err
+	case <-p.done:
+		return nil, errPingerStopped
+	case <-time.After(resolveTimeout):
+		return nil, fmt.Errorf("dns resolution for %q timed out after %s", address, resolveTimeout)
+	}
+}
+
 // resolveTarget attempts DNS resolution and updates the target's IP.
-// Returns the resolved address, or nil if resolution failed.
+// Returns the resolved address, or nil if resolution failed or the pinger
+// was stopped mid-resolution.
 func (p *Pinger) resolveTarget(t *stats.TargetStats) *net.IPAddr {
-	addr, err := p.resolveIPAddr("ip", t.Host)
+	addr, err := p.resolveIPAddrBounded("ip", t.Host)
 	if err != nil {
+		// A stop is not a ping failure: recording one here would inflate
+		// the loss count printed by printExitSummary on the way out.
+		//
+		// Everything else collapses to a generic "DNS Error" on purpose:
+		// LastError is surfaced in a narrow TUI column, so the detail
+		// resolveIPAddrBounded formats (which host, which timeout) is
+		// deliberately dropped here rather than truncated on screen.
+		if !errors.Is(err, errPingerStopped) {
+			t.OnFailure("DNS Error")
+		}
+		return nil
+	}
+	if addr == nil {
 		t.OnFailure("DNS Error")
 		return nil
 	}
@@ -520,12 +574,15 @@ type ASNInfo struct {
 	Org     string // "Google LLC"
 }
 
-// lookupASN performs a (potentially slow, uncancellable) Team Cymru DNS
-// lookup for ipStr and records the result on t. Guarded by p.done so that a
-// lookup queued just before Stop() doesn't fire a lookup that outlives it;
-// an already in-flight DNS query is not interrupted (getASNInfo has no
-// cancellation seam), but the wg.Add/Done in resolveTarget's caller ensures
-// Wait() still blocks until it finishes.
+// lookupASN performs a (potentially slow) Team Cymru DNS lookup for ipStr
+// and records the result on t. Guarded by p.done so that a lookup queued
+// just before Stop() doesn't fire at all. Once a lookup is in flight,
+// getASNInfo's calls to lookupTXTBounded also race against p.done: if
+// Stop() closes it mid-lookup, getASNInfo returns immediately instead of
+// waiting out the underlying DNS query, so Wait() (which blocks on the
+// wg.Add/Done in resolveTarget's caller) no longer stalls for
+// asnLookupTimeout. The abandoned DNS goroutine is left to finish on its
+// own into a buffered channel; only its result is discarded.
 func (p *Pinger) lookupASN(t *stats.TargetStats, ipStr string) {
 	select {
 	case <-p.done:
@@ -601,7 +658,13 @@ func (p *Pinger) getASNInfo(ipStr string) ASNInfo {
 
 	// Second lookup: <asn-number>.asn.cymru.com for org name
 	// Response: "15169 | GOOGLE - Google LLC, US | 1992-12-01"
-	org := p.lookupOrg(strings.TrimPrefix(asnRaw, "AS"))
+	org, err := p.lookupOrg(strings.TrimPrefix(asnRaw, "AS"))
+	if errors.Is(err, errPingerStopped) {
+		// Stop() fired mid-lookup: don't cache a partial record (real ASN/
+		// country with a bogus empty Org that's indistinguishable from a
+		// genuine "no org found" result).
+		return ASNInfo{}
+	}
 
 	info = ASNInfo{Number: asnRaw, Country: country, Org: org}
 	p.asnMu.Lock()
@@ -610,9 +673,11 @@ func (p *Pinger) getASNInfo(ipStr string) ASNInfo {
 	return info
 }
 
-// lookupTXTBounded wraps p.lookupTXT with asnLookupTimeout. The lookup
-// goroutine is left to finish into a buffered channel on timeout rather than
-// being interrupted.
+// lookupTXTBounded wraps p.lookupTXT with asnLookupTimeout and aborts early
+// when Stop() closes p.done. The lookup goroutine is left to finish into a
+// buffered channel rather than being interrupted — net.LookupTXT has no
+// cancellation seam — but the caller is released immediately so Wait()
+// doesn't stall the shutdown path.
 func (p *Pinger) lookupTXTBounded(name string) ([]string, error) {
 	type result struct {
 		txts []string
@@ -626,20 +691,30 @@ func (p *Pinger) lookupTXTBounded(name string) ([]string, error) {
 	select {
 	case r := <-ch:
 		return r.txts, r.err
+	case <-p.done:
+		return nil, errPingerStopped
 	case <-time.After(asnLookupTimeout):
 		return nil, fmt.Errorf("asn lookup for %q timed out after %s", name, asnLookupTimeout)
 	}
 }
 
-func (p *Pinger) lookupOrg(asnNumber string) string {
+// lookupOrg resolves the org name for asnNumber. The returned error is
+// non-nil only when the lookup aborted because Stop() closed p.done
+// (errPingerStopped); a genuine DNS failure or empty/malformed response is
+// reported as ("", nil) so callers keep treating it as "no org found", not
+// as a reason to discard an otherwise-successful ASN/country result.
+func (p *Pinger) lookupOrg(asnNumber string) (string, error) {
 	txts, err := p.lookupTXTBounded(asnNumber + ".asn.cymru.com")
+	if errors.Is(err, errPingerStopped) {
+		return "", err
+	}
 	if err != nil || len(txts) == 0 {
-		return ""
+		return "", nil
 	}
 	// Response: "15169 | GOOGLE - Google LLC, US | 1992-12-01"
 	parts := strings.Split(txts[0], "|")
 	if len(parts) < 2 {
-		return ""
+		return "", nil
 	}
 	desc := strings.TrimSpace(parts[1]) // "GOOGLE - Google LLC, US"
 	// Strip "HANDLE - " prefix if present
@@ -650,7 +725,7 @@ func (p *Pinger) lookupOrg(asnNumber string) string {
 	if idx := strings.LastIndex(desc, ", "); idx >= 0 {
 		desc = strings.TrimSpace(desc[:idx]) // "Google LLC"
 	}
-	return desc
+	return desc, nil
 }
 
 // getWriteFunc returns the appropriate ICMP message type and write function

@@ -59,8 +59,6 @@ type tableRenderer struct {
 	rowCount      int
 	compactLayout bool
 	groupRowMap   []groupTableRow
-	cachedWidths  []int
-	lastTermWidth int
 
 	vs *viewState
 }
@@ -96,8 +94,7 @@ func newTableRenderer(
 		headerColor:      tcell.ColorYellow,
 		rowColor:         tcell.ColorWhite,
 		table:            table, tablePane: tablePane,
-		lastTermWidth: -1,
-		vs:            vs,
+		vs: vs,
 	}
 	for i, c := range cols {
 		tr.fullHeaders[i] = c.name
@@ -143,6 +140,13 @@ func newTableRenderer(
 // output text (Src/Dst IP, DNS, ASN). views must be the same length as
 // tr.targets, in the same order (one GetView() snapshot per target, taken
 // once per tick by the caller rather than re-fetched here).
+//
+// Recomputed every tick on purpose. A previous version cached this and only
+// invalidated on terminal resize, which pinned the ASN and Dst IP columns to
+// whatever they measured on the first tick — before the Cymru lookup and DNS
+// resolution had filled them in — so their content stayed truncated until
+// the user resized. See BenchmarkCalcColumnWidths for the cost this trades
+// against.
 func (tr *tableRenderer) calcColumnWidths(views []stats.TargetView) []int {
 	widths := append([]int(nil), tr.baseWidths...)
 	for i, c := range tr.cols {
@@ -159,16 +163,6 @@ func (tr *tableRenderer) calcColumnWidths(views []stats.TargetView) []int {
 		widths[i] = maxWidth
 	}
 	return widths
-}
-
-// calcColumnWidthsCached recalculates only when the terminal width changes.
-func (tr *tableRenderer) calcColumnWidthsCached(views []stats.TargetView) []int {
-	_, _, curTermWidth, _ := tr.tablePane.GetInnerRect()
-	if tr.cachedWidths == nil || curTermWidth != tr.lastTermWidth {
-		tr.cachedWidths = tr.calcColumnWidths(views)
-		tr.lastTermWidth = curTermWidth
-	}
-	return tr.cachedWidths
 }
 
 // rowRenderMargin extends the rendered row window beyond what's strictly
@@ -235,7 +229,7 @@ func (tr *tableRenderer) update() {
 		availableColumnsWidth = 0
 	}
 
-	updatedWidths := tr.calcColumnWidthsCached(views)
+	updatedWidths := tr.calcColumnWidths(views)
 	dynamicMaxWidths := append([]int(nil), tr.maxWidths...)
 	for i, c := range tr.cols {
 		if c.dynamic && updatedWidths[i] > dynamicMaxWidths[i] {
