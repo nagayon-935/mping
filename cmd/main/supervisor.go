@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/mtr"
@@ -27,25 +29,112 @@ type supervisorConfig struct {
 	logCh        chan string
 }
 
+// supervisorState tracks whether this supervisor's components are running.
+// The previous code used a single `stopped bool`, which conflated "the user
+// pressed 's'" with "run() is tearing this iteration down" — a restart
+// racing with the teardown could therefore resurrect the pinger and
+// checkers. stateTerminated is one-way: nothing revives a supervisor from it.
+type supervisorState int
+
+const (
+	// stateStopped is the zero value on purpose: a freshly constructed
+	// supervisor owns nothing until cmdStart runs.
+	stateStopped supervisorState = iota
+	stateRunning
+	stateTerminated
+)
+
+func (s supervisorState) String() string {
+	switch s {
+	case stateStopped:
+		return "stopped"
+	case stateRunning:
+		return "running"
+	case stateTerminated:
+		return "terminated"
+	}
+	return "unknown"
+}
+
+// cmdKind identifies a supervisor operation. Every mutation of supervisor
+// state goes through one of these, processed one at a time, so the
+// components no longer need to defend themselves against concurrent callers.
+type cmdKind int
+
+const (
+	cmdStart cmdKind = iota
+	cmdStop
+	cmdRestart
+	cmdResetTrace
+	cmdResetMTR
+	cmdResetPort
+	cmdResetHTTP
+	cmdTerminate
+)
+
+func (k cmdKind) String() string {
+	switch k {
+	case cmdStart:
+		return "start"
+	case cmdStop:
+		return "stop"
+	case cmdRestart:
+		return "restart"
+	case cmdResetTrace:
+		return "resetTrace"
+	case cmdResetMTR:
+		return "resetMTR"
+	case cmdResetPort:
+		return "resetPort"
+	case cmdResetHTTP:
+		return "resetHTTP"
+	case cmdTerminate:
+		return "terminate"
+	}
+	return "unknown"
+}
+
+// command is one unit of work for the supervisor. reply may be nil when the
+// sender does not care about the outcome.
+type command struct {
+	kind  cmdKind
+	reply chan error
+}
+
+// errSupervisorTerminated is returned for a command that would have started
+// something after run() began tearing this iteration down.
+var errSupervisorTerminated = errors.New("supervisor terminated")
+
 // supervisor owns the pinger/traceroute/MTR/port/HTTP checker lifecycle for
-// one run() loop iteration, and the mutex guarding their shared state
-// (equivalent to run()'s former pMu). TD-22②: extracted out of run() as a
-// behavior-preserving move.
+// one run() loop iteration.
+//
+// Every field below except the channels and the snapshots is touched only by
+// the command goroutine (see supervisor_loop.go), so none of them is
+// synchronized. That is the point of the command loop: the components no
+// longer each need their own defence against concurrent callers.
 type supervisor struct {
 	cfg supervisorConfig
 
-	mu          sync.Mutex
 	p           pingerController
 	traceCancel context.CancelFunc
 	traceDone   chan struct{} // closed when the current runTraceroutes goroutine returns
 	portChecker *pinger.PortChecker
 	httpChecker *pinger.HTTPChecker
 	mtrEngine   *mtr.Engine
-	// stopped records that stopAll has torn this supervisor down, so a
-	// reset racing with shutdown doesn't install a checker nobody will
-	// stop (see resetChecker). Cleared by startPinger/setupPortAndHTTP on
-	// restart. Guarded by mu.
-	stopped bool
+	state       supervisorState
+
+	// Command plumbing. cmds is never closed — see do()'s comment.
+	cmds         chan command
+	done         chan struct{}
+	loopDone     chan struct{}
+	shutdownOnce sync.Once
+
+	// Snapshots published by the loop for readers that must not block on it:
+	// the render loop (httpSnap), count-limited runs (pingerSnap), tests
+	// (stateSnap).
+	httpSnap   atomic.Pointer[[]*stats.HTTPCheckResult]
+	pingerSnap atomic.Pointer[pingerController]
+	stateSnap  atomic.Int32
 }
 
 func newSupervisor(cfg supervisorConfig) *supervisor {
@@ -53,8 +142,9 @@ func newSupervisor(cfg supervisorConfig) *supervisor {
 }
 
 // startTraceroutes cancels any previous traceroute goroutine, launches a new
-// one, and tracks it via s.traceDone so stopPinger can join it on shutdown
-// instead of leaving it to be reaped by process exit. Caller must hold s.mu.
+// one, and tracks it via s.traceDone so tearDownAll can join it on shutdown
+// instead of leaving it to be reaped by process exit. Caller must be running
+// on the command goroutine (see supervisor_loop.go).
 func (s *supervisor) startTraceroutes(pr tracer) {
 	if s.traceCancel != nil {
 		s.traceCancel()
@@ -65,8 +155,8 @@ func (s *supervisor) startTraceroutes(pr tracer) {
 	s.traceDone = done
 	// Pass the local ctx rather than storing it in a shared field: a
 	// concurrent resetTrace()/startPinger() call would reassign a shared
-	// field under s.mu, racing with this goroutine reading it later. ctx
-	// here is only ever touched by this one goroutine.
+	// field on the next command-loop iteration, racing with this goroutine
+	// reading it later. ctx here is only ever touched by this one goroutine.
 	go func() {
 		defer close(done)
 		runTraceroutes(ctx, pr, s.cfg.targets)
@@ -82,43 +172,114 @@ func (s *supervisor) onFlap(host, desc string) {
 	}
 }
 
-// startPinger creates and starts a new pinger, wiring up traceroute/MTR when
-// enabled. next.Start() stays outside s.mu because it opens raw sockets and
-// spawns goroutines while touching no supervisor state; the swap itself is
-// done under s.mu, and any pinger it supersedes is released afterwards —
-// outside s.mu, because httpResults() takes the same mutex on every UI
-// refresh tick, so holding it across the join would visibly stall the TUI.
-// prev.Stop() runs before prev.Wait(), and every blocking helper in the
-// pinger short-circuits on p.done, so the join is bounded by
-// receiverReadTimeout (1s — the receiver loop's read-deadline poll), not by
-// resolveTimeout or asnLookupTimeout.
-func (s *supervisor) startPinger() error {
+// handle executes one command against the current state. It is the single
+// place where supervisor state changes, and it assumes it is never called
+// concurrently with itself — Task 2's command loop is what guarantees that.
+// Splitting it out from the loop keeps the whole state machine testable
+// without starting a goroutine.
+func (s *supervisor) handle(c command) error {
+	switch c.kind {
+	case cmdStart:
+		if s.state == stateTerminated {
+			return errSupervisorTerminated
+		}
+		if s.state == stateRunning {
+			return nil
+		}
+		return s.startAll()
+
+	case cmdStop:
+		if s.state != stateRunning {
+			return nil
+		}
+		s.tearDownAll()
+		s.state = stateStopped
+		return nil
+
+	case cmdRestart:
+		if s.state == stateTerminated {
+			return errSupervisorTerminated
+		}
+		if s.state == stateRunning {
+			s.tearDownAll()
+			s.state = stateStopped
+		}
+		return s.startAll()
+
+	case cmdResetTrace:
+		if s.state != stateRunning {
+			return nil
+		}
+		s.startTraceroutes(s.p)
+		return nil
+
+	case cmdResetMTR:
+		if s.state != stateRunning {
+			return nil
+		}
+		s.restartMTR()
+		return nil
+
+	case cmdResetPort:
+		if s.state != stateRunning {
+			return nil
+		}
+		s.restartPortChecker()
+		return nil
+
+	case cmdResetHTTP:
+		if s.state != stateRunning {
+			return nil
+		}
+		s.restartHTTPChecker()
+		return nil
+
+	case cmdTerminate:
+		if s.state == stateTerminated {
+			return nil
+		}
+		if s.state == stateRunning {
+			s.tearDownAll()
+		}
+		s.state = stateTerminated
+		return nil
+	}
+	return fmt.Errorf("supervisor: unknown command %d", c.kind)
+}
+
+// startAll brings up the pinger, traceroute, MTR engine and the port/HTTP
+// checkers. Any pinger it supersedes is released at the end — with commands
+// serialized that can only be a pinger cmdRestart already stopped, so this
+// is a cheap no-op safety net rather than the race guard it used to be.
+//
+// prev.Stop()/Wait()/Close() run here on the command goroutine, same as
+// everything else handle() does; there is no mutex left to stall, and
+// httpResults() no longer shares anything with this call — it reads a
+// snapshot published by the loop instead. prev is nil only on the very first
+// start; on every later start (cmdRestart from stateRunning always tears the
+// previous pinger down via tearDownAll before calling startAll, and handle()
+// only ever runs on the single command goroutine in loop()
+// (supervisor_loop.go), which drains s.cmds one at a time, so a second
+// concurrent cmdRestart cannot race in) prev is a pinger tearDownAll already
+// stopped, so releasing it again here is an idempotent no-op rather than a
+// real join — Pinger.Stop is sync.Once-guarded and Pinger.Close reuses that
+// same guard (pinger.go).
+func (s *supervisor) startAll() error {
 	next := s.cfg.makePinger(s.cfg.packetSize)
 	if err := next.Start(s.cfg.interval, s.cfg.timeout); err != nil {
 		return err
 	}
-	s.mu.Lock()
 	prev := s.p
-	s.stopped = false
+	s.p = next
 	if s.cfg.traceEnabled {
 		s.startTraceroutes(next)
 	}
 	if s.cfg.mtrEnabled {
-		if s.mtrEngine != nil {
-			s.mtrEngine.Stop()
-		}
-		s.mtrEngine = mtr.NewEngine(next.MTRProber(), s.cfg.targets, mtr.Config{
-			OnFlap: s.onFlap,
-		})
-		s.mtrEngine.Start()
+		s.restartMTR()
 	}
-	s.p = next
-	s.mu.Unlock()
-
-	// Release whatever we just superseded. In the normal OnRestart flow
-	// stopAll already stopped it, so this is a cheap no-op (Stop and Close
-	// are idempotent). In a concurrent double-start it is what keeps the
-	// loser's raw socket and worker goroutines from leaking.
+	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
+	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
+	s.state = stateRunning
 	if prev != nil && prev != next {
 		prev.Stop()
 		prev.Wait()
@@ -127,63 +288,32 @@ func (s *supervisor) startPinger() error {
 	return nil
 }
 
-// setupPortAndHTTP starts the port and HTTP checkers (each a no-op when its
-// spec list is empty).
-func (s *supervisor) setupPortAndHTTP() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.stopped = false
-	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
-	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
-}
-
-// stopPinger stops, in order, the traceroute goroutine (joined), the MTR
-// engine, and the pinger itself — Stop() (signal), Wait() (join), then
-// Close() (release the raw ICMP socket). Close is called only after Wait
-// returns, so the receiver goroutine is guaranteed to have already exited
-// before its socket fd is closed out from under it. Without this, YAML
-// reloads and add/delete-host swaps left each old pinger's raw socket for
-// the GC finalizer to close non-deterministically instead of releasing it
-// immediately. Safe to call multiple times (Close is idempotent, see
-// pinger.Pinger.Close).
-func (s *supervisor) stopPinger() {
-	s.mu.Lock()
+// tearDownAll stops everything in dependency order: the traceroute goroutine
+// is joined first (it probes through the pinger), then the MTR engine, then
+// the pinger itself — Stop (signal), Wait (join), Close (release the raw
+// socket), so the receiver goroutine has exited before its fd is closed.
+//
+// s.p, s.portChecker and s.httpChecker are deliberately NOT set to nil: the
+// UI keeps showing each pane's last values after a stop instead of blanking
+// them, which is the pre-existing behaviour.
+func (s *supervisor) tearDownAll() {
 	if s.traceCancel != nil {
 		s.traceCancel()
+		s.traceCancel = nil
 	}
-	curTraceDone := s.traceDone
-	curEngine := s.mtrEngine
-	cur := s.p
-	s.mu.Unlock()
-	if curTraceDone != nil {
-		<-curTraceDone
+	if s.traceDone != nil {
+		<-s.traceDone
+		s.traceDone = nil
 	}
-	if curEngine != nil {
-		curEngine.Stop()
+	if s.mtrEngine != nil {
+		s.mtrEngine.Stop()
+		s.mtrEngine = nil
 	}
-	if cur != nil {
-		cur.Stop()
-		cur.Wait()
-		cur.Close()
+	if s.p != nil {
+		s.p.Stop()
+		s.p.Wait()
+		s.p.Close()
 	}
-}
-
-// stopAll stops the pinger (and trace/MTR) followed by the port and HTTP
-// checkers. Called from multiple sites (OnStop, OnRestart, error path,
-// normal cleanup) and must be safe both to call more than once and to call
-// concurrently: Pinger.Stop, PortChecker.Stop and HTTPChecker.Stop all
-// guard their close/cancel with sync.Once.
-//
-// The checker teardown holds mu across Stop/Wait — matching resetChecker —
-// so a concurrent reset can't slip a freshly created checker past us. The
-// stopped flag then keeps a reset that arrives after us from creating one.
-// Both checkers' Wait() is bounded by their own check timeout and neither
-// calls back into supervisor, so holding mu here cannot deadlock.
-func (s *supervisor) stopAll() {
-	s.stopPinger()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.stopped = true
 	if s.portChecker != nil {
 		s.portChecker.Stop()
 		s.portChecker.Wait()
@@ -194,107 +324,68 @@ func (s *supervisor) stopAll() {
 	}
 }
 
-func (s *supervisor) resetTrace() {
-	s.mu.Lock()
-	cur := s.p
-	s.startTraceroutes(cur)
-	s.mu.Unlock()
-}
-
-func (s *supervisor) resetMTR() {
+// restartMTR replaces the MTR engine, resetting per-target stats first.
+// The 'R' key handler also calls t.Reset() on every target; that duplication
+// predates this refactor and is preserved deliberately.
+func (s *supervisor) restartMTR() {
 	for _, t := range s.cfg.targets {
 		t.Reset()
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	curEngine := s.mtrEngine
-	if curEngine != nil {
-		curEngine.Stop()
+	if s.mtrEngine != nil {
+		s.mtrEngine.Stop()
+		s.mtrEngine = nil
 	}
-	cur := s.p
-	if cur == nil {
+	if s.p == nil {
 		return
 	}
-	s.mtrEngine = mtr.NewEngine(cur.MTRProber(), s.cfg.targets, mtr.Config{
+	s.mtrEngine = mtr.NewEngine(s.p.MTRProber(), s.cfg.targets, mtr.Config{
 		OnFlap: s.onFlap,
 	})
 	s.mtrEngine.Start()
 }
 
-func (s *supervisor) resetHTTP() {
-	resetChecker(&s.mu, &s.stopped, &s.httpChecker, func() *pinger.HTTPChecker {
-		return setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
-	})
-}
-
-func (s *supervisor) resetPort() {
-	resetChecker(&s.mu, &s.stopped, &s.portChecker, func() *pinger.PortChecker {
-		return setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
-	})
-}
-
-// checkerStopper is implemented by *pinger.PortChecker and
-// *pinger.HTTPChecker: the two supervisor-owned checkers that share an
-// identical stop-then-replace reset lifecycle.
-type checkerStopper interface {
-	comparable
-	Stop()
-	Wait()
-}
-
-// resetChecker stops the current value at *field (if any) and swaps in a
-// freshly created replacement, holding mu across the entire stop→create→
-// assign sequence (matching resetMTR's pattern above, which already holds
-// mu across mtrEngine.Stop()+NewEngine()+Start()). TD-46②: this closes the
-// unlocked window resetHTTP/resetPort previously had, where a concurrent
-// stopAll() could read *field as nil mid-reset and skip stopping the
-// newly-created checker — stopAll also takes mu (see stopAll/stopPinger
-// above), so it now blocks until reset finishes and then correctly stops
-// the replacement. Stop/Wait on a port/HTTP checker just joins its own
-// goroutines and doesn't call back into supervisor, so holding mu across
-// them cannot deadlock.
-//
-// stopped is read under the same mu: when stopAll has already torn the
-// supervisor down, we stop the old checker, zero *field, and do NOT create a
-// replacement, because nothing would ever stop it. Without this, a reset that
-// interleaved with stopAll's read-then-release pattern leaked the new
-// checker's goroutines and sockets. Zeroing the field is visible in the UI —
-// httpResults() returns nil for a nil checker, blanking the HTTP pane — which
-// is the correct post-shutdown state.
-func resetChecker[T checkerStopper](mu *sync.Mutex, stopped *bool, field *T, create func() T) {
-	mu.Lock()
-	defer mu.Unlock()
-	cur := *field
-	var zero T
-	if cur != zero {
-		cur.Stop()
-		cur.Wait()
+// restartPortChecker stops any existing port checker and replaces it with a
+// freshly configured one.
+func (s *supervisor) restartPortChecker() {
+	if s.portChecker != nil {
+		s.portChecker.Stop()
+		s.portChecker.Wait()
 	}
-	if *stopped {
-		*field = zero
-		return
-	}
-	*field = create()
+	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
 }
+
+// restartHTTPChecker stops any existing HTTP checker and replaces it with a
+// freshly configured one.
+func (s *supervisor) restartHTTPChecker() {
+	if s.httpChecker != nil {
+		s.httpChecker.Stop()
+		s.httpChecker.Wait()
+	}
+	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
+}
+
+func (s *supervisor) startPinger() error { return s.do(cmdStart) }
+func (s *supervisor) stopAll()           { _ = s.do(cmdStop) }
+func (s *supervisor) resetTrace()        { _ = s.do(cmdResetTrace) }
+func (s *supervisor) resetMTR()          { _ = s.do(cmdResetMTR) }
+func (s *supervisor) resetHTTP()         { _ = s.do(cmdResetHTTP) }
+func (s *supervisor) resetPort()         { _ = s.do(cmdResetPort) }
 
 // httpResults returns the current HTTP checker's results, or nil when no
-// HTTP checker is active.
+// HTTP checker is active. Reads a snapshot rather than the live field: the
+// render loop calls this every tick and must never block on the command
+// queue.
 func (s *supervisor) httpResults() []*stats.HTTPCheckResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.httpChecker == nil {
-		return nil
+	if r := s.httpSnap.Load(); r != nil {
+		return *r
 	}
-	return s.httpChecker.Results()
+	return nil
 }
 
 // waitPinger blocks until the current pinger finishes (used for
 // count-limited runs).
 func (s *supervisor) waitPinger() {
-	s.mu.Lock()
-	cur := s.p
-	s.mu.Unlock()
-	if cur != nil {
-		cur.Wait()
+	if p := s.pingerSnap.Load(); p != nil {
+		(*p).Wait()
 	}
 }

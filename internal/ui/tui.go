@@ -52,11 +52,16 @@ type RunOptions struct {
 	// the case.
 	ExternalLogCh <-chan string
 	OnStop        func()
-	OnRestart     func() error
-	OnResetTrace  func()
-	OnResetMTR    func()
-	OnResetPort   func()
-	OnResetHTTP   func()
+	// OnRestart restarts the pinger and checkers. It returns an error both
+	// for a genuine restart failure and when the supervisor has already been
+	// shut down by run(); the key handler distinguishes them by checking
+	// appStop rather than inspecting the error, since internal/ui cannot
+	// import cmd/main.
+	OnRestart    func() error
+	OnResetTrace func()
+	OnResetMTR   func()
+	OnResetPort  func()
+	OnResetHTTP  func()
 	// OnAddHost is called when the user adds a host via the 'a' key dialog.
 	// A non-nil error is displayed in the Log pane; nil triggers a reload.
 	OnAddHost func(host string) error
@@ -220,6 +225,7 @@ func Run(opts RunOptions) error {
 		onAddHost:       onAddHost,
 		onDeleteHost:    onDeleteHost,
 		closeAppStop:    closeAppStop,
+		appStop:         appStop,
 	}))
 	startRefreshLoop(app, tr, footer, interval, updateTickerCh, externalLogCh, externalCloseCh, doneCh,
 		vs, closeAppStop, appStop)

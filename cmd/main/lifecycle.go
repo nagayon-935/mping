@@ -290,12 +290,7 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 		ExternalLogCh:   p.logCh,
 		OnStop:          p.sup.stopAll,
 		OnRestart: func() error {
-			p.sup.stopAll()
-			if err := p.sup.startPinger(); err != nil {
-				return err
-			}
-			p.sup.setupPortAndHTTP()
-			return nil
+			return p.sup.do(cmdRestart)
 		},
 		OnResetTrace: p.sup.resetTrace,
 		OnResetMTR:   p.resetMTR,
@@ -338,8 +333,13 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 }
 
 // finishIteration performs the standard post-uiRun cleanup: stop the JSON
-// writer and write a final snapshot, stop the pinger/port/HTTP checkers, then
-// stop the file watcher — in that order, joining each before moving on.
+// writer and write a final snapshot, tear the supervisor's components down,
+// stop its command loop, then stop the file watcher — in that order, joining
+// each before moving on.
+//
+// cmdTerminate must be processed BEFORE Shutdown(): terminate is what
+// actually stops the pinger and checkers, and Shutdown() ends the goroutine
+// that would execute it.
 func finishIteration(cfg config, targets []*stats.TargetStats, sup *supervisor, errOut io.Writer, jsonCancel func(), jsonDone chan struct{}, watchCancel func(), watchDone chan struct{}) {
 	jsonCancel()
 	<-jsonDone
@@ -348,7 +348,8 @@ func finishIteration(cfg config, targets []*stats.TargetStats, sup *supervisor, 
 			fmt.Fprintf(errOut, "Warning: Final JSON snapshot write failed: %v\n", err)
 		}
 	}
-	sup.stopAll()
+	_ = sup.do(cmdTerminate)
+	sup.Shutdown()
 	watchCancel()
 	<-watchDone
 }
