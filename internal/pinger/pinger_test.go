@@ -2579,3 +2579,44 @@ func TestRunReceiverV4FallbackParseShortData(t *testing.T) {
 		t.Fatal("runReceiverV4 did not stop")
 	}
 }
+
+// TestResolveTargetUnblocksOnStop verifies a hung DNS resolution does not
+// hold the shutdown path. resolveIPAddr takes no context and cannot be
+// cancelled — with an unresponsive --dns-server the real resolver was
+// measured blocking ~40s — so resolveTarget must bound it and bail out as
+// soon as Stop() closes p.done. runWorker calls resolveTarget on p.wg's
+// goroutines, so anything it blocks on also blocks Pinger.Wait().
+func TestResolveTargetUnblocksOnStop(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+
+	p := NewPingerWithOptions(nil, Options{
+		ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {
+			<-release // simulates a DNS server that never answers
+			return nil, nil
+		},
+	})
+	target := stats.NewTargetStats("example.com")
+
+	returned := make(chan *net.IPAddr, 1)
+	go func() { returned <- p.resolveTarget(target) }()
+
+	// Let the resolve goroutine get into its blocking call.
+	time.Sleep(20 * time.Millisecond)
+	p.Stop()
+
+	select {
+	case addr := <-returned:
+		if addr != nil {
+			t.Fatalf("expected nil address on stop, got %v", addr)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("resolveTarget did not return within 1s of Stop()")
+	}
+
+	// Shutdown must not be recorded as a ping failure: OnFailure bumps Loss
+	// and would pollute the exit summary printed by printExitSummary.
+	if v := target.GetView(); v.Loss != 0 {
+		t.Errorf("expected no loss recorded on shutdown, got Loss=%d LastError=%q", v.Loss, v.LastError)
+	}
+}

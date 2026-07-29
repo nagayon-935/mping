@@ -43,6 +43,13 @@ var asnLookupTimeout = 3 * time.Second
 // record a spurious loss against the target.
 var errPingerStopped = errors.New("pinger stopped")
 
+// resolveTimeout bounds each target DNS resolution. resolveIPAddr takes no
+// context, and neither net.ResolveIPAddr nor a *net.Resolver driven with
+// context.Background() has a timeout of its own — an unresponsive
+// --dns-server was measured blocking ~40s. A var (not const) so tests can
+// shrink it, matching asnLookupTimeout.
+var resolveTimeout = 5 * time.Second
+
 // PacketConnV4 interface matches *ipv4.PacketConn methods we use
 type PacketConnV4 interface {
 	ReadFrom(b []byte) (int, *ipv4.ControlMessage, net.Addr, error)
@@ -501,11 +508,45 @@ func (p *Pinger) handleICMPError(msg *icmp.Message, errorStringFn func(icmp.Type
 	}
 }
 
+// resolveIPAddrBounded wraps p.resolveIPAddr with resolveTimeout and aborts
+// early when Stop() closes p.done. Mirrors lookupTXTBounded: the resolver
+// goroutine is left to finish into a buffered channel (resolveIPAddrFunc
+// has no cancellation seam) while the caller is released immediately, so a
+// hung resolver cannot stall Pinger.Wait() and with it the whole shutdown.
+func (p *Pinger) resolveIPAddrBounded(network, address string) (*net.IPAddr, error) {
+	type result struct {
+		addr *net.IPAddr
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		addr, err := p.resolveIPAddr(network, address)
+		ch <- result{addr, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.addr, r.err
+	case <-p.done:
+		return nil, errPingerStopped
+	case <-time.After(resolveTimeout):
+		return nil, fmt.Errorf("dns resolution for %q timed out after %s", address, resolveTimeout)
+	}
+}
+
 // resolveTarget attempts DNS resolution and updates the target's IP.
-// Returns the resolved address, or nil if resolution failed.
+// Returns the resolved address, or nil if resolution failed or the pinger
+// was stopped mid-resolution.
 func (p *Pinger) resolveTarget(t *stats.TargetStats) *net.IPAddr {
-	addr, err := p.resolveIPAddr("ip", t.Host)
+	addr, err := p.resolveIPAddrBounded("ip", t.Host)
 	if err != nil {
+		// A stop is not a ping failure: recording one here would inflate
+		// the loss count printed by printExitSummary on the way out.
+		if !errors.Is(err, errPingerStopped) {
+			t.OnFailure("DNS Error")
+		}
+		return nil
+	}
+	if addr == nil {
 		t.OnFailure("DNS Error")
 		return nil
 	}
