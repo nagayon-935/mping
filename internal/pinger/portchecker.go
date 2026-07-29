@@ -96,8 +96,29 @@ func (pc *PortChecker) Wait() {
 	pc.wg.Wait()
 }
 
+// maxDNSWait bounds how long the first port check waits for the pinger to
+// resolve the target IP. Without this the initial check is silently skipped
+// when IP is still empty, leaving the status stuck at "Checking...".
+const maxDNSWait = 5 * time.Second
+
 func (pc *PortChecker) loop(t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
 	defer pc.wg.Done()
+
+	// Defer the first check until the target IP is resolved (or we time out),
+	// so the user sees a real Open/Closed/Filtered result on the first tick.
+	if t.GetView().IP == "" {
+		waitTicker := time.NewTicker(100 * time.Millisecond)
+		defer waitTicker.Stop()
+		deadline := time.Now().Add(maxDNSWait)
+		for t.GetView().IP == "" && time.Now().Before(deadline) {
+			select {
+			case <-pc.ctx.Done():
+				return
+			case <-waitTicker.C:
+			}
+		}
+	}
+
 	pc.check(t, spec, result)
 	ticker := time.NewTicker(pc.interval)
 	defer ticker.Stop()

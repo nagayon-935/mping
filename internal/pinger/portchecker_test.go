@@ -346,3 +346,55 @@ func TestPortChecker_CheckSkipsEmptyIP(t *testing.T) {
 		t.Errorf("check with empty IP: expected status to remain %q, got %q", "Checking...", status)
 	}
 }
+
+// ---- DNS wait behaviour tests ----
+
+// TestPortChecker_LoopWaitsForIP verifies that the first port check is deferred
+// until the target IP is resolved, instead of being silently skipped.
+func TestPortChecker_LoopWaitsForIP(t *testing.T) {
+	tgt := stats.NewTargetStats("delayed-ip")
+	spec := PortSpec{Port: 9, Protocol: "tcp"}
+	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Hour, 10*time.Millisecond)
+
+	pc.Start()
+	defer pc.Stop()
+
+	if status := tgt.PortResults[0].GetView().Status; status != "Checking..." {
+		t.Fatalf("expected Checking... immediately, got %q", status)
+	}
+
+	time.Sleep(20 * time.Millisecond)
+	tgt.SetIP("127.0.0.1")
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if status := tgt.PortResults[0].GetView().Status; status != "Checking..." {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("status remained Checking... after IP was set")
+}
+
+// TestPortChecker_LoopStopsWhileWaitingForIP verifies that Stop() cancels the
+// DNS-wait loop before maxDNSWait expires.
+func TestPortChecker_LoopStopsWhileWaitingForIP(t *testing.T) {
+	tgt := stats.NewTargetStats("never-resolved")
+	spec := PortSpec{Port: 9, Protocol: "tcp"}
+	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Hour, 10*time.Millisecond)
+
+	pc.Start()
+	pc.Stop()
+
+	done := make(chan struct{})
+	go func() {
+		pc.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait() did not return after Stop() while waiting for IP")
+	}
+}
