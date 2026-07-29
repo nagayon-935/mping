@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/mtr"
@@ -96,11 +97,8 @@ func (k cmdKind) String() string {
 // command is one unit of work for the supervisor. reply may be nil when the
 // sender does not care about the outcome.
 type command struct {
-	kind cmdKind
-	// reply is unused until Task 2's command loop sends the result of
-	// handle() on it; the field lives here now so command's shape doesn't
-	// change between tasks.
-	reply chan error //lint:ignore U1000 wired up by Task 2's loop()
+	kind  cmdKind
+	reply chan error
 }
 
 // errSupervisorTerminated is returned for a command that would have started
@@ -108,23 +106,35 @@ type command struct {
 var errSupervisorTerminated = errors.New("supervisor terminated")
 
 // supervisor owns the pinger/traceroute/MTR/port/HTTP checker lifecycle for
-// one run() loop iteration, and the mutex guarding their shared state
-// (equivalent to run()'s former pMu). TD-22②: extracted out of run() as a
-// behavior-preserving move.
+// one run() loop iteration.
+//
+// Every field below except the channels and the snapshots is touched only by
+// the command goroutine (see supervisor_loop.go), so none of them is
+// synchronized. That is the point of the command loop: the components no
+// longer each need their own defence against concurrent callers.
 type supervisor struct {
 	cfg supervisorConfig
 
-	mu          sync.Mutex
 	p           pingerController
 	traceCancel context.CancelFunc
 	traceDone   chan struct{} // closed when the current runTraceroutes goroutine returns
 	portChecker *pinger.PortChecker
 	httpChecker *pinger.HTTPChecker
 	mtrEngine   *mtr.Engine
-	// state is only ever touched by whichever goroutine is executing
-	// handle(). Until Task 2 introduces the command loop, callers still
-	// serialize themselves with mu.
-	state supervisorState
+	state       supervisorState
+
+	// Command plumbing. cmds is never closed — see do()'s comment.
+	cmds         chan command
+	done         chan struct{}
+	loopDone     chan struct{}
+	shutdownOnce sync.Once
+
+	// Snapshots published by the loop for readers that must not block on it:
+	// the render loop (httpSnap), count-limited runs (pingerSnap), tests
+	// (stateSnap).
+	httpSnap   atomic.Pointer[[]*stats.HTTPCheckResult]
+	pingerSnap atomic.Pointer[pingerController]
+	stateSnap  atomic.Int32
 }
 
 func newSupervisor(cfg supervisorConfig) *supervisor {
@@ -133,7 +143,8 @@ func newSupervisor(cfg supervisorConfig) *supervisor {
 
 // startTraceroutes cancels any previous traceroute goroutine, launches a new
 // one, and tracks it via s.traceDone so tearDownAll can join it on shutdown
-// instead of leaving it to be reaped by process exit. Caller must hold s.mu.
+// instead of leaving it to be reaped by process exit. Caller must be running
+// on the command goroutine (see supervisor_loop.go).
 func (s *supervisor) startTraceroutes(pr tracer) {
 	if s.traceCancel != nil {
 		s.traceCancel()
@@ -144,8 +155,8 @@ func (s *supervisor) startTraceroutes(pr tracer) {
 	s.traceDone = done
 	// Pass the local ctx rather than storing it in a shared field: a
 	// concurrent resetTrace()/startPinger() call would reassign a shared
-	// field under s.mu, racing with this goroutine reading it later. ctx
-	// here is only ever touched by this one goroutine.
+	// field on the next command-loop iteration, racing with this goroutine
+	// reading it later. ctx here is only ever touched by this one goroutine.
 	go func() {
 		defer close(done)
 		runTraceroutes(ctx, pr, s.cfg.targets)
@@ -249,21 +260,17 @@ func (s *supervisor) handle(c command) error {
 // serialized that can only be a pinger cmdRestart already stopped, so this
 // is a cheap no-op safety net rather than the race guard it used to be.
 //
-// prev.Stop()/Wait()/Close() run here under whichever caller's s.mu is held
-// across the whole handle() call (see startPinger/the other wrappers below),
-// unlike the old startPinger, which deliberately released the superseded
-// pinger outside s.mu so a slow Wait() couldn't stall httpResults() — called
-// on every UI refresh tick under the same mutex — for as long as the join
-// took. That invariant is dropped here. It is tolerable only because prev is
-// nil only on the very first start; on every later start (cmdRestart from
-// stateRunning always tears the previous pinger down via tearDownAll before
-// calling startAll, and the UI's `restarting` guard in
-// internal/ui/input_handler.go blocks a second concurrent OnRestart from
-// racing in) prev is a pinger tearDownAll already stopped, so releasing it
-// again here is an idempotent no-op rather than a real join — Pinger.Stop is
-// sync.Once-guarded and Pinger.Close reuses that same guard (pinger.go).
-// Task 2 removes s.mu entirely, at which point there is no mutex left to
-// stall and the concern disappears outright.
+// prev.Stop()/Wait()/Close() run here on the command goroutine, same as
+// everything else handle() does; there is no mutex left to stall, and
+// httpResults() no longer shares anything with this call — it reads a
+// snapshot published by the loop instead. prev is nil only on the very first
+// start; on every later start (cmdRestart from stateRunning always tears the
+// previous pinger down via tearDownAll before calling startAll, and the UI's
+// `restarting` guard in internal/ui/input_handler.go blocks a second
+// concurrent OnRestart from racing in) prev is a pinger tearDownAll already
+// stopped, so releasing it again here is an idempotent no-op rather than a
+// real join — Pinger.Stop is sync.Once-guarded and Pinger.Close reuses that
+// same guard (pinger.go).
 func (s *supervisor) startAll() error {
 	next := s.cfg.makePinger(s.cfg.packetSize)
 	if err := next.Start(s.cfg.interval, s.cfg.timeout); err != nil {
@@ -344,65 +351,28 @@ func (s *supervisor) restartMTR() {
 	s.mtrEngine.Start()
 }
 
-func (s *supervisor) startPinger() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.handle(command{kind: cmdStart})
-}
-
-// setupPortAndHTTP is retained as a no-op shim for this task only: cmdStart
-// now brings the checkers up together with the pinger. Task 2 deletes it
-// along with its call sites.
-func (s *supervisor) setupPortAndHTTP() {}
-
-func (s *supervisor) stopAll() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_ = s.handle(command{kind: cmdStop})
-}
-
-func (s *supervisor) resetTrace() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_ = s.handle(command{kind: cmdResetTrace})
-}
-
-func (s *supervisor) resetMTR() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_ = s.handle(command{kind: cmdResetMTR})
-}
-
-func (s *supervisor) resetHTTP() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_ = s.handle(command{kind: cmdResetHTTP})
-}
-
-func (s *supervisor) resetPort() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_ = s.handle(command{kind: cmdResetPort})
-}
+func (s *supervisor) startPinger() error { return s.do(cmdStart) }
+func (s *supervisor) stopAll()           { _ = s.do(cmdStop) }
+func (s *supervisor) resetTrace()        { _ = s.do(cmdResetTrace) }
+func (s *supervisor) resetMTR()          { _ = s.do(cmdResetMTR) }
+func (s *supervisor) resetHTTP()         { _ = s.do(cmdResetHTTP) }
+func (s *supervisor) resetPort()         { _ = s.do(cmdResetPort) }
 
 // httpResults returns the current HTTP checker's results, or nil when no
-// HTTP checker is active.
+// HTTP checker is active. Reads a snapshot rather than the live field: the
+// render loop calls this every tick and must never block on the command
+// queue.
 func (s *supervisor) httpResults() []*stats.HTTPCheckResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.httpChecker == nil {
-		return nil
+	if r := s.httpSnap.Load(); r != nil {
+		return *r
 	}
-	return s.httpChecker.Results()
+	return nil
 }
 
 // waitPinger blocks until the current pinger finishes (used for
 // count-limited runs).
 func (s *supervisor) waitPinger() {
-	s.mu.Lock()
-	cur := s.p
-	s.mu.Unlock()
-	if cur != nil {
-		cur.Wait()
+	if p := s.pingerSnap.Load(); p != nil {
+		(*p).Wait()
 	}
 }

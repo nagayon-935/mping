@@ -5,10 +5,12 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/mtr"
 	"github.com/nagayon-935/mping/internal/pinger"
+	"github.com/nagayon-935/mping/internal/stats"
 )
 
 // lifecycleFakePinger is a pingerController double that records its own lifecycle,
@@ -102,3 +104,64 @@ func (noopHopProber) ASNInfoFor(ip string) pinger.ASNInfo { return pinger.ASNInf
 // TestHandle_RestartReleasesPreviousPinger (supervisor_state_test.go) now
 // covers the release-the-old-pinger behavior via the only path that can
 // still produce a superseded pinger: a sequential cmdRestart.
+
+// TestSupervisorSerializesConcurrentRestarts replaces
+// TestStartPingerReleasesSupersededPinger. Concurrent starts used to race and
+// leak the loser's raw socket; now they queue, so the assertion changes from
+// "the loser is cleaned up" to "exactly one pinger is live and every earlier
+// one was released".
+func TestSupervisorSerializesConcurrentRestarts(t *testing.T) {
+	var mu sync.Mutex
+	var created []*lifecycleFakePinger
+
+	sup := newSupervisor(supervisorConfig{
+		makePinger: func(size int) pingerController {
+			fp := &lifecycleFakePinger{}
+			mu.Lock()
+			created = append(created, fp)
+			mu.Unlock()
+			return fp
+		},
+		targets:  []*stats.TargetStats{stats.NewTargetStats("example.com")},
+		interval: time.Second,
+		timeout:  time.Second,
+		logCh:    make(chan string, 8),
+	})
+	sup.Start()
+	defer sup.Shutdown()
+
+	var wg sync.WaitGroup
+	for g := 0; g < 4; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := sup.do(cmdRestart); err != nil {
+				t.Errorf("cmdRestart: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	live := sup.pingerSnap.Load()
+	if live == nil {
+		t.Fatal("no live pinger after restarts")
+	}
+
+	mu.Lock()
+	all := append([]*lifecycleFakePinger(nil), created...)
+	mu.Unlock()
+
+	liveCount := 0
+	for _, fp := range all {
+		if pingerController(fp) == *live {
+			liveCount++
+			continue
+		}
+		if !fp.isReleased() {
+			t.Errorf("superseded pinger leaked (stopped=%v closed=%v)", fp.stopped, fp.closed)
+		}
+	}
+	if liveCount != 1 {
+		t.Errorf("expected exactly 1 live pinger, got %d of %d", liveCount, len(all))
+	}
+}
