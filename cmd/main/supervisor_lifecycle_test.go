@@ -97,8 +97,9 @@ func (noopHopProber) ASNInfoFor(ip string) pinger.ASNInfo { return pinger.ASNInf
 // That scenario required next.Start() to run outside any lock so both
 // goroutines could race to create their own pinger before either published
 // s.p (see the superseded-pinger fix this test was written for). startPinger
-// now delegates to handle() under s.mu for its entire body (supervisor.go),
-// so two concurrent calls are fully serialized: whichever acquires s.mu
+// now delegates to handle() on the single command-loop goroutine
+// (supervisor_loop.go), so two concurrent calls are fully serialized by the
+// command queue rather than by a lock: whichever do(cmdStart) is dequeued
 // second observes state == stateRunning and returns without creating a
 // second pinger at all. The race this test exercised can no longer happen.
 // TestHandle_RestartReleasesPreviousPinger (supervisor_state_test.go) now
