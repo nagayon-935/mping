@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -27,6 +28,85 @@ type supervisorConfig struct {
 	logCh        chan string
 }
 
+// supervisorState tracks whether this supervisor's components are running.
+// The previous code used a single `stopped bool`, which conflated "the user
+// pressed 's'" with "run() is tearing this iteration down" — a restart
+// racing with the teardown could therefore resurrect the pinger and
+// checkers. stateTerminated is one-way: nothing revives a supervisor from it.
+type supervisorState int
+
+const (
+	// stateStopped is the zero value on purpose: a freshly constructed
+	// supervisor owns nothing until cmdStart runs.
+	stateStopped supervisorState = iota
+	stateRunning
+	stateTerminated
+)
+
+func (s supervisorState) String() string {
+	switch s {
+	case stateStopped:
+		return "stopped"
+	case stateRunning:
+		return "running"
+	case stateTerminated:
+		return "terminated"
+	}
+	return "unknown"
+}
+
+// cmdKind identifies a supervisor operation. Every mutation of supervisor
+// state goes through one of these, processed one at a time, so the
+// components no longer need to defend themselves against concurrent callers.
+type cmdKind int
+
+const (
+	cmdStart cmdKind = iota
+	cmdStop
+	cmdRestart
+	cmdResetTrace
+	cmdResetMTR
+	cmdResetPort
+	cmdResetHTTP
+	cmdTerminate
+)
+
+func (k cmdKind) String() string {
+	switch k {
+	case cmdStart:
+		return "start"
+	case cmdStop:
+		return "stop"
+	case cmdRestart:
+		return "restart"
+	case cmdResetTrace:
+		return "resetTrace"
+	case cmdResetMTR:
+		return "resetMTR"
+	case cmdResetPort:
+		return "resetPort"
+	case cmdResetHTTP:
+		return "resetHTTP"
+	case cmdTerminate:
+		return "terminate"
+	}
+	return "unknown"
+}
+
+// command is one unit of work for the supervisor. reply may be nil when the
+// sender does not care about the outcome.
+type command struct {
+	kind cmdKind
+	// reply is unused until Task 2's command loop sends the result of
+	// handle() on it; the field lives here now so command's shape doesn't
+	// change between tasks.
+	reply chan error //lint:ignore U1000 wired up by Task 2's loop()
+}
+
+// errSupervisorTerminated is returned for a command that would have started
+// something after run() began tearing this iteration down.
+var errSupervisorTerminated = errors.New("supervisor terminated")
+
 // supervisor owns the pinger/traceroute/MTR/port/HTTP checker lifecycle for
 // one run() loop iteration, and the mutex guarding their shared state
 // (equivalent to run()'s former pMu). TD-22②: extracted out of run() as a
@@ -41,11 +121,10 @@ type supervisor struct {
 	portChecker *pinger.PortChecker
 	httpChecker *pinger.HTTPChecker
 	mtrEngine   *mtr.Engine
-	// stopped records that stopAll has torn this supervisor down, so a
-	// reset racing with shutdown doesn't install a checker nobody will
-	// stop (see resetChecker). Cleared by startPinger/setupPortAndHTTP on
-	// restart. Guarded by mu.
-	stopped bool
+	// state is only ever touched by whichever goroutine is executing
+	// handle(). Until Task 2 introduces the command loop, callers still
+	// serialize themselves with mu.
+	state supervisorState
 }
 
 func newSupervisor(cfg supervisorConfig) *supervisor {
@@ -82,43 +161,109 @@ func (s *supervisor) onFlap(host, desc string) {
 	}
 }
 
-// startPinger creates and starts a new pinger, wiring up traceroute/MTR when
-// enabled. next.Start() stays outside s.mu because it opens raw sockets and
-// spawns goroutines while touching no supervisor state; the swap itself is
-// done under s.mu, and any pinger it supersedes is released afterwards —
-// outside s.mu, because httpResults() takes the same mutex on every UI
-// refresh tick, so holding it across the join would visibly stall the TUI.
-// prev.Stop() runs before prev.Wait(), and every blocking helper in the
-// pinger short-circuits on p.done, so the join is bounded by
-// receiverReadTimeout (1s — the receiver loop's read-deadline poll), not by
-// resolveTimeout or asnLookupTimeout.
-func (s *supervisor) startPinger() error {
+// handle executes one command against the current state. It is the single
+// place where supervisor state changes, and it assumes it is never called
+// concurrently with itself — Task 2's command loop is what guarantees that.
+// Splitting it out from the loop keeps the whole state machine testable
+// without starting a goroutine.
+func (s *supervisor) handle(c command) error {
+	switch c.kind {
+	case cmdStart:
+		if s.state == stateTerminated {
+			return errSupervisorTerminated
+		}
+		if s.state == stateRunning {
+			return nil
+		}
+		return s.startAll()
+
+	case cmdStop:
+		if s.state != stateRunning {
+			return nil
+		}
+		s.tearDownAll()
+		s.state = stateStopped
+		return nil
+
+	case cmdRestart:
+		if s.state == stateTerminated {
+			return errSupervisorTerminated
+		}
+		if s.state == stateRunning {
+			s.tearDownAll()
+			s.state = stateStopped
+		}
+		return s.startAll()
+
+	case cmdResetTrace:
+		if s.state != stateRunning {
+			return nil
+		}
+		s.startTraceroutes(s.p)
+		return nil
+
+	case cmdResetMTR:
+		if s.state != stateRunning {
+			return nil
+		}
+		s.restartMTR()
+		return nil
+
+	case cmdResetPort:
+		if s.state != stateRunning {
+			return nil
+		}
+		if s.portChecker != nil {
+			s.portChecker.Stop()
+			s.portChecker.Wait()
+		}
+		s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
+		return nil
+
+	case cmdResetHTTP:
+		if s.state != stateRunning {
+			return nil
+		}
+		if s.httpChecker != nil {
+			s.httpChecker.Stop()
+			s.httpChecker.Wait()
+		}
+		s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
+		return nil
+
+	case cmdTerminate:
+		if s.state == stateTerminated {
+			return nil
+		}
+		if s.state == stateRunning {
+			s.tearDownAll()
+		}
+		s.state = stateTerminated
+		return nil
+	}
+	return fmt.Errorf("supervisor: unknown command %d", c.kind)
+}
+
+// startAll brings up the pinger, traceroute, MTR engine and the port/HTTP
+// checkers. Any pinger it supersedes is released at the end — with commands
+// serialized that can only be a pinger cmdRestart already stopped, so this
+// is a cheap no-op safety net rather than the race guard it used to be.
+func (s *supervisor) startAll() error {
 	next := s.cfg.makePinger(s.cfg.packetSize)
 	if err := next.Start(s.cfg.interval, s.cfg.timeout); err != nil {
 		return err
 	}
-	s.mu.Lock()
 	prev := s.p
-	s.stopped = false
+	s.p = next
 	if s.cfg.traceEnabled {
 		s.startTraceroutes(next)
 	}
 	if s.cfg.mtrEnabled {
-		if s.mtrEngine != nil {
-			s.mtrEngine.Stop()
-		}
-		s.mtrEngine = mtr.NewEngine(next.MTRProber(), s.cfg.targets, mtr.Config{
-			OnFlap: s.onFlap,
-		})
-		s.mtrEngine.Start()
+		s.restartMTR()
 	}
-	s.p = next
-	s.mu.Unlock()
-
-	// Release whatever we just superseded. In the normal OnRestart flow
-	// stopAll already stopped it, so this is a cheap no-op (Stop and Close
-	// are idempotent). In a concurrent double-start it is what keeps the
-	// loser's raw socket and worker goroutines from leaking.
+	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
+	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
+	s.state = stateRunning
 	if prev != nil && prev != next {
 		prev.Stop()
 		prev.Wait()
@@ -127,63 +272,32 @@ func (s *supervisor) startPinger() error {
 	return nil
 }
 
-// setupPortAndHTTP starts the port and HTTP checkers (each a no-op when its
-// spec list is empty).
-func (s *supervisor) setupPortAndHTTP() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.stopped = false
-	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
-	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
-}
-
-// stopPinger stops, in order, the traceroute goroutine (joined), the MTR
-// engine, and the pinger itself — Stop() (signal), Wait() (join), then
-// Close() (release the raw ICMP socket). Close is called only after Wait
-// returns, so the receiver goroutine is guaranteed to have already exited
-// before its socket fd is closed out from under it. Without this, YAML
-// reloads and add/delete-host swaps left each old pinger's raw socket for
-// the GC finalizer to close non-deterministically instead of releasing it
-// immediately. Safe to call multiple times (Close is idempotent, see
-// pinger.Pinger.Close).
-func (s *supervisor) stopPinger() {
-	s.mu.Lock()
+// tearDownAll stops everything in dependency order: the traceroute goroutine
+// is joined first (it probes through the pinger), then the MTR engine, then
+// the pinger itself — Stop (signal), Wait (join), Close (release the raw
+// socket), so the receiver goroutine has exited before its fd is closed.
+//
+// s.p, s.portChecker and s.httpChecker are deliberately NOT set to nil: the
+// UI keeps showing each pane's last values after a stop instead of blanking
+// them, which is the pre-existing behaviour.
+func (s *supervisor) tearDownAll() {
 	if s.traceCancel != nil {
 		s.traceCancel()
+		s.traceCancel = nil
 	}
-	curTraceDone := s.traceDone
-	curEngine := s.mtrEngine
-	cur := s.p
-	s.mu.Unlock()
-	if curTraceDone != nil {
-		<-curTraceDone
+	if s.traceDone != nil {
+		<-s.traceDone
+		s.traceDone = nil
 	}
-	if curEngine != nil {
-		curEngine.Stop()
+	if s.mtrEngine != nil {
+		s.mtrEngine.Stop()
+		s.mtrEngine = nil
 	}
-	if cur != nil {
-		cur.Stop()
-		cur.Wait()
-		cur.Close()
+	if s.p != nil {
+		s.p.Stop()
+		s.p.Wait()
+		s.p.Close()
 	}
-}
-
-// stopAll stops the pinger (and trace/MTR) followed by the port and HTTP
-// checkers. Called from multiple sites (OnStop, OnRestart, error path,
-// normal cleanup) and must be safe both to call more than once and to call
-// concurrently: Pinger.Stop, PortChecker.Stop and HTTPChecker.Stop all
-// guard their close/cancel with sync.Once.
-//
-// The checker teardown holds mu across Stop/Wait — matching resetChecker —
-// so a concurrent reset can't slip a freshly created checker past us. The
-// stopped flag then keeps a reset that arrives after us from creating one.
-// Both checkers' Wait() is bounded by their own check timeout and neither
-// calls back into supervisor, so holding mu here cannot deadlock.
-func (s *supervisor) stopAll() {
-	s.stopPinger()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.stopped = true
 	if s.portChecker != nil {
 		s.portChecker.Stop()
 		s.portChecker.Wait()
@@ -194,87 +308,65 @@ func (s *supervisor) stopAll() {
 	}
 }
 
-func (s *supervisor) resetTrace() {
-	s.mu.Lock()
-	cur := s.p
-	s.startTraceroutes(cur)
-	s.mu.Unlock()
-}
-
-func (s *supervisor) resetMTR() {
+// restartMTR replaces the MTR engine, resetting per-target stats first.
+// The 'R' key handler also calls t.Reset() on every target; that duplication
+// predates this refactor and is preserved deliberately.
+func (s *supervisor) restartMTR() {
 	for _, t := range s.cfg.targets {
 		t.Reset()
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	curEngine := s.mtrEngine
-	if curEngine != nil {
-		curEngine.Stop()
+	if s.mtrEngine != nil {
+		s.mtrEngine.Stop()
+		s.mtrEngine = nil
 	}
-	cur := s.p
-	if cur == nil {
+	if s.p == nil {
 		return
 	}
-	s.mtrEngine = mtr.NewEngine(cur.MTRProber(), s.cfg.targets, mtr.Config{
+	s.mtrEngine = mtr.NewEngine(s.p.MTRProber(), s.cfg.targets, mtr.Config{
 		OnFlap: s.onFlap,
 	})
 	s.mtrEngine.Start()
 }
 
+func (s *supervisor) startPinger() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.handle(command{kind: cmdStart})
+}
+
+// setupPortAndHTTP is retained as a no-op shim for this task only: cmdStart
+// now brings the checkers up together with the pinger. Task 2 deletes it
+// along with its call sites.
+func (s *supervisor) setupPortAndHTTP() {}
+
+func (s *supervisor) stopAll() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = s.handle(command{kind: cmdStop})
+}
+
+func (s *supervisor) resetTrace() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = s.handle(command{kind: cmdResetTrace})
+}
+
+func (s *supervisor) resetMTR() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = s.handle(command{kind: cmdResetMTR})
+}
+
 func (s *supervisor) resetHTTP() {
-	resetChecker(&s.mu, &s.stopped, &s.httpChecker, func() *pinger.HTTPChecker {
-		return setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
-	})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = s.handle(command{kind: cmdResetHTTP})
 }
 
 func (s *supervisor) resetPort() {
-	resetChecker(&s.mu, &s.stopped, &s.portChecker, func() *pinger.PortChecker {
-		return setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
-	})
-}
-
-// checkerStopper is implemented by *pinger.PortChecker and
-// *pinger.HTTPChecker: the two supervisor-owned checkers that share an
-// identical stop-then-replace reset lifecycle.
-type checkerStopper interface {
-	comparable
-	Stop()
-	Wait()
-}
-
-// resetChecker stops the current value at *field (if any) and swaps in a
-// freshly created replacement, holding mu across the entire stop→create→
-// assign sequence (matching resetMTR's pattern above, which already holds
-// mu across mtrEngine.Stop()+NewEngine()+Start()). TD-46②: this closes the
-// unlocked window resetHTTP/resetPort previously had, where a concurrent
-// stopAll() could read *field as nil mid-reset and skip stopping the
-// newly-created checker — stopAll also takes mu (see stopAll/stopPinger
-// above), so it now blocks until reset finishes and then correctly stops
-// the replacement. Stop/Wait on a port/HTTP checker just joins its own
-// goroutines and doesn't call back into supervisor, so holding mu across
-// them cannot deadlock.
-//
-// stopped is read under the same mu: when stopAll has already torn the
-// supervisor down, we stop the old checker, zero *field, and do NOT create a
-// replacement, because nothing would ever stop it. Without this, a reset that
-// interleaved with stopAll's read-then-release pattern leaked the new
-// checker's goroutines and sockets. Zeroing the field is visible in the UI —
-// httpResults() returns nil for a nil checker, blanking the HTTP pane — which
-// is the correct post-shutdown state.
-func resetChecker[T checkerStopper](mu *sync.Mutex, stopped *bool, field *T, create func() T) {
-	mu.Lock()
-	defer mu.Unlock()
-	cur := *field
-	var zero T
-	if cur != zero {
-		cur.Stop()
-		cur.Wait()
-	}
-	if *stopped {
-		*field = zero
-		return
-	}
-	*field = create()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = s.handle(command{kind: cmdResetPort})
 }
 
 // httpResults returns the current HTTP checker's results, or nil when no
