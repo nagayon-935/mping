@@ -750,12 +750,14 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			logCh:        logCh,
 		})
 
+		sup.Start()
+
 		if err := sup.startPinger(); err != nil {
 			fmt.Fprintf(errOut, "Error starting pinger: %v\n", err)
 			fmt.Fprintln(errOut, "This program requires root privileges (sudo) for raw ICMP sockets.")
+			sup.Shutdown()
 			return 1
 		}
-		sup.setupPortAndHTTP()
 
 		var resetMTR, resetHTTP, resetPort func()
 		if currentCfg.mtr {
@@ -799,7 +801,8 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			jsonCancel()
 			<-jsonDone
 			watchCancel()
-			sup.stopAll()
+			_ = sup.do(cmdTerminate)
+			sup.Shutdown()
 			return 1
 		}
 
