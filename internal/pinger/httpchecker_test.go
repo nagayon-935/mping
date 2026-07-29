@@ -1,6 +1,7 @@
 package pinger
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -176,5 +177,30 @@ func TestHTTPChecker_FollowsRedirect(t *testing.T) {
 	v := hc.Results()[0].GetView()
 	if v.Status != "Up" {
 		t.Errorf("Status = %q, want Up (redirect should be followed)", v.Status)
+	}
+}
+
+// TestHTTPChecker_MaxRedirects verifies that the checker stops following
+// redirects after maxRedirects and returns the last redirect response.
+func TestHTTPChecker_MaxRedirects(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := 0
+		fmt.Sscanf(r.URL.Query().Get("c"), "%d", &count)
+		if count < maxRedirects+1 {
+			http.Redirect(w, r, fmt.Sprintf("/?c=%d", count+1), http.StatusFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	hc := NewHTTPChecker([]string{srv.URL}, time.Hour, 5*time.Second)
+	hc.Start()
+	time.Sleep(200 * time.Millisecond)
+	hc.Stop()
+
+	v := hc.Results()[0].GetView()
+	if v.StatusCode != http.StatusFound {
+		t.Errorf("StatusCode = %d, want %d (last redirect response)", v.StatusCode, http.StatusFound)
 	}
 }

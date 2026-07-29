@@ -10,6 +10,8 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
+const maxRedirects = 10
+
 // HTTPChecker runs HTTP(S) GET health checks for a set of URLs.
 type HTTPChecker struct {
 	results  []*stats.HTTPCheckResult
@@ -34,7 +36,7 @@ func NewHTTPChecker(urls []string, interval, timeout time.Duration) *HTTPChecker
 		client: &http.Client{
 			Timeout: timeout,
 			CheckRedirect: func(_ *http.Request, via []*http.Request) error {
-				if len(via) >= 10 {
+				if len(via) >= maxRedirects {
 					return http.ErrUseLastResponse
 				}
 				return nil
