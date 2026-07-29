@@ -254,13 +254,16 @@ func (s *supervisor) handle(c command) error {
 // unlike the old startPinger, which deliberately released the superseded
 // pinger outside s.mu so a slow Wait() couldn't stall httpResults() — called
 // on every UI refresh tick under the same mutex — for as long as the join
-// took. That invariant is dropped here. It is tolerable only because no
-// current call site reaches startAll with a still-live prev: cmdRestart
-// already tore the previous pinger down via tearDownAll before calling this,
-// and the UI's `restarting` guard (internal/ui/input_handler.go) blocks a
-// second concurrent OnRestart from racing in. So prev is nil in practice and
-// this branch is dead weight until Task 2 removes s.mu entirely, at which
-// point there is no mutex left to stall and the concern disappears outright.
+// took. That invariant is dropped here. It is tolerable only because prev is
+// nil only on the very first start; on every later start (cmdRestart from
+// stateRunning always tears the previous pinger down via tearDownAll before
+// calling startAll, and the UI's `restarting` guard in
+// internal/ui/input_handler.go blocks a second concurrent OnRestart from
+// racing in) prev is a pinger tearDownAll already stopped, so releasing it
+// again here is an idempotent no-op rather than a real join — Pinger.Stop is
+// sync.Once-guarded and Pinger.Close reuses that same guard (pinger.go).
+// Task 2 removes s.mu entirely, at which point there is no mutex left to
+// stall and the concern disappears outright.
 func (s *supervisor) startAll() error {
 	next := s.cfg.makePinger(s.cfg.packetSize)
 	if err := next.Start(s.cfg.interval, s.cfg.timeout); err != nil {
