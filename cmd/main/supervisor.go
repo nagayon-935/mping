@@ -144,9 +144,9 @@ func (s *supervisor) stopPinger() {
 
 // stopAll stops the pinger (and trace/MTR) followed by the port and HTTP
 // checkers. Called from multiple sites (OnStop, OnRestart, error path,
-// normal cleanup) and must be idempotent: Pinger.Stop uses a select-guarded
-// close(done) and PortChecker/HTTPChecker.Stop use sync.Once, so all are
-// safe to call more than once.
+// normal cleanup) and must be safe both to call more than once and to call
+// concurrently: Pinger.Stop, PortChecker.Stop and HTTPChecker.Stop all
+// guard their close/cancel with sync.Once.
 func (s *supervisor) stopAll() {
 	s.stopPinger()
 	s.mu.Lock()

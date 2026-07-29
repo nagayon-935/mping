@@ -95,8 +95,9 @@ type Pinger struct {
 
 	LogWriter io.Writer // Optional logger
 
-	done chan struct{} // Signal to close receiver
-	wg   sync.WaitGroup
+	done     chan struct{} // Signal to close receiver
+	stopOnce sync.Once     // guards close(done); Stop may be called concurrently
+	wg       sync.WaitGroup
 
 	resolveIPAddr resolveIPAddrFunc
 	now           func() time.Time
@@ -212,15 +213,16 @@ func (p *Pinger) applyLastErrSource(errMsg string) string {
 	return errMsg
 }
 
+// Stop signals the receiver and worker goroutines to exit. Safe to call
+// from multiple goroutines concurrently and any number of times, matching
+// PortChecker.Stop and HTTPChecker.Stop. The UI reaches this concurrently:
+// the 's' key handler runs stopAll in its own goroutine while run()'s
+// cleanup path calls stopAll on the main goroutine.
 func (p *Pinger) Stop() {
-	if p.done != nil {
-		select {
-		case <-p.done:
-			// Already closed
-		default:
-			close(p.done)
-		}
+	if p.done == nil {
+		return
 	}
+	p.stopOnce.Do(func() { close(p.done) })
 }
 
 func (p *Pinger) Start(interval, timeout time.Duration) error {
