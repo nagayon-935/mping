@@ -55,6 +55,13 @@ type inputHandlerDeps struct {
 	onDeleteHost func(host string) error
 
 	closeAppStop func()
+	// appStop is the channel closeAppStop closes. Callback goroutines read
+	// it to tell whether Run() has begun tearing down: after app.Stop() the
+	// update queue is no longer drained, so a QueueUpdateDraw from a
+	// goroutine that outlived the application would block there forever —
+	// and on a YAML reload run() keeps looping, so one would pile up per
+	// reload.
+	appStop <-chan struct{}
 }
 
 // newInputHandler returns the SetInputCapture callback for Run()'s
@@ -62,14 +69,13 @@ type inputHandlerDeps struct {
 // (nothing outside the key handler reads or writes it), so it lives here
 // rather than in inputHandlerDeps.
 func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.EventKey {
-	// stopRequested and restarting are owned entirely by the returned
-	// closure and are only ever touched on tview's event-loop goroutine
-	// (both the input capture and QueueUpdateDraw callbacks run there), so
-	// they need no synchronisation. restarting gates re-entry: stopRequested
-	// stays true for the whole restart, so without it a second 'S' press
-	// mid-restart starts a second pinger.
+	// stopRequested is owned entirely by the returned closure and is only
+	// ever touched on tview's event-loop goroutine (both the input capture
+	// and QueueUpdateDraw callbacks run there), so it needs no
+	// synchronisation. There is no re-entrancy guard: supervisor commands are
+	// queued and executed one at a time, so a second 'S' mid-restart simply
+	// restarts again — slower, but safe.
 	stopRequested := false
-	restarting := false
 
 	return func(event *tcell.EventKey) *tcell.EventKey {
 		// Pass all events through when a text input or modal list is focused.
@@ -191,14 +197,20 @@ func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.Even
 				}
 			}
 		case 'S':
-			if stopRequested && !restarting {
-				restarting = true
+			if stopRequested {
 				d.vs.appendLog(fmt.Sprintf("[yellow][%s] Restart requested by user[-]", time.Now().Format("15:04:05")))
 				if d.onRestart != nil {
 					go func() {
 						err := d.onRestart()
+						select {
+						case <-d.appStop:
+							// run() is tearing this iteration down; the
+							// update queue is no longer drained, so posting
+							// here would block this goroutine forever.
+							return
+						default:
+						}
 						d.app.QueueUpdateDraw(func() {
-							restarting = false
 							if err != nil {
 								d.vs.appendLog(fmt.Sprintf("[red][%s] Restart failed: %v[-]", time.Now().Format("15:04:05"), err))
 								return
@@ -210,8 +222,6 @@ func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.Even
 							}
 						})
 					}()
-				} else {
-					restarting = false
 				}
 			}
 		case 'R':
