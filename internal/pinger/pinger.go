@@ -528,12 +528,15 @@ type ASNInfo struct {
 	Org     string // "Google LLC"
 }
 
-// lookupASN performs a (potentially slow, uncancellable) Team Cymru DNS
-// lookup for ipStr and records the result on t. Guarded by p.done so that a
-// lookup queued just before Stop() doesn't fire a lookup that outlives it;
-// an already in-flight DNS query is not interrupted (getASNInfo has no
-// cancellation seam), but the wg.Add/Done in resolveTarget's caller ensures
-// Wait() still blocks until it finishes.
+// lookupASN performs a (potentially slow) Team Cymru DNS lookup for ipStr
+// and records the result on t. Guarded by p.done so that a lookup queued
+// just before Stop() doesn't fire at all. Once a lookup is in flight,
+// getASNInfo's calls to lookupTXTBounded also race against p.done: if
+// Stop() closes it mid-lookup, getASNInfo returns immediately instead of
+// waiting out the underlying DNS query, so Wait() (which blocks on the
+// wg.Add/Done in resolveTarget's caller) no longer stalls for
+// asnLookupTimeout. The abandoned DNS goroutine is left to finish on its
+// own into a buffered channel; only its result is discarded.
 func (p *Pinger) lookupASN(t *stats.TargetStats, ipStr string) {
 	select {
 	case <-p.done:
@@ -609,7 +612,13 @@ func (p *Pinger) getASNInfo(ipStr string) ASNInfo {
 
 	// Second lookup: <asn-number>.asn.cymru.com for org name
 	// Response: "15169 | GOOGLE - Google LLC, US | 1992-12-01"
-	org := p.lookupOrg(strings.TrimPrefix(asnRaw, "AS"))
+	org, err := p.lookupOrg(strings.TrimPrefix(asnRaw, "AS"))
+	if errors.Is(err, errPingerStopped) {
+		// Stop() fired mid-lookup: don't cache a partial record (real ASN/
+		// country with a bogus empty Org that's indistinguishable from a
+		// genuine "no org found" result).
+		return ASNInfo{}
+	}
 
 	info = ASNInfo{Number: asnRaw, Country: country, Org: org}
 	p.asnMu.Lock()
@@ -643,15 +652,23 @@ func (p *Pinger) lookupTXTBounded(name string) ([]string, error) {
 	}
 }
 
-func (p *Pinger) lookupOrg(asnNumber string) string {
+// lookupOrg resolves the org name for asnNumber. The returned error is
+// non-nil only when the lookup aborted because Stop() closed p.done
+// (errPingerStopped); a genuine DNS failure or empty/malformed response is
+// reported as ("", nil) so callers keep treating it as "no org found", not
+// as a reason to discard an otherwise-successful ASN/country result.
+func (p *Pinger) lookupOrg(asnNumber string) (string, error) {
 	txts, err := p.lookupTXTBounded(asnNumber + ".asn.cymru.com")
+	if errors.Is(err, errPingerStopped) {
+		return "", err
+	}
 	if err != nil || len(txts) == 0 {
-		return ""
+		return "", nil
 	}
 	// Response: "15169 | GOOGLE - Google LLC, US | 1992-12-01"
 	parts := strings.Split(txts[0], "|")
 	if len(parts) < 2 {
-		return ""
+		return "", nil
 	}
 	desc := strings.TrimSpace(parts[1]) // "GOOGLE - Google LLC, US"
 	// Strip "HANDLE - " prefix if present
@@ -662,7 +679,7 @@ func (p *Pinger) lookupOrg(asnNumber string) string {
 	if idx := strings.LastIndex(desc, ", "); idx >= 0 {
 		desc = strings.TrimSpace(desc[:idx]) // "Google LLC"
 	}
-	return desc
+	return desc, nil
 }
 
 // getWriteFunc returns the appropriate ICMP message type and write function
