@@ -128,6 +128,7 @@ func (s *supervisor) startPinger() error {
 func (s *supervisor) setupPortAndHTTP() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.stopped = false
 	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
 	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
 }
@@ -168,19 +169,24 @@ func (s *supervisor) stopPinger() {
 // normal cleanup) and must be safe both to call more than once and to call
 // concurrently: Pinger.Stop, PortChecker.Stop and HTTPChecker.Stop all
 // guard their close/cancel with sync.Once.
+//
+// The checker teardown holds mu across Stop/Wait — matching resetChecker —
+// so a concurrent reset can't slip a freshly created checker past us. The
+// stopped flag then keeps a reset that arrives after us from creating one.
+// Both checkers' Wait() is bounded by their own check timeout and neither
+// calls back into supervisor, so holding mu here cannot deadlock.
 func (s *supervisor) stopAll() {
 	s.stopPinger()
 	s.mu.Lock()
-	curPort := s.portChecker
-	curHTTP := s.httpChecker
-	s.mu.Unlock()
-	if curPort != nil {
-		curPort.Stop()
-		curPort.Wait()
+	defer s.mu.Unlock()
+	s.stopped = true
+	if s.portChecker != nil {
+		s.portChecker.Stop()
+		s.portChecker.Wait()
 	}
-	if curHTTP != nil {
-		curHTTP.Stop()
-		curHTTP.Wait()
+	if s.httpChecker != nil {
+		s.httpChecker.Stop()
+		s.httpChecker.Wait()
 	}
 }
 
@@ -212,13 +218,13 @@ func (s *supervisor) resetMTR() {
 }
 
 func (s *supervisor) resetHTTP() {
-	resetChecker(&s.mu, &s.httpChecker, func() *pinger.HTTPChecker {
+	resetChecker(&s.mu, &s.stopped, &s.httpChecker, func() *pinger.HTTPChecker {
 		return setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
 	})
 }
 
 func (s *supervisor) resetPort() {
-	resetChecker(&s.mu, &s.portChecker, func() *pinger.PortChecker {
+	resetChecker(&s.mu, &s.stopped, &s.portChecker, func() *pinger.PortChecker {
 		return setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
 	})
 }
@@ -243,7 +249,13 @@ type checkerStopper interface {
 // the replacement. Stop/Wait on a port/HTTP checker just joins its own
 // goroutines and doesn't call back into supervisor, so holding mu across
 // them cannot deadlock.
-func resetChecker[T checkerStopper](mu *sync.Mutex, field *T, create func() T) {
+//
+// stopped is read under the same mu: when stopAll has already torn the
+// supervisor down, we stop the old checker but do NOT create a replacement,
+// because nothing would ever stop it. Without this, a reset that interleaved
+// with stopAll's read-then-release pattern leaked the new checker's
+// goroutines and sockets.
+func resetChecker[T checkerStopper](mu *sync.Mutex, stopped *bool, field *T, create func() T) {
 	mu.Lock()
 	defer mu.Unlock()
 	cur := *field
@@ -251,6 +263,10 @@ func resetChecker[T checkerStopper](mu *sync.Mutex, field *T, create func() T) {
 	if cur != zero {
 		cur.Stop()
 		cur.Wait()
+	}
+	if *stopped {
+		*field = zero
+		return
 	}
 	*field = create()
 }
