@@ -25,7 +25,7 @@ import (
 
 // orderTrackingPinger wraps fakePinger and records whether Stop() was ever
 // invoked before the blocking TraceRoute call had returned. Because
-// stopPinger() waits on <-curTraceDone before calling cur.Stop(), this is a
+// tearDownAll() waits on <-s.traceDone before calling s.p.Stop(), this is a
 // deterministic ordering check (not timing-based): a violation can only be
 // observed if a future refactor calls Stop() without first joining the
 // traceroute goroutine.

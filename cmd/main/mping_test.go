@@ -34,7 +34,7 @@ type fakePinger struct {
 	// stopCalled/closeCalled track Stop() and Close() independently (unlike
 	// the single "closed" flag both also set, kept for backward
 	// compatibility with existing assertions), so tests can verify Close()
-	// specifically ran — e.g. after stopPinger() — rather than merely that
+	// specifically ran — e.g. after tearDownAll() — rather than merely that
 	// either of the two happened.
 	stopCalled  bool
 	closeCalled bool
@@ -312,7 +312,7 @@ func TestRunStopRestart(t *testing.T) {
 }
 
 // TestRunStop_JoinsTracerouteGoroutine verifies that OnStop (stopAll ->
-// stopPinger) actually waits for the background runTraceroutes goroutine to
+// tearDownAll) actually waits for the background runTraceroutes goroutine to
 // exit rather than just cancelling its context and returning immediately.
 func TestRunStop_JoinsTracerouteGoroutine(t *testing.T) {
 	origPinger := newPinger

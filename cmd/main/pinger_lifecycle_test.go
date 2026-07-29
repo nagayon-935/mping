@@ -11,7 +11,7 @@ import (
 )
 
 // closeOrderPinger wraps fakePinger and records whether Close() was ever
-// invoked before Wait() had returned. stopPinger() is expected to call
+// invoked before Wait() had returned. tearDownAll() is expected to call
 // Stop() → Wait() → Close() in that order (the F1 fix); this is a
 // deterministic check, not timing-based, since fakePinger's Wait()/Close()
 // just set flags synchronously.
@@ -28,8 +28,8 @@ func (o *closeOrderPinger) Close() {
 }
 
 // TestRunStop_ClosesPingerAfterWait verifies the F1 fix end-to-end: OnStop
-// (→ stopAll → stopPinger) must call Close() on the pinger, and only after
-// Wait() has already returned. Before the fix, stopPinger never called
+// (→ stopAll → tearDownAll) must call Close() on the pinger, and only after
+// Wait() has already returned. Before the fix, the stop path never called
 // Close() at all — the pre-existing "closed" flag (still set by either
 // Stop() or Close(), for backward compatibility with older assertions)
 // couldn't distinguish that, since Stop() alone already set it.

@@ -132,7 +132,7 @@ func newSupervisor(cfg supervisorConfig) *supervisor {
 }
 
 // startTraceroutes cancels any previous traceroute goroutine, launches a new
-// one, and tracks it via s.traceDone so stopPinger can join it on shutdown
+// one, and tracks it via s.traceDone so tearDownAll can join it on shutdown
 // instead of leaving it to be reaped by process exit. Caller must hold s.mu.
 func (s *supervisor) startTraceroutes(pr tracer) {
 	if s.traceCancel != nil {
@@ -248,6 +248,19 @@ func (s *supervisor) handle(c command) error {
 // checkers. Any pinger it supersedes is released at the end — with commands
 // serialized that can only be a pinger cmdRestart already stopped, so this
 // is a cheap no-op safety net rather than the race guard it used to be.
+//
+// prev.Stop()/Wait()/Close() run here under whichever caller's s.mu is held
+// across the whole handle() call (see startPinger/the other wrappers below),
+// unlike the old startPinger, which deliberately released the superseded
+// pinger outside s.mu so a slow Wait() couldn't stall httpResults() — called
+// on every UI refresh tick under the same mutex — for as long as the join
+// took. That invariant is dropped here. It is tolerable only because no
+// current call site reaches startAll with a still-live prev: cmdRestart
+// already tore the previous pinger down via tearDownAll before calling this,
+// and the UI's `restarting` guard (internal/ui/input_handler.go) blocks a
+// second concurrent OnRestart from racing in. So prev is nil in practice and
+// this branch is dead weight until Task 2 removes s.mu entirely, at which
+// point there is no mutex left to stall and the concern disappears outright.
 func (s *supervisor) startAll() error {
 	next := s.cfg.makePinger(s.cfg.packetSize)
 	if err := next.Start(s.cfg.interval, s.cfg.timeout); err != nil {
