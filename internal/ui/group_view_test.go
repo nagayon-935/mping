@@ -150,7 +150,7 @@ func TestTableRendererUpdate_GroupHeaderRendersEvenWhenMembersOffWindow(t *testi
 	tablePane.SetBorder(true)
 	tablePane.SetRect(0, 0, 200, 30)
 	vs := newViewState(tview.NewTextView())
-	tr := newTableRenderer(targets, "10.0.0.1", "", 56, false, groups, table, tablePane, nil, vs)
+	tr := newTableRenderer(targets, "10.0.0.1", "", 56, false, false, groups, table, tablePane, nil, vs)
 
 	// groupRowMap layout (no ungrouped targets, each group section is now
 	// header + repeated column subheader + members, joined by spacer rows):

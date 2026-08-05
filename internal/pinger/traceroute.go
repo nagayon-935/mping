@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"time"
-
-	"github.com/nagayon-935/mping/internal/stats"
 )
 
 // TraceRoute sends TTL-limited ICMP probes to dest and returns the IP address
@@ -74,11 +72,8 @@ func (p *Pinger) TraceRoute(ctx context.Context, dest string, maxHops int, timeo
 		srcIP := reply.SrcIP
 		if srcIP == "" {
 			srcIP = "*"
-		} else if srcIP != "*" && p.AsnEnabled {
-			info := p.getASNInfo(srcIP)
-			if annotation := stats.FormatASN(info.Number, info.Org); annotation != "" {
-				srcIP = fmt.Sprintf("%s(%s)", srcIP, annotation)
-			}
+		} else {
+			srcIP = annotateHopIP(srcIP, p.AsnEnabled, p.getASNInfo, p.PtrEnabled, p.getPTR)
 		}
 		hops = append(hops, srcIP)
 

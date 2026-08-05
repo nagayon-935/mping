@@ -57,7 +57,7 @@ type column struct {
 // legacy parallel-slice construction did — but every column now carries its
 // own shrink/grow priority, so enabling them can no longer desync width
 // adjustment from the wrong column.
-func mainTableColumns(dnsEnabled, asnEnabled bool) []column {
+func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled bool) []column {
 	cols := []column{
 		{
 			name: "Src IP", align: tview.AlignLeft, base: 6, min: 4, max: 45,
@@ -92,6 +92,13 @@ func mainTableColumns(dnsEnabled, asnEnabled bool) []column {
 			render: func(ctx columnRowContext) string {
 				return stats.FormatASN(ctx.view.ASN, ctx.view.Org)
 			},
+		})
+	}
+	if ptrEnabled {
+		cols = append(cols, column{
+			name: "PTR", align: tview.AlignLeft, base: 12, min: 8, max: 40,
+			dynamic: true, shrinkPriority: 28, growPriority: 18,
+			render: func(ctx columnRowContext) string { return ctx.view.PTR },
 		})
 	}
 	cols = append(cols,

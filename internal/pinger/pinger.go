@@ -40,12 +40,19 @@ const (
 	seqMask = 0xffff
 
 	asnJitterMax = 2 * time.Second // spreads concurrent targets' ASN lookups to avoid bursting Cymru's public server
+	ptrJitterMax = 2 * time.Second // spreads concurrent targets' PTR lookups to avoid bursting the configured resolver
 )
 
 // asnLookupTimeout bounds each Cymru DNS TXT query, since neither net.LookupTXT
 // nor a *net.Resolver wrapped with context.Background() has a timeout of its
 // own. A var (not const) so tests can shrink it instead of waiting 3s.
 var asnLookupTimeout = 3 * time.Second
+
+// ptrLookupTimeout bounds each PTR (reverse DNS) query, since neither
+// net.LookupAddr nor a *net.Resolver wrapped with context.Background() has a
+// timeout of its own. A var (not const) so tests can shrink it instead of
+// waiting 3s. Mirrors asnLookupTimeout.
+var ptrLookupTimeout = 3 * time.Second
 
 // errPingerStopped is returned by the bounded lookup helpers when Stop()
 // closed p.done while a call was in flight. Callers use it to distinguish
@@ -101,6 +108,7 @@ type Pinger struct {
 
 	ResolveInterval time.Duration // Interval to re-resolve DNS
 	AsnEnabled      bool          // Enable ASN lookups
+	PtrEnabled      bool          // Enable PTR (reverse DNS) lookups
 
 	connV4      PacketConnV4
 	connV6      PacketConnV6
@@ -119,6 +127,10 @@ type Pinger struct {
 	asnMu     sync.RWMutex
 	asnJitter func() time.Duration // returns a random delay to stagger concurrent Cymru lookups; overridden to 0 in tests
 
+	ptrCache  map[string]string
+	ptrMu     sync.RWMutex
+	ptrJitter func() time.Duration // returns a random delay to stagger concurrent PTR lookups; overridden to 0 in tests
+
 	traceChans   map[int]chan traceMsg // keyed by trace ID
 	traceChansMu sync.RWMutex
 	traceCounter atomic.Uint32 // unique traceID per concurrent call
@@ -133,6 +145,7 @@ type Pinger struct {
 	now           func() time.Time
 	listenPacket  listenPacketFunc
 	lookupTXT     func(string) ([]string, error)
+	lookupAddr    func(string) ([]string, error)
 }
 
 type resolveIPAddrFunc func(network, address string) (*net.IPAddr, error)
@@ -145,7 +158,9 @@ type Options struct {
 	Now           func() time.Time
 	ListenPacket  listenPacketFunc
 	LookupTXT     func(string) ([]string, error)
+	LookupAddr    func(string) ([]string, error)
 	AsnEnabled    bool
+	PtrEnabled    bool
 
 	// InitialSeq overrides the starting value of runWorker's logical seq
 	// counter. Zero value matches production behavior (start at 0); tests
@@ -198,16 +213,28 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 			lookup = net.LookupTXT
 		}
 	}
+	lookupAddr := opts.LookupAddr
+	if lookupAddr == nil {
+		if opts.Resolver != nil {
+			lookupAddr = func(ip string) ([]string, error) {
+				return opts.Resolver.LookupAddr(context.Background(), ip)
+			}
+		} else {
+			lookupAddr = net.LookupAddr
+		}
+	}
 
 	return &Pinger{
 		Targets:         targets,
 		targetMap:       make(map[int]*stats.TargetStats),
 		targetChans:     make(map[int]chan Reply),
 		asnCache:        make(map[string]ASNInfo),
+		ptrCache:        make(map[string]string),
 		baseID:          os.Getpid() & 0xffff,
 		Size:            56, // Default payload size (like standard ping)
 		ResolveInterval: 60 * time.Second,
 		AsnEnabled:      opts.AsnEnabled,
+		PtrEnabled:      opts.PtrEnabled,
 		traceChans:      make(map[int]chan traceMsg),
 		done:            make(chan struct{}),
 		initialSeq:      opts.InitialSeq,
@@ -215,7 +242,9 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		now:             now,
 		listenPacket:    listen,
 		lookupTXT:       lookup,
+		lookupAddr:      lookupAddr,
 		asnJitter:       func() time.Duration { return time.Duration(rand.Int63n(int64(asnJitterMax))) },
+		ptrJitter:       func() time.Duration { return time.Duration(rand.Int63n(int64(ptrJitterMax))) },
 	}
 }
 
@@ -647,6 +676,13 @@ func (p *Pinger) resolveTarget(t *stats.TargetStats) *net.IPAddr {
 		go func() {
 			defer p.wg.Done()
 			p.lookupASN(t, ipStr)
+		}()
+	}
+	if p.PtrEnabled {
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			p.lookupPTR(t, ipStr)
 		}()
 	}
 	return addr

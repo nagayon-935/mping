@@ -523,6 +523,7 @@ count: 5
 discovery-mtu: true
 traceroute: true
 asn: true
+ptr: true
 ipv4: true
 port:
   - 80/tcp
@@ -543,6 +544,7 @@ port:
 	fs.Bool("discovery-mtu", false, "")
 	fs.Bool("traceroute", false, "")
 	fs.Bool("asn", false, "")
+	fs.Bool("ptr", false, "")
 	fs.Bool("ipv4", false, "")
 	fs.StringSlice("port", nil, "")
 
@@ -583,6 +585,9 @@ port:
 	}
 	if gotCfg.asnEnabled != true {
 		t.Errorf("asnEnabled: got %v", gotCfg.asnEnabled)
+	}
+	if gotCfg.ptrEnabled != true {
+		t.Errorf("ptrEnabled: got %v", gotCfg.ptrEnabled)
 	}
 	if gotCfg.ipv4Only != true {
 		t.Errorf("ipv4Only: got %v", gotCfg.ipv4Only)

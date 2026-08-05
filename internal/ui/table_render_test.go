@@ -150,7 +150,7 @@ func newTestTableRenderer(targets []*stats.TargetStats, width int) *tableRendere
 	errorView := tview.NewTextView()
 	vs := newViewState(errorView)
 
-	return newTableRenderer(targets, "10.0.0.1", "", 56, false, nil, table, tablePane, nil, vs)
+	return newTableRenderer(targets, "10.0.0.1", "", 56, false, false, nil, table, tablePane, nil, vs)
 }
 
 // TestTableRendererUpdate_SkipsCompactWhenFullLayoutFits guards the P3 fix:
@@ -325,16 +325,18 @@ func TestMainTableColumns_DynamicFlags(t *testing.T) {
 		name       string
 		dnsEnabled bool
 		asnEnabled bool
+		ptrEnabled bool
 		want       []string // names of columns expected to be dynamic, in order
 	}{
-		{"neither enabled", false, false, []string{"Src IP", "Dst IP"}},
-		{"dns only", true, false, []string{"Src IP", "Dst IP", "DNS"}},
-		{"asn only", false, true, []string{"Src IP", "Dst IP", "ASN"}},
-		{"both enabled", true, true, []string{"Src IP", "Dst IP", "DNS", "ASN"}},
+		{"neither enabled", false, false, false, []string{"Src IP", "Dst IP"}},
+		{"dns only", true, false, false, []string{"Src IP", "Dst IP", "DNS"}},
+		{"asn only", false, true, false, []string{"Src IP", "Dst IP", "ASN"}},
+		{"ptr only", false, false, true, []string{"Src IP", "Dst IP", "PTR"}},
+		{"all enabled", true, true, true, []string{"Src IP", "Dst IP", "DNS", "ASN", "PTR"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cols := mainTableColumns(tt.dnsEnabled, tt.asnEnabled)
+			cols := mainTableColumns(tt.dnsEnabled, tt.asnEnabled, tt.ptrEnabled)
 			var got []string
 			for _, c := range cols {
 				if c.dynamic {
@@ -360,6 +362,7 @@ func TestRenderRowTexts(t *testing.T) {
 		Host:      "example.com",
 		IP:        "1.1.1.1",
 		ASN:       "AS15169",
+		PTR:       "one.one.one.one",
 		DNSServer: "8.8.8.8",
 		Recv:      10,
 		Loss:      2,
@@ -371,8 +374,8 @@ func TestRenderRowTexts(t *testing.T) {
 	}
 	ctx := columnRowContext{view: view, sourceIPv4: "10.0.0.2", packetSize: 56, lossRate: calcLossRate(view)}
 
-	// Case 1: dnsEnabled = false, asnEnabled = true
-	cols := mainTableColumns(false, true)
+	// Case 1: dnsEnabled = false, asnEnabled = true, ptrEnabled = false
+	cols := mainTableColumns(false, true, false)
 	texts := renderRowTexts(cols, ctx)
 	if texts[0] != "10.0.0.2" {
 		t.Fatalf("src: got %q", texts[0])
@@ -391,8 +394,8 @@ func TestRenderRowTexts(t *testing.T) {
 		t.Fatalf("asn: got %q", texts[2])
 	}
 
-	// Case 2: dnsEnabled = true, asnEnabled = true
-	cols2 := mainTableColumns(true, true)
+	// Case 2: dnsEnabled = true, asnEnabled = true, ptrEnabled = false
+	cols2 := mainTableColumns(true, true, false)
 	texts2 := renderRowTexts(cols2, ctx)
 	if len(texts2) != 15 {
 		t.Fatalf("texts len (dns enabled): got %d", len(texts2))
@@ -405,6 +408,27 @@ func TestRenderRowTexts(t *testing.T) {
 	}
 	if texts2[3] != "AS15169" {
 		t.Fatalf("asn: got %q", texts2[3])
+	}
+
+	// Case 3: dnsEnabled = true, asnEnabled = true, ptrEnabled = true
+	cols3 := mainTableColumns(true, true, true)
+	texts3 := renderRowTexts(cols3, ctx)
+	if len(texts3) != 16 {
+		t.Fatalf("texts len (ptr enabled): got %d", len(texts3))
+	}
+	if texts3[4] != "one.one.one.one" {
+		t.Fatalf("ptr: got %q, expected one.one.one.one", texts3[4])
+	}
+
+	// PTR column falls back to blank (not a placeholder) when the target's
+	// PTR field is unset, e.g. lookup failed or hasn't completed yet — the
+	// plain IP is still visible via the always-present Dst IP column.
+	viewNoPTR := view
+	viewNoPTR.PTR = ""
+	ctxNoPTR := columnRowContext{view: viewNoPTR, sourceIPv4: "10.0.0.2", packetSize: 56, lossRate: calcLossRate(viewNoPTR)}
+	textsNoPTR := renderRowTexts(cols3, ctxNoPTR)
+	if textsNoPTR[4] != "" {
+		t.Fatalf("ptr fallback: got %q, want empty", textsNoPTR[4])
 	}
 }
 
@@ -447,8 +471,8 @@ func TestRenderRowCells(t *testing.T) {
 	}
 	ctx := columnRowContext{view: view, packetSize: 56, lossRate: 90.0}
 
-	// Case 1: dnsEnabled = false, asnEnabled = true
-	cols := mainTableColumns(false, true)
+	// Case 1: dnsEnabled = false, asnEnabled = true, ptrEnabled = false
+	cols := mainTableColumns(false, true, false)
 	widths := make([]int, len(cols))
 	for i := range widths {
 		widths[i] = 5
@@ -464,8 +488,8 @@ func TestRenderRowCells(t *testing.T) {
 		t.Fatalf("expected error cell colored")
 	}
 
-	// Case 2: dnsEnabled = true, asnEnabled = true
-	cols2 := mainTableColumns(true, true)
+	// Case 2: dnsEnabled = true, asnEnabled = true, ptrEnabled = false
+	cols2 := mainTableColumns(true, true, false)
 	widths2 := make([]int, len(cols2))
 	for i := range widths2 {
 		widths2[i] = 5
@@ -475,6 +499,19 @@ func TestRenderRowCells(t *testing.T) {
 	cells2 := renderRowCells(cols2, texts2, widths2, aligns2, ctx, tcell.ColorWhite)
 	if len(cells2) != len(cols2) {
 		t.Fatalf("cells len mismatch (dns enabled)")
+	}
+
+	// Case 3: dnsEnabled = true, asnEnabled = true, ptrEnabled = true
+	cols3 := mainTableColumns(true, true, true)
+	widths3 := make([]int, len(cols3))
+	for i := range widths3 {
+		widths3[i] = 5
+	}
+	aligns3 := make([]int, len(cols3))
+	texts3 := renderRowTexts(cols3, ctx)
+	cells3 := renderRowCells(cols3, texts3, widths3, aligns3, ctx, tcell.ColorWhite)
+	if len(cells3) != len(cols3) {
+		t.Fatalf("cells len mismatch (ptr enabled)")
 	}
 }
 

@@ -34,6 +34,7 @@ type RunOptions struct {
 	PortEnabled  bool
 	HTTPEnabled  bool
 	ASNEnabled   bool
+	PTREnabled   bool
 	// HTTPResults returns live HTTP health-check results for the HTTP Monitor
 	// pane. Called on every render tick (rather than once at startup) so it
 	// reflects a checker swapped in by OnResetHTTP after Run has started.
@@ -91,6 +92,7 @@ func Run(opts RunOptions) error {
 	httpEnabled := opts.HTTPEnabled
 	httpResultsFunc := opts.HTTPResults
 	asnEnabled := opts.ASNEnabled
+	ptrEnabled := opts.PTREnabled
 	onStop := opts.OnStop
 	onRestart := opts.OnRestart
 	onResetTrace := opts.OnResetTrace
@@ -153,7 +155,7 @@ func Run(opts RunOptions) error {
 	})
 	sidePanes := []*monitorPane{tracePaneObj, mtrPaneObj, portPaneObj, httpPaneObj}
 
-	tr := newTableRenderer(targets, sourceIPv4, sourceIPv6, packetSize, asnEnabled, groups,
+	tr := newTableRenderer(targets, sourceIPv4, sourceIPv6, packetSize, asnEnabled, ptrEnabled, groups,
 		table, tablePane, initialLogs, vs)
 	tr.sidePanes = sidePanes
 

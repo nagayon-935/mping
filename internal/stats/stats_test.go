@@ -15,6 +15,7 @@ func TestTargetStats_GetViewWindow_MatchesGetViewExceptHistory(t *testing.T) {
 	tgt := NewTargetStats("example.com")
 	tgt.SetIP("1.1.1.1")
 	tgt.SetASNInfo("AS15169", "US", "Google LLC")
+	tgt.SetPTR("one.one.one.one")
 	for i := 1; i <= 50; i++ {
 		tgt.IncSent()
 		tgt.OnSuccess(time.Duration(i)*time.Millisecond, 64)
@@ -308,6 +309,15 @@ func TestTargetStats_SetASNInfo(t *testing.T) {
 	view := tgt.GetView()
 	if view.ASN != "AS12345" {
 		t.Errorf("ASN: got %q, want %q", view.ASN, "AS12345")
+	}
+}
+
+func TestTargetStats_SetPTR(t *testing.T) {
+	tgt := NewTargetStats("example.com")
+	tgt.SetPTR("dns.google")
+	view := tgt.GetView()
+	if view.PTR != "dns.google" {
+		t.Errorf("PTR: got %q, want %q", view.PTR, "dns.google")
 	}
 }
 

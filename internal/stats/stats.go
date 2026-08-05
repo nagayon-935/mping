@@ -80,6 +80,7 @@ type TargetStats struct {
 	ASN              string
 	Country          string
 	Org              string
+	PTR              string // reverse DNS (PTR) hostname for IP, when --ptr is enabled
 	DNSServer        string
 	IfaceMTU         int
 	PMTU             int
@@ -182,6 +183,7 @@ type TargetView struct {
 	ASN              string
 	Country          string
 	Org              string
+	PTR              string // reverse DNS (PTR) hostname for IP, when --ptr is enabled
 	DNSServer        string
 	IfaceMTU         int
 	PMTU             int
@@ -248,6 +250,7 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 		ASN:              t.ASN,
 		Country:          t.Country,
 		Org:              t.Org,
+		PTR:              t.PTR,
 		DNSServer:        t.DNSServer,
 		IfaceMTU:         t.IfaceMTU,
 		PMTU:             t.PMTU,
@@ -319,6 +322,14 @@ func (t *TargetStats) SetASNInfo(number, country, org string) {
 	t.ASN = number
 	t.Country = country
 	t.Org = org
+}
+
+// SetPTR records the resolved PTR (reverse DNS) hostname for t's IP.
+func (t *TargetStats) SetPTR(name string) {
+	defer bumpGeneration()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.PTR = name
 }
 
 func (t *TargetStats) SetDNSServer(dnsServer string) {

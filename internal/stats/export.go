@@ -16,6 +16,7 @@ type TargetSummary struct {
 	ASN              string        `json:"asn,omitempty"`
 	Country          string        `json:"country,omitempty"`
 	Org              string        `json:"org,omitempty"`
+	PTR              string        `json:"ptr,omitempty"`
 	Sent             int           `json:"sent"`
 	Recv             int           `json:"recv"`
 	Loss             int           `json:"loss"`
@@ -145,6 +146,7 @@ func BuildSnapshot(targets []*TargetStats, httpResults []*HTTPCheckResult) Expor
 			ASN:              v.ASN,
 			Country:          v.Country,
 			Org:              v.Org,
+			PTR:              v.PTR,
 			Sent:             v.Sent,
 			Recv:             v.Recv,
 			Loss:             v.Loss,
