@@ -29,6 +29,16 @@ const (
 	payloadSignature    = "MPING"                // identifies our probes in packet captures
 	traceSignature      = "TRC-"                 // 4-byte prefix distinguishing traceroute probes from ping probes
 
+	// seqMask masks a logical (unbounded) seq counter down to the 16-bit
+	// range the ICMP echo Seq field occupies on the wire: icmp.Echo.Marshal
+	// truncates via uint16(p.Seq), and icmp.ParseMessage never returns a Seq
+	// outside [0, 65535]. runWorker's seq counter is a plain int that grows
+	// forever, so it must be masked both when building the outgoing Echo
+	// and when matching an incoming reply — otherwise, once the counter
+	// exceeds 65535, replies (correctly wrapped by the peer) never compare
+	// equal to it again and every subsequent probe times out permanently.
+	seqMask = 0xffff
+
 	asnJitterMax = 2 * time.Second // spreads concurrent targets' ASN lookups to avoid bursting Cymru's public server
 )
 
@@ -98,6 +108,12 @@ type Pinger struct {
 	mapMu       sync.RWMutex
 	baseID      int
 
+	// initialSeq is the value runWorker's logical seq counter starts from
+	// (before the first seq++). Always 0 in production; tests override it
+	// via Options.InitialSeq to reach the 16-bit wraparound boundary
+	// without waiting for 65535 real probes.
+	initialSeq int
+
 	asnCache  map[string]ASNInfo
 	asnMu     sync.RWMutex
 	asnJitter func() time.Duration // returns a random delay to stagger concurrent Cymru lookups; overridden to 0 in tests
@@ -129,6 +145,11 @@ type Options struct {
 	ListenPacket  listenPacketFunc
 	LookupTXT     func(string) ([]string, error)
 	AsnEnabled    bool
+
+	// InitialSeq overrides the starting value of runWorker's logical seq
+	// counter. Zero value matches production behavior (start at 0); tests
+	// set it to exercise the 16-bit ICMP seq wraparound boundary.
+	InitialSeq int
 }
 
 // NewPinger creates a Pinger with default options for the given targets.
@@ -188,6 +209,7 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		AsnEnabled:      opts.AsnEnabled,
 		traceChans:      make(map[int]chan traceMsg),
 		done:            make(chan struct{}),
+		initialSeq:      opts.InitialSeq,
 		resolveIPAddr:   resolve,
 		now:             now,
 		listenPacket:    listen,
@@ -761,7 +783,7 @@ func (p *Pinger) sendProbe(t *stats.TargetStats, id, seq int, payload []byte, ds
 		Code: 0,
 		Body: &icmp.Echo{
 			ID:   id,
-			Seq:  seq,
+			Seq:  seq & seqMask,
 			Data: payload,
 		},
 	}
@@ -801,7 +823,7 @@ func (p *Pinger) waitForReply(t *stats.TargetStats, ch <-chan Reply, seq int, st
 	for {
 		select {
 		case reply := <-ch:
-			if reply.Seq != seq {
+			if reply.Seq != seq&seqMask {
 				continue
 			}
 			if reply.Err != "" {
@@ -829,7 +851,7 @@ func (p *Pinger) waitForReply(t *stats.TargetStats, ch <-chan Reply, seq int, st
 func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.Duration) {
 	dstAddr := p.resolveTarget(t)
 
-	seq := 0
+	seq := p.initialSeq
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 

@@ -1878,6 +1878,58 @@ func TestRunWorkerDoneAfterReply(t *testing.T) {
 	}
 }
 
+// TestRunWorkerSeqWraparound proves the ICMP echo seq wraparound fix: once
+// the logical seq counter crosses 65535, the wire-level reply comes back
+// with Seq wrapped into [0, 65535] (golang.org/x/net/icmp.ParseMessage never
+// returns a value outside that range), and it must still be matched as a
+// success — not dropped as a mismatch that degrades into a permanent
+// timeout/loss for every subsequent probe.
+func TestRunWorkerSeqWraparound(t *testing.T) {
+	target := stats.NewTargetStats("example.com")
+	resolve := func(network, address string) (*net.IPAddr, error) {
+		return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
+	}
+	p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{
+		ResolveIPAddr: resolve,
+		InitialSeq:    65535, // seq++ makes the first logical seq 65536
+	})
+	p.connV4 = &fakePacketConn{}
+	p.Count = 0 // unlimited; the test stops the worker explicitly via Close
+
+	id := p.baseID & 0xffff
+	ch := make(chan Reply, 1)
+	p.targetChans[id] = ch
+
+	done := make(chan struct{})
+	go func() {
+		p.runWorker(target, id, 50*time.Millisecond, 200*time.Millisecond)
+		close(done)
+	}()
+
+	// Simulates the real wire reply to logical seq 65536: the receiver
+	// parses Seq as a wrapped uint16, i.e. 0.
+	ch <- Reply{TTL: 64, Seq: 0}
+	time.Sleep(10 * time.Millisecond)
+	p.Close()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runWorker did not stop after done closed")
+	}
+
+	view := target.GetView()
+	if view.Recv != 1 {
+		t.Fatalf("Recv: got %d, want 1 (wrapped-seq reply should match as success, not be lost to a permanent mismatch)", view.Recv)
+	}
+	if view.Loss != 0 {
+		t.Fatalf("Loss: got %d, want 0", view.Loss)
+	}
+	if view.LastTTL != 64 {
+		t.Fatalf("LastTTL: got %d, want 64", view.LastTTL)
+	}
+}
+
 // ---- DiscoverMaxPayload additional coverage ----
 
 func TestDiscoverMaxPayload_NegativeMin(t *testing.T) {
