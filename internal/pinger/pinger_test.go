@@ -225,6 +225,10 @@ func (f *fakePacketConnV6) SetControlMessage(cf ipv6.ControlFlags, on bool) erro
 	return nil
 }
 
+func (f *fakePacketConnV6) SetICMPFilter(filt *ipv6.ICMPFilter) error {
+	return nil
+}
+
 func timeoutOpError() error {
 	return &net.OpError{
 		Err: &net.DNSError{IsTimeout: true},

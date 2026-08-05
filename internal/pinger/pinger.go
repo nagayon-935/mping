@@ -76,6 +76,7 @@ type PacketConnV6 interface {
 	SetReadDeadline(t time.Time) error
 	Close() error
 	SetControlMessage(cf ipv6.ControlFlags, on bool) error
+	SetICMPFilter(f *ipv6.ICMPFilter) error
 }
 
 // Reply represents a single received ICMP echo reply or error from the receiver loop.
@@ -294,6 +295,7 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 			p.connV6 = ipv6.NewPacketConn(c)
 			// Non-fatal: hop limit control message may not be available on all platforms.
 			_ = p.connV6.SetControlMessage(ipv6.FlagHopLimit, true)
+			applyICMPv6Filter(p.connV6)
 		} else {
 			errV6 = err
 		}
@@ -410,6 +412,52 @@ var receiverV6Config = receiverConfig{
 		ipv6.ICMPTypeParameterProblem,
 	},
 	errorStringFn: icmpV6ErrorString,
+}
+
+// icmpv6FilterSetter is satisfied by both PacketConnV6 (the main receiver
+// socket) and hopSendConnV6 (MTR/traceroute's HopSocket). Sharing it lets
+// applyICMPv6Filter serve both call sites without a second interface.
+type icmpv6FilterSetter interface {
+	SetICMPFilter(f *ipv6.ICMPFilter) error
+}
+
+// icmpv6FilterFromConfig builds a kernel-side ICMP6_FILTER that blocks every
+// ICMPv6 type except cfg.echoReply and cfg.errorTypes. It is derived from
+// cfg rather than a second, independently-maintained type list, so a future
+// addition to receiverV6Config.errorTypes (e.g. another ICMP error type
+// needed for traceroute/MTR) automatically widens the kernel filter too -
+// there is exactly one place that enumerates the types mping cares about.
+func icmpv6FilterFromConfig(cfg receiverConfig) ipv6.ICMPFilter {
+	var filt ipv6.ICMPFilter
+	filt.SetAll(true) // block everything by default (ICMP6_FILTER_SETBLOCKALL)
+	if t, ok := cfg.echoReply.(ipv6.ICMPType); ok {
+		filt.Accept(t)
+	}
+	for _, et := range cfg.errorTypes {
+		if t, ok := et.(ipv6.ICMPType); ok {
+			filt.Accept(t)
+		}
+	}
+	return filt
+}
+
+// applyICMPv6Filter installs the kernel-side ICMPv6 filter derived from
+// receiverV6Config onto conn. IPv6 multiplexes neighbor discovery (NS/NA),
+// router advertisement (RA) and MLD over the same raw ICMPv6 protocol
+// number as echo/error traffic, so without this every one of those L2
+// control packets would otherwise reach userspace and wake the receiver
+// goroutine for a message it immediately discards. Mirrors Apple's ping6.c
+// (ICMP6_FILTER_SETBLOCKALL + SETPASS on ECHO_REPLY only), except mping
+// also passes the ICMP error types receiverV6Config needs for its error
+// column, traceroute, and MTR.
+//
+// Non-fatal: ICMP6_FILTER is unsupported on some platforms (and by
+// definition on any non-syscall.Conn, such as the fakes used in tests),
+// matching the existing best-effort `_ = conn.SetControlMessage(...)` calls
+// alongside this one.
+func applyICMPv6Filter(conn icmpv6FilterSetter) {
+	filt := icmpv6FilterFromConfig(receiverV6Config)
+	_ = conn.SetICMPFilter(&filt)
 }
 
 func (p *Pinger) runReceiverV4() {
