@@ -28,6 +28,11 @@ const (
 	tracerouteMaxHops    = 30               // RFC 1393 recommended maximum; internet paths rarely exceed 30 hops
 	tracerouteHopTimeout = 1 * time.Second  // per-hop timeout for traceroute probes
 	probePort            = "80"             // destination port used when detecting the preferred outbound IP
+
+	// exitCodeNoResponse mirrors Apple's ping.c/ping6.c: exit(nreceived == 0
+	// ? 2 : 0). Returned only when --count is set (a bounded, script-friendly
+	// run) and every target finished with zero replies.
+	exitCodeNoResponse = 2
 )
 
 // pingerController manages the lifecycle of a pinger instance.
@@ -133,6 +138,7 @@ type config struct {
 	mtr            bool
 	dnsServer      string
 	resolveAll     bool
+	duration       time.Duration
 
 	// thresholds holds the colour-coding / alert boundaries (warn = orange,
 	// crit = red), unified onto ui.Thresholds directly (TD-10) instead of
@@ -167,6 +173,7 @@ type hostsFileYAML struct {
 	Mtr        *bool           `yaml:"mtr"`
 	DNSServer  *string         `yaml:"dns-server"`
 	ResolveAll *bool           `yaml:"resolve-all"`
+	Duration   *string         `yaml:"duration"`
 	Thresholds *thresholdsYAML `yaml:"thresholds"`
 }
 
@@ -217,6 +224,9 @@ func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]string, 
 	syncField(fs, "mtr", doc.Mtr, &cfg.mtr)
 	syncField(fs, "dns-server", doc.DNSServer, &cfg.dnsServer)
 	syncField(fs, "resolve-all", doc.ResolveAll, &cfg.resolveAll)
+	if err := syncDuration(fs, "duration", doc.Duration, &cfg.duration); err != nil {
+		return nil, nil, cfg, err
+	}
 	cfg.thresholds = overlayThresholdsDoc(cfg.thresholds, fs, doc.Thresholds)
 	if cfg.ipv4Only && cfg.ipv6Only {
 		return nil, nil, cfg, fmt.Errorf("cannot use both -4 and -6")
@@ -243,6 +253,35 @@ func syncSlice(fs *pflag.FlagSet, flag string, docVal []string, cfgField *[]stri
 		return
 	}
 	*cfgField = docVal
+}
+
+// parseNonNegativeDuration parses raw as a Go duration string (e.g. "30s",
+// "5m") and rejects negative values. Shared by --duration's CLI/YAML
+// validation so both surfaces reject the same malformed input the same way.
+func parseNonNegativeDuration(raw string) (time.Duration, error) {
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration %q: %w", raw, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("duration must be >= 0, got %s", d)
+	}
+	return d, nil
+}
+
+// syncDuration is syncField's counterpart for cfg.duration: the YAML doc
+// stores the raw duration string (so the file stays human-readable, e.g.
+// "duration: 5m"), which must be parsed before it can overwrite cfgField.
+func syncDuration(fs *pflag.FlagSet, flag string, docVal *string, cfgField *time.Duration) error {
+	if fs.Changed(flag) || docVal == nil {
+		return nil
+	}
+	d, err := parseNonNegativeDuration(*docVal)
+	if err != nil {
+		return fmt.Errorf("%s: %w", flag, err)
+	}
+	*cfgField = d
+	return nil
 }
 
 // mergeHosts merges a hosts-file's configuration into cfg and host list.
@@ -331,6 +370,11 @@ func validateHostsDoc(doc hostsFileYAML) error {
 	}
 	if doc.Count != nil && *doc.Count < 0 {
 		return fmt.Errorf("count: must be >= 0, got %d", *doc.Count)
+	}
+	if doc.Duration != nil {
+		if _, err := parseNonNegativeDuration(*doc.Duration); err != nil {
+			return fmt.Errorf("duration: %w", err)
+		}
 	}
 	if doc.Ipv4Only != nil && doc.Ipv6Only != nil && *doc.Ipv4Only && *doc.Ipv6Only {
 		return fmt.Errorf("ipv4 and ipv6 cannot both be true")
@@ -496,6 +540,7 @@ func registerFlags(fs *pflag.FlagSet, cfg *config, th *thresholdFlags) {
 	fs.StringVarP(&cfg.sourceAddr, "source", "S", "", "source IP address to bind to")
 	fs.IntVarP(&cfg.packetSize, "size", "s", 56, "packet size in bytes (payload)")
 	fs.IntVarP(&cfg.count, "count", "c", 0, "stop after sending count packets")
+	fs.DurationVar(&cfg.duration, "duration", 0, "stop after this much time has elapsed (e.g. 30s, 5m, 1h30m); 0 disables the limit")
 	fs.BoolVarP(&cfg.ipv4Only, "ipv4", "4", false, "force IPv4 only")
 	fs.BoolVarP(&cfg.ipv6Only, "ipv6", "6", false, "force IPv6 only")
 	fs.StringSliceVarP(&cfg.portSpecs, "port", "p", nil, "port(s) to check, e.g. 443/tcp,53/udp or 443 (defaults to tcp)")
@@ -551,6 +596,10 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 
 	if cfg.ipv4Only && cfg.ipv6Only {
 		return config{}, nil, nil, usageBuf.String(), fmt.Errorf("cannot use both -4 and -6")
+	}
+
+	if cfg.duration < 0 {
+		return config{}, nil, nil, usageBuf.String(), fmt.Errorf("--duration must be >= 0, got %s", cfg.duration)
 	}
 
 	return cfg, hosts, fs, usageBuf.String(), nil
@@ -702,6 +751,20 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	// targets is declared outside the loop so the exit summary can read it.
 	var targets []*stats.TargetStats
 
+	// durationCtx, when --duration is set, bounds the whole run() invocation
+	// (an overall session alarm, mirroring ping.c's -t) rather than being
+	// re-armed per reload iteration — the same one-shot-from-startup
+	// treatment bindIP already gets even though ifaceName/sourceAddr are
+	// re-synced into currentCfg on every reload above. It is deliberately
+	// derived from the pre-loop cfg, not currentCfg, so a YAML reload cannot
+	// silently extend or shorten an already-running deadline.
+	var durationCtx context.Context
+	if cfg.duration > 0 {
+		var cancelDuration context.CancelFunc
+		durationCtx, cancelDuration = context.WithTimeout(context.Background(), cfg.duration)
+		defer cancelDuration()
+	}
+
 	// activePortSpecsRaw is the --port / port: value the running port
 	// checker was actually built from (env.portSpecs is parsed once and
 	// never re-derived on reload; see checkPortReloadDrift, TD-25).
@@ -780,12 +843,19 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			}()
 		}
 
-		// sig is closed to signal TUI shutdown, either by the YAML watcher or
-		// by an in-memory add/delete-host request.
+		// sig is closed to signal TUI shutdown, either by the YAML watcher, an
+		// in-memory add/delete-host request, or (below) --duration elapsing.
 		sig := newReloadSignal()
 		onFileChange := func() { rc.requestFileReload(sig, currentCfg.hostsFile, logCh) }
 		watchCancel, watchDone := startWatcher(currentCfg.hostsFile, onFileChange, logCh)
 		jsonCancel, jsonDone := startJSONWriter(currentCfg.jsonOutputFile, targets, sup.httpResults, errOut)
+
+		// stopDurationWatch converges --duration onto the same sig/
+		// ExternalCloseCh path as a YAML reload: nothing here calls
+		// rc.requestFileReload/requestHostsChange, so once uiRun returns,
+		// rc.apply() below finds no pending reload and the loop breaks to
+		// printExitSummary exactly as it would after a plain 'q' quit.
+		stopDurationWatch := watchDurationLimit(durationCtx, sig, logCh)
 
 		runOpts := buildRunOptions(runOptionsParams{
 			targets: targets, interval: interval, timeout: timeout, doneCh: doneCh,
@@ -796,8 +866,10 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			thresholds: currentCfg.thresholds, sig: sig, logCh: logCh, rc: rc,
 			currentHosts: currentHosts, currentGroups: currentGroups,
 		})
-		if err := uiRun(runOpts); err != nil {
-			fmt.Fprintf(errOut, "Error running application: %v\n", err)
+		uiErr := uiRun(runOpts)
+		stopDurationWatch()
+		if uiErr != nil {
+			fmt.Fprintf(errOut, "Error running application: %v\n", uiErr)
 			jsonCancel()
 			<-jsonDone
 			watchCancel()
@@ -824,7 +896,23 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	}
 
 	printExitSummary(out, targets)
+	if currentCfg.count > 0 && allTargetsUnresponsive(targets) {
+		return exitCodeNoResponse
+	}
 	return 0
+}
+
+// allTargetsUnresponsive reports whether every target finished with zero
+// replies. Mirrors the nreceived == 0 check Apple's ping.c/ping6.c use to
+// decide their exit code; only consulted when --count bounds the run (see
+// exitCodeNoResponse) — the always-on TUI mode has no notion of "finished".
+func allTargetsUnresponsive(targets []*stats.TargetStats) bool {
+	for _, t := range targets {
+		if t.GetView().Recv > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // printExitSummary writes the per-target ping statistics shown after the TUI exits.

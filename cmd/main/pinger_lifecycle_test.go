@@ -21,7 +21,7 @@ type closeOrderPinger struct {
 }
 
 func (o *closeOrderPinger) Close() {
-	if !o.waited {
+	if !o.Waited() {
 		o.closeBeforeWaitViolation = true
 	}
 	o.fakePinger.Close()
@@ -60,7 +60,7 @@ func TestRunStop_ClosesPingerAfterWait(t *testing.T) {
 	if !tracker.stopCalled {
 		t.Error("expected Stop() to be called")
 	}
-	if !tracker.waited {
+	if !tracker.Waited() {
 		t.Error("expected Wait() to be called")
 	}
 	if !tracker.closeCalled {

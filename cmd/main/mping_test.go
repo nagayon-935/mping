@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,12 +25,20 @@ type fakePinger struct {
 	startErr             error
 	started              bool
 	closed               bool
-	waited               bool
 	discoverMTU          int
 	discoverBottleneckIP string
 	discoverErr          error
 	traceErr             error
 	logWriterSet         bool
+
+	// waited is written by Wait(), which — like the real *pinger.Pinger.Wait()
+	// it stands in for (a thin sync.WaitGroup.Wait() wrapper, safe for
+	// concurrent callers by design) — can legitimately be called from two
+	// goroutines at once: run()'s doneCh watcher (waitPinger(), count-limited
+	// mode) and the supervisor's tearDownAll(), racing during shutdown. An
+	// atomic.Bool keeps that concurrency safe here the same way the real
+	// WaitGroup already is.
+	waited atomic.Bool
 
 	// stopCalled/closeCalled track Stop() and Close() independently (unlike
 	// the single "closed" flag both also set, kept for backward
@@ -61,7 +70,13 @@ func (f *fakePinger) Close() {
 }
 
 func (f *fakePinger) Wait() {
-	f.waited = true
+	f.waited.Store(true)
+}
+
+// Waited reports whether Wait() has been called, safe to read concurrently
+// with a still-in-flight Wait() call (see the waited field's doc comment).
+func (f *fakePinger) Waited() bool {
+	return f.waited.Load()
 }
 
 func (f *fakePinger) DiscoverMaxPayload(ctx context.Context, dest string, start int, min int, logf func(string)) (int, string, error) {
@@ -153,6 +168,95 @@ func TestParseArgsIPv4IPv6Conflict(t *testing.T) {
 	_, _, _, _, err := parseArgs([]string{"-4", "-6", "example.com"})
 	if err == nil {
 		t.Fatal("expected error for -4 and -6 together")
+	}
+}
+
+func TestParseArgsDuration_Default(t *testing.T) {
+	cfg, _, _, _, err := parseArgs([]string{"example.com"})
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if cfg.duration != 0 {
+		t.Fatalf("expected duration disabled (0) by default, got %s", cfg.duration)
+	}
+}
+
+func TestParseArgsDuration_Valid(t *testing.T) {
+	tests := []struct {
+		arg  string
+		want time.Duration
+	}{
+		{"30s", 30 * time.Second},
+		{"5m", 5 * time.Minute},
+		{"1h30m", 90 * time.Minute},
+		{"0s", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.arg, func(t *testing.T) {
+			cfg, _, _, _, err := parseArgs([]string{"--duration", tt.arg, "example.com"})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cfg.duration != tt.want {
+				t.Fatalf("duration: got %s, want %s", cfg.duration, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseArgsDuration_Negative(t *testing.T) {
+	_, _, _, _, err := parseArgs([]string{"--duration", "-5s", "example.com"})
+	if err == nil {
+		t.Fatal("expected error for negative --duration")
+	}
+}
+
+func TestParseArgsDuration_Malformed(t *testing.T) {
+	_, _, _, _, err := parseArgs([]string{"--duration", "notaduration", "example.com"})
+	if err == nil {
+		t.Fatal("expected error for malformed --duration")
+	}
+}
+
+func TestApplyDocToCfg_DurationYAMLApplied(t *testing.T) {
+	cfg, _, fs, _, err := parseArgs([]string{"example.com"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	v := "5m"
+	_, _, gotCfg, err := applyDocToCfg(cfg, fs, hostsFileYAML{Hosts: []string{"example.com"}, Duration: &v})
+	if err != nil {
+		t.Fatalf("applyDocToCfg: %v", err)
+	}
+	if gotCfg.duration != 5*time.Minute {
+		t.Errorf("duration: got %s, want 5m", gotCfg.duration)
+	}
+}
+
+func TestApplyDocToCfg_DurationFlagOverridesYAML(t *testing.T) {
+	cfg, _, fs, _, err := parseArgs([]string{"--duration", "1m", "example.com"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	v := "5m"
+	_, _, gotCfg, err := applyDocToCfg(cfg, fs, hostsFileYAML{Hosts: []string{"example.com"}, Duration: &v})
+	if err != nil {
+		t.Fatalf("applyDocToCfg: %v", err)
+	}
+	if gotCfg.duration != 1*time.Minute {
+		t.Errorf("duration: got %s, want CLI flag value 1m (YAML must not override an explicit flag)", gotCfg.duration)
+	}
+}
+
+func TestApplyDocToCfg_DurationMalformedYAML(t *testing.T) {
+	cfg, _, fs, _, err := parseArgs([]string{"example.com"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	v := "not-a-duration"
+	_, _, _, err = applyDocToCfg(cfg, fs, hostsFileYAML{Hosts: []string{"example.com"}, Duration: &v})
+	if err == nil {
+		t.Fatal("expected error for malformed duration in YAML doc")
 	}
 }
 
@@ -306,8 +410,8 @@ func TestRunStopRestart(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected 0, got %d", code)
 	}
-	if !fp.started || !fp.closed || !fp.waited {
-		t.Fatalf("expected pinger lifecycle, started=%v closed=%v waited=%v", fp.started, fp.closed, fp.waited)
+	if !fp.started || !fp.closed || !fp.Waited() {
+		t.Fatalf("expected pinger lifecycle, started=%v closed=%v waited=%v", fp.started, fp.closed, fp.Waited())
 	}
 }
 
@@ -1168,6 +1272,30 @@ func TestValidateHostsDoc_NegativeCount(t *testing.T) {
 	}
 }
 
+func TestValidateHostsDoc_DurationValid(t *testing.T) {
+	v := "5m"
+	doc := hostsFileYAML{Hosts: []string{"a.com"}, Duration: &v}
+	if err := validateHostsDoc(doc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateHostsDoc_DurationMalformed(t *testing.T) {
+	v := "not-a-duration"
+	doc := hostsFileYAML{Hosts: []string{"a.com"}, Duration: &v}
+	if err := validateHostsDoc(doc); err == nil {
+		t.Fatal("expected error for malformed duration")
+	}
+}
+
+func TestValidateHostsDoc_DurationNegative(t *testing.T) {
+	v := "-5s"
+	doc := hostsFileYAML{Hosts: []string{"a.com"}, Duration: &v}
+	if err := validateHostsDoc(doc); err == nil {
+		t.Fatal("expected error for negative duration")
+	}
+}
+
 func TestValidateHostsDoc_IPv4IPv6Conflict(t *testing.T) {
 	tr := true
 	doc := hostsFileYAML{Hosts: []string{"a.com"}, Ipv4Only: &tr, Ipv6Only: &tr}
@@ -1930,5 +2058,193 @@ func TestExpandTargets(t *testing.T) {
 	}
 	if len(expandedHostsUnres) != 1 || expandedHostsUnres[0].Host != "invalid.invalid" {
 		t.Errorf("expected unresolvable host to remain as is, got %v", expandedHostsUnres)
+	}
+}
+
+// ---- exit code tests (-c/--count vs. total loss, TD: apple ping.c parity) ----
+
+func TestAllTargetsUnresponsive(t *testing.T) {
+	allLoss := []*stats.TargetStats{stats.NewTargetStats("a"), stats.NewTargetStats("b")}
+	for _, tgt := range allLoss {
+		tgt.IncSent()
+	}
+	if !allTargetsUnresponsive(allLoss) {
+		t.Error("expected true when no target has received a reply")
+	}
+
+	partial := []*stats.TargetStats{stats.NewTargetStats("a"), stats.NewTargetStats("b")}
+	partial[0].IncSent()
+	partial[0].OnSuccess(5*time.Millisecond, 64)
+	partial[1].IncSent()
+	if allTargetsUnresponsive(partial) {
+		t.Error("expected false when at least one target received a reply")
+	}
+
+	if !allTargetsUnresponsive(nil) {
+		t.Error("expected true for an empty target list")
+	}
+}
+
+// TestRun_ExitCode drives run() end-to-end with a mocked pinger/UI, covering
+// the (-c present/absent) x (total loss/partial/full response) matrix from
+// the exit-code spec: only a bounded (-c) run that received zero replies on
+// every target should exit exitCodeNoResponse; everything else stays 0. The
+// pre-existing error paths (return 1) are untouched by this feature and are
+// not re-tested here.
+func TestRun_ExitCode(t *testing.T) {
+	tests := []struct {
+		name      string
+		withCount bool
+		simulate  func(targets []*stats.TargetStats)
+		wantCode  int
+	}{
+		{
+			name:      "no --count, total loss still exits 0",
+			withCount: false,
+			simulate: func(targets []*stats.TargetStats) {
+				for _, tgt := range targets {
+					tgt.IncSent()
+				}
+			},
+			wantCode: 0,
+		},
+		{
+			name:      "--count set, total loss exits exitCodeNoResponse",
+			withCount: true,
+			simulate: func(targets []*stats.TargetStats) {
+				for _, tgt := range targets {
+					tgt.IncSent()
+				}
+			},
+			wantCode: exitCodeNoResponse,
+		},
+		{
+			name:      "--count set, partial response exits 0",
+			withCount: true,
+			simulate: func(targets []*stats.TargetStats) {
+				targets[0].IncSent()
+				targets[0].OnSuccess(10*time.Millisecond, 64)
+				targets[1].IncSent()
+			},
+			wantCode: 0,
+		},
+		{
+			name:      "--count set, every target responded exits 0",
+			withCount: true,
+			simulate: func(targets []*stats.TargetStats) {
+				for _, tgt := range targets {
+					tgt.IncSent()
+					tgt.OnSuccess(10*time.Millisecond, 64)
+				}
+			},
+			wantCode: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origPinger := newPinger
+			origUI := uiRun
+			t.Cleanup(func() {
+				newPinger = origPinger
+				uiRun = origUI
+			})
+
+			var captured []*stats.TargetStats
+			newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+				captured = targets
+				return &fakePinger{}
+			}
+			uiRun = func(opts ui.RunOptions) error {
+				tt.simulate(captured)
+				return nil
+			}
+
+			args := []string{"-S", "127.0.0.1"}
+			if tt.withCount {
+				args = append(args, "-c", "3")
+			}
+			args = append(args, "example.com", "example.org")
+
+			var out, errOut bytes.Buffer
+			code := run(args, &out, &errOut)
+			if code != tt.wantCode {
+				t.Fatalf("expected %d, got %d (err: %s)", tt.wantCode, code, errOut.String())
+			}
+		})
+	}
+}
+
+// ---- --duration tests ----
+
+// TestRunDurationExpires verifies --duration converges onto the existing
+// ExternalCloseCh shutdown path (the same one YAML reload uses): once the
+// deadline elapses, uiRun's ExternalCloseCh must close, uiRun must be called
+// exactly once (no reload re-entry), and printExitSummary's output must
+// still appear on stdout after run() returns.
+func TestRunDurationExpires(t *testing.T) {
+	origPinger := newPinger
+	origUI := uiRun
+	t.Cleanup(func() {
+		newPinger = origPinger
+		uiRun = origUI
+	})
+
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		return &fakePinger{}
+	}
+
+	callCount := 0
+	uiRun = func(opts ui.RunOptions) error {
+		callCount++
+		select {
+		case <-opts.ExternalCloseCh:
+		case <-time.After(2 * time.Second):
+			t.Error("--duration did not close ExternalCloseCh in time")
+		}
+		return nil
+	}
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"--duration", "50ms", "-S", "127.0.0.1", "example.com"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
+	}
+	if callCount != 1 {
+		t.Errorf("expected exactly one uiRun call (no reload re-entry), got %d", callCount)
+	}
+	if !strings.Contains(out.String(), "mping statistics") {
+		t.Errorf("expected exit summary in stdout, got: %q", out.String())
+	}
+}
+
+// TestRunNoDuration_ExternalCloseChNotFired guards against a regression where
+// watchDurationLimit would fire even when --duration is left at its disabled
+// (0) default.
+func TestRunNoDuration_ExternalCloseChNotFired(t *testing.T) {
+	origPinger := newPinger
+	origUI := uiRun
+	t.Cleanup(func() {
+		newPinger = origPinger
+		uiRun = origUI
+	})
+
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		return &fakePinger{}
+	}
+
+	uiRun = func(opts ui.RunOptions) error {
+		select {
+		case <-opts.ExternalCloseCh:
+			t.Error("ExternalCloseCh fired even though --duration was not set")
+		case <-time.After(100 * time.Millisecond):
+		}
+		return nil
+	}
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"-S", "127.0.0.1", "example.com"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
 	}
 }
