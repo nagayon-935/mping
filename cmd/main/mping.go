@@ -125,6 +125,7 @@ type config struct {
 	mtuEnabled     bool
 	trace          bool
 	asnEnabled     bool
+	ptrEnabled     bool
 	ipv4Only       bool
 	ipv6Only       bool
 	portSpecs      []string
@@ -159,6 +160,7 @@ type hostsFileYAML struct {
 	MtuEnabled *bool           `yaml:"discovery-mtu"`
 	Trace      *bool           `yaml:"traceroute"`
 	AsnEnabled *bool           `yaml:"asn"`
+	PtrEnabled *bool           `yaml:"ptr"`
 	Ipv4Only   *bool           `yaml:"ipv4"`
 	Ipv6Only   *bool           `yaml:"ipv6"`
 	PortSpecs  []string        `yaml:"port"`
@@ -209,6 +211,7 @@ func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]string, 
 	syncField(fs, "discovery-mtu", doc.MtuEnabled, &cfg.mtuEnabled)
 	syncField(fs, "traceroute", doc.Trace, &cfg.trace)
 	syncField(fs, "asn", doc.AsnEnabled, &cfg.asnEnabled)
+	syncField(fs, "ptr", doc.PtrEnabled, &cfg.ptrEnabled)
 	syncField(fs, "ipv4", doc.Ipv4Only, &cfg.ipv4Only)
 	syncField(fs, "ipv6", doc.Ipv6Only, &cfg.ipv6Only)
 	syncSlice(fs, "port", doc.PortSpecs, &cfg.portSpecs)
@@ -492,6 +495,7 @@ func registerFlags(fs *pflag.FlagSet, cfg *config, th *thresholdFlags) {
 	fs.BoolVarP(&cfg.mtuEnabled, "discovery-mtu", "m", false, "discover maximum payload size using DF probes (IPv4 only)")
 	fs.BoolVarP(&cfg.trace, "traceroute", "T", false, "enable traceroute pane and run traceroute")
 	fs.BoolVarP(&cfg.asnEnabled, "asn", "a", false, "lookup and display AS numbers for target IPs")
+	fs.BoolVarP(&cfg.ptrEnabled, "ptr", "r", false, "lookup and display PTR (reverse DNS) records for target and hop IPs")
 	fs.StringVarP(&cfg.ifaceName, "interface", "I", "", "interface name to bind to (e.g. eth0)")
 	fs.StringVarP(&cfg.sourceAddr, "source", "S", "", "source IP address to bind to")
 	fs.IntVarP(&cfg.packetSize, "size", "s", 56, "packet size in bytes (payload)")

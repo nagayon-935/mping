@@ -173,6 +173,7 @@ func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resol
 		},
 		Resolver:   customResolver,
 		AsnEnabled: cfg.asnEnabled,
+		PtrEnabled: cfg.ptrEnabled,
 	}
 }
 
@@ -285,6 +286,7 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 		HTTPEnabled:     len(p.cfg.httpURLs) > 0,
 		HTTPResults:     p.sup.httpResults,
 		ASNEnabled:      p.cfg.asnEnabled,
+		PTREnabled:      p.cfg.ptrEnabled,
 		Thresholds:      &p.thresholds,
 		ExternalCloseCh: p.sig.ch,
 		ExternalLogCh:   p.logCh,
