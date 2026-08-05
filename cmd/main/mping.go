@@ -839,10 +839,11 @@ func printExitSummary(out io.Writer, targets []*stats.TargetStats) {
 		fmt.Fprintf(out, "%s (%s): %d packets transmitted, %d received, %.1f%% packet loss\n",
 			v.Host, v.IP, v.Sent, v.Recv, lossRate)
 		if v.Recv > 0 {
-			fmt.Fprintf(out, "rtt min/avg/max = %.3f/%.3f/%.3f ms\n",
+			fmt.Fprintf(out, "rtt min/avg/max/stddev = %.3f/%.3f/%.3f/%.3f ms\n",
 				float64(v.MinRTT.Microseconds())/1000.0,
 				float64(v.AvgRTT.Microseconds())/1000.0,
-				float64(v.MaxRTT.Microseconds())/1000.0)
+				float64(v.MaxRTT.Microseconds())/1000.0,
+				float64(v.StdDev.Microseconds())/1000.0)
 		}
 		fmt.Fprintln(out)
 	}

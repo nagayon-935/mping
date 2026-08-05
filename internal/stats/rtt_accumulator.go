@@ -1,6 +1,9 @@
 package stats
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 // rttAccumulator tracks min/max/sum/sample-count RTT statistics and an
 // optional ring-buffer history. Shared by TargetStats, PortCheckResult, and
@@ -12,6 +15,17 @@ type rttAccumulator struct {
 	sum     time.Duration
 	samples int
 
+	// mean and m2 hold Welford's online algorithm state (Knuth, TAOCP vol.
+	// 2, §4.2.2) for computing variance one sample at a time without ever
+	// squaring the raw RTT sum. This is deliberately NOT ping.c/ping6.c's
+	// `vari := tsumsq/n - avg*avg`: that formula subtracts two large,
+	// nearly-equal float64 values, and when RTTs are large relative to
+	// their spread the rounding error in that subtraction can exceed the
+	// true (small) variance, driving vari negative and sqrt(vari) to NaN.
+	// Values are float64 nanoseconds (time.Duration's unit).
+	mean float64
+	m2   float64
+
 	// history is nil for accumulators that don't track a ring buffer
 	// (HTTPCheckResult has no History field in its view). historyIdx/
 	// historyLen follow the layout reconstructHistory expects.
@@ -21,7 +35,9 @@ type rttAccumulator struct {
 }
 
 // record updates min/max/sum/samples for a successful RTT measurement.
-// No-op for rtt <= 0 (mirrors the guard every prior recordRTT had).
+// No-op for rtt <= 0 (mirrors the guard every prior recordRTT had); the
+// Welford variance state must stay inside this guard too, so a failed
+// probe (rtt <= 0) never perturbs stddev().
 func (a *rttAccumulator) record(rtt time.Duration) {
 	if rtt <= 0 {
 		return
@@ -34,6 +50,12 @@ func (a *rttAccumulator) record(rtt time.Duration) {
 	if rtt > a.max {
 		a.max = rtt
 	}
+
+	x := float64(rtt)
+	delta := x - a.mean
+	a.mean += delta / float64(a.samples)
+	delta2 := x - a.mean
+	a.m2 += delta * delta2
 }
 
 // avg returns sum/samples, or 0 if no samples have been recorded.
@@ -42,6 +64,19 @@ func (a *rttAccumulator) avg() time.Duration {
 		return 0
 	}
 	return a.sum / time.Duration(a.samples)
+}
+
+// stddev returns the population standard deviation of recorded RTTs (i.e.
+// variance divided by n, matching ping.c/ping6.c's "round-trip
+// min/avg/max/std-dev" semantics), computed from the Welford state
+// accumulated in record(). Returns 0 for 0 or 1 samples, where variance is
+// undefined/zero.
+func (a *rttAccumulator) stddev() time.Duration {
+	if a.samples < 2 {
+		return 0
+	}
+	variance := a.m2 / float64(a.samples)
+	return time.Duration(math.Sqrt(variance))
 }
 
 // appendHistory pushes rtt (which may be 0, e.g. to mark a failed probe)

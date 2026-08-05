@@ -29,6 +29,7 @@ type HTTPCheckView struct {
 	MinRTT     time.Duration
 	AvgRTT     time.Duration
 	MaxRTT     time.Duration
+	StdDev     time.Duration // Population stddev, via Welford's online algorithm
 	UpCount    int
 	DownCount  int
 	LastChange time.Time
@@ -88,6 +89,7 @@ func (r *HTTPCheckResult) GetView() HTTPCheckView {
 		MinRTT:     r.rtt.min,
 		AvgRTT:     r.rtt.avg(),
 		MaxRTT:     r.rtt.max,
+		StdDev:     r.rtt.stddev(),
 		UpCount:    r.UpCount,
 		DownCount:  r.DownCount,
 		LastChange: r.LastChange,

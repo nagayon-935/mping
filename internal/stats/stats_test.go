@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -86,6 +87,14 @@ func TestTargetStatsSuccessStatsAndView(t *testing.T) {
 	}
 	if view.AvgRTT != 20*time.Millisecond {
 		t.Fatalf("AvgRTT: got %v, want %v", view.AvgRTT, 20*time.Millisecond)
+	}
+
+	// StdDev: population stddev of {10,20,30}ms. mean=20ms,
+	// sum of squared deviations = 100+0+100 = 200 ms^2, /3 = 66.667 ms^2,
+	// sqrt ≈ 8.164966 ms.
+	expStdDev := time.Duration(math.Sqrt(200.0/3.0) * float64(time.Millisecond))
+	if diff := view.StdDev - expStdDev; diff < -time.Microsecond || diff > time.Microsecond {
+		t.Fatalf("StdDev: got %v, want %v (diff %v)", view.StdDev, expStdDev, diff)
 	}
 
 	// Jitter should be calculated using RFC 1889 (smoothed).
