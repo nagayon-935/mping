@@ -1,6 +1,8 @@
 package pinger
 
 import (
+	"fmt"
+
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
@@ -19,14 +21,23 @@ func icmpErrorString(typ icmp.Type, code int) string {
 	}
 }
 
+// icmpV6ErrorString renders a type/code pair into a human-readable string.
+// Note that unlike IPv4 - where "Fragmentation Needed" is DstUnreach code 4 -
+// IPv6 has no equivalent DstUnreach code: Packet Too Big is its own,
+// independent ICMPv6 type (type 2, RFC 4443 section 3.2). Its code is always
+// 0, so the useful diagnostic (the next-hop MTU) is carried in the message
+// body rather than the code; callers that have the full *icmp.Message should
+// prefer packetTooBigString(body.MTU) for that reason (see handleICMPError).
 func icmpV6ErrorString(typ icmp.Type, code int) string {
 	switch typ {
 	case ipv6.ICMPTypeDestinationUnreachable:
 		return destUnreachV6String(code)
+	case ipv6.ICMPTypePacketTooBig:
+		return "Packet Too Big"
 	case ipv6.ICMPTypeTimeExceeded:
-		return "Time Exceeded"
+		return timeExceededV6String(code)
 	case ipv6.ICMPTypeParameterProblem:
-		return "Parameter Problem"
+		return paramProblemV6String(code)
 	default:
 		return "ICMPv6 Error"
 	}
@@ -51,11 +62,15 @@ var destUnreachCodes = map[int]string{
 	15: "Precedence Cutoff in Effect",
 }
 
+// destUnreachV6Codes maps RFC 4443 section 3.1 Destination Unreachable codes.
 var destUnreachV6Codes = map[int]string{
 	0: "No Route to Destination",
 	1: "Communication with Destination Administratively Prohibited",
+	2: "Beyond Scope of Source Address",
 	3: "Address Unreachable",
 	4: "Port Unreachable",
+	5: "Source Address Failed Ingress/Egress Policy",
+	6: "Reject Route to Destination",
 }
 
 var timeExceededCodes = map[int]string{
@@ -63,10 +78,28 @@ var timeExceededCodes = map[int]string{
 	1: "Fragment Reassembly Time Exceeded",
 }
 
+// timeExceededV6Codes maps RFC 4443 section 3.3 Time Exceeded codes. Code 0
+// means the hop limit was exceeded in transit, distinct from IPv4's generic
+// "Time Exceeded" wording for the same code.
+var timeExceededV6Codes = map[int]string{
+	0: "Hop Limit Exceeded in Transit",
+	1: "Fragment Reassembly Time Exceeded",
+}
+
 var paramProblemCodes = map[int]string{
 	0: "Parameter Problem",
 	1: "Missing Required Option",
 	2: "Bad Length",
+}
+
+// paramProblemV6Codes maps RFC 4443 section 3.4 Parameter Problem codes.
+// These do not correspond to IPv4's ICMPTypeParameterProblem codes, which
+// index a pointer into the offending packet rather than naming a category of
+// error - IPv6 code 0/1/2 name a category directly.
+var paramProblemV6Codes = map[int]string{
+	0: "Erroneous Header Field Encountered",
+	1: "Unrecognized Next Header Type Encountered",
+	2: "Unrecognized IPv6 Option Encountered",
 }
 
 func lookupICMPCode(codes map[int]string, code int, fallback string) string {
@@ -88,8 +121,25 @@ func timeExceededString(code int) string {
 	return lookupICMPCode(timeExceededCodes, code, "Time Exceeded")
 }
 
+func timeExceededV6String(code int) string {
+	return lookupICMPCode(timeExceededV6Codes, code, "Time Exceeded")
+}
+
 func paramProblemString(code int) string {
 	return lookupICMPCode(paramProblemCodes, code, "Parameter Problem")
+}
+
+func paramProblemV6String(code int) string {
+	return lookupICMPCode(paramProblemV6Codes, code, "Parameter Problem")
+}
+
+// packetTooBigString renders an ICMPv6 Packet Too Big message (RFC 4443
+// section 3.2), including the next-hop MTU reported by the router so MTU and
+// fragmentation issues are diagnosable straight from the TUI instead of
+// showing up as a generic timeout. Mirrors Apple's ping6.c, which prints
+// "Packet too big mtu = %d".
+func packetTooBigString(mtu int) string {
+	return fmt.Sprintf("Packet Too Big (MTU=%d)", mtu)
 }
 
 // extractEchoIDSeq extracts the ICMP echo ID and sequence number from an ICMP
@@ -104,6 +154,8 @@ func icmpErrorBodyData(msg *icmp.Message) ([]byte, bool) {
 	case *icmp.TimeExceeded:
 		return body.Data, true
 	case *icmp.ParamProb:
+		return body.Data, true
+	case *icmp.PacketTooBig:
 		return body.Data, true
 	default:
 		return nil, false

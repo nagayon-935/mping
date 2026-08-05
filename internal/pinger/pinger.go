@@ -397,9 +397,18 @@ var receiverV4Config = receiverConfig{
 }
 
 var receiverV6Config = receiverConfig{
-	protocol:      58,
-	echoReply:     ipv6.ICMPTypeEchoReply,
-	errorTypes:    []icmp.Type{ipv6.ICMPTypeDestinationUnreachable, ipv6.ICMPTypeTimeExceeded, ipv6.ICMPTypeParameterProblem},
+	protocol:  58,
+	echoReply: ipv6.ICMPTypeEchoReply,
+	// ipv6.ICMPTypePacketTooBig (type 2) has no IPv4 equivalent code to piggyback
+	// on - IPv4's "Fragmentation Needed" is DstUnreach code 4, but IPv6 carries the
+	// same signal as its own top-level type. Omitting it here means MTU problems on
+	// IPv6 are silently dropped by isErrorType and surface as plain timeouts.
+	errorTypes: []icmp.Type{
+		ipv6.ICMPTypeDestinationUnreachable,
+		ipv6.ICMPTypePacketTooBig,
+		ipv6.ICMPTypeTimeExceeded,
+		ipv6.ICMPTypeParameterProblem,
+	},
 	errorStringFn: icmpV6ErrorString,
 }
 
@@ -519,6 +528,12 @@ func (p *Pinger) handleICMPError(msg *icmp.Message, errorStringFn func(icmp.Type
 		return
 	}
 	errMsg := errorStringFn(msg.Type, msg.Code)
+	// Packet Too Big's useful diagnostic - the next-hop MTU - lives in the
+	// message body, not the type/code pair errorStringFn works from, so it is
+	// layered in here once the full *icmp.Message is available.
+	if ptb, ok := msg.Body.(*icmp.PacketTooBig); ok {
+		errMsg = packetTooBigString(ptb.MTU)
+	}
 	p.mapMu.RLock()
 	ch, exists := p.targetChans[id]
 	p.mapMu.RUnlock()
