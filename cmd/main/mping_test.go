@@ -1856,6 +1856,26 @@ func TestPrintExitSummary_WithRecv(t *testing.T) {
 	}
 }
 
+func TestPrintExitSummary_StdDev(t *testing.T) {
+	tgt := stats.NewTargetStats("example.com")
+	tgt.SetIP("1.2.3.4")
+	// Classic dataset: population stddev of {2,4,4,4,5,5,7,9}ms is exactly 2ms.
+	for _, ms := range []int{2, 4, 4, 4, 5, 5, 7, 9} {
+		tgt.IncSent()
+		tgt.OnSuccess(time.Duration(ms)*time.Millisecond, 64)
+	}
+
+	var out bytes.Buffer
+	printExitSummary(&out, []*stats.TargetStats{tgt})
+	s := out.String()
+	if !strings.Contains(s, "rtt min/avg/max/stddev = ") {
+		t.Fatalf("missing rtt min/avg/max/stddev header: %q", s)
+	}
+	if !strings.Contains(s, "/2.000 ms") {
+		t.Errorf("stddev not printed as 2.000ms: %q", s)
+	}
+}
+
 func TestNewCustomResolver(t *testing.T) {
 	r := newCustomResolver("8.8.8.8")
 	if r == nil {

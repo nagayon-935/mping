@@ -65,6 +65,7 @@ func (r *PortCheckResult) GetView() PortCheckView {
 		MinRTT:      r.rtt.min,
 		AvgRTT:      r.rtt.avg(),
 		MaxRTT:      r.rtt.max,
+		StdDev:      r.rtt.stddev(),
 		History:     r.rtt.historySnapshot(),
 		OpenCount:   r.OpenCount,
 		ClosedCount: r.ClosedCount,
@@ -112,6 +113,7 @@ type PortCheckView struct {
 	MinRTT      time.Duration
 	AvgRTT      time.Duration
 	MaxRTT      time.Duration
+	StdDev      time.Duration   // Population stddev, via Welford's online algorithm
 	History     []time.Duration // ordered ring buffer snapshot for RTT graph
 	OpenCount   int
 	ClosedCount int
@@ -197,6 +199,7 @@ type TargetView struct {
 	MinRTT           time.Duration
 	MaxRTT           time.Duration
 	AvgRTT           time.Duration // Calculated
+	StdDev           time.Duration // Population stddev, via Welford's online algorithm
 	Jitter           time.Duration // From RFC 1889 state
 	History          []time.Duration
 	LastTTL          int
@@ -262,6 +265,7 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 		MinRTT:           t.rtt.min,
 		MaxRTT:           t.rtt.max,
 		AvgRTT:           avg,
+		StdDev:           t.rtt.stddev(),
 		Jitter:           time.Duration(t.jitter),
 		History:          histCopy,
 		LastTTL:          t.LastTTL,
