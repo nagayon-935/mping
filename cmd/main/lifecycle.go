@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/pinger"
@@ -239,6 +240,40 @@ func startJSONWriter(path string, targets []*stats.TargetStats, httpResults func
 		}
 	}()
 	return cancelFn, doneCh
+}
+
+// watchDurationLimit arms sig to fire once durationCtx's deadline elapses,
+// converging --duration onto the same ExternalCloseCh shutdown path a YAML
+// reload already uses (see reload_coordinator.go): this function never calls
+// rc.requestFileReload/requestHostsChange, so rc.apply() finds no pending
+// reload afterwards and run()'s main loop breaks out to printExitSummary
+// instead of re-entering — the same outcome as the user pressing 'q'.
+//
+// durationCtx is nil when --duration was not set (0, the disabled default),
+// in which case this is a no-op returning a no-op stop func. Otherwise it
+// starts a goroutine bounded to the current loop iteration: the caller MUST
+// invoke the returned stop func once that iteration ends by any other path
+// (user quit, reload, error), so the goroutine doesn't outlive the iteration
+// waiting on a deadline nothing still cares about.
+func watchDurationLimit(durationCtx context.Context, sig *reloadSignal, logCh chan<- string) (stop func()) {
+	if durationCtx == nil {
+		return func() {}
+	}
+	done := make(chan struct{})
+	var once sync.Once
+	go func() {
+		select {
+		case <-durationCtx.Done():
+			select {
+			case logCh <- fmt.Sprintf("[green][%s] Duration limit reached, shutting down...[-]",
+				time.Now().Format("15:04:05")):
+			default:
+			}
+			sig.fire()
+		case <-done:
+		}
+	}()
+	return func() { once.Do(func() { close(done) }) }
 }
 
 // runOptionsParams bundles the per-iteration values buildRunOptions needs to

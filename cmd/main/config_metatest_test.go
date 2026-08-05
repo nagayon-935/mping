@@ -31,7 +31,7 @@ func TestApplyDocToCfg_EveryFieldHasEffect(t *testing.T) {
 		t.Run(field.Name, func(t *testing.T) {
 			doc := hostsFileYAML{}
 			docVal := reflect.ValueOf(&doc).Elem()
-			if !setSentinel(docVal.FieldByName(field.Name)) {
+			if !setSentinel(field.Name, docVal.FieldByName(field.Name)) {
 				t.Fatalf("no sentinel setter for field %s (kind %s) — extend setSentinel", field.Name, field.Type.Kind())
 			}
 
@@ -58,7 +58,7 @@ func TestOverlayThresholdsDoc_EveryFieldHasEffect(t *testing.T) {
 		t.Run(field.Name, func(t *testing.T) {
 			th := thresholdsYAML{}
 			thVal := reflect.ValueOf(&th).Elem()
-			if !setSentinel(thVal.FieldByName(field.Name)) {
+			if !setSentinel(field.Name, thVal.FieldByName(field.Name)) {
 				t.Fatalf("no sentinel setter for field %s (kind %s) — extend setSentinel", field.Name, field.Type.Kind())
 			}
 
@@ -74,19 +74,27 @@ func TestOverlayThresholdsDoc_EveryFieldHasEffect(t *testing.T) {
 }
 
 // setSentinel sets v (addressable, currently zero) to a distinguishing
-// non-zero value based on its type. Returns false if the type isn't handled,
-// so tests fail loudly instead of silently passing on an unrecognised field.
-func setSentinel(v reflect.Value) bool {
+// non-zero value based on its type and field name. Returns false if the type
+// isn't handled, so tests fail loudly instead of silently passing on an
+// unrecognised field.
+func setSentinel(fieldName string, v reflect.Value) bool {
 	switch v.Kind() {
 	case reflect.Ptr:
 		elem := reflect.New(v.Type().Elem())
-		if !setSentinel(elem.Elem()) {
+		if !setSentinel(fieldName, elem.Elem()) {
 			return false
 		}
 		v.Set(elem)
 		return true
 	case reflect.String:
-		v.SetString("sentinel")
+		if fieldName == "Duration" {
+			// Duration is parsed with time.ParseDuration, unlike every other
+			// *string field here — the plain "sentinel" text below would
+			// make applyDocToCfg return an error instead of applying it.
+			v.SetString("999h")
+		} else {
+			v.SetString("sentinel")
+		}
 		return true
 	case reflect.Int, reflect.Int64:
 		v.SetInt(999)
