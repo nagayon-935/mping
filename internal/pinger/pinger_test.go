@@ -469,6 +469,82 @@ func TestRunReceiverDispatchesICMPErrorV6(t *testing.T) {
 	}
 }
 
+// TestRunReceiverDispatchesPacketTooBigV6 is a privilege-free integration
+// test that drives a real ICMPv6 Packet Too Big message through the unified
+// receiver loop (runReceiverV6 -> handleICMPError) using fakePacketConnV6 and
+// verifies it reaches the target's channel with the MTU embedded in the
+// error string. Before this fix, ipv6.ICMPTypePacketTooBig was absent from
+// receiverV6Config.errorTypes, so runReceiver's isErrorType check silently
+// dropped the message and the target would show "Timeout" instead of the
+// real cause.
+func TestRunReceiverDispatchesPacketTooBigV6(t *testing.T) {
+	target := stats.NewTargetStats("example.com")
+	p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{})
+
+	id := p.baseID & 0xffff
+	echo := icmp.Message{
+		Type: ipv6.ICMPTypeEchoRequest,
+		Code: 0,
+		Body: &icmp.Echo{
+			ID:   id,
+			Seq:  5,
+			Data: []byte("x"),
+		},
+	}
+	inner, err := echo.Marshal(nil)
+	if err != nil {
+		t.Fatalf("marshal inner: %v", err)
+	}
+	data := make([]byte, 40)
+	data[0] = 0x60 // IPv6 version
+	data[6] = 58   // ICMPv6
+	data = append(data, inner...)
+
+	tooBig := icmp.Message{
+		Type: ipv6.ICMPTypePacketTooBig,
+		Code: 0,
+		Body: &icmp.PacketTooBig{MTU: 1400, Data: data},
+	}
+	raw, err := tooBig.Marshal(nil)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	fake := &fakePacketConnV6{
+		readQueue: []readResultV6{
+			{data: raw, cm: &ipv6.ControlMessage{HopLimit: 55}},
+		},
+	}
+	p.connV6 = fake
+	p.targetMap[id] = target
+	p.targetChans[id] = make(chan Reply, 1)
+
+	done := make(chan struct{})
+	go func() {
+		p.runReceiverV6()
+		close(done)
+	}()
+
+	select {
+	case got := <-p.targetChans[id]:
+		if got.Seq != 5 {
+			t.Fatalf("seq mismatch: got %d, want 5", got.Seq)
+		}
+		if got.Err != "Packet Too Big (MTU=1400)" {
+			t.Fatalf("Err = %q, want %q", got.Err, "Packet Too Big (MTU=1400)")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timeout waiting for reply")
+	}
+	p.Close()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("receiver did not stop")
+	}
+}
+
 func TestStartWithIPv4Source(t *testing.T) {
 	p := NewPingerWithOptions(nil, Options{
 		ListenPacket: func(network, address string) (net.PacketConn, error) {
@@ -903,11 +979,80 @@ func TestICMPErrorStrings(t *testing.T) {
 	if icmpV6ErrorString(ipv6.ICMPTypeDestinationUnreachable, 1) == "" {
 		t.Fatal("expected v6 dest unreachable string")
 	}
-	if icmpV6ErrorString(ipv6.ICMPTypeTimeExceeded, 0) != "Time Exceeded" {
-		t.Fatal("expected v6 time exceeded")
+	if icmpV6ErrorString(ipv6.ICMPTypeTimeExceeded, 0) != "Hop Limit Exceeded in Transit" {
+		t.Fatal("expected v6 time exceeded code 0 to be hop-limit-specific")
 	}
-	if icmpV6ErrorString(ipv6.ICMPTypeParameterProblem, 0) != "Parameter Problem" {
-		t.Fatal("expected v6 parameter problem")
+	if icmpV6ErrorString(ipv6.ICMPTypeParameterProblem, 0) != "Erroneous Header Field Encountered" {
+		t.Fatal("expected v6 parameter problem code 0 to be RFC 4443 specific")
+	}
+}
+
+// TestIcmpV6ErrorStringTable exercises icmpV6ErrorString across every RFC 4443
+// type/code combination mping recognizes, including the Packet Too Big type
+// (ipv6.ICMPTypePacketTooBig / type 2) that has no IPv4 equivalent, and the
+// fallback path for unknown codes within a known type.
+func TestIcmpV6ErrorStringTable(t *testing.T) {
+	tests := []struct {
+		name string
+		typ  icmp.Type
+		code int
+		want string
+	}{
+		// Destination Unreachable (type 1)
+		{"DstUnreach/NoRoute", ipv6.ICMPTypeDestinationUnreachable, 0, "No Route to Destination"},
+		{"DstUnreach/AdminProhibited", ipv6.ICMPTypeDestinationUnreachable, 1, "Communication with Destination Administratively Prohibited"},
+		{"DstUnreach/BeyondScope", ipv6.ICMPTypeDestinationUnreachable, 2, "Beyond Scope of Source Address"},
+		{"DstUnreach/AddrUnreachable", ipv6.ICMPTypeDestinationUnreachable, 3, "Address Unreachable"},
+		{"DstUnreach/PortUnreachable", ipv6.ICMPTypeDestinationUnreachable, 4, "Port Unreachable"},
+		{"DstUnreach/PolicyFailure", ipv6.ICMPTypeDestinationUnreachable, 5, "Source Address Failed Ingress/Egress Policy"},
+		{"DstUnreach/RejectRoute", ipv6.ICMPTypeDestinationUnreachable, 6, "Reject Route to Destination"},
+		{"DstUnreach/UnknownCode", ipv6.ICMPTypeDestinationUnreachable, 99, "Destination Unreachable"},
+
+		// Packet Too Big (type 2) - no IPv4 equivalent, code is always 0.
+		{"PacketTooBig/Code0", ipv6.ICMPTypePacketTooBig, 0, "Packet Too Big"},
+		{"PacketTooBig/UnknownCode", ipv6.ICMPTypePacketTooBig, 5, "Packet Too Big"},
+
+		// Time Exceeded (type 3)
+		{"TimeExceeded/HopLimit", ipv6.ICMPTypeTimeExceeded, 0, "Hop Limit Exceeded in Transit"},
+		{"TimeExceeded/FragReassembly", ipv6.ICMPTypeTimeExceeded, 1, "Fragment Reassembly Time Exceeded"},
+		{"TimeExceeded/UnknownCode", ipv6.ICMPTypeTimeExceeded, 99, "Time Exceeded"},
+
+		// Parameter Problem (type 4)
+		{"ParamProblem/ErroneousHeader", ipv6.ICMPTypeParameterProblem, 0, "Erroneous Header Field Encountered"},
+		{"ParamProblem/UnrecognizedNextHeader", ipv6.ICMPTypeParameterProblem, 1, "Unrecognized Next Header Type Encountered"},
+		{"ParamProblem/UnrecognizedOption", ipv6.ICMPTypeParameterProblem, 2, "Unrecognized IPv6 Option Encountered"},
+		{"ParamProblem/UnknownCode", ipv6.ICMPTypeParameterProblem, 99, "Parameter Problem"},
+
+		// Unknown type entirely.
+		{"UnknownType", ipv6.ICMPTypeEchoReply, 0, "ICMPv6 Error"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := icmpV6ErrorString(tt.typ, tt.code)
+			if got != tt.want {
+				t.Fatalf("icmpV6ErrorString(%v, %d) = %q, want %q", tt.typ, tt.code, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPacketTooBigString verifies the MTU value reported by a router is
+// embedded in the rendered error string, matching Apple ping6.c's
+// "Packet too big mtu = %d" convention.
+func TestPacketTooBigString(t *testing.T) {
+	tests := []struct {
+		mtu  int
+		want string
+	}{
+		{1400, "Packet Too Big (MTU=1400)"},
+		{1280, "Packet Too Big (MTU=1280)"},
+		{0, "Packet Too Big (MTU=0)"},
+	}
+	for _, tt := range tests {
+		if got := packetTooBigString(tt.mtu); got != tt.want {
+			t.Fatalf("packetTooBigString(%d) = %q, want %q", tt.mtu, got, tt.want)
+		}
 	}
 }
 
@@ -926,17 +1071,10 @@ func TestDestUnreachStrings(t *testing.T) {
 			t.Fatalf("expected destUnreachString for code %d", code)
 		}
 	}
-	if destUnreachV6String(0) == "" {
-		t.Fatal("expected v6 destUnreach string")
-	}
-	if destUnreachV6String(1) == "" {
-		t.Fatal("expected v6 destUnreach string")
-	}
-	if destUnreachV6String(3) == "" {
-		t.Fatal("expected v6 destUnreach string")
-	}
-	if destUnreachV6String(4) == "" {
-		t.Fatal("expected v6 destUnreach string")
+	for _, code := range []int{0, 1, 2, 3, 4, 5, 6} {
+		if destUnreachV6String(code) == "" {
+			t.Fatalf("expected v6 destUnreach string for code %d", code)
+		}
 	}
 	if destUnreachV6String(99) != "Destination Unreachable" {
 		t.Fatal("expected default v6 destUnreach string")
@@ -1194,6 +1332,36 @@ func TestExtractEchoIDSeqV6(t *testing.T) {
 	}
 }
 
+// TestExtractEchoIDSeqPacketTooBigV6 ensures extractEchoIDSeq can pull the
+// embedded original packet's ID/Seq out of an ICMPv6 Packet Too Big body.
+// Without a *icmp.PacketTooBig case in icmpErrorBodyData this returns
+// ok=false and the reply can never be routed back to its target.
+func TestExtractEchoIDSeqPacketTooBigV6(t *testing.T) {
+	echo := icmp.Message{
+		Type: ipv6.ICMPTypeEchoRequest,
+		Code: 0,
+		Body: &icmp.Echo{ID: 21, Seq: 43, Data: []byte("x")},
+	}
+	inner, err := echo.Marshal(nil)
+	if err != nil {
+		t.Fatalf("marshal inner: %v", err)
+	}
+	ipHeader := make([]byte, 40)
+	ipHeader[0] = 0x60
+	ipHeader[6] = 58 // ICMPv6
+	data := append(ipHeader, inner...)
+
+	tooBig := icmp.Message{
+		Type: ipv6.ICMPTypePacketTooBig,
+		Code: 0,
+		Body: &icmp.PacketTooBig{MTU: 1400, Data: data},
+	}
+	id, seq, ok := extractEchoIDSeq(&tooBig)
+	if !ok || id != 21 || seq != 43 {
+		t.Fatalf("unexpected extract: ok=%v id=%d seq=%d", ok, id, seq)
+	}
+}
+
 // ---- Pinger.Stop() test ----
 
 func TestPingerStop(t *testing.T) {
@@ -1439,6 +1607,11 @@ func TestICMPErrorBodyData(t *testing.T) {
 			wantOK: true,
 		},
 		{
+			name:   "PacketTooBig",
+			msg:    &icmp.Message{Body: &icmp.PacketTooBig{MTU: 1400, Data: []byte("test")}},
+			wantOK: true,
+		},
+		{
 			name:   "Echo (unsupported)",
 			msg:    &icmp.Message{Body: &icmp.Echo{Data: []byte("test")}},
 			wantOK: false,
@@ -1471,6 +1644,18 @@ func TestIsErrorType(t *testing.T) {
 	}
 	if isErrorType(ipv4.ICMPTypeEchoReply, errorTypes) {
 		t.Fatal("expected false for EchoReply")
+	}
+}
+
+// TestReceiverV6ConfigIncludesPacketTooBig pins receiverV6Config.errorTypes
+// to include ipv6.ICMPTypePacketTooBig. IPv6 has no "Fragmentation Needed"
+// DstUnreach code like IPv4 does (code 4) - Packet Too Big is its own,
+// independent ICMPv6 type (type 2) and must be listed explicitly or
+// runReceiver's isErrorType check silently drops it, making MTU problems on
+// IPv6 look like plain timeouts.
+func TestReceiverV6ConfigIncludesPacketTooBig(t *testing.T) {
+	if !isErrorType(ipv6.ICMPTypePacketTooBig, receiverV6Config.errorTypes) {
+		t.Fatal("receiverV6Config.errorTypes must include ipv6.ICMPTypePacketTooBig")
 	}
 }
 
@@ -1777,6 +1962,49 @@ func TestHandleICMPError(t *testing.T) {
 		}
 		if reply.Err != "Destination Host Unreachable" {
 			t.Fatalf("Err = %q, want %q", reply.Err, "Destination Host Unreachable")
+		}
+	default:
+		t.Fatal("expected reply in channel")
+	}
+}
+
+// TestHandleICMPErrorPacketTooBigV6 verifies handleICMPError overrides the
+// generic type-level string with the MTU-specific one when the message body
+// is *icmp.PacketTooBig, at the unit level (no fake conn / receiver loop).
+func TestHandleICMPErrorPacketTooBigV6(t *testing.T) {
+	target := stats.NewTargetStats("example.com")
+	p := NewPinger([]*stats.TargetStats{target})
+	id := p.baseID & 0xffff
+	p.targetMap[id] = target
+	ch := make(chan Reply, 1)
+	p.targetChans[id] = ch
+
+	echo := icmp.Message{
+		Type: ipv6.ICMPTypeEchoRequest,
+		Code: 0,
+		Body: &icmp.Echo{ID: id, Seq: 8, Data: []byte("x")},
+	}
+	inner, _ := echo.Marshal(nil)
+	hdr := make([]byte, 40)
+	hdr[0] = 0x60
+	hdr[6] = 58 // ICMPv6
+	data := append(hdr, inner...)
+
+	msg := &icmp.Message{
+		Type: ipv6.ICMPTypePacketTooBig,
+		Code: 0,
+		Body: &icmp.PacketTooBig{MTU: 1280, Data: data},
+	}
+
+	p.handleICMPError(msg, icmpV6ErrorString)
+
+	select {
+	case reply := <-ch:
+		if reply.Seq != 8 {
+			t.Fatalf("Seq = %d, want 8", reply.Seq)
+		}
+		if reply.Err != "Packet Too Big (MTU=1280)" {
+			t.Fatalf("Err = %q, want %q", reply.Err, "Packet Too Big (MTU=1280)")
 		}
 	default:
 		t.Fatal("expected reply in channel")
