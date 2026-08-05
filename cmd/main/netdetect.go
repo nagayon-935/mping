@@ -20,17 +20,83 @@ func getInterfaceIP(ifaceName string, wantIPv6 bool) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("get addresses for interface %q: %w", ifaceName, err)
 	}
+	return selectInterfaceIP(addrs, ifaceName, wantIPv6)
+}
+
+// IPv6 address selection priority for a given interface, lower is more
+// preferred. Global unicast addresses are used first, then Unique Local
+// Addresses (RFC 4193), and link-local addresses only as a last resort.
+const (
+	ipv6RankGlobalUnicast = iota
+	ipv6RankULA
+	ipv6RankLinkLocal
+)
+
+// isUniqueLocalAddr reports whether ip falls within the IPv6 Unique Local
+// Address range fc00::/7 (RFC 4193).
+func isUniqueLocalAddr(ip net.IP) bool {
+	ip16 := ip.To16()
+	if ip16 == nil {
+		return false
+	}
+	return ip16[0]&0xfe == 0xfc
+}
+
+// ipv6AddrRank classifies an IPv6 address for source-address selection.
+func ipv6AddrRank(ip net.IP) int {
+	switch {
+	case ip.IsLinkLocalUnicast():
+		return ipv6RankLinkLocal
+	case isUniqueLocalAddr(ip):
+		return ipv6RankULA
+	default:
+		return ipv6RankGlobalUnicast
+	}
+}
+
+// selectInterfaceIP picks the most appropriate address of the requested
+// family from addrs, the set of addresses assigned to interface ifaceName.
+//
+// For IPv4, it keeps the pre-existing behavior of returning the first
+// non-loopback address found.
+//
+// For IPv6, an interface commonly carries several addresses at once
+// (link-local, ULA, global unicast, RFC 4941 temporary addresses). Global
+// unicast is preferred, then ULA, then link-local. Because a link-local
+// address is only valid for binding when qualified with a zone (e.g.
+// "fe80::1%en0"), the interface's zone is appended whenever link-local is
+// the only option.
+func selectInterfaceIP(addrs []net.Addr, ifaceName string, wantIPv6 bool) (string, error) {
+	bestRank := -1
+	var best net.IP
+
 	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			isV4 := ipnet.IP.To4() != nil
-			if wantIPv6 && !isV4 {
-				return ipnet.IP.String(), nil
-			}
-			if !wantIPv6 && isV4 {
-				return ipnet.IP.String(), nil
-			}
+		ipnet, ok := addr.(*net.IPNet)
+		if !ok || ipnet.IP.IsLoopback() {
+			continue
+		}
+		isV4 := ipnet.IP.To4() != nil
+		if wantIPv6 == isV4 {
+			continue
+		}
+		if !wantIPv6 {
+			return ipnet.IP.String(), nil
+		}
+
+		rank := ipv6AddrRank(ipnet.IP)
+		if bestRank == -1 || rank < bestRank {
+			bestRank = rank
+			best = ipnet.IP
 		}
 	}
+
+	if best != nil {
+		if bestRank == ipv6RankLinkLocal {
+			return best.String() + "%" + ifaceName, nil
+		}
+		return best.String(), nil
+	}
+
 	ver := "IPv4"
 	if wantIPv6 {
 		ver = "IPv6"
