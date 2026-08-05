@@ -765,22 +765,9 @@ func (p *Pinger) sendProbe(t *stats.TargetStats, id, seq int, payload []byte, ds
 			Data: payload,
 		},
 	}
-	var b []byte
-	var buf []byte
-	var err error
-	if p.Size <= 1400 {
-		bufPtr := marshalBufPool.Get().(*[]byte)
-		defer marshalBufPool.Put(bufPtr)
-		buf = *bufPtr
-		b, err = msg.Marshal(buf[:0])
-		if err != nil {
-			return time.Time{}, false
-		}
-	} else {
-		b, err = msg.Marshal(nil)
-		if err != nil {
-			return time.Time{}, false
-		}
+	b, err := marshalProbe(&msg)
+	if err != nil {
+		return time.Time{}, false
 	}
 
 	start := time.Now()
@@ -929,9 +916,19 @@ func buildPayload(size int) []byte {
 	return payload
 }
 
-var marshalBufPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, 1500)
-		return &b
-	},
+// marshalProbe serializes an ICMP echo request for transmission.
+//
+// psh (the pseudo header argument to icmp.Message.Marshal) must stay nil
+// here. For ICMPv4 it's ignored entirely, but for ICMPv6, x/net treats a
+// non-nil psh as real pseudo-header bytes: it writes a 4-byte message
+// length field at a fixed offset (2*net.IPv6len = 32) into the buffer
+// and computes a checksum over it. A non-nil-but-empty slice (as this
+// package used to pass via a pooled buffer for size<=1400) satisfies
+// "non-nil" without being an actual pseudo header, so that length write
+// lands inside the ICMP payload once it's long enough to reach offset
+// 32, silently corrupting it. Passing nil defers checksum computation to
+// the kernel, which is required anyway since a raw ICMPv6 socket always
+// recomputes and overwrites the checksum on send.
+func marshalProbe(msg *icmp.Message) ([]byte, error) {
+	return msg.Marshal(nil)
 }
