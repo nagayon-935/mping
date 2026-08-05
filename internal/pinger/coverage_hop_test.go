@@ -23,6 +23,9 @@ func (f *fakeHopConnV6) ReadFrom(b []byte) (int, *ipv6.ControlMessage, net.Addr,
 	return 0, nil, nil, timeoutOpError()
 }
 func (f *fakeHopConnV6) Close() error { return nil }
+func (f *fakeHopConnV6) SetICMPFilter(filt *ipv6.ICMPFilter) error {
+	return nil
+}
 
 // TestNewPingerWithOptions_WithResolver covers the opts.Resolver != nil path
 // for both the resolve and lookupTXT closures.

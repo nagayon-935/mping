@@ -36,6 +36,7 @@ type hopSendConnV6 interface {
 	SetReadDeadline(t time.Time) error
 	ReadFrom(b []byte) (int, *ipv6.ControlMessage, net.Addr, error)
 	Close() error
+	SetICMPFilter(f *ipv6.ICMPFilter) error
 }
 
 // HopSocket holds the send socket for MTR probing.
@@ -133,6 +134,15 @@ func (p *Pinger) OpenHopSocket(dest string) (*HopSocket, error) {
 		v6conn := ipv6.NewPacketConn(c)
 		// Non-fatal: hop limit control message may not be available on all platforms.
 		_ = v6conn.SetControlMessage(ipv6.FlagHopLimit, true)
+		// Same kernel-side filter as the main receiver socket (see
+		// applyICMPv6Filter in pinger.go). This conn is used for both the
+		// standalone read path (receiveViaSocket, when no Pinger.connV6 is
+		// running) and the send-only path when a Pinger is running
+		// (replies are read via the shared trace channel instead) - the
+		// filter is applied unconditionally since it is a strict superset
+		// of the ICMP types acceptHopPacket matches on (EchoReply,
+		// TimeExceeded, DestinationUnreachable) and is harmless when unused.
+		applyICMPv6Filter(v6conn)
 		sock.sendV6 = v6conn
 	}
 
