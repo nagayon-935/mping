@@ -59,6 +59,7 @@ func (f *lifecycleFakePinger) TraceRoute(ctx context.Context, dest string, maxHo
 }
 
 func (f *lifecycleFakePinger) SetSource(ip string)                       {}
+func (f *lifecycleFakePinger) SetInterface(name string)                  {}
 func (f *lifecycleFakePinger) SetSize(size int)                          {}
 func (f *lifecycleFakePinger) SetCount(count int)                        {}
 func (f *lifecycleFakePinger) SetResolveInterval(interval time.Duration) {}

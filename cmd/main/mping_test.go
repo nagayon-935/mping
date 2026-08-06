@@ -54,6 +54,11 @@ type fakePinger struct {
 	// TraceRoute returns, letting a test observe when it actually exited.
 	blockTraceUntilCtxDone bool
 	traceRouteReturned     chan struct{}
+
+	// interfaceSet records the last value passed to SetInterface, so tests
+	// can verify makePingerFactory wires cfg.ifaceName through without
+	// needing a real *pinger.Pinger.
+	interfaceSet string
 }
 
 func (f *fakePinger) Start(interval, timeout time.Duration) error {
@@ -104,6 +109,7 @@ func (f *fakePinger) TraceRoute(ctx context.Context, dest string, maxHops int, t
 }
 
 func (f *fakePinger) SetSource(ip string)                       {}
+func (f *fakePinger) SetInterface(name string)                  { f.interfaceSet = name }
 func (f *fakePinger) SetSize(size int)                          {}
 func (f *fakePinger) SetCount(count int)                        {}
 func (f *fakePinger) SetResolveInterval(interval time.Duration) {}
@@ -690,6 +696,10 @@ func TestPingerAdapterSetters(t *testing.T) {
 	if p.Source != "1.2.3.4" {
 		t.Errorf("SetSource: got %q, want %q", p.Source, "1.2.3.4")
 	}
+	p.SetInterface("eth0")
+	if p.Interface != "eth0" {
+		t.Errorf("SetInterface: got %q, want %q", p.Interface, "eth0")
+	}
 	p.SetSize(128)
 	if p.Size != 128 {
 		t.Errorf("SetSize: got %d, want 128", p.Size)
@@ -706,6 +716,63 @@ func TestPingerAdapterSetters(t *testing.T) {
 	p.SetLogWriter(&buf)
 	if p.LogWriter != &buf {
 		t.Error("SetLogWriter: writer not set correctly")
+	}
+}
+
+// ---- makePingerFactory interface wiring tests ----
+
+// TestMakePingerFactory_SetsInterface verifies that the -I interface name
+// carried on cfg.ifaceName reaches the pingerController via SetInterface,
+// the same way bindIP already reaches it via SetSource — so true interface
+// binding (see internal/pinger/bindif_*.go) actually gets armed for
+// CLI-driven runs, not just when a caller constructs *pinger.Pinger by hand.
+func TestMakePingerFactory_SetsInterface(t *testing.T) {
+	origNewPinger := newPinger
+	t.Cleanup(func() { newPinger = origNewPinger })
+
+	var created *fakePinger
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		created = &fakePinger{}
+		return created
+	}
+
+	cfg := config{ifaceName: "eth0"}
+	factory := makePingerFactory(nil, pinger.Options{}, cfg, "192.168.1.10", nil)
+	factory(56)
+
+	if created == nil {
+		t.Fatal("expected newPinger to be called")
+	}
+	if created.interfaceSet != "eth0" {
+		t.Errorf("SetInterface: got %q, want %q", created.interfaceSet, "eth0")
+	}
+}
+
+// TestMakePingerFactory_EmptyInterfaceWhenUnset verifies that when -I was
+// never passed (cfg.ifaceName == ""), the factory still calls SetInterface
+// with an empty string rather than skipping the call — matching Pinger's own
+// zero-value semantics (an empty Interface is a documented no-op in
+// bindToInterface) and keeping -S-only runs behaviorally identical to
+// before this feature existed.
+func TestMakePingerFactory_EmptyInterfaceWhenUnset(t *testing.T) {
+	origNewPinger := newPinger
+	t.Cleanup(func() { newPinger = origNewPinger })
+
+	var created *fakePinger
+	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
+		created = &fakePinger{}
+		return created
+	}
+
+	cfg := config{sourceAddr: "10.0.0.5"}
+	factory := makePingerFactory(nil, pinger.Options{}, cfg, "10.0.0.5", nil)
+	factory(56)
+
+	if created == nil {
+		t.Fatal("expected newPinger to be called")
+	}
+	if created.interfaceSet != "" {
+		t.Errorf("SetInterface: got %q, want empty", created.interfaceSet)
 	}
 }
 
