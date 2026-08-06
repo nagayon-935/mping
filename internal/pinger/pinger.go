@@ -1048,43 +1048,93 @@ func (p *Pinger) sendProbe(t *stats.TargetStats, id, seq int, payload []byte, ds
 	return start, true
 }
 
-// waitForReply waits for a matching reply or timeout. Returns false if done channel was closed.
-func (p *Pinger) waitForReply(t *stats.TargetStats, ch <-chan Reply, seq int, start time.Time, timeoutTimer *time.Timer) bool {
-	for {
-		select {
-		case reply := <-ch:
-			if reply.Seq != seq&seqMask {
-				continue
-			}
-			if reply.Err != "" {
-				t.OnFailure(reply.Err)
-				p.log(t, seq, "ICMPError", 0, 0, reply.Err)
-			} else {
-				rtt := time.Since(start)
-				t.OnSuccess(rtt, reply.TTL)
-				t.SetLastDSCP(reply.DSCP)
-				p.log(t, seq, "OK", rtt, reply.TTL, "")
-			}
-			timeoutTimer.Stop()
-			return true
-		case <-timeoutTimer.C:
-			errMsg := p.applyLastErrSource("Timeout")
-			t.OnFailure(errMsg)
-			p.log(t, seq, "Timeout", 0, 0, "Request timed out")
-			return true
-		case <-p.done:
-			timeoutTimer.Stop()
-			return false
+// pendingProbe tracks one in-flight probe: the logical (unbounded) seq used
+// for CSV logging, and the time it was sent (for RTT and expiry).
+type pendingProbe struct {
+	logicalSeq int
+	start      time.Time
+}
+
+// nextExpiry returns the earliest deadline among unacked's entries, and
+// whether unacked is non-empty. Because runWorker only ever inserts entries
+// with monotonically increasing start times and a single, constant timeout,
+// the earliest deadline is a plain O(n) scan; n is bounded by the number of
+// probes currently in flight (interval/timeout ratio), which stays small in
+// practice.
+func nextExpiry(unacked map[int]pendingProbe, timeout time.Duration) (time.Time, bool) {
+	var earliest time.Time
+	found := false
+	for _, pend := range unacked {
+		d := pend.start.Add(timeout)
+		if !found || d.Before(earliest) {
+			earliest, found = d, true
 		}
+	}
+	return earliest, found
+}
+
+// rearmSweepTimer stops/drains sweepTimer and reschedules it for the
+// earliest still-outstanding deadline in unacked, or leaves it stopped when
+// unacked is empty. Only ever called from runWorker's own goroutine, so no
+// synchronization is needed around the Stop/drain/Reset sequence.
+func rearmSweepTimer(sweepTimer *time.Timer, unacked map[int]pendingProbe, timeout time.Duration) {
+	if !sweepTimer.Stop() {
+		select {
+		case <-sweepTimer.C:
+		default:
+		}
+	}
+	if d, ok := nextExpiry(unacked, timeout); ok {
+		wait := time.Until(d)
+		if wait < 0 {
+			wait = 0
+		}
+		sweepTimer.Reset(wait)
 	}
 }
 
+// runWorker drives one target's probe traffic with a single select loop
+// that decouples sending from waiting on replies (see Apple ping.c's
+// select()-based main loop, which never blocks sending on a reply):
+//
+//   - sendTimer fires immediately for the first probe (matching the prior
+//     stop-and-wait runWorker, which never gated its first send on a
+//     tick), then rearms itself for `interval` after every subsequent
+//     fire. Unlike a stop-and-wait design, later sends are never gated on
+//     a prior probe's reply, so a target that never answers is still
+//     probed once per `interval`, not once per `timeout`.
+//   - ch delivers replies from the receiver goroutine; a reply is matched
+//     against `unacked` by its (16-bit-masked) seq and, if found, recorded
+//     as a success or ICMP error and removed. A reply with no matching
+//     entry — a duplicate of an already-resolved seq, or one that arrived
+//     after its entry was already swept as a timeout — is silently
+//     discarded, exactly as the prior stop-and-wait waitForReply did for
+//     any non-matching reply.
+//   - sweepTimer fires at the earliest deadline among `unacked` and
+//     records every entry that has aged past `timeout` as a loss.
+//   - dnsTicker re-resolves the target on the same cadence as before.
+//   - p.done ends the loop immediately, matching Stop()/Close().
+//
+// `unacked` is owned exclusively by this goroutine, so it needs no mutex.
+//
+// Count still means "stop after sending Count probes", but since probes can
+// now be in flight concurrently, reaching Count no longer implies the most
+// recent probe (or any earlier one) has already been resolved: once the
+// Count-th probe is sent, the loop stops sending but keeps servicing
+// replies/sweeps — draining `unacked` — until every outstanding probe has
+// been resolved, then returns. This is the same "wait out the stragglers
+// before reporting the final tally" idea as ping.c's almost_done.
 func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.Duration) {
 	dstAddr := p.resolveTarget(t)
 
 	seq := p.initialSeq
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	// sendTimer fires once immediately (duration 0) for the first probe,
+	// then is explicitly Reset(interval) after every fire that doesn't
+	// terminate sending — see the case below. This reproduces the prior
+	// implementation's "send right away, then pace off the ticker"
+	// structure without a separate pre-loop send.
+	sendTimer := time.NewTimer(0)
+	defer sendTimer.Stop()
 
 	resInterval := p.ResolveInterval
 	if resInterval <= 0 {
@@ -1093,7 +1143,13 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 	dnsTicker := time.NewTicker(resInterval)
 	defer dnsTicker.Stop()
 
-	var timeoutTimer *time.Timer
+	// sweepTimer is created stopped: it's only armed once the first probe
+	// is sent (rearmSweepTimer no-ops while unacked is empty).
+	sweepTimer := time.NewTimer(timeout)
+	if !sweepTimer.Stop() {
+		<-sweepTimer.C
+	}
+	defer sweepTimer.Stop()
 
 	p.mapMu.RLock()
 	ch := p.targetChans[id]
@@ -1101,68 +1157,94 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 
 	payload := buildPayload(p.Size)
 
-	for {
-		if p.Count > 0 && seq >= p.Count {
-			return
-		}
+	unacked := make(map[int]pendingProbe)
+	doneSending := false // set once seq reaches p.Count (Count<=0 means unlimited)
 
+	// replyCh stays nil (permanently blocking that select case) until the
+	// first probe is actually written to the wire. A real ICMP reply can
+	// never arrive before its request was sent, so this changes nothing
+	// observable in production — but it matters for the select loop
+	// itself: without this gate, the loop would be a ready reader on ch
+	// from goroutine start, before `unacked` has its first entry, so any
+	// reply delivered in that window would find no match and be discarded
+	// as if it were a stale duplicate. Gating the case off until a send has
+	// actually happened preserves the intuitive invariant that a reply is
+	// only ever evaluated against an `unacked` that could possibly contain
+	// it.
+	var replyCh <-chan Reply
+
+	for {
 		select {
+		case <-p.done:
+			return
+
 		case <-dnsTicker.C:
 			if newAddr := p.resolveTarget(t); newAddr != nil {
 				dstAddr = newAddr
 			}
-		default:
-		}
 
-		if dstAddr == nil {
-			if addr := p.resolveTarget(t); addr != nil {
-				dstAddr = addr
-			} else {
-				select {
-				case <-p.done:
-					return
-				case <-ticker.C:
+		case <-sendTimer.C:
+			if doneSending {
+				continue
+			}
+			if dstAddr == nil {
+				if addr := p.resolveTarget(t); addr != nil {
+					dstAddr = addr
+				} else {
+					sendTimer.Reset(interval) // retry resolution on the next tick, as before
 					continue
 				}
 			}
-		}
 
-		seq++
+			seq++
 
-		start, ok := p.sendProbe(t, id, seq, payload, dstAddr)
-		if !ok {
-			select {
-			case <-p.done:
-				return
-			case <-ticker.C:
-				continue
+			start, ok := p.sendProbe(t, id, seq, payload, dstAddr)
+			if ok {
+				unacked[seq&seqMask] = pendingProbe{logicalSeq: seq, start: start}
+				rearmSweepTimer(sweepTimer, unacked, timeout)
+				replyCh = ch
 			}
-		}
 
-		if timeoutTimer == nil {
-			timeoutTimer = time.NewTimer(timeout)
-		} else {
-			if !timeoutTimer.Stop() {
-				select {
-				case <-timeoutTimer.C:
-				default:
+			if p.Count > 0 && seq >= p.Count {
+				doneSending = true
+			} else {
+				sendTimer.Reset(interval)
+			}
+
+		case reply := <-replyCh:
+			// A reply with no matching entry is a duplicate of an
+			// already-resolved seq, or a late arrival for a seq already
+			// swept as a timeout: discard it silently, matching the prior
+			// waitForReply's behavior for any non-matching reply.
+			if pend, found := unacked[reply.Seq]; found {
+				delete(unacked, reply.Seq)
+				if reply.Err != "" {
+					t.OnFailure(reply.Err)
+					p.log(t, pend.logicalSeq, "ICMPError", 0, 0, reply.Err)
+				} else {
+					rtt := time.Since(pend.start)
+					t.OnSuccess(rtt, reply.TTL)
+					t.SetLastDSCP(reply.DSCP)
+					p.log(t, pend.logicalSeq, "OK", rtt, reply.TTL, "")
+				}
+				rearmSweepTimer(sweepTimer, unacked, timeout)
+			}
+
+		case <-sweepTimer.C:
+			now := time.Now()
+			for wireSeq, pend := range unacked {
+				if now.Sub(pend.start) >= timeout {
+					delete(unacked, wireSeq)
+					errMsg := p.applyLastErrSource("Timeout")
+					t.OnFailure(errMsg)
+					p.log(t, pend.logicalSeq, "Timeout", 0, 0, "Request timed out")
 				}
 			}
-			timeoutTimer.Reset(timeout)
+			rearmSweepTimer(sweepTimer, unacked, timeout)
 		}
 
-		if !p.waitForReply(t, ch, seq, start, timeoutTimer) {
+		if doneSending && len(unacked) == 0 {
 			return
-		}
-
-		if p.Count > 0 && seq >= p.Count {
-			return
-		}
-
-		select {
-		case <-p.done:
-			return
-		case <-ticker.C:
 		}
 	}
 }

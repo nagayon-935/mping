@@ -1831,85 +1831,17 @@ func TestSendProbe(t *testing.T) {
 	})
 }
 
-func TestWaitForReply(t *testing.T) {
-	t.Run("success reply", func(t *testing.T) {
-		target := stats.NewTargetStats("example.com")
-		p := NewPinger([]*stats.TargetStats{target})
-
-		ch := make(chan Reply, 1)
-		ch <- Reply{Seq: 1, TTL: 64}
-		timer := time.NewTimer(1 * time.Second)
-
-		ok := p.waitForReply(target, ch, 1, time.Now(), timer)
-		if !ok {
-			t.Fatal("expected true")
-		}
-		view := target.GetView()
-		if view.Recv != 1 {
-			t.Fatalf("Recv = %d, want 1", view.Recv)
-		}
-		if view.LastTTL != 64 {
-			t.Fatalf("LastTTL = %d, want 64", view.LastTTL)
-		}
-	})
-
-	t.Run("error reply", func(t *testing.T) {
-		target := stats.NewTargetStats("example.com")
-		p := NewPinger([]*stats.TargetStats{target})
-
-		ch := make(chan Reply, 1)
-		ch <- Reply{Seq: 1, Err: "Destination Host Unreachable"}
-		timer := time.NewTimer(1 * time.Second)
-
-		ok := p.waitForReply(target, ch, 1, time.Now(), timer)
-		if !ok {
-			t.Fatal("expected true")
-		}
-		view := target.GetView()
-		if view.Loss != 1 {
-			t.Fatalf("Loss = %d, want 1", view.Loss)
-		}
-		if view.LastError != "Destination Host Unreachable" {
-			t.Fatalf("LastError = %q, want %q", view.LastError, "Destination Host Unreachable")
-		}
-	})
-
-	t.Run("timeout", func(t *testing.T) {
-		target := stats.NewTargetStats("example.com")
-		p := NewPinger([]*stats.TargetStats{target})
-
-		ch := make(chan Reply, 1)
-		timer := time.NewTimer(1 * time.Millisecond)
-		time.Sleep(5 * time.Millisecond) // let timer expire
-
-		ok := p.waitForReply(target, ch, 1, time.Now(), timer)
-		if !ok {
-			t.Fatal("expected true on timeout")
-		}
-		view := target.GetView()
-		if view.Loss != 1 {
-			t.Fatalf("Loss = %d, want 1", view.Loss)
-		}
-	})
-
-	t.Run("done channel", func(t *testing.T) {
-		target := stats.NewTargetStats("example.com")
-		p := NewPinger([]*stats.TargetStats{target})
-
-		ch := make(chan Reply) // unbuffered, will block
-		timer := time.NewTimer(10 * time.Second)
-
-		go func() {
-			time.Sleep(10 * time.Millisecond)
-			close(p.done)
-		}()
-
-		ok := p.waitForReply(target, ch, 1, time.Now(), timer)
-		if ok {
-			t.Fatal("expected false when done channel closed")
-		}
-	})
-}
+// waitForReply (the stop-and-wait "block for the one outstanding seq"
+// helper) was removed by the async probe loop refactor: runWorker now
+// matches replies against a seq->pendingProbe table inline in its select
+// loop instead of delegating to a per-call blocking helper. The four
+// scenarios TestWaitForReply used to cover directly (success reply, ICMP
+// error reply, timeout, and immediate stop on p.done) are now exercised at
+// the runWorker level instead — see TestCharacterization_RunWorker_
+// SuccessSentRecvCSV, _ICMPErrorCSV, _TimeoutCSV, and
+// _StopNoGoroutineLeak in runworker_characterization_test.go, plus the
+// pre-existing TestRunWorkerSuccessPath/TestRunWorkerTimeout/
+// TestRunWorkerICMPError/TestRunWorkerDoneAfterReply below.
 
 func TestHandleEchoReply(t *testing.T) {
 	t.Run("matching ID", func(t *testing.T) {
@@ -2417,27 +2349,10 @@ func TestHandleICMPError_NoExtract(t *testing.T) {
 	p.handleICMPError(msg, icmpErrorString)
 }
 
-// ---- waitForReply seq mismatch (exercises the continue branch) ----
-
-func TestWaitForReply_SeqMismatch(t *testing.T) {
-	target := stats.NewTargetStats("example.com")
-	p := NewPinger([]*stats.TargetStats{target})
-
-	ch := make(chan Reply, 2)
-	// First reply has wrong seq, second has correct seq.
-	ch <- Reply{Seq: 99, TTL: 64} // mismatch
-	ch <- Reply{Seq: 1, TTL: 64}  // match
-	timer := time.NewTimer(1 * time.Second)
-
-	ok := p.waitForReply(target, ch, 1, time.Now(), timer)
-	if !ok {
-		t.Fatal("expected true")
-	}
-	view := target.GetView()
-	if view.Recv != 1 {
-		t.Fatalf("Recv = %d, want 1", view.Recv)
-	}
-}
+// A seq-mismatched reply's "discard and keep going" behavior no longer has
+// a standalone waitForReply to exercise directly; it's now pinned at the
+// runWorker level by TestCharacterization_RunWorker_MismatchedReplyDiscarded
+// in runworker_characterization_test.go.
 
 // ---- buildPayload with negative size ----
 
