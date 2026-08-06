@@ -2,6 +2,7 @@ package pinger
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -41,6 +42,23 @@ const (
 
 	asnJitterMax = 2 * time.Second // spreads concurrent targets' ASN lookups to avoid bursting Cymru's public server
 	ptrJitterMax = 2 * time.Second // spreads concurrent targets' PTR lookups to avoid bursting the configured resolver
+
+	// timestampSize is the width, in bytes, of the send timestamp embedded
+	// in a probe's payload: an 8-byte big-endian count of nanoseconds
+	// elapsed since procStart.
+	timestampSize = 8
+
+	// timestampOffset is where the embedded send timestamp begins within a
+	// probe payload. It sits immediately after payloadSignature, which must
+	// stay first since packet captures rely on it at a fixed offset to
+	// identify our probes.
+	timestampOffset = len(payloadSignature)
+
+	// minTimestampPayloadSize is the smallest -s payload size with room for
+	// both payloadSignature and the embedded timestamp (5 + 8 = 13 bytes).
+	// Below it, embedSendTimestamp/extractSendTimestamp are no-ops and
+	// runWorker falls back to its own start-time bookkeeping in `unacked`.
+	minTimestampPayloadSize = timestampOffset + timestampSize
 )
 
 // asnLookupTimeout bounds each Cymru DNS TXT query, since neither net.LookupTXT
@@ -53,6 +71,84 @@ var asnLookupTimeout = 3 * time.Second
 // timeout of its own. A var (not const) so tests can shrink it instead of
 // waiting 3s. Mirrors asnLookupTimeout.
 var ptrLookupTimeout = 3 * time.Second
+
+// procStart anchors embedded send timestamps to process start rather than
+// wall-clock time. A wall-clock timestamp serialized into a probe payload
+// would be corrupted by NTP adjustments or a DST transition occurring while
+// the probe is in flight; expressing the timestamp as an offset from
+// procStart and reading it back via time.Since/Sub instead relies on the
+// monotonic clock reading Go carries inside every time.Time obtained from
+// time.Now(), which such wall-clock changes never affect.
+var procStart = time.Now()
+
+// embedSendTimestamp writes `sent`, as nanoseconds elapsed since procStart,
+// into payload immediately after the MPING signature (see
+// minTimestampPayloadSize). The receiver goroutine reads it back via
+// extractSendTimestamp to compute RTT without an extra hop through
+// runWorker's own goroutine (see handleEchoReply). It is a no-op when
+// payload is smaller than minTimestampPayloadSize (e.g. -s below 13),
+// leaving that probe's RTT to runWorker's own start-time fallback.
+func embedSendTimestamp(payload []byte, sent time.Time) {
+	if len(payload) < minTimestampPayloadSize {
+		return
+	}
+	elapsed := uint64(sent.Sub(procStart))
+	binary.BigEndian.PutUint64(payload[timestampOffset:timestampOffset+timestampSize], elapsed)
+}
+
+// extractSendTimestamp reads the timestamp embedSendTimestamp wrote into an
+// echo reply's payload and returns the RTT it implies, measured against
+// `received`. ok is false whenever the value can't be trusted: the payload
+// is too small to carry both signature and timestamp, the signature bytes
+// don't match (a middlebox rewrote the payload in transit, or this isn't
+// one of our probes), or isPlausibleRTT rejects the resulting duration.
+// Callers must fall back to their own RTT bookkeeping when ok is false.
+func extractSendTimestamp(data []byte, received time.Time, timeout time.Duration) (time.Duration, bool) {
+	if len(data) < minTimestampPayloadSize {
+		return 0, false
+	}
+	if string(data[:len(payloadSignature)]) != payloadSignature {
+		return 0, false
+	}
+	elapsed := binary.BigEndian.Uint64(data[timestampOffset : timestampOffset+timestampSize])
+	sentAt := procStart.Add(time.Duration(elapsed))
+	rtt := received.Sub(sentAt)
+	if !isPlausibleRTT(rtt, timeout) {
+		return 0, false
+	}
+	return rtt, true
+}
+
+// isPlausibleRTT sanity-checks an RTT computed from a payload-embedded
+// timestamp before it's trusted, because that payload travels through
+// equipment mping doesn't control — some NAT gateways and consumer routers
+// are known to rewrite ICMP echo payload bytes in transit. Two conditions
+// prove the bytes were corrupted rather than reflecting genuine network
+// behavior:
+//
+//   - rtt < 0: impossible under a monotonic clock (time.Time.Sub between
+//     two monotonic readings never goes backwards), so a negative result
+//     can only come from mangled timestamp bytes.
+//   - rtt > 2*timeout: a reply arriving this late would already have had
+//     its `unacked` entry swept out as a timeout before runWorker's select
+//     loop could ever match it against a still-live seq (see
+//     rearmSweepTimer), so a *genuine* embedded timestamp can never
+//     legitimately produce a value this large. The 2x margin (rather than
+//     exactly `timeout`) only absorbs scheduling/clock-read skew between
+//     the sweep firing and this reply being processed — it does not weaken
+//     the corruption check, since anything past one full timeout is
+//     already unreachable via the normal path. timeout<=0 disables this
+//     half of the check (not reachable via Start() in production, but
+//     guards direct/test callers that don't set one).
+func isPlausibleRTT(rtt, timeout time.Duration) bool {
+	if rtt < 0 {
+		return false
+	}
+	if timeout > 0 && rtt > 2*timeout {
+		return false
+	}
+	return true
+}
 
 // errPingerStopped is returned by the bounded lookup helpers when Stop()
 // closed p.done while a call was in flight. Callers use it to distinguish
@@ -99,6 +195,14 @@ type PacketConnV6 interface {
 
 // Reply represents a single received ICMP echo reply or error from the receiver loop.
 type Reply struct {
+	// RTT is computed in the receiver goroutine from the timestamp
+	// embedSendTimestamp wrote into the probe's own payload (see
+	// handleEchoReply/extractSendTimestamp), avoiding the scheduling delay
+	// of also crossing into runWorker's goroutine to compute it there. It
+	// is left at its zero value whenever that timestamp couldn't be
+	// trusted — payload too small for -s, signature mismatch, or a
+	// suspicious result caught by isPlausibleRTT — in which case runWorker
+	// falls back to its own start-time bookkeeping in `unacked`.
 	RTT time.Duration
 	TTL int
 	// DSCP is the TOS (IPv4) / TrafficClass (IPv6) byte read off the reply's
@@ -168,6 +272,15 @@ type Pinger struct {
 	targetChans map[int]chan Reply
 	mapMu       sync.RWMutex
 	baseID      int
+
+	// probeTimeout mirrors the timeout passed to Start, kept so
+	// handleEchoReply's isPlausibleRTT sanity check has a timeout to
+	// compare a payload-embedded RTT against. handleEchoReply runs in the
+	// receiver goroutine, which has no per-worker context of its own, so
+	// this single Pinger-wide value is the only timeout it can reference —
+	// matching Start's existing single timeout parameter already shared by
+	// every worker.
+	probeTimeout time.Duration
 
 	// initialSeq is the value runWorker's logical seq counter starts from
 	// (before the first seq++). Always 0 in production; tests override it
@@ -369,6 +482,8 @@ func (p *Pinger) Stop() {
 }
 
 func (p *Pinger) Start(interval, timeout time.Duration) error {
+	p.probeTimeout = timeout
+
 	var errV4, errV6 error
 
 	// Initialize IPv4
@@ -709,8 +824,12 @@ func (p *Pinger) handleEchoReply(msg *icmp.Message, ttl, dscp int) {
 	ch, exists := p.targetChans[echo.ID]
 	p.mapMu.RUnlock()
 	if exists {
+		reply := Reply{TTL: ttl, DSCP: dscp, Seq: echo.Seq}
+		if rtt, ok := extractSendTimestamp(echo.Data, p.now(), p.probeTimeout); ok {
+			reply.RTT = rtt
+		}
 		select {
-		case ch <- Reply{TTL: ttl, DSCP: dscp, Seq: echo.Seq}:
+		case ch <- reply:
 		default:
 		}
 	}
@@ -1021,6 +1140,14 @@ func (p *Pinger) sendProbe(t *stats.TargetStats, id, seq int, payload []byte, ds
 		return time.Time{}, false
 	}
 
+	// start is captured before the payload is marshaled (rather than right
+	// before the write, as before) because embedSendTimestamp needs it
+	// embedded in `payload` first. This is the same instant used for both
+	// the embedded timestamp and the pendingProbe fallback in runWorker, so
+	// the two stay consistent with each other.
+	start := time.Now()
+	embedSendTimestamp(payload, start)
+
 	msg := icmp.Message{
 		Type: msgType,
 		Code: 0,
@@ -1035,7 +1162,6 @@ func (p *Pinger) sendProbe(t *stats.TargetStats, id, seq int, payload []byte, ds
 		return time.Time{}, false
 	}
 
-	start := time.Now()
 	_, err = writeFunc(b, dstAddr)
 	if err != nil {
 		errMsg := p.applyLastErrSource(err.Error())
@@ -1222,7 +1348,20 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 					t.OnFailure(reply.Err)
 					p.log(t, pend.logicalSeq, "ICMPError", 0, 0, reply.Err)
 				} else {
-					rtt := time.Since(pend.start)
+					// Prefer the RTT the receiver goroutine computed from the
+					// payload-embedded send timestamp (see handleEchoReply):
+					// it skips this goroutine hop entirely, so it isn't
+					// inflated by scheduling delay between the receiver and
+					// this select loop. reply.RTT is left at its zero value
+					// whenever that timestamp couldn't be trusted (payload
+					// too small for -s, signature mismatch, or a result
+					// isPlausibleRTT rejected), in which case fall back to
+					// this goroutine's own start-time bookkeeping, exactly
+					// as before this feature existed.
+					rtt := reply.RTT
+					if rtt <= 0 {
+						rtt = time.Since(pend.start)
+					}
 					t.OnSuccess(rtt, reply.TTL)
 					t.SetLastDSCP(reply.DSCP)
 					p.log(t, pend.logicalSeq, "OK", rtt, reply.TTL, "")
