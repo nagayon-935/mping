@@ -355,11 +355,20 @@ func TestCharacterization_RunWorker_CountMultiSendCSV(t *testing.T) {
 	ch := make(chan Reply, 3)
 	p.targetChans[id] = ch
 
+	// runWorker sends immediately (seq 1 at t=0), then every 10ms (seq 2 at
+	// t=10ms, seq 3 at t=20ms). Each push here trails its corresponding
+	// send by a comfortable margin so it can never race the goroutine that
+	// records the send in `unacked` — a real ICMP reply could never arrive
+	// before its own request goes out, so this margin only compensates for
+	// this test's artificial channel injection, not for anything runWorker
+	// itself needs.
 	go func() {
-		for seq := 1; seq <= 3; seq++ {
-			ch <- Reply{TTL: 64, Seq: seq}
-			time.Sleep(10 * time.Millisecond)
-		}
+		time.Sleep(5 * time.Millisecond)
+		ch <- Reply{TTL: 64, Seq: 1}
+		time.Sleep(15 * time.Millisecond)
+		ch <- Reply{TTL: 64, Seq: 2}
+		time.Sleep(15 * time.Millisecond)
+		ch <- Reply{TTL: 64, Seq: 3}
 	}()
 
 	p.runWorker(target, id, 10*time.Millisecond, 200*time.Millisecond)
