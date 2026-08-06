@@ -103,8 +103,22 @@ type Pinger struct {
 	Targets []*stats.TargetStats
 
 	Source string // Source IP address to bind to
-	Size   int    // Payload size in bytes
-	Count  int    // Stop after sending Count packets (0 = infinite)
+
+	// Interface is the network interface name requested via -I. When set,
+	// Start() and OpenHopSocket() additionally bind each socket to this
+	// physical interface (SO_BINDTODEVICE on Linux, IP_BOUND_IF/
+	// IPV6_BOUND_IF on Darwin — see bindif_linux.go/bindif_darwin.go),
+	// on top of the source-IP bind Source already performs. This enforces
+	// the egress interface even when the routing table would otherwise
+	// choose a different one, or when the same address is assigned to more
+	// than one interface. It has no effect on platforms without a
+	// supported binding facility (bindif_other.go), where source-IP bind
+	// via Source remains the only interface-selection mechanism, exactly
+	// matching pre-existing behavior.
+	Interface string
+
+	Size  int // Payload size in bytes
+	Count int // Stop after sending Count packets (0 = infinite)
 
 	ResolveInterval time.Duration // Interval to re-resolve DNS
 	AsnEnabled      bool          // Enable ASN lookups
@@ -151,6 +165,13 @@ type Pinger struct {
 type resolveIPAddrFunc func(network, address string) (*net.IPAddr, error)
 
 type listenPacketFunc func(network, address string) (net.PacketConn, error)
+
+// bindToInterfaceFn is a seam over the platform-specific bindToInterface
+// implementation (bindif_linux.go / bindif_darwin.go / bindif_other.go),
+// letting tests verify that Start() and OpenHopSocket() dispatch to it with
+// the correct interface name and address family without requiring root
+// privileges, real sockets, or real network interfaces.
+var bindToInterfaceFn = bindToInterface
 
 type Options struct {
 	ResolveIPAddr resolveIPAddrFunc
@@ -303,6 +324,10 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 
 		c, err := p.listenPacket(network, bindAddr)
 		if err == nil {
+			// Non-fatal: true interface binding may be unsupported on this
+			// platform, or fail (e.g. missing privileges); the source-IP
+			// bind above still applies regardless.
+			bindToInterfaceFn(c, p.Interface, false)
 			p.connV4 = ipv4.NewPacketConn(c)
 			// Non-fatal: TTL control message may not be available on all platforms.
 			_ = p.connV4.SetControlMessage(ipv4.FlagTTL, true)
@@ -321,6 +346,8 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 
 		c, err := p.listenPacket(network, bindAddr)
 		if err == nil {
+			// Non-fatal, same rationale as the IPv4 block above.
+			bindToInterfaceFn(c, p.Interface, true)
 			p.connV6 = ipv6.NewPacketConn(c)
 			// Non-fatal: hop limit control message may not be available on all platforms.
 			_ = p.connV6.SetControlMessage(ipv6.FlagHopLimit, true)

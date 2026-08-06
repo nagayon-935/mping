@@ -121,6 +121,8 @@ func (p *Pinger) OpenHopSocket(dest string) (*HopSocket, error) {
 		if err != nil {
 			return nil, fmt.Errorf("open MTR send socket (v4): %w", err)
 		}
+		// Non-fatal: see the equivalent call in Start() for rationale.
+		bindToInterfaceFn(c, p.Interface, false)
 		sock.sendV4 = ipv4.NewPacketConn(c)
 	} else {
 		bindAddr := "::"
@@ -131,6 +133,8 @@ func (p *Pinger) OpenHopSocket(dest string) (*HopSocket, error) {
 		if err != nil {
 			return nil, fmt.Errorf("open MTR send socket (v6): %w", err)
 		}
+		// Non-fatal: see the equivalent call in Start() for rationale.
+		bindToInterfaceFn(c, p.Interface, true)
 		v6conn := ipv6.NewPacketConn(c)
 		// Non-fatal: hop limit control message may not be available on all platforms.
 		_ = v6conn.SetControlMessage(ipv6.FlagHopLimit, true)

@@ -48,6 +48,7 @@ type pingerController interface {
 	DiscoverMaxPayload(ctx context.Context, dest string, start int, min int, logf func(string)) (int, string, error)
 	TraceRoute(ctx context.Context, dest string, maxHops int, timeout time.Duration) ([]string, error)
 	SetSource(ip string)
+	SetInterface(name string)
 	SetSize(size int)
 	SetCount(count int)
 	SetResolveInterval(interval time.Duration)
@@ -64,6 +65,14 @@ type pingerAdapter struct {
 
 func (p *pingerAdapter) SetSource(ip string) {
 	p.Source = ip
+}
+
+// SetInterface arms true interface binding (see internal/pinger/bindif_*.go)
+// on top of the source-IP bind SetSource already performs. name is cfg.
+// ifaceName, which is only non-empty when -I was passed, so this is a no-op
+// exactly when it always was: -S-only runs never touch Interface.
+func (p *pingerAdapter) SetInterface(name string) {
+	p.Interface = name
 }
 
 func (p *pingerAdapter) SetSize(size int) {
@@ -652,6 +661,7 @@ func makePingerFactory(targets []*stats.TargetStats, opts pinger.Options, cfg co
 	return func(size int) pingerController {
 		p := newPinger(targets, opts)
 		p.SetSource(bindIP)
+		p.SetInterface(cfg.ifaceName)
 		p.SetSize(size)
 		p.SetCount(cfg.count)
 		p.SetResolveInterval(dnsResolveInterval)
