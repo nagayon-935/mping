@@ -1,6 +1,7 @@
 package pinger
 
 import (
+	"container/list"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -39,6 +40,23 @@ const (
 	// exceeds 65535, replies (correctly wrapped by the peer) never compare
 	// equal to it again and every subsequent probe times out permanently.
 	seqMask = 0xffff
+
+	// recentSeqHistoryCap bounds recentSeqHistory, the FIFO runWorker keeps
+	// of recently-resolved wire seqs (see recentSeqHistory's doc) so it can
+	// classify a reply that no longer matches `unacked` as a duplicate or a
+	// late arrival instead of silently discarding it.
+	//
+	// It must stay far below seqMask+1 (65536, the full 16-bit wraparound
+	// period a wire seq value cycles through): once a wire seq value is
+	// reused by a brand-new logical probe (a fresh unacked[wireSeq] entry),
+	// any history this cache still held from that value's *previous*
+	// generation must already have been evicted -- otherwise a reply for
+	// the *new* generation could be misclassified against *stale* history.
+	// 512 gives a generous multi-thousand-probe margin below one full
+	// wraparound while comfortably covering the realistic dup/late window
+	// (network duplicates and late arrivals show up within a handful of
+	// probes of the original, not thousands later).
+	recentSeqHistoryCap = 512
 
 	asnJitterMax = 2 * time.Second // spreads concurrent targets' ASN lookups to avoid bursting Cymru's public server
 	ptrJitterMax = 2 * time.Second // spreads concurrent targets' PTR lookups to avoid bursting the configured resolver
@@ -1181,6 +1199,89 @@ type pendingProbe struct {
 	start      time.Time
 }
 
+// resolutionKind records how a wire seq was most recently resolved, so a
+// later reply for that same wire seq (once it's no longer in `unacked`) can
+// be classified instead of just discarded.
+type resolutionKind int
+
+const (
+	// resolvedAcked means the seq already got a reply -- a success or an
+	// ICMP error, both of which remove the unacked entry the same way. A
+	// further reply for the same wire seq is therefore a duplicate.
+	resolvedAcked resolutionKind = iota
+	// resolvedTimeout means the seq's unacked entry aged out and was swept
+	// as a loss. A reply arriving now is a late arrival.
+	resolvedTimeout
+)
+
+// recentEntry is one record in recentSeqHistory: how wireSeq was resolved,
+// its logical seq (for CSV logging, matching pendingProbe.logicalSeq), and
+// the original send time (for the same RTT fallback runWorker's normal
+// success path uses when no payload-embedded timestamp is available).
+type recentEntry struct {
+	wireSeq    int
+	logicalSeq int
+	kind       resolutionKind
+	start      time.Time
+}
+
+// recentSeqHistory is a small, size-bounded FIFO cache mapping a
+// just-resolved wire seq to how it was resolved. runWorker consults it only
+// when a reply doesn't match anything in `unacked`, to tell a duplicate or a
+// late arrival apart from a genuinely unrecognized/bogus seq (which stays
+// silently discarded, exactly as before this feature existed).
+//
+// Capacity, not time, bounds it (see recentSeqHistoryCap's doc for why a
+// bounded size rather than a time window is what keeps this safe across the
+// 16-bit wire seq wraparound). It is owned exclusively by runWorker's own
+// goroutine, exactly like `unacked`, so it needs no mutex.
+type recentSeqHistory struct {
+	order *list.List            // front = oldest, back = newest
+	index map[int]*list.Element // wireSeq -> its node in order
+}
+
+func newRecentSeqHistory() *recentSeqHistory {
+	return &recentSeqHistory{
+		order: list.New(),
+		index: make(map[int]*list.Element),
+	}
+}
+
+// record notes that wireSeq was just resolved as kind, evicting the oldest
+// entry once the cache is over recentSeqHistoryCap. Re-recording an
+// already-present wireSeq (not expected in normal operation -- a given wire
+// seq is only resolved once per generation -- but handled safely) replaces
+// its entry and moves it to the back as the newest.
+func (h *recentSeqHistory) record(wireSeq, logicalSeq int, kind resolutionKind, start time.Time) {
+	if el, ok := h.index[wireSeq]; ok {
+		h.order.Remove(el)
+	}
+	el := h.order.PushBack(recentEntry{wireSeq: wireSeq, logicalSeq: logicalSeq, kind: kind, start: start})
+	h.index[wireSeq] = el
+
+	for h.order.Len() > recentSeqHistoryCap {
+		oldest := h.order.Front()
+		h.order.Remove(oldest)
+		entry := oldest.Value.(recentEntry)
+		// Only clear the index if it still points at this exact node: the
+		// replace-and-move-to-back path above can leave a wireSeq's index
+		// entry pointing at a newer node by the time an older, since
+		// re-recorded node reaches the front.
+		if h.index[entry.wireSeq] == oldest {
+			delete(h.index, entry.wireSeq)
+		}
+	}
+}
+
+// lookup returns the recorded entry for wireSeq, if any.
+func (h *recentSeqHistory) lookup(wireSeq int) (recentEntry, bool) {
+	el, ok := h.index[wireSeq]
+	if !ok {
+		return recentEntry{}, false
+	}
+	return el.Value.(recentEntry), true
+}
+
 // nextExpiry returns the earliest deadline among unacked's entries, and
 // whether unacked is non-empty. Because runWorker only ever inserts entries
 // with monotonically increasing start times and a single, constant timeout,
@@ -1284,6 +1385,12 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 	payload := buildPayload(p.Size)
 
 	unacked := make(map[int]pendingProbe)
+	// hist remembers how recently-resolved wire seqs were resolved, so a
+	// reply that no longer matches `unacked` can be classified as a
+	// duplicate or a late arrival instead of just discarded (see
+	// recentSeqHistory's doc). Owned exclusively by this goroutine, exactly
+	// like `unacked`.
+	hist := newRecentSeqHistory()
 	doneSending := false // set once seq reaches p.Count (Count<=0 means unlimited)
 
 	// replyCh stays nil (permanently blocking that select case) until the
@@ -1338,10 +1445,6 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 			}
 
 		case reply := <-replyCh:
-			// A reply with no matching entry is a duplicate of an
-			// already-resolved seq, or a late arrival for a seq already
-			// swept as a timeout: discard it silently, matching the prior
-			// waitForReply's behavior for any non-matching reply.
 			if pend, found := unacked[reply.Seq]; found {
 				delete(unacked, reply.Seq)
 				if reply.Err != "" {
@@ -1366,8 +1469,41 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 					t.SetLastDSCP(reply.DSCP)
 					p.log(t, pend.logicalSeq, "OK", rtt, reply.TTL, "")
 				}
+				// Remember how this wire seq was resolved so a further reply
+				// for it (a genuine network-level duplicate) can be
+				// classified as a DUP below instead of silently discarded.
+				hist.record(reply.Seq, pend.logicalSeq, resolvedAcked, pend.start)
 				rearmSweepTimer(sweepTimer, unacked, timeout)
+			} else if entry, foundHist := hist.lookup(reply.Seq); foundHist {
+				// No `unacked` entry, but this wire seq was recently
+				// resolved: classify instead of silently discarding.
+				rtt := reply.RTT
+				if rtt <= 0 {
+					rtt = time.Since(entry.start)
+				}
+				switch entry.kind {
+				case resolvedAcked:
+					// A second reply for an already-resolved seq: a
+					// network-level duplicate (routing loop, L2 duplication,
+					// NAT/load-balancer anomaly). Never counted as Recv --
+					// see TargetStats.Duplicates' doc -- so the loss rate
+					// isn't understated.
+					t.OnDuplicate()
+					p.log(t, entry.logicalSeq, "DUP", rtt, reply.TTL, "")
+				case resolvedTimeout:
+					// Arrived after its probe was already swept as a loss:
+					// the target is slow but reachable, not truly dropping
+					// this probe. The Loss already recorded stands; see
+					// TargetStats.LateReplies' doc.
+					t.OnLateReply()
+					p.log(t, entry.logicalSeq, "LateReply", rtt, reply.TTL, "")
+				}
 			}
+			// A reply matching neither `unacked` nor recent history is for a
+			// seq this worker never resolved (or resolved so long ago that
+			// recentSeqHistoryCap already evicted it): discard it silently,
+			// matching the prior waitForReply's behavior for any
+			// non-matching reply.
 
 		case <-sweepTimer.C:
 			now := time.Now()
@@ -1377,6 +1513,10 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 					errMsg := p.applyLastErrSource("Timeout")
 					t.OnFailure(errMsg)
 					p.log(t, pend.logicalSeq, "Timeout", 0, 0, "Request timed out")
+					// Remember this seq timed out so a reply that shows up
+					// later can be classified as a late arrival below,
+					// instead of silently discarded.
+					hist.record(wireSeq, pend.logicalSeq, resolvedTimeout, pend.start)
 				}
 			}
 			rearmSweepTimer(sweepTimer, unacked, timeout)

@@ -91,8 +91,22 @@ type TargetStats struct {
 	Sent             int
 	Recv             int
 	Loss             int
-	LastRTT          time.Duration
-	LastTTL          int
+	// Duplicates counts replies that repeat a seq already resolved (either
+	// by a successful reply or an ICMP error) -- a network-level dup
+	// (routing loop, L2 duplication, NAT/load-balancer anomaly), not a
+	// second successful probe. Never folded into Recv: doing so would
+	// understate the real loss rate, exactly the reason Apple's ping.c
+	// decrements nreceived when it detects a dup.
+	Duplicates int
+	// LateReplies counts replies that arrive for a seq whose `unacked`
+	// entry was already swept as a timeout (and so already counted in
+	// Loss). Tracked separately so a target that's simply slow can be told
+	// apart from one that's truly dropping packets -- mirrors ping.c's
+	// -W/nrcvtimeout. The Loss already recorded for that probe is left
+	// standing; a late reply never decrements it.
+	LateReplies int
+	LastRTT     time.Duration
+	LastTTL     int
 	// LastDSCP is the TOS (IPv4) / TrafficClass (IPv6) byte observed on the
 	// most recent successful reply's own IP header — i.e. what DSCP marking
 	// actually arrived, after any re-marking or bleaching along the return
@@ -204,6 +218,8 @@ type TargetView struct {
 	Sent             int
 	Recv             int
 	Loss             int
+	Duplicates       int
+	LateReplies      int
 	LastRTT          time.Duration
 	MinRTT           time.Duration
 	MaxRTT           time.Duration
@@ -272,6 +288,8 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 		Sent:             t.Sent,
 		Recv:             t.Recv,
 		Loss:             t.Loss,
+		Duplicates:       t.Duplicates,
+		LateReplies:      t.LateReplies,
 		LastRTT:          t.LastRTT,
 		MinRTT:           t.rtt.min,
 		MaxRTT:           t.rtt.max,
@@ -422,6 +440,25 @@ func (t *TargetStats) SetLastDSCP(dscp int) {
 	t.LastDSCP = dscp
 }
 
+// OnDuplicate records a reply that repeats a seq already resolved. See the
+// Duplicates field's doc for why this must never be folded into Recv.
+func (t *TargetStats) OnDuplicate() {
+	defer bumpGeneration()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.Duplicates++
+}
+
+// OnLateReply records a reply that arrived after its probe's `unacked`
+// entry was already swept as a timeout. See the LateReplies field's doc for
+// why the Loss already recorded for that probe is left untouched here.
+func (t *TargetStats) OnLateReply() {
+	defer bumpGeneration()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.LateReplies++
+}
+
 func (t *TargetStats) OnFailure(reason string) {
 	defer bumpGeneration()
 	t.mu.Lock()
@@ -439,6 +476,8 @@ func (t *TargetStats) Reset() {
 	t.Sent = 0
 	t.Recv = 0
 	t.Loss = 0
+	t.Duplicates = 0
+	t.LateReplies = 0
 	t.LastRTT = 0
 	t.LastTTL = 0
 	t.LastDSCP = 0

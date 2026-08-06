@@ -70,6 +70,48 @@ func TestBuildSnapshot_Basic(t *testing.T) {
 	}
 }
 
+// TestBuildSnapshot_DuplicatesAndLateReplies pins that both counters flow
+// through BuildSnapshot into the exported JSON fields.
+func TestBuildSnapshot_DuplicatesAndLateReplies(t *testing.T) {
+	ts := NewTargetStats("example.com")
+	ts.SetIP("1.2.3.4")
+	ts.IncSent()
+	ts.OnSuccess(10*time.Millisecond, 64)
+	ts.OnDuplicate()
+	ts.OnDuplicate()
+	ts.OnLateReply()
+
+	snap := BuildSnapshot([]*TargetStats{ts}, nil)
+	st := snap.Targets[0]
+	if st.Duplicates != 2 {
+		t.Errorf("duplicates = %d, want 2", st.Duplicates)
+	}
+	if st.LateReplies != 1 {
+		t.Errorf("late_replies = %d, want 1", st.LateReplies)
+	}
+	// Recv must not be inflated by the duplicates recorded above.
+	if st.Recv != 1 {
+		t.Errorf("recv = %d, want 1 (duplicates must not inflate Recv)", st.Recv)
+	}
+
+	data, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	targets := out["targets"].([]any)
+	target0 := targets[0].(map[string]any)
+	if target0["duplicates"] != float64(2) {
+		t.Errorf("json duplicates = %v, want 2", target0["duplicates"])
+	}
+	if target0["late_replies"] != float64(1) {
+		t.Errorf("json late_replies = %v, want 1", target0["late_replies"])
+	}
+}
+
 func TestBuildSnapshot_JSON(t *testing.T) {
 	ts := NewTargetStats("google.com")
 	ts.SetIP("8.8.8.8")

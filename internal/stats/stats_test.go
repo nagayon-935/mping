@@ -287,10 +287,15 @@ func TestTargetStatsFailureAndReset(t *testing.T) {
 	}
 
 	tgt.SetLastDSCP(46 << 2)
+	tgt.OnDuplicate()
+	tgt.OnLateReply()
 	tgt.Reset()
 	view = tgt.GetView()
 	if view.Sent != 0 || view.Recv != 0 || view.Loss != 0 {
 		t.Fatalf("Reset did not clear counts: sent=%d recv=%d loss=%d", view.Sent, view.Recv, view.Loss)
+	}
+	if view.Duplicates != 0 || view.LateReplies != 0 {
+		t.Fatalf("Reset did not clear Duplicates/LateReplies: duplicates=%d lateReplies=%d", view.Duplicates, view.LateReplies)
 	}
 	if view.LastRTT != 0 || view.MinRTT != 0 || view.MaxRTT != 0 || view.AvgRTT != 0 || view.Jitter != 0 {
 		t.Fatalf("Reset did not clear RTT stats: last=%v min=%v max=%v avg=%v jitter=%v",
