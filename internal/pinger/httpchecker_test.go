@@ -15,7 +15,7 @@ func TestHTTPChecker_Up(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	hc := NewHTTPChecker([]string{srv.URL}, time.Hour, 5*time.Second)
+	hc := NewHTTPChecker([]string{srv.URL}, time.Hour, 5*time.Second, BindConfig{})
 	hc.Start()
 	time.Sleep(200 * time.Millisecond)
 	hc.Stop()
@@ -41,7 +41,7 @@ func TestHTTPChecker_Down(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	hc := NewHTTPChecker([]string{srv.URL}, time.Hour, 5*time.Second)
+	hc := NewHTTPChecker([]string{srv.URL}, time.Hour, 5*time.Second, BindConfig{})
 	hc.Start()
 	time.Sleep(200 * time.Millisecond)
 	hc.Stop()
@@ -57,7 +57,7 @@ func TestHTTPChecker_Down(t *testing.T) {
 
 func TestHTTPChecker_Error(t *testing.T) {
 	// Port 1 is privileged and not listening: connection should fail.
-	hc := NewHTTPChecker([]string{"http://127.0.0.1:1"}, time.Hour, 200*time.Millisecond)
+	hc := NewHTTPChecker([]string{"http://127.0.0.1:1"}, time.Hour, 200*time.Millisecond, BindConfig{})
 	hc.Start()
 	time.Sleep(500 * time.Millisecond)
 	hc.Stop()
@@ -81,7 +81,7 @@ func TestHTTPChecker_MultipleURLs(t *testing.T) {
 	}))
 	defer fail.Close()
 
-	hc := NewHTTPChecker([]string{ok.URL, fail.URL}, time.Hour, 5*time.Second)
+	hc := NewHTTPChecker([]string{ok.URL, fail.URL}, time.Hour, 5*time.Second, BindConfig{})
 	hc.Start()
 	time.Sleep(200 * time.Millisecond)
 	hc.Stop()
@@ -108,7 +108,7 @@ func TestHTTPChecker_StopPreventsFurtherChecks(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	hc := NewHTTPChecker([]string{srv.URL}, 50*time.Millisecond, 5*time.Second)
+	hc := NewHTTPChecker([]string{srv.URL}, 50*time.Millisecond, 5*time.Second, BindConfig{})
 	hc.Start()
 	time.Sleep(120 * time.Millisecond)
 	hc.Stop()
@@ -134,7 +134,7 @@ func TestHTTPChecker_Wait(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	hc := NewHTTPChecker([]string{srv.URL}, 5*time.Millisecond, 5*time.Second)
+	hc := NewHTTPChecker([]string{srv.URL}, 5*time.Millisecond, 5*time.Second, BindConfig{})
 	hc.Start()
 	time.Sleep(20 * time.Millisecond) // let the loop run at least once
 	hc.Stop()
@@ -169,7 +169,7 @@ func TestHTTPChecker_FollowsRedirect(t *testing.T) {
 	}))
 	defer redirect.Close()
 
-	hc := NewHTTPChecker([]string{redirect.URL}, time.Hour, 5*time.Second)
+	hc := NewHTTPChecker([]string{redirect.URL}, time.Hour, 5*time.Second, BindConfig{})
 	hc.Start()
 	time.Sleep(200 * time.Millisecond)
 	hc.Stop()
@@ -194,7 +194,7 @@ func TestHTTPChecker_MaxRedirects(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	hc := NewHTTPChecker([]string{srv.URL}, time.Hour, 5*time.Second)
+	hc := NewHTTPChecker([]string{srv.URL}, time.Hour, 5*time.Second, BindConfig{})
 	hc.Start()
 	time.Sleep(200 * time.Millisecond)
 	hc.Stop()

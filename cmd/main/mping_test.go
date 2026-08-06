@@ -1991,7 +1991,7 @@ func TestWriteJSONSnapshot_WriteError(t *testing.T) {
 // ---- setupHTTPChecker ----
 
 func TestSetupHTTPChecker_NoURLs(t *testing.T) {
-	hc := setupHTTPChecker(nil, time.Second, time.Second)
+	hc := setupHTTPChecker(nil, time.Second, time.Second, pinger.BindConfig{})
 	if hc != nil {
 		t.Error("expected nil HTTPChecker for empty URL list")
 	}
@@ -2000,7 +2000,7 @@ func TestSetupHTTPChecker_NoURLs(t *testing.T) {
 func TestSetupHTTPChecker_WithURLs(t *testing.T) {
 	srv := &localHTTPServer{}
 	srv.start(t)
-	hc := setupHTTPChecker([]string{srv.url()}, 100*time.Millisecond, 100*time.Millisecond)
+	hc := setupHTTPChecker([]string{srv.url()}, 100*time.Millisecond, 100*time.Millisecond, pinger.BindConfig{})
 	if hc == nil {
 		t.Fatal("expected non-nil HTTPChecker for non-empty URL list")
 	}

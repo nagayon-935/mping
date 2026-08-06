@@ -711,21 +711,23 @@ func setupPMTU(makePinger func(size int) pingerController, cfg config, ifaceMTU 
 }
 
 // setupPortChecker parses port specs and starts a PortChecker if any specs are
-// provided. Returns nil if no specs are given.
-func setupPortChecker(targets []*stats.TargetStats, portSpecs []pinger.PortSpec, interval, timeout time.Duration) *pinger.PortChecker {
+// provided. Returns nil if no specs are given. bind is the -S/-I pair the ICMP
+// pinger is already bound to (see makePingerFactory), so port checks probe over
+// the same egress path.
+func setupPortChecker(targets []*stats.TargetStats, portSpecs []pinger.PortSpec, interval, timeout time.Duration, bind pinger.BindConfig) *pinger.PortChecker {
 	if len(portSpecs) == 0 {
 		return nil
 	}
-	pc := pinger.NewPortChecker(targets, portSpecs, interval, timeout)
+	pc := pinger.NewPortChecker(targets, portSpecs, interval, timeout, bind)
 	pc.Start()
 	return pc
 }
 
-func setupHTTPChecker(urls []string, interval, timeout time.Duration) *pinger.HTTPChecker {
+func setupHTTPChecker(urls []string, interval, timeout time.Duration, bind pinger.BindConfig) *pinger.HTTPChecker {
 	if len(urls) == 0 {
 		return nil
 	}
-	hc := pinger.NewHTTPChecker(urls, interval, timeout)
+	hc := pinger.NewHTTPChecker(urls, interval, timeout, bind)
 	hc.Start()
 	return hc
 }
@@ -822,6 +824,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			timeout:      timeout,
 			portSpecs:    portSpecs,
 			httpURLs:     currentCfg.httpURLs,
+			bind:         checkerBindConfig(currentCfg, bindIP),
 			traceEnabled: currentCfg.trace,
 			mtrEnabled:   currentCfg.mtr,
 			logCh:        logCh,

@@ -26,20 +26,23 @@ var interfaceByNameFn = net.InterfaceByName
 // setsockopt call fails, mping silently falls back to the source-IP bind
 // Pinger.Start already performs via p.Source.
 func bindToInterface(c net.PacketConn, ifaceName string, isIPv6 bool) {
-	if ifaceName == "" {
-		return
-	}
-	iface, err := interfaceByNameFn(ifaceName)
-	if err != nil {
-		return
-	}
-	sc, ok := c.(interface {
-		SyscallConn() (syscall.RawConn, error)
-	})
+	rawConn, ok := rawConnOf(c)
 	if !ok {
 		return
 	}
-	rawConn, err := sc.SyscallConn()
+	bindRawConnToInterface(rawConn, ifaceName, isIPv6)
+}
+
+// bindRawConnToInterface is bindToInterface for a socket already reduced to
+// its syscall.RawConn — the form net.Dialer.Control hands us, used by the port
+// and HTTP checkers (see dialbind.go) so their TCP/UDP connections leave via
+// the same physical interface as the ICMP sockets above. Failures stay
+// non-fatal for the reasons documented on bindToInterface.
+func bindRawConnToInterface(rawConn syscall.RawConn, ifaceName string, isIPv6 bool) {
+	if ifaceName == "" || rawConn == nil {
+		return
+	}
+	iface, err := interfaceByNameFn(ifaceName)
 	if err != nil {
 		return
 	}
