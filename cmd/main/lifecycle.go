@@ -148,6 +148,13 @@ func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetSta
 // including the address resolver. specs supplies a pinned-IP lookup (keyed
 // by targetSpec.display(), the same string used for stats.TargetStats.Host)
 // so --resolve-all entries resolve straight to their pinned IP.
+//
+// errors are collected rather than returned as a second value: cfg.dscp and
+// every spec's DSCP were already validated (parseArgs / validateHostsDoc), so
+// a parse failure here would mean that validation was skipped somewhere —
+// buildPingerOptions ignores an unparsable spec (treating it as "no
+// override") rather than propagating a signature change through every
+// caller for a case that should be unreachable in practice.
 func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resolver, specs []targetSpec) pinger.Options {
 	pinned := make(map[string]string, len(specs))
 	for _, s := range specs {
@@ -155,6 +162,28 @@ func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resol
 			pinned[s.display()] = s.PinnedIP
 		}
 	}
+
+	var dscp *int
+	if cfg.dscp != "" {
+		if v, err := pinger.ParseDSCP(cfg.dscp); err == nil {
+			dscp = &v
+		}
+	}
+	var targetDSCP map[string]int
+	for _, s := range specs {
+		if s.DSCP == "" {
+			continue
+		}
+		v, err := pinger.ParseDSCP(s.DSCP)
+		if err != nil {
+			continue
+		}
+		if targetDSCP == nil {
+			targetDSCP = make(map[string]int, len(specs))
+		}
+		targetDSCP[s.display()] = v
+	}
+
 	return pinger.Options{
 		ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {
 			if ip, ok := pinned[address]; ok {
@@ -175,6 +204,8 @@ func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resol
 		Resolver:   customResolver,
 		AsnEnabled: cfg.asnEnabled,
 		PtrEnabled: cfg.ptrEnabled,
+		DSCP:       dscp,
+		TargetDSCP: targetDSCP,
 	}
 }
 
@@ -302,6 +333,24 @@ type runOptionsParams struct {
 	currentGroups []ui.TargetGroup
 }
 
+// dscpColumnEnabled decides whether the TUI's DSCP column should show,
+// following the ASN/PTR dynamic-column pattern (ui.RunOptions.DSCPEnabled):
+// shown when DSCP marking is actually in play, either globally (--dscp /
+// dscp:) or via any target's per-target override — matching how ASNEnabled/
+// PTREnabled key off the flag that turns the underlying lookups on, rather
+// than always reserving screen space for a column most runs never populate.
+func dscpColumnEnabled(cfg config, hosts []targetSpec) bool {
+	if cfg.dscp != "" {
+		return true
+	}
+	for _, h := range hosts {
+		if h.DSCP != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // buildRunOptions assembles the ui.RunOptions for one loop iteration,
 // including the OnAddHost/OnDeleteHost callbacks that arm an in-memory
 // reload via the reloadCoordinator.
@@ -322,6 +371,7 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 		HTTPResults:     p.sup.httpResults,
 		ASNEnabled:      p.cfg.asnEnabled,
 		PTREnabled:      p.cfg.ptrEnabled,
+		DSCPEnabled:     dscpColumnEnabled(p.cfg, p.currentHosts),
 		Thresholds:      &p.thresholds,
 		ExternalCloseCh: p.sig.ch,
 		ExternalLogCh:   p.logCh,

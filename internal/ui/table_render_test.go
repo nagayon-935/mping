@@ -150,7 +150,7 @@ func newTestTableRenderer(targets []*stats.TargetStats, width int) *tableRendere
 	errorView := tview.NewTextView()
 	vs := newViewState(errorView)
 
-	return newTableRenderer(targets, "10.0.0.1", "", 56, false, false, nil, table, tablePane, nil, vs)
+	return newTableRenderer(targets, "10.0.0.1", "", 56, false, false, false, nil, table, tablePane, nil, vs)
 }
 
 // TestTableRendererUpdate_SkipsCompactWhenFullLayoutFits guards the P3 fix:
@@ -336,7 +336,7 @@ func TestMainTableColumns_DynamicFlags(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cols := mainTableColumns(tt.dnsEnabled, tt.asnEnabled, tt.ptrEnabled)
+			cols := mainTableColumns(tt.dnsEnabled, tt.asnEnabled, tt.ptrEnabled, false)
 			var got []string
 			for _, c := range cols {
 				if c.dynamic {
@@ -350,6 +350,54 @@ func TestMainTableColumns_DynamicFlags(t *testing.T) {
 				if got[i] != tt.want[i] {
 					t.Fatalf("dynamic columns = %v, want %v", got, tt.want)
 				}
+			}
+		})
+	}
+}
+
+// TestMainTableColumns_DSCP verifies the DSCP column follows ASN/PTR's
+// dynamic-column pattern (absent by default, present when enabled) but is
+// itself NOT a "dynamic" (width-tracks-content) column — it mirrors TTL's
+// fixed-width short-text convention instead, since its values are short
+// codepoint names/numbers, not variable-length text like a hostname or PTR
+// record.
+func TestMainTableColumns_DSCP(t *testing.T) {
+	withoutDSCP := mainTableColumns(false, false, false, false)
+	if idx := columnsByName(withoutDSCP, "DSCP"); idx != -1 {
+		t.Fatalf("DSCP column present when dscpEnabled=false: index %d", idx)
+	}
+
+	withDSCP := mainTableColumns(false, false, false, true)
+	idx := columnsByName(withDSCP, "DSCP")
+	if idx == -1 {
+		t.Fatal("DSCP column missing when dscpEnabled=true")
+	}
+	if withDSCP[idx].dynamic {
+		t.Error("DSCP column should not be dynamic (fixed-width, like TTL)")
+	}
+}
+
+func TestDSCPColumnRender(t *testing.T) {
+	cols := mainTableColumns(false, false, false, true)
+	idx := columnsByName(cols, "DSCP")
+	if idx == -1 {
+		t.Fatal("DSCP column missing")
+	}
+
+	tests := []struct {
+		name     string
+		lastDSCP int
+		want     string
+	}{
+		{"no observation yet", 0, "-"},
+		{"EF observed", 46 << 2, "EF"},
+		{"CS0 observed", 0, "-"}, // ambiguous with "unobserved" by design; see dscpDisplayString
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := columnRowContext{view: stats.TargetView{LastDSCP: tt.lastDSCP}}
+			if got := cols[idx].render(ctx); got != tt.want {
+				t.Errorf("render(LastDSCP=%d) = %q, want %q", tt.lastDSCP, got, tt.want)
 			}
 		})
 	}
@@ -375,7 +423,7 @@ func TestRenderRowTexts(t *testing.T) {
 	ctx := columnRowContext{view: view, sourceIPv4: "10.0.0.2", packetSize: 56, lossRate: calcLossRate(view)}
 
 	// Case 1: dnsEnabled = false, asnEnabled = true, ptrEnabled = false
-	cols := mainTableColumns(false, true, false)
+	cols := mainTableColumns(false, true, false, false)
 	texts := renderRowTexts(cols, ctx)
 	if texts[0] != "10.0.0.2" {
 		t.Fatalf("src: got %q", texts[0])
@@ -395,7 +443,7 @@ func TestRenderRowTexts(t *testing.T) {
 	}
 
 	// Case 2: dnsEnabled = true, asnEnabled = true, ptrEnabled = false
-	cols2 := mainTableColumns(true, true, false)
+	cols2 := mainTableColumns(true, true, false, false)
 	texts2 := renderRowTexts(cols2, ctx)
 	if len(texts2) != 15 {
 		t.Fatalf("texts len (dns enabled): got %d", len(texts2))
@@ -411,7 +459,7 @@ func TestRenderRowTexts(t *testing.T) {
 	}
 
 	// Case 3: dnsEnabled = true, asnEnabled = true, ptrEnabled = true
-	cols3 := mainTableColumns(true, true, true)
+	cols3 := mainTableColumns(true, true, true, false)
 	texts3 := renderRowTexts(cols3, ctx)
 	if len(texts3) != 16 {
 		t.Fatalf("texts len (ptr enabled): got %d", len(texts3))
@@ -472,7 +520,7 @@ func TestRenderRowCells(t *testing.T) {
 	ctx := columnRowContext{view: view, packetSize: 56, lossRate: 90.0}
 
 	// Case 1: dnsEnabled = false, asnEnabled = true, ptrEnabled = false
-	cols := mainTableColumns(false, true, false)
+	cols := mainTableColumns(false, true, false, false)
 	widths := make([]int, len(cols))
 	for i := range widths {
 		widths[i] = 5
@@ -489,7 +537,7 @@ func TestRenderRowCells(t *testing.T) {
 	}
 
 	// Case 2: dnsEnabled = true, asnEnabled = true, ptrEnabled = false
-	cols2 := mainTableColumns(true, true, false)
+	cols2 := mainTableColumns(true, true, false, false)
 	widths2 := make([]int, len(cols2))
 	for i := range widths2 {
 		widths2[i] = 5
@@ -502,7 +550,7 @@ func TestRenderRowCells(t *testing.T) {
 	}
 
 	// Case 3: dnsEnabled = true, asnEnabled = true, ptrEnabled = true
-	cols3 := mainTableColumns(true, true, true)
+	cols3 := mainTableColumns(true, true, true, false)
 	widths3 := make([]int, len(cols3))
 	for i := range widths3 {
 		widths3[i] = 5

@@ -286,6 +286,7 @@ func TestTargetStatsFailureAndReset(t *testing.T) {
 		t.Fatalf("LastError: got %q, want %q", view.LastError, "Timeout")
 	}
 
+	tgt.SetLastDSCP(46 << 2)
 	tgt.Reset()
 	view = tgt.GetView()
 	if view.Sent != 0 || view.Recv != 0 || view.Loss != 0 {
@@ -300,6 +301,27 @@ func TestTargetStatsFailureAndReset(t *testing.T) {
 	}
 	if !view.LastLossTime.IsZero() || view.LastError != "" {
 		t.Fatalf("Reset did not clear error state: lastLoss=%v lastError=%q", view.LastLossTime, view.LastError)
+	}
+	if view.LastDSCP != 0 {
+		t.Fatalf("Reset did not clear LastDSCP: got %d", view.LastDSCP)
+	}
+}
+
+func TestTargetStats_SetLastDSCP(t *testing.T) {
+	tgt := NewTargetStats("example.com")
+	if got := tgt.GetView().LastDSCP; got != 0 {
+		t.Fatalf("default LastDSCP: got %d, want 0", got)
+	}
+	tgt.SetLastDSCP(46 << 2) // EF's TOS byte
+	view := tgt.GetView()
+	if view.LastDSCP != 46<<2 {
+		t.Fatalf("LastDSCP: got %d, want %d", view.LastDSCP, 46<<2)
+	}
+	// A later observation (e.g. bleaching re-marking the reply to CS0)
+	// overwrites, matching LastTTL's "most recent value wins" semantics.
+	tgt.SetLastDSCP(0)
+	if got := tgt.GetView().LastDSCP; got != 0 {
+		t.Fatalf("LastDSCP after re-observing 0: got %d, want 0", got)
 	}
 }
 

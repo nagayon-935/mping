@@ -149,6 +149,13 @@ type config struct {
 	dnsServer      string
 	resolveAll     bool
 	duration       time.Duration
+	// dscp is the raw --dscp / dscp: value (a name like "EF" or a bare
+	// number), applied as the global outbound DSCP-derived TOS/TrafficClass
+	// default for every target that has no per-target override (see
+	// targetSpec.DSCP). Empty means "not configured" — parsed lazily by
+	// buildPingerOptions rather than here, so validateHostsDoc/parseArgs can
+	// reject a malformed spec before any pinger is constructed.
+	dscp string
 
 	// thresholds holds the colour-coding / alert boundaries (warn = orange,
 	// crit = red), unified onto ui.Thresholds directly (TD-10) instead of
@@ -156,14 +163,59 @@ type config struct {
 	thresholds ui.Thresholds
 }
 
+// hostEntry is one entry of a hosts-file's hosts:/groups[].hosts: list. It
+// unmarshals from either a bare scalar string (the pre-existing, common
+// case: just a hostname/IP) or a mapping with a required 'host' key and an
+// optional 'dscp' key — the per-target DSCP override that lets the same
+// destination be monitored under two different DSCP markings side by side
+// (e.g. one entry with dscp: EF, another with dscp: CS0, both host: the
+// same address), which is this feature's primary use case (see
+// targetSpec.DSCP).
+type hostEntry struct {
+	Host string
+	// DSCP is the raw dscp: value for this entry (a name like "EF" or a
+	// bare number), or "" when absent — parsed lazily, same rationale as
+	// config.dscp.
+	DSCP string
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler. Field names are checked
+// manually (rather than via value.Decode into a strict struct) so an
+// unknown key inside a host mapping is rejected the same way
+// dec.KnownFields(true) rejects one at the top level of the file.
+func (h *hostEntry) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		h.Host = value.Value
+		return nil
+	}
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("host entry: expected a string or a mapping with 'host'/'dscp' keys, got %v", value.Kind)
+	}
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		key, val := value.Content[i].Value, value.Content[i+1]
+		switch key {
+		case "host":
+			h.Host = val.Value
+		case "dscp":
+			h.DSCP = val.Value
+		default:
+			return fmt.Errorf("host entry: unknown field %q (expected 'host' or 'dscp')", key)
+		}
+	}
+	if h.Host == "" {
+		return fmt.Errorf("host entry: 'host' field is required when given as a mapping")
+	}
+	return nil
+}
+
 // groupYAML represents a named host group in the YAML config file.
 type groupYAML struct {
-	Name  string   `yaml:"name"`
-	Hosts []string `yaml:"hosts"`
+	Name  string      `yaml:"name"`
+	Hosts []hostEntry `yaml:"hosts"`
 }
 
 type hostsFileYAML struct {
-	Hosts      []string        `yaml:"hosts"`
+	Hosts      []hostEntry     `yaml:"hosts"`
 	Groups     []groupYAML     `yaml:"groups"`
 	IntervalMs *int            `yaml:"interval"`
 	TimeoutMs  *int            `yaml:"timeout"`
@@ -185,6 +237,7 @@ type hostsFileYAML struct {
 	DNSServer  *string         `yaml:"dns-server"`
 	ResolveAll *bool           `yaml:"resolve-all"`
 	Duration   *string         `yaml:"duration"`
+	DSCP       *string         `yaml:"dscp"`
 	Thresholds *thresholdsYAML `yaml:"thresholds"`
 }
 
@@ -216,7 +269,7 @@ func resolveNetwork(cfg config) string {
 // overrides (a field is only applied when the CLI flag was not explicitly set).
 // Returns the ungrouped hosts listed in the document, the raw group definitions,
 // and the updated cfg.
-func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]string, []groupYAML, config, error) {
+func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]hostEntry, []groupYAML, config, error) {
 	syncField(fs, "interval", doc.IntervalMs, &cfg.intervalMs)
 	syncField(fs, "timeout", doc.TimeoutMs, &cfg.timeoutMs)
 	syncField(fs, "output", doc.OutputFile, &cfg.outputFile)
@@ -236,6 +289,7 @@ func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]string, 
 	syncField(fs, "mtr", doc.Mtr, &cfg.mtr)
 	syncField(fs, "dns-server", doc.DNSServer, &cfg.dnsServer)
 	syncField(fs, "resolve-all", doc.ResolveAll, &cfg.resolveAll)
+	syncField(fs, "dscp", doc.DSCP, &cfg.dscp)
 	if err := syncDuration(fs, "duration", doc.Duration, &cfg.duration); err != nil {
 		return nil, nil, cfg, err
 	}
@@ -321,18 +375,22 @@ func mergeHosts(cfg config, fs *pflag.FlagSet, hosts []string) ([]targetSpec, []
 
 // buildHostsAndGroups assembles the final host list and TargetGroup slice.
 // Ungrouped hosts (docHosts + cliHosts) come first; group hosts are appended
-// after, with indices pointing into the combined slice.
-func buildHostsAndGroups(docHosts []string, docGroups []groupYAML, cliHosts []string) ([]targetSpec, []ui.TargetGroup) {
-	allHostStrs := append(append([]string(nil), docHosts...), cliHosts...)
-	allHosts := make([]targetSpec, len(allHostStrs))
-	for i, h := range allHostStrs {
-		allHosts[i] = targetSpec{Host: h}
+// after, with indices pointing into the combined slice. docHosts entries
+// carry their per-target DSCP override (if any) straight into the returned
+// targetSpec; cliHosts (bare strings from argv) never have one.
+func buildHostsAndGroups(docHosts []hostEntry, docGroups []groupYAML, cliHosts []string) ([]targetSpec, []ui.TargetGroup) {
+	allHosts := make([]targetSpec, 0, len(docHosts)+len(cliHosts))
+	for _, h := range docHosts {
+		allHosts = append(allHosts, targetSpec{Host: h.Host, DSCP: h.DSCP})
+	}
+	for _, h := range cliHosts {
+		allHosts = append(allHosts, targetSpec{Host: h})
 	}
 	var uiGroups []ui.TargetGroup
 	for _, g := range docGroups {
 		startIdx := len(allHosts)
 		for _, h := range g.Hosts {
-			allHosts = append(allHosts, targetSpec{Host: h})
+			allHosts = append(allHosts, targetSpec{Host: h.Host, DSCP: h.DSCP})
 		}
 		indices := make([]int, len(g.Hosts))
 		for j := range g.Hosts {
@@ -354,8 +412,13 @@ func validateHostsDoc(doc hostsFileYAML) error {
 		return fmt.Errorf("hosts: at least one entry required (in hosts: or groups:)")
 	}
 	for i, h := range doc.Hosts {
-		if strings.TrimSpace(h) == "" {
+		if strings.TrimSpace(h.Host) == "" {
 			return fmt.Errorf("hosts[%d]: empty host entry", i)
+		}
+		if h.DSCP != "" {
+			if _, err := pinger.ParseDSCP(h.DSCP); err != nil {
+				return fmt.Errorf("hosts[%d]: dscp: %w", i, err)
+			}
 		}
 	}
 	for gi, g := range doc.Groups {
@@ -366,9 +429,19 @@ func validateHostsDoc(doc hostsFileYAML) error {
 			return fmt.Errorf("groups[%q]: at least one host required", g.Name)
 		}
 		for j, h := range g.Hosts {
-			if strings.TrimSpace(h) == "" {
+			if strings.TrimSpace(h.Host) == "" {
 				return fmt.Errorf("groups[%q][%d]: empty host entry", g.Name, j)
 			}
+			if h.DSCP != "" {
+				if _, err := pinger.ParseDSCP(h.DSCP); err != nil {
+					return fmt.Errorf("groups[%q][%d]: dscp: %w", g.Name, j, err)
+				}
+			}
+		}
+	}
+	if doc.DSCP != nil && *doc.DSCP != "" {
+		if _, err := pinger.ParseDSCP(*doc.DSCP); err != nil {
+			return fmt.Errorf("dscp: %w", err)
 		}
 	}
 	if doc.IntervalMs != nil && (*doc.IntervalMs < 100 || *doc.IntervalMs > 60000) {
@@ -562,6 +635,7 @@ func registerFlags(fs *pflag.FlagSet, cfg *config, th *thresholdFlags) {
 	fs.BoolVarP(&cfg.mtr, "mtr", "M", false, "enable MTR-style per-hop monitor pane")
 	fs.StringVarP(&cfg.dnsServer, "dns-server", "d", "", "custom DNS server IP to use for hostname resolution")
 	fs.BoolVar(&cfg.resolveAll, "resolve-all", false, "resolve target hostname to all IP addresses and monitor them concurrently")
+	fs.StringVar(&cfg.dscp, "dscp", "", "outbound DSCP marking: a codepoint name (EF, CS0-CS7, AF11-AF43, VA, DF) or a 0-255 TOS/TrafficClass byte; overridable per host in a hosts file via 'dscp:' (IPv6 only for per-host overrides — see docs)")
 
 	fs.IntVar(&th.rttWarnMs, "rtt-warn", 50, "RTT warn threshold in ms (orange)")
 	fs.IntVar(&th.rttCritMs, "rtt-crit", 200, "RTT crit threshold in ms (red)")
@@ -613,6 +687,12 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 
 	if cfg.duration < 0 {
 		return config{}, nil, nil, usageBuf.String(), fmt.Errorf("--duration must be >= 0, got %s", cfg.duration)
+	}
+
+	if cfg.dscp != "" {
+		if _, err := pinger.ParseDSCP(cfg.dscp); err != nil {
+			return config{}, nil, nil, usageBuf.String(), fmt.Errorf("--dscp: %w", err)
+		}
 	}
 
 	return cfg, hosts, fs, usageBuf.String(), nil
@@ -1049,9 +1129,9 @@ func expandTargets(specs []targetSpec, groups []ui.TargetGroup, cfg config) ([]t
 
 		for _, ip := range ips {
 			if spec.Host != ip {
-				expandedSpecs = append(expandedSpecs, targetSpec{Host: spec.Host, PinnedIP: ip})
+				expandedSpecs = append(expandedSpecs, targetSpec{Host: spec.Host, PinnedIP: ip, DSCP: spec.DSCP})
 			} else {
-				expandedSpecs = append(expandedSpecs, targetSpec{Host: ip})
+				expandedSpecs = append(expandedSpecs, targetSpec{Host: ip, DSCP: spec.DSCP})
 			}
 		}
 

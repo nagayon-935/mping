@@ -11,6 +11,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/rivo/tview"
 
+	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
@@ -84,6 +85,18 @@ func ttlString(ttl int) string {
 		return "-"
 	}
 	return fmt.Sprintf("%d", ttl)
+}
+
+// dscpDisplayString formats the DSCP column cell for a target's most recent
+// reply. Mirrors ttlString's "<=0 means unknown" convention: 0 is both the
+// pre-first-reply default and IPv4's permanent value (x/net has no
+// receive-side DSCP support — see pinger.Reply.DSCP), so it reads as "-"
+// rather than the misleading "CS0".
+func dscpDisplayString(dscp int) string {
+	if dscp <= 0 {
+		return "-"
+	}
+	return pinger.DSCPName(dscp)
 }
 
 // inferInitialTTL returns the likely initial TTL the remote host used,

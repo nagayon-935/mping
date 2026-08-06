@@ -18,9 +18,64 @@ func TestParseHostsFile_Mapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseHostsFile: %v", err)
 	}
-	want := []string{"example.com", "8.8.8.8"}
+	want := []hostEntry{{Host: "example.com"}, {Host: "8.8.8.8"}}
 	if !reflect.DeepEqual(got.Hosts, want) {
 		t.Fatalf("hosts: got %v, want %v", got.Hosts, want)
+	}
+}
+
+func TestParseHostsFile_PerHostDSCPMapping(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts.yaml")
+	// The feature's primary use case: the same destination monitored twice,
+	// once per DSCP marking, side by side.
+	content := "hosts:\n" +
+		"  - host: 2001:db8::1\n    dscp: EF\n" +
+		"  - host: 2001:db8::1\n    dscp: CS0\n" +
+		"  - plain.example.com\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	got, err := parseHostsFile(path)
+	if err != nil {
+		t.Fatalf("parseHostsFile: %v", err)
+	}
+	want := []hostEntry{
+		{Host: "2001:db8::1", DSCP: "EF"},
+		{Host: "2001:db8::1", DSCP: "CS0"},
+		{Host: "plain.example.com"},
+	}
+	if !reflect.DeepEqual(got.Hosts, want) {
+		t.Fatalf("hosts: got %v, want %v", got.Hosts, want)
+	}
+}
+
+func TestParseHostsFile_HostMappingMissingHostIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts.yaml")
+	content := "hosts:\n  - dscp: EF\n" // missing required 'host' key
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	_, err := parseHostsFile(path)
+	if err == nil {
+		t.Fatal("parseHostsFile: expected error for host mapping missing 'host', got nil")
+	}
+}
+
+func TestParseHostsFile_HostMappingUnknownKeyIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts.yaml")
+	content := "hosts:\n  - host: example.com\n    dscpp: EF\n" // typo of "dscp"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	_, err := parseHostsFile(path)
+	if err == nil {
+		t.Fatal("parseHostsFile: expected error for unknown key in host mapping, got nil")
 	}
 }
 
