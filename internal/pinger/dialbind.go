@@ -70,6 +70,14 @@ func newBoundDialer(network string, timeout time.Duration, bc BindConfig) *net.D
 	return d
 }
 
+// NewBoundDialer is newBoundDialer for callers outside this package that
+// build their own dials — notably cmd/main's DNS resolver, which needs the
+// same -S/-I treatment as the ICMP pinger and the port/HTTP checkers so name
+// resolution leaves via the same egress path.
+func NewBoundDialer(network string, timeout time.Duration, bc BindConfig) *net.Dialer {
+	return newBoundDialer(network, timeout, bc)
+}
+
 // newBoundTransport returns an http.Transport whose dials honour bc, or nil
 // when bc requests no binding — in which case callers must leave
 // http.Client.Transport unset so http.DefaultTransport stays in play, exactly

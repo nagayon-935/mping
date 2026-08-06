@@ -2238,14 +2238,90 @@ func TestPrintExitSummary_NoDuplicatesOrLateReplies(t *testing.T) {
 }
 
 func TestNewCustomResolver(t *testing.T) {
-	r := newCustomResolver("8.8.8.8")
+	r := newCustomResolver("8.8.8.8", pinger.BindConfig{})
 	if r == nil {
 		t.Fatal("expected resolver, got nil")
 	}
 
-	rPort := newCustomResolver("8.8.8.8:53")
+	rPort := newCustomResolver("8.8.8.8:53", pinger.BindConfig{})
 	if rPort == nil {
 		t.Fatal("expected resolver with port, got nil")
+	}
+}
+
+// TestNewCustomResolver_NoDNSServerReturnsDefaultResolver verifies the -S/-I
+// wiring never touches the empty-dnsServer path: with no --dns-server the
+// resolver must stay net.DefaultResolver regardless of bind, exactly as
+// before this feature — bind only takes effect once --dns-server picks a
+// specific server to dial.
+func TestNewCustomResolver_NoDNSServerReturnsDefaultResolver(t *testing.T) {
+	r := newCustomResolver("", pinger.BindConfig{Source: "192.0.2.5", Interface: "eth0"})
+	if r != net.DefaultResolver {
+		t.Errorf("newCustomResolver(\"\", ...): got %p, want net.DefaultResolver (%p)", r, net.DefaultResolver)
+	}
+}
+
+// TestNewCustomResolver_DialHonoursBindConfig is the behavioral proof that
+// -S actually reaches the resolver's dial: a real loopback UDP listener is
+// reachable through the unbound resolver's Dial and stops being reachable
+// once the resolver is told to source from an address the host does not
+// own. This exercises exactly the func net.Resolver.Dial invokes internally
+// during LookupIP, without needing a real DNS server to answer.
+func TestNewCustomResolver_DialHonoursBindConfig(t *testing.T) {
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer conn.Close()
+	dnsServer := conn.LocalAddr().String()
+
+	unbound := newCustomResolver(dnsServer, pinger.BindConfig{})
+	if _, err := unbound.Dial(context.Background(), "udp", "ignored"); err != nil {
+		t.Fatalf("unbound resolver Dial: unexpected error: %v", err)
+	}
+
+	bound := newCustomResolver(dnsServer, pinger.BindConfig{Source: "192.0.2.5"})
+	if _, err := bound.Dial(context.Background(), "udp", "ignored"); err == nil {
+		t.Error("resolver Dial with Source=192.0.2.5: got no error, want a dial failure — the source address was ignored")
+	}
+}
+
+// ---- resolverBindConfig ----
+
+// TestResolverBindConfig_UsesSourceAddr verifies expandTargets' -S/-I lookup
+// helper carries an explicit -S straight through without needing any
+// network I/O (determineSourceIPs returns cfg.sourceAddr as-is in this case).
+func TestResolverBindConfig_UsesSourceAddr(t *testing.T) {
+	cfg := config{sourceAddr: "192.0.2.5", ifaceName: "eth0"}
+
+	got := resolverBindConfig(cfg, nil)
+
+	want := pinger.BindConfig{Source: "192.0.2.5", Interface: "eth0"}
+	if got != want {
+		t.Errorf("resolverBindConfig() = %+v, want %+v", got, want)
+	}
+}
+
+// TestResolverBindConfig_UnsetFlagsYieldZeroValue mirrors
+// TestCheckerBindConfig_UnsetFlagsYieldZeroValue: with neither flag given,
+// --resolve-all's DNS lookups must stay unbound.
+func TestResolverBindConfig_UnsetFlagsYieldZeroValue(t *testing.T) {
+	if got := resolverBindConfig(config{}, nil); !got.IsZero() {
+		t.Errorf("resolverBindConfig() = %+v, want zero value", got)
+	}
+}
+
+// TestResolverBindConfig_ResolutionErrorFallsBackToZero verifies that when
+// -I names an interface that doesn't exist, resolverBindConfig degrades to
+// an unbound resolver rather than propagating the error itself — the
+// authoritative error for a bad -I surfaces later via prepareRunEnv's own
+// determineSourceIPs call, so duplicating that failure here would just add a
+// second, redundant error path for the same misconfiguration.
+func TestResolverBindConfig_ResolutionErrorFallsBackToZero(t *testing.T) {
+	cfg := config{ifaceName: "no-such-iface-xyz-mping-test"}
+
+	if got := resolverBindConfig(cfg, nil); !got.IsZero() {
+		t.Errorf("resolverBindConfig() = %+v, want zero value on resolution error", got)
 	}
 }
 

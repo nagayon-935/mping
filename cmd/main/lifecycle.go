@@ -135,6 +135,24 @@ func checkerBindConfig(cfg config, bindIP string) pinger.BindConfig {
 	return pinger.BindConfig{Source: bindIP, Interface: cfg.ifaceName}
 }
 
+// resolverBindConfig is checkerBindConfig for expandTargets' --resolve-all DNS
+// lookups, which run during parseAndLoadHosts — before prepareRunEnv has
+// resolved bindIP via determineSourceIPs. It resolves bindIP itself instead of
+// receiving it as a parameter. A resolution failure (e.g. an unknown -I
+// interface) is swallowed here rather than surfaced: the authoritative error
+// for a bad -I is prepareRunEnv's own determineSourceIPs call, which runs
+// moments later and stops the process before any pinger starts — duplicating
+// that failure here would just add a second, redundant error path for the
+// same misconfiguration, so --resolve-all's DNS lookups simply fall back to
+// unbound in that case.
+func resolverBindConfig(cfg config, specs []targetSpec) pinger.BindConfig {
+	bindIP, _, _, err := determineSourceIPs(cfg, specs)
+	if err != nil {
+		return pinger.BindConfig{}
+	}
+	return checkerBindConfig(cfg, bindIP)
+}
+
 // buildTargetsForIteration creates TargetStats for hosts and tags each with
 // its display DNS server (used by the UI's DNS column).
 func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetStats {

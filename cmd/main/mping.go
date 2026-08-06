@@ -713,7 +713,14 @@ func parseHostsFile(path string) (hostsFileYAML, error) {
 	return doc, nil
 }
 
-func newCustomResolver(dnsServer string) *net.Resolver {
+// newCustomResolver returns a *net.Resolver for --dns-server, or
+// net.DefaultResolver when it's unset. bind carries the -S source address and
+// -I interface name so name resolution leaves the host by the same path as
+// the ICMP probes and the port/HTTP checks; it only takes effect once
+// dnsServer picks a specific server to dial — the net.DefaultResolver
+// fallback can't be steered this way, so bind is a no-op in that case exactly
+// as before this feature.
+func newCustomResolver(dnsServer string, bind pinger.BindConfig) *net.Resolver {
 	if dnsServer == "" {
 		return net.DefaultResolver
 	}
@@ -723,13 +730,11 @@ func newCustomResolver(dnsServer string) *net.Resolver {
 		port = "53"
 	}
 	dnsAddress := net.JoinHostPort(host, port)
+	dialer := pinger.NewBoundDialer("udp", 2*time.Second, bind)
 	return &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			d := net.Dialer{
-				Timeout: 2 * time.Second,
-			}
-			return d.DialContext(ctx, "udp", dnsAddress)
+			return dialer.DialContext(ctx, "udp", dnsAddress)
 		},
 	}
 }
@@ -874,7 +879,8 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 
 		targets = buildTargetsForIteration(currentHosts, currentCfg)
 
-		customResolver := newCustomResolver(currentCfg.dnsServer)
+		bind := checkerBindConfig(currentCfg, bindIP)
+		customResolver := newCustomResolver(currentCfg.dnsServer, bind)
 		opts := buildPingerOptions(currentCfg, resNetwork, customResolver, currentHosts)
 
 		ifaceMTU, mtuErr := getInterfaceMTU(currentCfg.ifaceName, bindIP, currentHosts[0].resolveAddr())
@@ -904,7 +910,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			timeout:      timeout,
 			portSpecs:    portSpecs,
 			httpURLs:     currentCfg.httpURLs,
-			bind:         checkerBindConfig(currentCfg, bindIP),
+			bind:         bind,
 			traceEnabled: currentCfg.trace,
 			mtrEnabled:   currentCfg.mtr,
 			logCh:        logCh,
@@ -1098,7 +1104,7 @@ func expandTargets(specs []targetSpec, groups []ui.TargetGroup, cfg config) ([]t
 		return specs, groups, nil
 	}
 
-	resolver := newCustomResolver(cfg.dnsServer)
+	resolver := newCustomResolver(cfg.dnsServer, resolverBindConfig(cfg, specs))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
