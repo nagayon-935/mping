@@ -175,6 +175,25 @@ func TestNewBoundDialer_ControlDispatchesToBindSeam(t *testing.T) {
 	}
 }
 
+// TestNewBoundDialer_ExportedWrapperDelegates verifies the exported
+// NewBoundDialer (for callers outside this package, e.g. cmd/main's DNS
+// resolver) produces the same dialer as the internal constructor.
+func TestNewBoundDialer_ExportedWrapperDelegates(t *testing.T) {
+	bc := BindConfig{Source: "192.0.2.5"}
+	got := NewBoundDialer("udp", 2*time.Second, bc)
+
+	if got.Timeout != 2*time.Second {
+		t.Errorf("Timeout: got %v, want %v", got.Timeout, 2*time.Second)
+	}
+	addr, ok := got.LocalAddr.(*net.UDPAddr)
+	if !ok {
+		t.Fatalf("LocalAddr: got %T, want *net.UDPAddr", got.LocalAddr)
+	}
+	if !addr.IP.Equal(net.ParseIP("192.0.2.5")) {
+		t.Errorf("LocalAddr IP: got %v, want 192.0.2.5", addr.IP)
+	}
+}
+
 // TestNewBoundTransport_ZeroBindConfigReturnsNil pins the fallback: when
 // neither -S nor -I is given the HTTP checker must keep using
 // http.DefaultTransport rather than a clone, leaving prior behavior untouched.
