@@ -17,13 +17,17 @@ import (
 // one run() loop iteration. A fresh supervisor is created each time the main
 // loop re-enters (on YAML reload), mirroring the closures it replaces.
 type supervisorConfig struct {
-	makePinger   func(size int) pingerController
-	packetSize   int
-	targets      []*stats.TargetStats
-	interval     time.Duration
-	timeout      time.Duration
-	portSpecs    []pinger.PortSpec
-	httpURLs     []string
+	makePinger func(size int) pingerController
+	packetSize int
+	targets    []*stats.TargetStats
+	interval   time.Duration
+	timeout    time.Duration
+	portSpecs  []pinger.PortSpec
+	httpURLs   []string
+	// bind is the -S source address / -I interface pair the ICMP pinger is
+	// bound to; the port and HTTP checkers get the same one so a single mping
+	// invocation cannot split its probes across different egress paths.
+	bind         pinger.BindConfig
 	traceEnabled bool
 	mtrEnabled   bool
 	logCh        chan string
@@ -277,8 +281,8 @@ func (s *supervisor) startAll() error {
 	if s.cfg.mtrEnabled {
 		s.restartMTR()
 	}
-	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
-	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
+	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout, s.cfg.bind)
+	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout, s.cfg.bind)
 	s.state = stateRunning
 	if prev != nil && prev != next {
 		prev.Stop()
@@ -351,7 +355,7 @@ func (s *supervisor) restartPortChecker() {
 		s.portChecker.Stop()
 		s.portChecker.Wait()
 	}
-	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout)
+	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout, s.cfg.bind)
 }
 
 // restartHTTPChecker stops any existing HTTP checker and replaces it with a
@@ -361,7 +365,7 @@ func (s *supervisor) restartHTTPChecker() {
 		s.httpChecker.Stop()
 		s.httpChecker.Wait()
 	}
-	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout)
+	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout, s.cfg.bind)
 }
 
 func (s *supervisor) startPinger() error { return s.do(cmdStart) }

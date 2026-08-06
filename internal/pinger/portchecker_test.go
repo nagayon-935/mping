@@ -76,7 +76,7 @@ func TestNewPortChecker_InitializesPortResults(t *testing.T) {
 		{Port: 80, Protocol: "tcp"},
 		{Port: 443, Protocol: "tcp"},
 	}
-	pc := NewPortChecker(targets, specs, time.Second, time.Second)
+	pc := NewPortChecker(targets, specs, time.Second, time.Second, BindConfig{})
 
 	if pc == nil {
 		t.Fatal("NewPortChecker returned nil")
@@ -100,7 +100,7 @@ func TestNewPortChecker_InitializesPortResults(t *testing.T) {
 }
 
 func TestNewPortChecker_EmptySpecsAndTargets(t *testing.T) {
-	pc := NewPortChecker(nil, nil, time.Second, time.Second)
+	pc := NewPortChecker(nil, nil, time.Second, time.Second, BindConfig{})
 	if pc == nil {
 		t.Fatal("NewPortChecker returned nil")
 	}
@@ -111,7 +111,7 @@ func TestNewPortChecker_EmptySpecsAndTargets(t *testing.T) {
 func TestPortChecker_StartStop(t *testing.T) {
 	targets := []*stats.TargetStats{stats.NewTargetStats("host1")}
 	specs := []PortSpec{{Port: 9, Protocol: "tcp"}} // discard port, won't connect
-	pc := NewPortChecker(targets, specs, 10*time.Second, 10*time.Millisecond)
+	pc := NewPortChecker(targets, specs, 10*time.Second, 10*time.Millisecond, BindConfig{})
 
 	pc.Start()
 	// Stop should not block or panic
@@ -138,7 +138,7 @@ func TestPortChecker_Wait(t *testing.T) {
 		tgt.SetIP("127.0.0.1") // give check() a real address to dial, so loops do actual work
 	}
 	specs := []PortSpec{{Port: 9, Protocol: "tcp"}, {Port: 10, Protocol: "udp"}}
-	pc := NewPortChecker(targets, specs, 5*time.Millisecond, 10*time.Millisecond)
+	pc := NewPortChecker(targets, specs, 5*time.Millisecond, 10*time.Millisecond, BindConfig{})
 
 	pc.Start()
 	time.Sleep(20 * time.Millisecond) // let loops run at least once
@@ -195,7 +195,7 @@ func TestCheckTCP_Open(t *testing.T) {
 	}()
 
 	addr := ln.Addr().String()
-	status, rtt := checkTCP(context.Background(), addr, time.Second)
+	status, rtt := checkTCP(context.Background(), newBoundDialer("tcp", time.Second, BindConfig{}), addr)
 	if status != "Open" {
 		t.Errorf("checkTCP: got %q, want %q (rtt=%v)", status, "Open", rtt)
 	}
@@ -213,7 +213,7 @@ func TestCheckTCP_Closed(t *testing.T) {
 	addr := ln.Addr().String()
 	ln.Close()
 
-	status, _ := checkTCP(context.Background(), addr, time.Second)
+	status, _ := checkTCP(context.Background(), newBoundDialer("tcp", time.Second, BindConfig{}), addr)
 	if status != "Closed" && status != "Filtered" {
 		t.Errorf("checkTCP closed port: got %q, want Closed or Filtered", status)
 	}
@@ -221,7 +221,7 @@ func TestCheckTCP_Closed(t *testing.T) {
 
 func TestCheckTCP_Filtered(t *testing.T) {
 	// Use a non-routable address to trigger timeout
-	status, _ := checkTCP(context.Background(), "192.0.2.1:9", 50*time.Millisecond)
+	status, _ := checkTCP(context.Background(), newBoundDialer("tcp", 50*time.Millisecond, BindConfig{}), "192.0.2.1:9")
 	if status != "Filtered" {
 		t.Logf("checkTCP filtered: got %q (may vary in CI)", status)
 	}
@@ -231,7 +231,7 @@ func TestCheckTCP_Filtered(t *testing.T) {
 
 func TestCheckUDP_OpenFiltered(t *testing.T) {
 	// Non-routable address, UDP won't get ICMP unreachable → Open|Filtered
-	status, _ := checkUDP(context.Background(), "192.0.2.1:9", 50*time.Millisecond)
+	status, _ := checkUDP(context.Background(), newBoundDialer("udp", 50*time.Millisecond, BindConfig{}), "192.0.2.1:9", 50*time.Millisecond)
 	if status != "Open|Filtered" && status != "Error" {
 		t.Logf("checkUDP: got %q (may vary by environment)", status)
 	}
@@ -245,7 +245,7 @@ func TestCheckUDP_LocalhostOpen(t *testing.T) {
 	defer conn.Close()
 	addr := conn.LocalAddr().String()
 
-	status, _ := checkUDP(context.Background(), addr, 200*time.Millisecond)
+	status, _ := checkUDP(context.Background(), newBoundDialer("udp", 200*time.Millisecond, BindConfig{}), addr, 200*time.Millisecond)
 	// UDP server exists; likely Open|Filtered or Open depending on OS
 	if status == "Error" {
 		t.Logf("checkUDP local: got Error (OS may not allow UDP dial to self)")
@@ -255,7 +255,7 @@ func TestCheckUDP_LocalhostOpen(t *testing.T) {
 func TestCheckUDP_Closed(t *testing.T) {
 	// Pick a port that is unlikely to be listening
 	addr := "127.0.0.1:54321"
-	status, _ := checkUDP(context.Background(), addr, 50*time.Millisecond)
+	status, _ := checkUDP(context.Background(), newBoundDialer("udp", 50*time.Millisecond, BindConfig{}), addr, 50*time.Millisecond)
 	// On most OSs, this should return Closed (ECONNREFUSED) or Open|Filtered (timeout)
 	// If it returns Closed, we've increased coverage.
 	if status == "Closed" {
@@ -266,7 +266,7 @@ func TestCheckUDP_Closed(t *testing.T) {
 func TestCheckUDP_DialError(t *testing.T) {
 	// An out-of-range port makes net.DialTimeout fail deterministically,
 	// exercising the "Error" return path.
-	status, rtt := checkUDP(context.Background(), "127.0.0.1:99999", 50*time.Millisecond)
+	status, rtt := checkUDP(context.Background(), newBoundDialer("udp", 50*time.Millisecond, BindConfig{}), "127.0.0.1:99999", 50*time.Millisecond)
 	if status != "Error" {
 		t.Errorf("checkUDP with invalid port = %q, want Error", status)
 	}
@@ -321,7 +321,7 @@ func TestPortChecker_CheckWithIP(t *testing.T) {
 	result := &stats.PortCheckResult{Port: port, Protocol: "tcp", Status: "Checking..."}
 	tgt.PortResults = []*stats.PortCheckResult{result}
 
-	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Second, time.Second)
+	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Second, time.Second, BindConfig{})
 	pc.check(tgt, spec, result)
 
 	status := result.GetView().Status
@@ -337,7 +337,7 @@ func TestPortChecker_CheckSkipsEmptyIP(t *testing.T) {
 	result := &stats.PortCheckResult{Port: 80, Protocol: "tcp", Status: "Checking..."}
 	tgt.PortResults = []*stats.PortCheckResult{result}
 
-	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Second, time.Second)
+	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Second, time.Second, BindConfig{})
 	pc.check(tgt, spec, result)
 
 	// Status should remain unchanged since IP was empty
@@ -354,7 +354,7 @@ func TestPortChecker_CheckSkipsEmptyIP(t *testing.T) {
 func TestPortChecker_LoopWaitsForIP(t *testing.T) {
 	tgt := stats.NewTargetStats("delayed-ip")
 	spec := PortSpec{Port: 9, Protocol: "tcp"}
-	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Hour, 10*time.Millisecond)
+	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Hour, 10*time.Millisecond, BindConfig{})
 
 	pc.Start()
 	defer pc.Stop()
@@ -381,7 +381,7 @@ func TestPortChecker_LoopWaitsForIP(t *testing.T) {
 func TestPortChecker_LoopStopsWhileWaitingForIP(t *testing.T) {
 	tgt := stats.NewTargetStats("never-resolved")
 	spec := PortSpec{Port: 9, Protocol: "tcp"}
-	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Hour, 10*time.Millisecond)
+	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Hour, 10*time.Millisecond, BindConfig{})
 
 	pc.Start()
 	pc.Stop()

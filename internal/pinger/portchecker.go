@@ -47,14 +47,23 @@ type PortChecker struct {
 	results  [][]*stats.PortCheckResult
 	interval time.Duration
 	timeout  time.Duration
-	ctx      context.Context
-	cancel   context.CancelFunc
-	stopOnce sync.Once
-	wg       sync.WaitGroup
+	bind     BindConfig
+	// Per-protocol dialers built once from bind: net.Dialer.LocalAddr must be
+	// a *net.TCPAddr for tcp and a *net.UDPAddr for udp, so the two cannot
+	// share one dialer.
+	tcpDialer *net.Dialer
+	udpDialer *net.Dialer
+	ctx       context.Context
+	cancel    context.CancelFunc
+	stopOnce  sync.Once
+	wg        sync.WaitGroup
 }
 
-// NewPortChecker creates a PortChecker and initialises PortResults on each target.
-func NewPortChecker(targets []*stats.TargetStats, specs []PortSpec, interval, timeout time.Duration) *PortChecker {
+// NewPortChecker creates a PortChecker and initialises PortResults on each
+// target. bind carries the -S source address and -I interface name so port
+// checks leave the host by the same path as the ICMP probes; a zero BindConfig
+// leaves dialling exactly as it was before those flags were wired in.
+func NewPortChecker(targets []*stats.TargetStats, specs []PortSpec, interval, timeout time.Duration, bind BindConfig) *PortChecker {
 	results := make([][]*stats.PortCheckResult, len(targets))
 	for i, t := range targets {
 		results[i] = make([]*stats.PortCheckResult, len(specs))
@@ -65,15 +74,22 @@ func NewPortChecker(targets []*stats.TargetStats, specs []PortSpec, interval, ti
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &PortChecker{
-		targets:  targets,
-		specs:    specs,
-		results:  results,
-		interval: interval,
-		timeout:  timeout,
-		ctx:      ctx,
-		cancel:   cancel,
+		targets:   targets,
+		specs:     specs,
+		results:   results,
+		interval:  interval,
+		timeout:   timeout,
+		bind:      bind,
+		tcpDialer: newBoundDialer("tcp", timeout, bind),
+		udpDialer: newBoundDialer("udp", timeout, bind),
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 }
+
+// BindConfig returns the source/interface binding the checks are dialling
+// with.
+func (pc *PortChecker) BindConfig() BindConfig { return pc.bind }
 
 // Start launches one goroutine per (target, spec) pair.
 func (pc *PortChecker) Start() {
@@ -143,16 +159,15 @@ func (pc *PortChecker) check(t *stats.TargetStats, spec PortSpec, result *stats.
 	var rtt time.Duration
 	switch spec.Protocol {
 	case "tcp":
-		status, rtt = checkTCP(pc.ctx, addr, pc.timeout)
+		status, rtt = checkTCP(pc.ctx, pc.tcpDialer, addr)
 	case "udp":
-		status, rtt = checkUDP(pc.ctx, addr, pc.timeout)
+		status, rtt = checkUDP(pc.ctx, pc.udpDialer, addr, pc.timeout)
 	}
 	result.SetResult(status, rtt)
 }
 
-func checkTCP(ctx context.Context, addr string, timeout time.Duration) (string, time.Duration) {
+func checkTCP(ctx context.Context, dialer *net.Dialer, addr string) (string, time.Duration) {
 	start := time.Now()
-	dialer := &net.Dialer{Timeout: timeout}
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	rtt := time.Since(start)
 	if err != nil {
@@ -165,8 +180,7 @@ func checkTCP(ctx context.Context, addr string, timeout time.Duration) (string, 
 	return "Open", rtt
 }
 
-func checkUDP(ctx context.Context, addr string, timeout time.Duration) (string, time.Duration) {
-	dialer := &net.Dialer{Timeout: timeout}
+func checkUDP(ctx context.Context, dialer *net.Dialer, addr string, timeout time.Duration) (string, time.Duration) {
 	conn, err := dialer.DialContext(ctx, "udp", addr)
 	if err != nil {
 		return "Error", 0

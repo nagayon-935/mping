@@ -16,6 +16,7 @@ const maxRedirects = 10
 type HTTPChecker struct {
 	results  []*stats.HTTPCheckResult
 	interval time.Duration
+	bind     BindConfig
 	client   *http.Client
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -23,29 +24,44 @@ type HTTPChecker struct {
 	wg       sync.WaitGroup
 }
 
-// NewHTTPChecker creates an HTTPChecker for the given URLs.
-func NewHTTPChecker(urls []string, interval, timeout time.Duration) *HTTPChecker {
+// NewHTTPChecker creates an HTTPChecker for the given URLs. bind carries the
+// -S source address and -I interface name so HTTP checks leave the host by the
+// same path as the ICMP probes; a zero BindConfig leaves http.DefaultTransport
+// in place, exactly as before those flags were wired in.
+func NewHTTPChecker(urls []string, interval, timeout time.Duration, bind BindConfig) *HTTPChecker {
 	results := make([]*stats.HTTPCheckResult, len(urls))
 	for i, u := range urls {
 		results[i] = stats.NewHTTPCheckResult(u)
+	}
+	client := &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
+			if len(via) >= maxRedirects {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
+	}
+	// Assign only when a bound transport is actually needed: leaving Transport
+	// nil keeps http.DefaultTransport, whereas assigning a nil *http.Transport
+	// would store a non-nil interface holding a nil pointer.
+	if tr := newBoundTransport(timeout, bind); tr != nil {
+		client.Transport = tr
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &HTTPChecker{
 		results:  results,
 		interval: interval,
-		client: &http.Client{
-			Timeout: timeout,
-			CheckRedirect: func(_ *http.Request, via []*http.Request) error {
-				if len(via) >= maxRedirects {
-					return http.ErrUseLastResponse
-				}
-				return nil
-			},
-		},
-		ctx:    ctx,
-		cancel: cancel,
+		bind:     bind,
+		client:   client,
+		ctx:      ctx,
+		cancel:   cancel,
 	}
 }
+
+// BindConfig returns the source/interface binding the checks are dialling
+// with.
+func (hc *HTTPChecker) BindConfig() BindConfig { return hc.bind }
 
 // Results returns the per-URL check result slice (callers must not modify it).
 func (hc *HTTPChecker) Results() []*stats.HTTPCheckResult {

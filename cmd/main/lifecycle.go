@@ -125,6 +125,16 @@ func prepareRunEnv(cfg config, hosts []targetSpec, out, errOut io.Writer) (env r
 	return env, 0, true
 }
 
+// checkerBindConfig builds the source/interface binding for the port and HTTP
+// checkers. It deliberately mirrors what makePingerFactory feeds the ICMP
+// pinger — SetSource(bindIP) plus SetInterface(cfg.ifaceName) — including the
+// asymmetry that bindIP is resolved once at startup while ifaceName is re-read
+// from the (possibly reloaded) config, so all three check types always probe
+// over the same egress path.
+func checkerBindConfig(cfg config, bindIP string) pinger.BindConfig {
+	return pinger.BindConfig{Source: bindIP, Interface: cfg.ifaceName}
+}
+
 // buildTargetsForIteration creates TargetStats for hosts and tags each with
 // its display DNS server (used by the UI's DNS column).
 func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetStats {

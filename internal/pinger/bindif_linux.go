@@ -24,18 +24,22 @@ import (
 // falls back to the source-IP bind Pinger.Start already performs via
 // p.Source — the same non-fatal treatment as the pre-existing
 // ipv4.FlagTTL / ipv6.FlagHopLimit control-message setup in Start().
-func bindToInterface(c net.PacketConn, ifaceName string, _ bool) {
-	if ifaceName == "" {
-		return
-	}
-	sc, ok := c.(interface {
-		SyscallConn() (syscall.RawConn, error)
-	})
+func bindToInterface(c net.PacketConn, ifaceName string, isIPv6 bool) {
+	rawConn, ok := rawConnOf(c)
 	if !ok {
 		return
 	}
-	rawConn, err := sc.SyscallConn()
-	if err != nil {
+	bindRawConnToInterface(rawConn, ifaceName, isIPv6)
+}
+
+// bindRawConnToInterface is bindToInterface for a socket already reduced to
+// its syscall.RawConn — the form net.Dialer.Control hands us, used by the port
+// and HTTP checkers (see dialbind.go) so their TCP/UDP connections leave via
+// the same physical interface as the ICMP sockets above. As with
+// bindToInterface, SO_BINDTODEVICE is family-agnostic so isIPv6 is unused
+// here, and failures are deliberately non-fatal.
+func bindRawConnToInterface(rawConn syscall.RawConn, ifaceName string, _ bool) {
+	if ifaceName == "" || rawConn == nil {
 		return
 	}
 	_ = rawConn.Control(func(fd uintptr) {
