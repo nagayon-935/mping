@@ -21,6 +21,18 @@ import (
 	"github.com/spf13/pflag"
 )
 
+// hostEntries builds a []hostEntry from bare hostnames, for tests written
+// before hostsFileYAML.Hosts/groupYAML.Hosts gained per-target DSCP
+// overrides (hostEntry) and still want the old "just a list of strings"
+// shorthand.
+func hostEntries(hosts ...string) []hostEntry {
+	entries := make([]hostEntry, len(hosts))
+	for i, h := range hosts {
+		entries[i] = hostEntry{Host: h}
+	}
+	return entries
+}
+
 type fakePinger struct {
 	startErr             error
 	started              bool
@@ -230,7 +242,7 @@ func TestApplyDocToCfg_DurationYAMLApplied(t *testing.T) {
 		t.Fatalf("parseArgs: %v", err)
 	}
 	v := "5m"
-	_, _, gotCfg, err := applyDocToCfg(cfg, fs, hostsFileYAML{Hosts: []string{"example.com"}, Duration: &v})
+	_, _, gotCfg, err := applyDocToCfg(cfg, fs, hostsFileYAML{Hosts: hostEntries("example.com"), Duration: &v})
 	if err != nil {
 		t.Fatalf("applyDocToCfg: %v", err)
 	}
@@ -245,7 +257,7 @@ func TestApplyDocToCfg_DurationFlagOverridesYAML(t *testing.T) {
 		t.Fatalf("parseArgs: %v", err)
 	}
 	v := "5m"
-	_, _, gotCfg, err := applyDocToCfg(cfg, fs, hostsFileYAML{Hosts: []string{"example.com"}, Duration: &v})
+	_, _, gotCfg, err := applyDocToCfg(cfg, fs, hostsFileYAML{Hosts: hostEntries("example.com"), Duration: &v})
 	if err != nil {
 		t.Fatalf("applyDocToCfg: %v", err)
 	}
@@ -260,7 +272,7 @@ func TestApplyDocToCfg_DurationMalformedYAML(t *testing.T) {
 		t.Fatalf("parseArgs: %v", err)
 	}
 	v := "not-a-duration"
-	_, _, _, err = applyDocToCfg(cfg, fs, hostsFileYAML{Hosts: []string{"example.com"}, Duration: &v})
+	_, _, _, err = applyDocToCfg(cfg, fs, hostsFileYAML{Hosts: hostEntries("example.com"), Duration: &v})
 	if err == nil {
 		t.Fatal("expected error for malformed duration in YAML doc")
 	}
@@ -317,7 +329,7 @@ func TestParseHostsFileYAMLMapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseHostsFile: %v", err)
 	}
-	if len(got.Hosts) != 2 || got.Hosts[0] != "a" || got.Hosts[1] != "b" {
+	if len(got.Hosts) != 2 || got.Hosts[0].Host != "a" || got.Hosts[1].Host != "b" {
 		t.Fatalf("hosts: got %v", got.Hosts)
 	}
 }
@@ -510,6 +522,49 @@ func TestMergeHosts(t *testing.T) {
 	}
 	if len(got) != 3 {
 		t.Fatalf("hosts len: got %d", len(got))
+	}
+}
+
+// TestMergeHosts_PerTargetDSCP exercises the feature's primary use case end
+// to end through the real hosts-file pipeline: the same destination
+// monitored twice under two different DSCP markings, plus a global default
+// and a plain (no-override) host.
+func TestMergeHosts_PerTargetDSCP(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts.yaml")
+	yamlContent := `
+dscp: CS0
+hosts:
+  - host: 2001:db8::1
+    dscp: EF
+  - host: 2001:db8::1
+    dscp: DF
+  - plain.example.com
+`
+	if err := os.WriteFile(path, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	cfg := config{hostsFile: path}
+	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+
+	got, _, mergedCfg, err := mergeHosts(cfg, fs, nil)
+	if err != nil {
+		t.Fatalf("mergeHosts: %v", err)
+	}
+	if mergedCfg.dscp != "CS0" {
+		t.Fatalf("mergedCfg.dscp = %q, want %q", mergedCfg.dscp, "CS0")
+	}
+	if len(got) != 3 {
+		t.Fatalf("hosts len: got %d, want 3", len(got))
+	}
+	if got[0].Host != "2001:db8::1" || got[0].DSCP != "EF" {
+		t.Fatalf("got[0] = %+v, want Host=2001:db8::1 DSCP=EF", got[0])
+	}
+	if got[1].Host != "2001:db8::1" || got[1].DSCP != "DF" {
+		t.Fatalf("got[1] = %+v, want Host=2001:db8::1 DSCP=DF", got[1])
+	}
+	if got[2].Host != "plain.example.com" || got[2].DSCP != "" {
+		t.Fatalf("got[2] = %+v, want Host=plain.example.com DSCP=\"\"", got[2])
 	}
 }
 
@@ -1277,7 +1332,7 @@ func TestInitTargets(t *testing.T) {
 func TestValidateHostsDoc_Valid(t *testing.T) {
 	ms := func(v int) *int { return &v }
 	doc := hostsFileYAML{
-		Hosts:      []string{"a.com", "b.com"},
+		Hosts:      hostEntries("a.com", "b.com"),
 		IntervalMs: ms(500),
 		TimeoutMs:  ms(1000),
 		PacketSize: ms(56),
@@ -1289,7 +1344,7 @@ func TestValidateHostsDoc_Valid(t *testing.T) {
 }
 
 func TestValidateHostsDoc_EmptyHosts(t *testing.T) {
-	doc := hostsFileYAML{Hosts: []string{}}
+	doc := hostsFileYAML{Hosts: hostEntries()}
 	if err := validateHostsDoc(doc); err == nil {
 		t.Fatal("expected error for empty hosts")
 	}
@@ -1302,7 +1357,7 @@ func TestValidateHostsDoc_NilHosts(t *testing.T) {
 }
 
 func TestValidateHostsDoc_EmptyHostEntry(t *testing.T) {
-	doc := hostsFileYAML{Hosts: []string{"a.com", "  "}}
+	doc := hostsFileYAML{Hosts: hostEntries("a.com", "  ")}
 	if err := validateHostsDoc(doc); err == nil {
 		t.Fatal("expected error for blank host entry")
 	}
@@ -1310,7 +1365,7 @@ func TestValidateHostsDoc_EmptyHostEntry(t *testing.T) {
 
 func TestValidateHostsDoc_InvalidInterval(t *testing.T) {
 	v := 50 // below minimum 100
-	doc := hostsFileYAML{Hosts: []string{"a.com"}, IntervalMs: &v}
+	doc := hostsFileYAML{Hosts: hostEntries("a.com"), IntervalMs: &v}
 	if err := validateHostsDoc(doc); err == nil {
 		t.Fatal("expected error for interval=50")
 	}
@@ -1322,7 +1377,7 @@ func TestValidateHostsDoc_InvalidInterval(t *testing.T) {
 
 func TestValidateHostsDoc_InvalidTimeout(t *testing.T) {
 	v := 5 // below minimum 10
-	doc := hostsFileYAML{Hosts: []string{"a.com"}, TimeoutMs: &v}
+	doc := hostsFileYAML{Hosts: hostEntries("a.com"), TimeoutMs: &v}
 	if err := validateHostsDoc(doc); err == nil {
 		t.Fatal("expected error for timeout=5")
 	}
@@ -1330,7 +1385,7 @@ func TestValidateHostsDoc_InvalidTimeout(t *testing.T) {
 
 func TestValidateHostsDoc_InvalidSize(t *testing.T) {
 	v := 0 // below minimum 1
-	doc := hostsFileYAML{Hosts: []string{"a.com"}, PacketSize: &v}
+	doc := hostsFileYAML{Hosts: hostEntries("a.com"), PacketSize: &v}
 	if err := validateHostsDoc(doc); err == nil {
 		t.Fatal("expected error for size=0")
 	}
@@ -1338,7 +1393,7 @@ func TestValidateHostsDoc_InvalidSize(t *testing.T) {
 
 func TestValidateHostsDoc_NegativeCount(t *testing.T) {
 	v := -1
-	doc := hostsFileYAML{Hosts: []string{"a.com"}, Count: &v}
+	doc := hostsFileYAML{Hosts: hostEntries("a.com"), Count: &v}
 	if err := validateHostsDoc(doc); err == nil {
 		t.Fatal("expected error for count=-1")
 	}
@@ -1346,7 +1401,7 @@ func TestValidateHostsDoc_NegativeCount(t *testing.T) {
 
 func TestValidateHostsDoc_DurationValid(t *testing.T) {
 	v := "5m"
-	doc := hostsFileYAML{Hosts: []string{"a.com"}, Duration: &v}
+	doc := hostsFileYAML{Hosts: hostEntries("a.com"), Duration: &v}
 	if err := validateHostsDoc(doc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1354,7 +1409,7 @@ func TestValidateHostsDoc_DurationValid(t *testing.T) {
 
 func TestValidateHostsDoc_DurationMalformed(t *testing.T) {
 	v := "not-a-duration"
-	doc := hostsFileYAML{Hosts: []string{"a.com"}, Duration: &v}
+	doc := hostsFileYAML{Hosts: hostEntries("a.com"), Duration: &v}
 	if err := validateHostsDoc(doc); err == nil {
 		t.Fatal("expected error for malformed duration")
 	}
@@ -1362,7 +1417,7 @@ func TestValidateHostsDoc_DurationMalformed(t *testing.T) {
 
 func TestValidateHostsDoc_DurationNegative(t *testing.T) {
 	v := "-5s"
-	doc := hostsFileYAML{Hosts: []string{"a.com"}, Duration: &v}
+	doc := hostsFileYAML{Hosts: hostEntries("a.com"), Duration: &v}
 	if err := validateHostsDoc(doc); err == nil {
 		t.Fatal("expected error for negative duration")
 	}
@@ -1370,9 +1425,58 @@ func TestValidateHostsDoc_DurationNegative(t *testing.T) {
 
 func TestValidateHostsDoc_IPv4IPv6Conflict(t *testing.T) {
 	tr := true
-	doc := hostsFileYAML{Hosts: []string{"a.com"}, Ipv4Only: &tr, Ipv6Only: &tr}
+	doc := hostsFileYAML{Hosts: hostEntries("a.com"), Ipv4Only: &tr, Ipv6Only: &tr}
 	if err := validateHostsDoc(doc); err == nil {
 		t.Fatal("expected error for ipv4+ipv6 both true")
+	}
+}
+
+// ---- validateHostsDoc dscp validation ----
+
+func TestValidateHostsDoc_GlobalDSCPValid(t *testing.T) {
+	dscp := "EF"
+	doc := hostsFileYAML{Hosts: hostEntries("a.com"), DSCP: &dscp}
+	if err := validateHostsDoc(doc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateHostsDoc_GlobalDSCPInvalid(t *testing.T) {
+	dscp := "NOT-A-CODEPOINT"
+	doc := hostsFileYAML{Hosts: hostEntries("a.com"), DSCP: &dscp}
+	if err := validateHostsDoc(doc); err == nil {
+		t.Fatal("expected error for invalid global dscp")
+	}
+}
+
+func TestValidateHostsDoc_PerHostDSCPValid(t *testing.T) {
+	doc := hostsFileYAML{Hosts: []hostEntry{{Host: "a.com", DSCP: "AF41"}}}
+	if err := validateHostsDoc(doc); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateHostsDoc_PerHostDSCPInvalid(t *testing.T) {
+	doc := hostsFileYAML{Hosts: []hostEntry{{Host: "a.com", DSCP: "9999"}}}
+	err := validateHostsDoc(doc)
+	if err == nil {
+		t.Fatal("expected error for out-of-range per-host dscp")
+	}
+	if !strings.Contains(err.Error(), "hosts[0]") {
+		t.Fatalf("error should identify the offending entry: %v", err)
+	}
+}
+
+func TestValidateHostsDoc_GroupHostDSCPInvalid(t *testing.T) {
+	doc := hostsFileYAML{
+		Groups: []groupYAML{{Name: "DC1", Hosts: []hostEntry{{Host: "a.com", DSCP: "bogus"}}}},
+	}
+	err := validateHostsDoc(doc)
+	if err == nil {
+		t.Fatal("expected error for invalid group host dscp")
+	}
+	if !strings.Contains(err.Error(), `groups["DC1"][0]`) {
+		t.Fatalf("error should identify the offending group entry: %v", err)
 	}
 }
 
@@ -1628,7 +1732,7 @@ func TestOverlayThresholdsDoc_FlagOverridesYAML(t *testing.T) {
 func TestValidateHostsDoc_ThresholdsInvalid(t *testing.T) {
 	mi := func(v int) *int { return &v }
 	doc := hostsFileYAML{
-		Hosts: []string{"a.com"},
+		Hosts: hostEntries("a.com"),
 		Thresholds: &thresholdsYAML{
 			RTTWarn: mi(200), RTTCrit: mi(100), // warn >= crit
 		},
@@ -1642,7 +1746,7 @@ func TestValidateHostsDoc_ThresholdsValid(t *testing.T) {
 	mi := func(v int) *int { return &v }
 	mf := func(v float64) *float64 { return &v }
 	doc := hostsFileYAML{
-		Hosts: []string{"a.com"},
+		Hosts: hostEntries("a.com"),
 		Thresholds: &thresholdsYAML{
 			RTTWarn: mi(30), RTTCrit: mi(120),
 			LossWarn: mf(10), LossCrit: mf(70),
@@ -1659,7 +1763,7 @@ func TestValidateHostsDoc_GroupsOnly(t *testing.T) {
 	// groups: alone (no hosts:) should be valid
 	doc := hostsFileYAML{
 		Groups: []groupYAML{
-			{Name: "DC1", Hosts: []string{"192.168.1.1", "192.168.1.2"}},
+			{Name: "DC1", Hosts: hostEntries("192.168.1.1", "192.168.1.2")},
 		},
 	}
 	if err := validateHostsDoc(doc); err != nil {
@@ -1670,8 +1774,8 @@ func TestValidateHostsDoc_GroupsOnly(t *testing.T) {
 func TestValidateHostsDoc_GroupsAndHosts(t *testing.T) {
 	// mixing hosts: and groups: is allowed
 	doc := hostsFileYAML{
-		Hosts:  []string{"google.com"},
-		Groups: []groupYAML{{Name: "DC1", Hosts: []string{"192.168.1.1"}}},
+		Hosts:  hostEntries("google.com"),
+		Groups: []groupYAML{{Name: "DC1", Hosts: hostEntries("192.168.1.1")}},
 	}
 	if err := validateHostsDoc(doc); err != nil {
 		t.Errorf("mixed hosts+groups should be valid, got: %v", err)
@@ -1680,7 +1784,7 @@ func TestValidateHostsDoc_GroupsAndHosts(t *testing.T) {
 
 func TestValidateHostsDoc_EmptyGroupName(t *testing.T) {
 	doc := hostsFileYAML{
-		Groups: []groupYAML{{Name: "", Hosts: []string{"192.168.1.1"}}},
+		Groups: []groupYAML{{Name: "", Hosts: hostEntries("192.168.1.1")}},
 	}
 	if err := validateHostsDoc(doc); err == nil {
 		t.Fatal("expected error for empty group name")
@@ -1689,7 +1793,7 @@ func TestValidateHostsDoc_EmptyGroupName(t *testing.T) {
 
 func TestValidateHostsDoc_EmptyGroupHosts(t *testing.T) {
 	doc := hostsFileYAML{
-		Groups: []groupYAML{{Name: "DC1", Hosts: []string{}}},
+		Groups: []groupYAML{{Name: "DC1", Hosts: hostEntries()}},
 	}
 	if err := validateHostsDoc(doc); err == nil {
 		t.Fatal("expected error for group with no hosts")
@@ -1698,7 +1802,7 @@ func TestValidateHostsDoc_EmptyGroupHosts(t *testing.T) {
 
 func TestValidateHostsDoc_EmptyGroupHostEntry(t *testing.T) {
 	doc := hostsFileYAML{
-		Groups: []groupYAML{{Name: "DC1", Hosts: []string{"192.168.1.1", "  "}}},
+		Groups: []groupYAML{{Name: "DC1", Hosts: hostEntries("192.168.1.1", "  ")}},
 	}
 	if err := validateHostsDoc(doc); err == nil {
 		t.Fatal("expected error for blank host entry in group")

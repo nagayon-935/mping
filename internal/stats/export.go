@@ -11,22 +11,27 @@ type ExportSnapshot struct {
 
 // TargetSummary is a JSON-serialisable summary for a single ping target.
 type TargetSummary struct {
-	Host             string        `json:"host"`
-	IP               string        `json:"ip"`
-	ASN              string        `json:"asn,omitempty"`
-	Country          string        `json:"country,omitempty"`
-	Org              string        `json:"org,omitempty"`
-	PTR              string        `json:"ptr,omitempty"`
-	Sent             int           `json:"sent"`
-	Recv             int           `json:"recv"`
-	Loss             int           `json:"loss"`
-	LossRatePct      float64       `json:"loss_rate_pct"`
-	MinRTTMs         float64       `json:"min_rtt_ms"`
-	AvgRTTMs         float64       `json:"avg_rtt_ms"`
-	MaxRTTMs         float64       `json:"max_rtt_ms"`
-	LastRTTMs        float64       `json:"last_rtt_ms"`
-	JitterMs         float64       `json:"jitter_ms"`
-	LastTTL          int           `json:"last_ttl"`
+	Host        string  `json:"host"`
+	IP          string  `json:"ip"`
+	ASN         string  `json:"asn,omitempty"`
+	Country     string  `json:"country,omitempty"`
+	Org         string  `json:"org,omitempty"`
+	PTR         string  `json:"ptr,omitempty"`
+	Sent        int     `json:"sent"`
+	Recv        int     `json:"recv"`
+	Loss        int     `json:"loss"`
+	LossRatePct float64 `json:"loss_rate_pct"`
+	MinRTTMs    float64 `json:"min_rtt_ms"`
+	AvgRTTMs    float64 `json:"avg_rtt_ms"`
+	MaxRTTMs    float64 `json:"max_rtt_ms"`
+	LastRTTMs   float64 `json:"last_rtt_ms"`
+	JitterMs    float64 `json:"jitter_ms"`
+	LastTTL     int     `json:"last_ttl"`
+	// LastDSCP is the TOS (IPv4) / TrafficClass (IPv6) byte observed on the
+	// most recent reply's own IP header (see stats.TargetStats.LastDSCP).
+	// Always 0 for IPv4 targets: x/net's ipv4.ControlMessage has no TOS
+	// field, so IPv4 has no receive-side DSCP observation at all.
+	LastDSCP         int           `json:"last_dscp"`
 	LastError        string        `json:"last_error,omitempty"`
 	LastLossTime     *time.Time    `json:"last_loss_time,omitempty"`
 	TraceHops        []string      `json:"trace_hops,omitempty"`
@@ -157,6 +162,7 @@ func BuildSnapshot(targets []*TargetStats, httpResults []*HTTPCheckResult) Expor
 			LastRTTMs:        durationMs(v.LastRTT),
 			JitterMs:         durationMs(v.Jitter),
 			LastTTL:          v.LastTTL,
+			LastDSCP:         v.LastDSCP,
 			LastError:        v.LastError,
 			LastLossTime:     lastLossTime,
 			TraceHops:        traceHops,

@@ -35,7 +35,7 @@ func newBenchTableRenderer(tb testing.TB, targetCount int) *tableRenderer {
 	errorView := tview.NewTextView()
 	vs := newViewState(errorView)
 
-	return newTableRenderer(targets, "10.0.0.1", "", 56, true, false, nil, table, tablePane, nil, vs)
+	return newTableRenderer(targets, "10.0.0.1", "", 56, true, false, false, nil, table, tablePane, nil, vs)
 }
 
 // BenchmarkCalcColumnWidths documents the per-tick cost of recomputing

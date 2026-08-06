@@ -8,6 +8,12 @@ package main
 type targetSpec struct {
 	Host     string
 	PinnedIP string
+	// DSCP is this target's raw per-target dscp: override (a name like
+	// "EF" or a bare number), sourced from a hosts-file mapping entry
+	// (hostEntry.DSCP). "" means no override — the target falls back to
+	// config.dscp, mping's global default. Parsed lazily by
+	// buildPingerOptions, same rationale as config.dscp.
+	DSCP string
 }
 
 // resolveAddr returns the address DNS/dial resolution should use: the

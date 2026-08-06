@@ -20,6 +20,11 @@ import (
 
 type fakePacketConn struct {
 	readQueue []readResult
+
+	// tosCalls records every SetTOS argument, so tests can assert the
+	// global DSCP Start() derives from Pinger.DSCP was actually armed on
+	// the socket.
+	tosCalls []int
 }
 
 type readResult struct {
@@ -55,6 +60,11 @@ func (f *fakePacketConn) SetControlMessage(cf ipv4.ControlFlags, on bool) error 
 	return nil
 }
 
+func (f *fakePacketConn) SetTOS(tos int) error {
+	f.tosCalls = append(f.tosCalls, tos)
+	return nil
+}
+
 type fakeErrPacketConn struct {
 	err error
 }
@@ -72,6 +82,7 @@ func (f *fakeErrPacketConn) Close() error                      { return nil }
 func (f *fakeErrPacketConn) SetControlMessage(cf ipv4.ControlFlags, on bool) error {
 	return nil
 }
+func (f *fakeErrPacketConn) SetTOS(tos int) error { return nil }
 
 type fakeNetPacketConn struct{}
 
@@ -190,6 +201,15 @@ func buildInnerEchoDataV4(id, seq int) []byte {
 
 type fakePacketConnV6 struct {
 	readQueue []readResultV6
+
+	// tosCalls records every SetTrafficClass argument (see
+	// fakePacketConn.tosCalls).
+	tosCalls []int
+
+	// writeCMs records every ControlMessage passed to WriteTo (nil entries
+	// included), so tests can assert a per-target DSCP override reached the
+	// per-packet write path.
+	writeCMs []*ipv6.ControlMessage
 }
 
 type readResultV6 struct {
@@ -210,6 +230,7 @@ func (f *fakePacketConnV6) ReadFrom(b []byte) (int, *ipv6.ControlMessage, net.Ad
 }
 
 func (f *fakePacketConnV6) WriteTo(b []byte, cm *ipv6.ControlMessage, dst net.Addr) (int, error) {
+	f.writeCMs = append(f.writeCMs, cm)
 	return len(b), nil
 }
 
@@ -226,6 +247,11 @@ func (f *fakePacketConnV6) SetControlMessage(cf ipv6.ControlFlags, on bool) erro
 }
 
 func (f *fakePacketConnV6) SetICMPFilter(filt *ipv6.ICMPFilter) error {
+	return nil
+}
+
+func (f *fakePacketConnV6) SetTrafficClass(tc int) error {
+	f.tosCalls = append(f.tosCalls, tc)
 	return nil
 }
 
@@ -1706,7 +1732,7 @@ func TestGetWriteFunc(t *testing.T) {
 	t.Run("IPv4 with conn", func(t *testing.T) {
 		p := NewPinger(nil)
 		p.connV4 = &fakePacketConn{}
-		msgType, writeFunc, errStr := p.getWriteFunc(&net.IPAddr{IP: net.IPv4(8, 8, 8, 8)})
+		msgType, writeFunc, errStr := p.getWriteFunc(&net.IPAddr{IP: net.IPv4(8, 8, 8, 8)}, dscpUnset, false)
 		if writeFunc == nil {
 			t.Fatal("expected non-nil writeFunc")
 		}
@@ -1720,7 +1746,7 @@ func TestGetWriteFunc(t *testing.T) {
 
 	t.Run("IPv4 without conn", func(t *testing.T) {
 		p := NewPinger(nil)
-		_, writeFunc, errStr := p.getWriteFunc(&net.IPAddr{IP: net.IPv4(8, 8, 8, 8)})
+		_, writeFunc, errStr := p.getWriteFunc(&net.IPAddr{IP: net.IPv4(8, 8, 8, 8)}, dscpUnset, false)
 		if writeFunc != nil {
 			t.Fatal("expected nil writeFunc")
 		}
@@ -1732,7 +1758,7 @@ func TestGetWriteFunc(t *testing.T) {
 	t.Run("IPv6 with conn", func(t *testing.T) {
 		p := NewPinger(nil)
 		p.connV6 = &fakePacketConnV6{}
-		msgType, writeFunc, errStr := p.getWriteFunc(&net.IPAddr{IP: net.ParseIP("2001:db8::1")})
+		msgType, writeFunc, errStr := p.getWriteFunc(&net.IPAddr{IP: net.ParseIP("2001:db8::1")}, dscpUnset, false)
 		if writeFunc == nil {
 			t.Fatal("expected non-nil writeFunc")
 		}
@@ -1746,7 +1772,7 @@ func TestGetWriteFunc(t *testing.T) {
 
 	t.Run("IPv6 without conn", func(t *testing.T) {
 		p := NewPinger(nil)
-		_, writeFunc, errStr := p.getWriteFunc(&net.IPAddr{IP: net.ParseIP("2001:db8::1")})
+		_, writeFunc, errStr := p.getWriteFunc(&net.IPAddr{IP: net.ParseIP("2001:db8::1")}, dscpUnset, false)
 		if writeFunc != nil {
 			t.Fatal("expected nil writeFunc")
 		}
@@ -1897,12 +1923,18 @@ func TestHandleEchoReply(t *testing.T) {
 		msg := &icmp.Message{
 			Body: &icmp.Echo{ID: id, Seq: 5},
 		}
-		p.handleEchoReply(msg, 64)
+		// 184 (0xB8) is the EF DSCP codepoint's TOS byte, standing in for a
+		// value the receiver's ControlMessage carried off the reply's IP
+		// header (see runReceiverV6's cm.TrafficClass extraction).
+		p.handleEchoReply(msg, 64, 184)
 
 		select {
 		case reply := <-ch:
 			if reply.TTL != 64 || reply.Seq != 5 {
 				t.Fatalf("reply: TTL=%d Seq=%d, want TTL=64 Seq=5", reply.TTL, reply.Seq)
+			}
+			if reply.DSCP != 184 {
+				t.Fatalf("reply.DSCP = %d, want 184 (observed DSCP must reach the target via Reply)", reply.DSCP)
 			}
 		default:
 			t.Fatal("expected reply in channel")
@@ -1915,7 +1947,7 @@ func TestHandleEchoReply(t *testing.T) {
 			Body: &icmp.Echo{ID: 9999, Seq: 1},
 		}
 		// Should not panic
-		p.handleEchoReply(msg, 64)
+		p.handleEchoReply(msg, 64, 0)
 	})
 
 	t.Run("non-echo body", func(t *testing.T) {
@@ -1924,7 +1956,7 @@ func TestHandleEchoReply(t *testing.T) {
 			Body: &icmp.DstUnreach{Data: []byte("test")},
 		}
 		// Should not panic
-		p.handleEchoReply(msg, 64)
+		p.handleEchoReply(msg, 64, 0)
 	})
 }
 
@@ -2321,7 +2353,7 @@ func TestDiscoverMaxPayload_LogfFailNoBottleneck(t *testing.T) {
 func TestGetWriteFunc_IPv6Lambda(t *testing.T) {
 	p := NewPinger(nil)
 	p.connV6 = &fakePacketConnV6{}
-	_, writeFunc, errStr := p.getWriteFunc(&net.IPAddr{IP: net.ParseIP("2001:db8::1")})
+	_, writeFunc, errStr := p.getWriteFunc(&net.IPAddr{IP: net.ParseIP("2001:db8::1")}, dscpUnset, false)
 	if writeFunc == nil {
 		t.Fatal("expected non-nil writeFunc for IPv6")
 	}
@@ -2797,6 +2829,7 @@ func (f *fakeErrOnReadPacketConn) Close() error                      { return ni
 func (f *fakeErrOnReadPacketConn) SetControlMessage(cf ipv4.ControlFlags, on bool) error {
 	return nil
 }
+func (f *fakeErrOnReadPacketConn) SetTOS(tos int) error { return nil }
 
 func TestRunReceiverV4NonTimeoutError(t *testing.T) {
 	p := NewPingerWithOptions(nil, Options{})
@@ -2840,6 +2873,7 @@ func (f *fakeShortDataPacketConn) Close() error                      { return ni
 func (f *fakeShortDataPacketConn) SetControlMessage(cf ipv4.ControlFlags, on bool) error {
 	return nil
 }
+func (f *fakeShortDataPacketConn) SetTOS(tos int) error { return nil }
 
 // TestRunReceiverV4FallbackParseShortData exercises the fallbackParse branch
 // (ParseMessage error path) when the packet is too short to fallback successfully.

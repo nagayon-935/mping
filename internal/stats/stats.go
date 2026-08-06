@@ -93,8 +93,15 @@ type TargetStats struct {
 	Loss             int
 	LastRTT          time.Duration
 	LastTTL          int
-	LastLossTime     time.Time
-	LastError        string
+	// LastDSCP is the TOS (IPv4) / TrafficClass (IPv6) byte observed on the
+	// most recent successful reply's own IP header — i.e. what DSCP marking
+	// actually arrived, after any re-marking or bleaching along the return
+	// path. Zero both as the pre-first-reply default and when the platform
+	// didn't supply a control message; same ambiguity as LastTTL's zero
+	// value, and for the same reason (see pinger.Reply.DSCP).
+	LastDSCP     int
+	LastLossTime time.Time
+	LastError    string
 
 	// RTT statistics and history (ring buffer for Sparkline).
 	rtt rttAccumulator
@@ -205,6 +212,7 @@ type TargetView struct {
 	Jitter           time.Duration // From RFC 1889 state
 	History          []time.Duration
 	LastTTL          int
+	LastDSCP         int
 	LastLossTime     time.Time
 	LastError        string
 }
@@ -272,6 +280,7 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 		Jitter:           time.Duration(t.jitter),
 		History:          histCopy,
 		LastTTL:          t.LastTTL,
+		LastDSCP:         t.LastDSCP,
 		LastLossTime:     t.LastLossTime,
 		LastError:        t.LastError,
 	}
@@ -402,6 +411,17 @@ func (t *TargetStats) OnSuccess(rtt time.Duration, ttl int) {
 	t.LastError = ""
 }
 
+// SetLastDSCP records the DSCP-derived TOS/TrafficClass byte observed on the
+// most recent successful reply. Called separately from OnSuccess (rather
+// than as an extra OnSuccess parameter) to avoid touching OnSuccess's
+// existing call sites across cmd/main and internal/ui's test suites.
+func (t *TargetStats) SetLastDSCP(dscp int) {
+	defer bumpGeneration()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.LastDSCP = dscp
+}
+
 func (t *TargetStats) OnFailure(reason string) {
 	defer bumpGeneration()
 	t.mu.Lock()
@@ -421,6 +441,7 @@ func (t *TargetStats) Reset() {
 	t.Loss = 0
 	t.LastRTT = 0
 	t.LastTTL = 0
+	t.LastDSCP = 0
 	t.LastLossTime = time.Time{}
 	t.LastError = ""
 	t.rtt = rttAccumulator{}
