@@ -2180,6 +2180,63 @@ func TestPrintExitSummary_StdDev(t *testing.T) {
 	}
 }
 
+// TestPrintExitSummary_Duplicates pins the "+N duplicates" segment (mirrors
+// ping.c's summary line) and that it's omitted entirely when there are none
+// (already covered by TestPrintExitSummary_WithRecv having zero dups).
+func TestPrintExitSummary_Duplicates(t *testing.T) {
+	tgt := stats.NewTargetStats("example.com")
+	tgt.SetIP("1.2.3.4")
+	tgt.IncSent()
+	tgt.OnSuccess(10*time.Millisecond, 64)
+	tgt.OnDuplicate()
+	tgt.OnDuplicate()
+
+	var out bytes.Buffer
+	printExitSummary(&out, []*stats.TargetStats{tgt})
+	s := out.String()
+	if !strings.Contains(s, "+2 duplicates") {
+		t.Errorf("missing duplicates segment in summary: %q", s)
+	}
+}
+
+// TestPrintExitSummary_LateReplies pins the "N packets out of wait time"
+// segment (mirrors ping.c's -W/nrcvtimeout summary line) and that it's
+// omitted when there are none.
+func TestPrintExitSummary_LateReplies(t *testing.T) {
+	tgt := stats.NewTargetStats("example.com")
+	tgt.SetIP("1.2.3.4")
+	tgt.IncSent()
+	tgt.OnFailure("Timeout")
+	tgt.OnLateReply()
+
+	var out bytes.Buffer
+	printExitSummary(&out, []*stats.TargetStats{tgt})
+	s := out.String()
+	if !strings.Contains(s, "1 packets out of wait time") {
+		t.Errorf("missing late-reply segment in summary: %q", s)
+	}
+}
+
+// TestPrintExitSummary_NoDuplicatesOrLateReplies pins that a run with
+// neither prints exactly as it did before this feature existed -- no stray
+// ", +0 duplicates" or ", 0 packets out of wait time" segments.
+func TestPrintExitSummary_NoDuplicatesOrLateReplies(t *testing.T) {
+	tgt := stats.NewTargetStats("example.com")
+	tgt.SetIP("1.2.3.4")
+	tgt.IncSent()
+	tgt.OnSuccess(10*time.Millisecond, 64)
+
+	var out bytes.Buffer
+	printExitSummary(&out, []*stats.TargetStats{tgt})
+	s := out.String()
+	if strings.Contains(s, "duplicates") {
+		t.Errorf("unexpected duplicates segment in summary: %q", s)
+	}
+	if strings.Contains(s, "out of wait time") {
+		t.Errorf("unexpected late-reply segment in summary: %q", s)
+	}
+}
+
 func TestNewCustomResolver(t *testing.T) {
 	r := newCustomResolver("8.8.8.8")
 	if r == nil {

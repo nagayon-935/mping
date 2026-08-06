@@ -25,6 +25,8 @@ func TestGeneration_AdvancesOnMutation(t *testing.T) {
 	mustAdvance("IncSent", func() { tgt.IncSent() })
 	mustAdvance("OnSuccess", func() { tgt.OnSuccess(10*time.Millisecond, 64) })
 	mustAdvance("OnFailure", func() { tgt.OnFailure("Timeout") })
+	mustAdvance("OnDuplicate", func() { tgt.OnDuplicate() })
+	mustAdvance("OnLateReply", func() { tgt.OnLateReply() })
 	mustAdvance("SetIP", func() { tgt.SetIP("1.1.1.1") })
 	mustAdvance("SetASNInfo", func() { tgt.SetASNInfo("AS15169", "US", "Google LLC") })
 	mustAdvance("SetDNSServer", func() { tgt.SetDNSServer("8.8.8.8") })

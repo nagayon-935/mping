@@ -1018,8 +1018,18 @@ func printExitSummary(out io.Writer, targets []*stats.TargetStats) {
 		if v.Sent > 0 {
 			lossRate = (float64(v.Loss) / float64(v.Sent)) * 100
 		}
-		fmt.Fprintf(out, "%s (%s): %d packets transmitted, %d received, %.1f%% packet loss\n",
-			v.Host, v.IP, v.Sent, v.Recv, lossRate)
+		fmt.Fprintf(out, "%s (%s): %d packets transmitted, %d received", v.Host, v.IP, v.Sent, v.Recv)
+		// Mirrors ping.c's "+N duplicates" / "N packets out of wait time":
+		// both are omitted when zero, so a run with neither dups nor late
+		// arrivals prints exactly as it did before this feature existed.
+		if v.Duplicates > 0 {
+			fmt.Fprintf(out, ", +%d duplicates", v.Duplicates)
+		}
+		fmt.Fprintf(out, ", %.1f%% packet loss", lossRate)
+		if v.LateReplies > 0 {
+			fmt.Fprintf(out, ", %d packets out of wait time", v.LateReplies)
+		}
+		fmt.Fprintln(out)
 		if v.Recv > 0 {
 			fmt.Fprintf(out, "rtt min/avg/max/stddev = %.3f/%.3f/%.3f/%.3f ms\n",
 				float64(v.MinRTT.Microseconds())/1000.0,

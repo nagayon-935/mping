@@ -11,15 +11,21 @@ type ExportSnapshot struct {
 
 // TargetSummary is a JSON-serialisable summary for a single ping target.
 type TargetSummary struct {
-	Host        string  `json:"host"`
-	IP          string  `json:"ip"`
-	ASN         string  `json:"asn,omitempty"`
-	Country     string  `json:"country,omitempty"`
-	Org         string  `json:"org,omitempty"`
-	PTR         string  `json:"ptr,omitempty"`
-	Sent        int     `json:"sent"`
-	Recv        int     `json:"recv"`
-	Loss        int     `json:"loss"`
+	Host    string `json:"host"`
+	IP      string `json:"ip"`
+	ASN     string `json:"asn,omitempty"`
+	Country string `json:"country,omitempty"`
+	Org     string `json:"org,omitempty"`
+	PTR     string `json:"ptr,omitempty"`
+	Sent    int    `json:"sent"`
+	Recv    int    `json:"recv"`
+	Loss    int    `json:"loss"`
+	// Duplicates and LateReplies are omitempty since the overwhelming
+	// majority of runs never see either; see stats.TargetStats' fields of
+	// the same name for what each counts and why neither is folded into
+	// Recv or Loss.
+	Duplicates  int     `json:"duplicates,omitempty"`
+	LateReplies int     `json:"late_replies,omitempty"`
 	LossRatePct float64 `json:"loss_rate_pct"`
 	MinRTTMs    float64 `json:"min_rtt_ms"`
 	AvgRTTMs    float64 `json:"avg_rtt_ms"`
@@ -155,6 +161,8 @@ func BuildSnapshot(targets []*TargetStats, httpResults []*HTTPCheckResult) Expor
 			Sent:             v.Sent,
 			Recv:             v.Recv,
 			Loss:             v.Loss,
+			Duplicates:       v.Duplicates,
+			LateReplies:      v.LateReplies,
 			LossRatePct:      lossRatePct,
 			MinRTTMs:         durationMs(v.MinRTT),
 			AvgRTTMs:         durationMs(v.AvgRTT),
