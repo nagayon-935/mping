@@ -168,13 +168,19 @@ func TestRttAccumulator_StdDev_IgnoresNonPositiveRTT(t *testing.T) {
 // avg*avg, the naive formula subtracts two nearly-equal float64 values whose
 // individual rounding error swamps the true (small) difference, so the
 // result can go negative and sqrt() returns NaN. This dataset was found by
-// brute-force search over small integer-nanosecond jitter around a 1s base.
+// brute-force search over small integer-nanosecond jitter around a 1s base,
+// filtered to land the naive variance comfortably below zero (rather than
+// only a few ULP past it) on both amd64 and arm64 — an earlier dataset here
+// sat within the ~1e18-magnitude subtraction's rounding-noise floor, so it
+// went negative on arm64 but landed on exactly 0.0 on amd64, making the
+// `naiveVari < 0` assertion below architecture-dependent (see CI: it passed
+// on macOS/arm64 and failed on Linux/amd64 for that reason).
 //
-// The true population variance here is 17 ns^2 (stddev = sqrt(17) ≈
-// 4.1231 ns): offsets from 1e9 ns are {-5,-3,-5,0,2,5,5,5}, mean offset 0.5,
-// sum of squared deviations 136, 136/8 = 17.
+// The true population variance here is 1.359375 ns^2 (stddev ≈ 1.1659 ns):
+// offsets from 1e9 ns are {7,10,8,10,10,8,10,8}, mean offset 8.875, sum of
+// squared deviations 10.875, 10.875/8 = 1.359375.
 func TestRttAccumulator_StdDev_NaiveFormulaWouldOverflowToNaN(t *testing.T) {
-	offsets := []int64{-5, -3, -5, 0, 2, 5, 5, 5}
+	offsets := []int64{7, 10, 8, 10, 10, 8, 10, 8}
 	const base = int64(time.Second) // 1_000_000_000 ns
 
 	// Reproduce ping.c's naive formula directly to confirm it fails here.
@@ -204,8 +210,8 @@ func TestRttAccumulator_StdDev_NaiveFormulaWouldOverflowToNaN(t *testing.T) {
 	if got <= 0 {
 		t.Fatalf("stddev() = %v, want a small positive duration (naive formula would have been NaN)", got)
 	}
-	// sqrt(17) ≈ 4.1231ns; time.Duration truncates to whole nanoseconds.
-	want := 4 * time.Nanosecond
+	// sqrt(1.359375) ≈ 1.1659ns; time.Duration truncates to whole nanoseconds.
+	want := 1 * time.Nanosecond
 	if got != want {
 		t.Errorf("stddev() = %v, want %v", got, want)
 	}
