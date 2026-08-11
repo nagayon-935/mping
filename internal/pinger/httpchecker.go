@@ -12,6 +12,20 @@ import (
 
 const maxRedirects = 10
 
+// maxDrainBytes caps how much of a response body the checker reads. The body
+// is drained only so the connection can go back into the keep-alive pool —
+// a health check has no use for the content — and client.Timeout bounds how
+// long an oversized body takes to read but not how much of it crosses the
+// wire.
+const maxDrainBytes = 64 << 10
+
+// drainBody reads and discards up to maxDrainBytes so the connection can be
+// reused. A body past the cap is left unread, which costs that one
+// connection instead of the rest of the transfer.
+func drainBody(body io.Reader) {
+	_, _ = io.CopyN(io.Discard, body, maxDrainBytes)
+}
+
 // HTTPChecker runs HTTP(S) GET health checks for a set of URLs.
 type HTTPChecker struct {
 	results  []*stats.HTTPCheckResult
@@ -114,7 +128,7 @@ func (hc *HTTPChecker) check(r *stats.HTTPCheckResult) {
 		r.SetResult(0, rtt, err)
 		return
 	}
-	_, _ = io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	defer resp.Body.Close()
+	drainBody(resp.Body)
 	r.SetResult(resp.StatusCode, rtt, nil)
 }

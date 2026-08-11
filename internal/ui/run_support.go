@@ -27,6 +27,24 @@ func shouldRedraw(gen, lastGen uint64, sinceLastRedraw time.Duration) bool {
 	return gen != lastGen || sinceLastRedraw >= redrawFloor
 }
 
+// refreshTickInterval maps a ping interval to the refresh loop's tick
+// period. Half the ping interval keeps the table in step with arriving
+// samples, but the tick is also the hard upper bound on redraw latency —
+// shouldRedraw can only suppress a redraw, never bring one forward — so it
+// is capped at redrawFloor, otherwise a long ping interval would silently
+// stretch that floor (a 10s interval used to mean a 5s tick, five times the
+// floor the graph's auto-scale shrink relies on). Intervals below
+// minUIRefresh fall back to a fixed fast rate instead of halving further.
+func refreshTickInterval(interval time.Duration) time.Duration {
+	if interval < minUIRefresh {
+		return fastUIRefresh
+	}
+	if tick := interval / 2; tick < redrawFloor {
+		return tick
+	}
+	return redrawFloor
+}
+
 // wireHostInputs sets the Enter/Escape behavior for the add-host and
 // delete-host input fields: Enter invokes the corresponding callback (if
 // non-nil and the field isn't empty) and logs any error, Escape clears the
@@ -93,10 +111,7 @@ func startRefreshLoop(
 	closeAppStop func(), appStop chan struct{},
 ) {
 	go func() {
-		ticker := time.NewTicker(interval / 2)
-		if interval < minUIRefresh {
-			ticker.Reset(fastUIRefresh)
-		}
+		ticker := time.NewTicker(refreshTickInterval(interval))
 		defer ticker.Stop()
 
 		// lastGen/lastRedraw gate redraws to ticks where something actually
@@ -110,11 +125,7 @@ func startRefreshLoop(
 			select {
 			case newInterval := <-updateTickerCh:
 				ticker.Stop()
-				if newInterval < minUIRefresh {
-					ticker = time.NewTicker(fastUIRefresh)
-				} else {
-					ticker = time.NewTicker(newInterval / 2)
-				}
+				ticker = time.NewTicker(refreshTickInterval(newInterval))
 			case <-ticker.C:
 				now := time.Now()
 				gen := stats.Generation()

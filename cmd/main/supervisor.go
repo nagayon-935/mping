@@ -328,13 +328,14 @@ func (s *supervisor) tearDownAll() {
 	}
 }
 
-// restartMTR replaces the MTR engine, resetting per-target stats first.
-// The 'R' key handler also calls t.Reset() on every target; that duplication
-// predates this refactor and is preserved deliberately.
+// restartMTR replaces the MTR engine and nothing else. It deliberately does
+// not reset per-target stats: TargetStats.Reset clears the ping counters
+// too, and clearing those is the 'R' key's job — the key handler already
+// resets every target before calling in here. Doing it a second time from
+// this side also leaked into startAll, which reaches restartMTR on every
+// (re)start, so a restart used to wipe the ping counters with --mtr on and
+// keep them with --mtr off.
 func (s *supervisor) restartMTR() {
-	for _, t := range s.cfg.targets {
-		t.Reset()
-	}
 	if s.mtrEngine != nil {
 		s.mtrEngine.Stop()
 		s.mtrEngine = nil
