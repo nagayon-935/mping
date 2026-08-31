@@ -20,10 +20,14 @@ const maxRedirects = 10
 const maxDrainBytes = 64 << 10
 
 // drainBody reads and discards up to maxDrainBytes so the connection can be
-// reused. A body past the cap is left unread, which costs that one
-// connection instead of the rest of the transfer.
+// reused. The limit is one byte past the cap on purpose: io.CopyN stops at
+// its limit without ever reading beyond it, so asking for exactly
+// maxDrainBytes would leave a maxDrainBytes-sized body one read short of
+// EOF — net/http would treat it as unfinished and drop the connection, the
+// very cost this helper exists to avoid. A body past the cap is left unread,
+// which costs that one connection instead of the rest of the transfer.
 func drainBody(body io.Reader) {
-	_, _ = io.CopyN(io.Discard, body, maxDrainBytes)
+	_, _ = io.CopyN(io.Discard, body, maxDrainBytes+1)
 }
 
 // HTTPChecker runs HTTP(S) GET health checks for a set of URLs.

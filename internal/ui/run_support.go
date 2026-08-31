@@ -39,10 +39,7 @@ func refreshTickInterval(interval time.Duration) time.Duration {
 	if interval < minUIRefresh {
 		return fastUIRefresh
 	}
-	if tick := interval / 2; tick < redrawFloor {
-		return tick
-	}
-	return redrawFloor
+	return min(interval/2, redrawFloor)
 }
 
 // wireHostInputs sets the Enter/Escape behavior for the add-host and
@@ -124,8 +121,7 @@ func startRefreshLoop(
 		for {
 			select {
 			case newInterval := <-updateTickerCh:
-				ticker.Stop()
-				ticker = time.NewTicker(refreshTickInterval(newInterval))
+				ticker.Reset(refreshTickInterval(newInterval))
 			case <-ticker.C:
 				now := time.Now()
 				gen := stats.Generation()

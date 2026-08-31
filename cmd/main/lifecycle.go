@@ -45,6 +45,10 @@ func parseAndLoadHosts(args []string, out, errOut io.Writer) (p startupParams, e
 			fmt.Fprint(out, usage)
 			return startupParams{}, 0, false
 		}
+		// The error has to be printed explicitly: usage is only non-empty
+		// when fs.Usage() ran (pflag's own errors, missing hosts), so the
+		// value-range checks in parseArgs would otherwise exit 1 in silence.
+		fmt.Fprintf(errOut, "Error: %v\n", err)
 		fmt.Fprint(errOut, usage)
 		return startupParams{}, 1, false
 	}

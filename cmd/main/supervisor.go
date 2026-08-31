@@ -221,7 +221,7 @@ func (s *supervisor) handle(c command) error {
 		if s.state != stateRunning {
 			return nil
 		}
-		s.restartMTR()
+		s.restartMTR(true)
 		return nil
 
 	case cmdResetPort:
@@ -279,7 +279,7 @@ func (s *supervisor) startAll() error {
 		s.startTraceroutes(next)
 	}
 	if s.cfg.mtrEnabled {
-		s.restartMTR()
+		s.restartMTR(false)
 	}
 	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout, s.cfg.bind)
 	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout, s.cfg.bind)
@@ -328,17 +328,29 @@ func (s *supervisor) tearDownAll() {
 	}
 }
 
-// restartMTR replaces the MTR engine and nothing else. It deliberately does
-// not reset per-target stats: TargetStats.Reset clears the ping counters
-// too, and clearing those is the 'R' key's job — the key handler already
-// resets every target before calling in here. Doing it a second time from
-// this side also leaked into startAll, which reaches restartMTR on every
-// (re)start, so a restart used to wipe the ping counters with --mtr on and
-// keep them with --mtr off.
-func (s *supervisor) restartMTR() {
+// restartMTR replaces the MTR engine. It never calls TargetStats.Reset:
+// that clears the ping counters too, and clearing those is the 'R' key's job
+// — the key handler already resets every target before calling in here.
+// Doing it a second time from this side also leaked into startAll, which
+// reaches restartMTR on every (re)start, so a restart used to wipe the ping
+// counters with --mtr on and keep them with --mtr off.
+//
+// resetStats clears the per-hop counters only, which is what the 'R' key
+// wants and what startAll must not do (a plain restart keeps the counters,
+// matching how --mtr off already behaves).
+func (s *supervisor) restartMTR(resetStats bool) {
 	if s.mtrEngine != nil {
 		s.mtrEngine.Stop()
 		s.mtrEngine = nil
+	}
+	// Cleared here rather than by the 'R' key handler: Stop above has joined
+	// the outgoing engine's goroutines and the replacement has not started,
+	// so this is the only window in which a probe reply cannot land in the
+	// counters just after they are zeroed.
+	if resetStats {
+		for _, t := range s.cfg.targets {
+			t.MTR().Reset()
+		}
 	}
 	if s.p == nil {
 		return

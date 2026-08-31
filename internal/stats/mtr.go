@@ -284,12 +284,18 @@ func buildFlapDesc(prev, cur []string) string {
 	return strings.Join(changed, "; ")
 }
 
-// Reset clears all hop data.
+// Reset clears all hop data and the flap history. The flap fields go with
+// the hops: they describe route changes observed over a monitoring window
+// that a reset discards, so leaving them behind would report a flap against
+// a window the user just threw away.
 func (m *MTRStats) Reset() {
 	defer bumpGeneration()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.hops = nil
+	m.flapCount = 0
+	m.lastFlapAt = time.Time{}
+	m.lastFlapDesc = ""
 }
 
 // hopAt returns the HopStats for ttl (1-based), or nil if out of range.

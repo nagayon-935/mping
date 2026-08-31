@@ -403,6 +403,17 @@ func buildHostsAndGroups(docHosts []hostEntry, docGroups []groupYAML, cliHosts [
 
 // validateHostsDoc checks a hostsFileYAML for semantic errors.
 // Returns a non-nil error if any field is out of range or logically invalid.
+// Interval bounds shared by the YAML validator and the -i flag check, so the
+// two entry points cannot drift apart. The lower bound matters beyond taste:
+// the interval reaches time.NewTicker unmodified in the port and HTTP
+// checkers (portchecker.go, httpchecker.go), which panics on a non-positive
+// duration and would take the process down from inside a check goroutine,
+// after the TUI has already taken over the terminal.
+const (
+	minIntervalMs = 100
+	maxIntervalMs = 60000
+)
+
 func validateHostsDoc(doc hostsFileYAML) error {
 	totalHosts := len(doc.Hosts)
 	for _, g := range doc.Groups {
@@ -444,8 +455,8 @@ func validateHostsDoc(doc hostsFileYAML) error {
 			return fmt.Errorf("dscp: %w", err)
 		}
 	}
-	if doc.IntervalMs != nil && (*doc.IntervalMs < 100 || *doc.IntervalMs > 60000) {
-		return fmt.Errorf("interval: must be 100–60000 ms, got %d", *doc.IntervalMs)
+	if doc.IntervalMs != nil && (*doc.IntervalMs < minIntervalMs || *doc.IntervalMs > maxIntervalMs) {
+		return fmt.Errorf("interval: must be %d–%d ms, got %d", minIntervalMs, maxIntervalMs, *doc.IntervalMs)
 	}
 	if doc.TimeoutMs != nil && (*doc.TimeoutMs < 10 || *doc.TimeoutMs > 30000) {
 		return fmt.Errorf("timeout: must be 10–30000 ms, got %d", *doc.TimeoutMs)
@@ -687,6 +698,11 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 
 	if cfg.duration < 0 {
 		return config{}, nil, nil, usageBuf.String(), fmt.Errorf("--duration must be >= 0, got %s", cfg.duration)
+	}
+
+	if cfg.intervalMs < minIntervalMs || cfg.intervalMs > maxIntervalMs {
+		return config{}, nil, nil, usageBuf.String(),
+			fmt.Errorf("-i/--interval: must be %d–%d ms, got %d", minIntervalMs, maxIntervalMs, cfg.intervalMs)
 	}
 
 	if cfg.dscp != "" {
