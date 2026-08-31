@@ -746,3 +746,60 @@ func TestRunOnDeleteHost_EscapeAborts(t *testing.T) {
 		t.Fatal("OnDeleteHost should not be called after Escape")
 	}
 }
+
+// ---- Run: 'R' key with mtrEnabled clears MTR hop stats and calls onResetMTR ----
+
+// TestRunResetMTRKey pins an invariant that now rests entirely on this key
+// handler. restartMTR on the supervisor side no longer resets anything, so
+// the only thing clearing per-hop counters on 'R' is the t.Reset() loop here
+// — without this test, removing that loop would leave MTR stats permanently
+// uncleared with the whole suite still green.
+func TestRunResetMTRKey(t *testing.T) {
+	orig := newApplication
+	t.Cleanup(func() { newApplication = orig })
+
+	factory, screenCh := makeSimScreen(t)
+	newApplication = factory
+
+	target := stats.NewTargetStats("example.com")
+	target.SetIP("127.0.0.1")
+	target.MTR().EnsureLen(2)
+	target.MTR().RecordReply(1, "10.0.0.1", "", "", "", 5*time.Millisecond)
+	if len(target.MTR().View()) == 0 {
+		t.Fatal("fixture did not record any hops")
+	}
+
+	resetCalled := make(chan struct{}, 1)
+	onResetMTR := func() { resetCalled <- struct{}{} }
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run(RunOptions{Targets: []*stats.TargetStats{target}, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, PacketSize: 56, MTREnabled: true, OnResetMTR: onResetMTR})
+	}()
+
+	screen := <-screenCh
+	time.Sleep(30 * time.Millisecond)
+	screen.InjectKey(tcell.KeyRune, 'R', tcell.ModNone)
+
+	select {
+	case <-resetCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("onResetMTR was not called after 'R' key")
+	}
+
+	// The handler resets every target before dispatching onResetMTR, so the
+	// callback firing means the reset has already happened — no polling.
+	if hops := target.MTR().View(); len(hops) != 0 {
+		t.Errorf("MTR hop stats not cleared after 'R': got %d hops", len(hops))
+	}
+
+	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}

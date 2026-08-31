@@ -17,8 +17,13 @@ func TestRefreshTickInterval(t *testing.T) {
 		interval time.Duration
 		want     time.Duration
 	}{
+		{"non-positive interval falls back to the fast rate", 0, fastUIRefresh},
 		{"below minUIRefresh uses the fast rate", 50 * time.Millisecond, fastUIRefresh},
 		{"at minUIRefresh halves the interval", minUIRefresh, minUIRefresh / 2},
+		// minUIRefresh/2 happens to equal fastUIRefresh, so the case above
+		// passes under either branch. 300ms is the smallest round value where
+		// halving and the fast rate disagree, which is what pins the "<".
+		{"just above minUIRefresh takes the halving branch", 300 * time.Millisecond, 150 * time.Millisecond},
 		{"short interval halves", time.Second, 500 * time.Millisecond},
 		{"half-interval exactly at the floor is kept", 2 * redrawFloor, redrawFloor},
 		{"long interval is capped at the floor", 10 * time.Second, redrawFloor},
