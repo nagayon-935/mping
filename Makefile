@@ -22,12 +22,24 @@ coverage:
 	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
 
-# lint runs the same four checks the CI workflow does, in the same order, so
-# a green `make lint` locally means the lint job won't be the thing that
-# turns the build red. gofmt is checked rather than applied — CI fails on
-# unformatted files, so this has to fail the same way.
+# lint runs the same four checks the CI workflow does, in the same order.
+# gofmt is checked rather than applied — CI fails on unformatted files, so
+# this has to fail the same way.
+#
+# Two things stop this from being an exact stand-in for the CI job, both in
+# the direction of failing locally where CI passes:
+#
+#   - govulncheck reports against the toolchain that built the code, while
+#     CI resolves `go-version: '1.26'` to the newest patch release. An older
+#     local Go turns up standard-library advisories CI will never show —
+#     upgrade the toolchain rather than ignoring the output.
+#   - gofmt is pointed at the module's own package directories instead of
+#     `.`, because plain `gofmt -l .` descends into dot-directories that the
+#     other three checks skip (`./...` ignores them). Locally that means
+#     .claude/worktrees/, which is git-ignored and absent from CI's clean
+#     checkout, so scratch work in a worktree would otherwise fail the build.
 lint:
-	@fmt_out="$$(gofmt -l .)"; \
+	@fmt_out="$$(gofmt -l $$(go list -f '{{.Dir}}' ./...))"; \
 	if [ -n "$$fmt_out" ]; then \
 		echo "The following files are not gofmt'ed:"; \
 		echo "$$fmt_out"; \
