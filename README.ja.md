@@ -33,10 +33,10 @@
 
 | OS | アーキテクチャ | 備考 |
 | :--- | :--- | :--- |
-| Linux | amd64, arm64 | 通常の ping は昇格権限なしで実行可能 |
-| macOS | amd64, arm64 (Apple Silicon) | 通常の ping は昇格権限なしで実行可能 |
+| Linux | amd64, arm64 | `setcap` による `CAP_NET_RAW` 付与を推奨 |
+| macOS | amd64, arm64 (Apple Silicon) | `sudo` で起動 |
 
-> **権限について** — Linux/macOSの通常pingは非特権ICMP datagramソケットを使用します。traceroute・MTR・PMTU探索にはrawソケットが必要なため、Linuxでは`CAP_NET_RAW`、macOSではその機能の実行時に`sudo`が必要です。setuid/setgidでの実行は拒否します。
+> **権限について** — mping は正確な TTL を取得するために Raw ICMP ソケットを使用します。Linux では `setcap cap_net_raw+ep` での権限付与を推奨します (`install.sh` が自動で処理します)。macOS では `sudo` で起動してください。ユーザーが指定したファイルを昇格権限で操作しないよう、setuid/setgid での実行は拒否します。
 
 > **ターミナルの互換性** — Linux や macOS の標準ターミナルでは、色が正しく描画されないことがあります。色が正しく表示されない場合は、モダンなターミナルエミュレータ（iTerm2, Alacritty, kitty など）の使用を検討してください。
 
@@ -53,8 +53,8 @@
 curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-linux-amd64.tar.gz
 tar -xzf mping-v0.4.5-linux-amd64.tar.gz
 
-# ~/.local/bin へインストール (sudo不要)
-./install.sh
+# インストール (setcap で CAP_NET_RAW を付与。setcap が無い場合は起動時に sudo が必要)
+sudo ./install.sh
 ```
 
 #### Linux (arm64 — Raspberry Pi, AWS Graviton など)
@@ -62,7 +62,7 @@ tar -xzf mping-v0.4.5-linux-amd64.tar.gz
 ```bash
 curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-linux-arm64.tar.gz
 tar -xzf mping-v0.4.5-linux-arm64.tar.gz
-./install.sh
+sudo ./install.sh
 ```
 
 #### macOS (Intel)
@@ -70,7 +70,7 @@ tar -xzf mping-v0.4.5-linux-arm64.tar.gz
 ```bash
 curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-darwin-amd64.tar.gz
 tar -xzf mping-v0.4.5-darwin-amd64.tar.gz
-./install.sh
+sudo ./install.sh
 ```
 
 #### macOS (Apple Silicon)
@@ -78,27 +78,27 @@ tar -xzf mping-v0.4.5-darwin-amd64.tar.gz
 ```bash
 curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-darwin-arm64.tar.gz
 tar -xzf mping-v0.4.5-darwin-arm64.tar.gz
-./install.sh
+sudo ./install.sh
 ```
 
-一般ユーザーで実行すると、`install.sh`は昇格権限なしで`~/.local/bin`へインストールします。rootで実行した場合のデフォルトは`/usr/local/bin`です。
+`install.sh` はバイナリを `INSTALL_DIR` (デフォルト: `/usr/local/bin`) にコピーし、OS に応じて権限を設定します:
 
-* **Linux**: 通常pingはそのまま動作します。rootでインストールし`setcap`が利用できる場合は`CAP_NET_RAW`も付与し、traceroute・MTR・PMTUを`sudo`なしで利用できます。
-* **macOS**: 通常pingはそのまま動作します。traceroute・MTR・PMTUには引き続き`sudo`が必要です。
+* **Linux**: `setcap cap_net_raw+ep` を付与。`setcap` がない場合は `sudo` で起動します。
+* **macOS**: root 所有・モード `0755` の署名済みバイナリを配置。`sudo` で起動します。
 
 インストール先を変更する場合:
 
 ```bash
-INSTALL_DIR="$HOME/bin" ./install.sh
+sudo INSTALL_DIR=/usr/local/bin ./install.sh
 ```
 
-ユーザー用インストール先を`PATH`に追加すれば、`sudo`なしで実行できます:
+Linux で `CAP_NET_RAW` が付与されていれば `sudo` なしで実行できます:
 
 ```bash
 mping google.com 1.1.1.1
 ```
 
-macOSでrawソケット機能を使う場合は、`sudo mping --trace google.com`のように実行します。旧バージョンをsetuidでインストールしている場合は、新しい`install.sh`で再インストールするとsetuidビットが除去されます。
+macOS と `setcap` のない Linux では `sudo mping google.com 1.1.1.1` と実行してください。旧バージョンを setuid でインストールしている場合は、新しい `install.sh` で再インストールすると setuid ビットが除去されます。
 
 ---
 
@@ -121,19 +121,19 @@ make build
 make install
 ```
 
-> `make install`は一般ユーザーでは`~/.local/bin`へインストールします。システム全体へのインストールやLinuxで`CAP_NET_RAW`が必要な場合だけrootで実行してください。
+> `make install` も `install.sh` と同じ設定を行います。Linux では利用可能なら `CAP_NET_RAW` を付与し、それ以外では起動時に `sudo` が必要です。
 
 #### go build を使ったビルド
 
 ```bash
 go build -o mping ./cmd/main
-./install.sh
+sudo ./install.sh
 ```
 
 ## 使い方
 
 ```bash
-# 基本的な使い方 (Linux/macOSともsudo不要)
+# 基本的な使い方 (Linux の CAP_NET_RAW 付与済み環境。それ以外は sudo を付ける)
 mping google.com 1.1.1.1 8.8.8.8
 
 # インターフェイスを指定して実行
@@ -185,9 +185,9 @@ mping --rtt-warn 30 --rtt-crit 100 --loss-warn 10 --loss-crit 50 google.com
 mping -a google.com 1.1.1.1
 ```
 
-> traceroute・MTR・PMTUにはrawソケット権限が必要です。macOSでは、その機能の実行時に`sudo`を付けてください:
+> macOS など `CAP_NET_RAW` が付与されていない環境では、`sudo` を付けてください:
 > ```bash
-> sudo mping --trace google.com
+> sudo ./mping google.com
 > ```
 
 ### hosts.yaml の例

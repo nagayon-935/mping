@@ -1,15 +1,12 @@
 #!/bin/sh
 set -e
 
+INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 BINARY="mping"
-UID_NOW="$(id -u)"
 
-if [ -z "${INSTALL_DIR:-}" ]; then
-  if [ "$UID_NOW" -eq 0 ]; then
-    INSTALL_DIR="/usr/local/bin"
-  else
-    INSTALL_DIR="${HOME}/.local/bin"
-  fi
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Please run as root (e.g., sudo ./install.sh)"
+  exit 1
 fi
 
 if [ ! -f "./$BINARY" ]; then
@@ -18,27 +15,24 @@ if [ ! -f "./$BINARY" ]; then
 fi
 
 echo "Installing $BINARY to $INSTALL_DIR..."
-mkdir -p "$INSTALL_DIR"
 cp "./$BINARY" "$INSTALL_DIR/$BINARY"
-if [ "$UID_NOW" -eq 0 ]; then
-  chown root "$INSTALL_DIR/$BINARY"
-fi
+chown root "$INSTALL_DIR/$BINARY"
 chmod 755 "$INSTALL_DIR/$BINARY"
 
 OS="$(uname -s)"
 case "$OS" in
   Linux)
-    if [ "$UID_NOW" -eq 0 ] && command -v setcap > /dev/null 2>&1; then
+    if command -v setcap > /dev/null 2>&1; then
       echo "Setting CAP_NET_RAW capability..."
       setcap cap_net_raw+ep "$INSTALL_DIR/$BINARY"
     else
-      echo "Installed for non-privileged ping. Raw-socket features require CAP_NET_RAW or sudo."
+      echo "setcap not found. Run with sudo, or install setcap and reinstall."
     fi
     ;;
   Darwin)
     echo "Code signing..."
     codesign --sign - --force "$INSTALL_DIR/$BINARY"
-    echo "Installed for non-privileged ping. Raw-socket features require sudo."
+    echo "Run mping with sudo on macOS."
     ;;
   *)
     echo "Warning: Unsupported OS '$OS'. Run with the privileges needed for raw ICMP sockets."

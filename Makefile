@@ -13,7 +13,7 @@ build:
 	$(BUILD_CMD)
 
 install: build
-	./install.sh
+	sudo ./install.sh
 
 test:
 	go test ./...

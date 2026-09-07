@@ -10,7 +10,6 @@ import (
 	"math/rand"
 	"net"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -78,16 +77,6 @@ const (
 	// Below it, embedSendTimestamp/extractSendTimestamp are no-ops and
 	// runWorker falls back to its own start-time bookkeeping in `unacked`.
 	minTimestampPayloadSize = timestampOffset + timestampSize
-
-	// Linux and Darwin rewrite Echo.ID on non-privileged ICMP datagram
-	// sockets. A marker and logical target ID after the existing timestamp let
-	// the receiver route those replies without mistaking older payloads for
-	// the new format.
-	targetIDOffset         = minTimestampPayloadSize
-	targetIDMarker         = 0x4d50
-	targetIDMarkerSize     = 2
-	targetIDSize           = 2
-	minTargetIDPayloadSize = targetIDOffset + targetIDMarkerSize + targetIDSize
 )
 
 // asnLookupTimeout bounds each Cymru DNS TXT query, since neither net.LookupTXT
@@ -123,23 +112,6 @@ func embedSendTimestamp(payload []byte, sent time.Time) {
 	}
 	elapsed := uint64(sent.Sub(procStart))
 	binary.BigEndian.PutUint64(payload[timestampOffset:timestampOffset+timestampSize], elapsed)
-}
-
-func embedTargetID(payload []byte, id int) {
-	if len(payload) < minTargetIDPayloadSize {
-		return
-	}
-	binary.BigEndian.PutUint16(payload[targetIDOffset:targetIDOffset+targetIDMarkerSize], targetIDMarker)
-	binary.BigEndian.PutUint16(payload[targetIDOffset+targetIDMarkerSize:targetIDOffset+targetIDMarkerSize+targetIDSize], uint16(id))
-}
-
-func extractTargetID(payload []byte) (int, bool) {
-	if len(payload) < minTargetIDPayloadSize || string(payload[:len(payloadSignature)]) != payloadSignature ||
-		binary.BigEndian.Uint16(payload[targetIDOffset:targetIDOffset+targetIDMarkerSize]) != targetIDMarker {
-		return 0, false
-	}
-	start := targetIDOffset + targetIDMarkerSize
-	return int(binary.BigEndian.Uint16(payload[start : start+targetIDSize])), true
 }
 
 // extractSendTimestamp reads the timestamp embedSendTimestamp wrote into an
@@ -349,10 +321,6 @@ type Pinger struct {
 	resolveWithContext func(context.Context, string, string) (*net.IPAddr, error)
 	now                func() time.Time
 	listenPacket       listenPacketFunc
-	listenDatagramV4   func(string) (PacketConnV4, error)
-	listenDatagramV6   func(string) (PacketConnV6, error)
-	unprivilegedV4     bool
-	unprivilegedV6     bool
 	lookupTXT          func(string) ([]string, error)
 	lookupAddr         func(string) ([]string, error)
 }
@@ -432,14 +400,8 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		now = time.Now
 	}
 	listen := opts.ListenPacket
-	var listenDatagramV4 func(string) (PacketConnV4, error)
-	var listenDatagramV6 func(string) (PacketConnV6, error)
 	if listen == nil {
 		listen = net.ListenPacket
-		if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
-			listenDatagramV4 = listenUnprivilegedV4
-			listenDatagramV6 = listenUnprivilegedV6
-		}
 	}
 	lookup := opts.LookupTXT
 	if lookup == nil {
@@ -497,8 +459,6 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		resolveWithContext: resolveContext,
 		now:                now,
 		listenPacket:       listen,
-		listenDatagramV4:   listenDatagramV4,
-		listenDatagramV6:   listenDatagramV6,
 		lookupTXT:          lookup,
 		lookupAddr:         lookupAddr,
 		asnJitter:          func() time.Duration { return time.Duration(rand.Int63n(int64(asnJitterMax))) },
@@ -570,12 +530,6 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 			p.connV4 = ipv4.NewPacketConn(c)
 			// Non-fatal: TTL control message may not be available on all platforms.
 			_ = p.connV4.SetControlMessage(ipv4.FlagTTL, true)
-		} else if p.listenDatagramV4 != nil {
-			p.connV4, errV4 = p.listenDatagramV4(bindAddr)
-			p.unprivilegedV4 = p.connV4 != nil
-			if p.connV4 != nil {
-				_ = p.connV4.SetControlMessage(ipv4.FlagTTL, true)
-			}
 		} else {
 			errV4 = err
 		}
@@ -598,13 +552,6 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 			// be available on all platforms.
 			_ = p.connV6.SetControlMessage(ipv6.FlagHopLimit|ipv6.FlagTrafficClass, true)
 			applyICMPv6Filter(p.connV6)
-		} else if p.listenDatagramV6 != nil {
-			p.connV6, errV6 = p.listenDatagramV6(bindAddr)
-			p.unprivilegedV6 = p.connV6 != nil
-			if p.connV6 != nil {
-				_ = p.connV6.SetControlMessage(ipv6.FlagHopLimit|ipv6.FlagTrafficClass, true)
-				applyICMPv6Filter(p.connV6)
-			}
 		} else {
 			errV6 = err
 		}
@@ -612,10 +559,6 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 
 	if p.connV4 == nil && p.connV6 == nil {
 		return fmt.Errorf("failed to initialize pinger: v4=%v, v6=%v", errV4, errV6)
-	}
-	if (p.unprivilegedV4 || p.unprivilegedV6) && p.Size < minTargetIDPayloadSize {
-		p.Close()
-		return fmt.Errorf("non-privileged ICMP requires packet size >= %d bytes (got %d)", minTargetIDPayloadSize, p.Size)
 	}
 
 	p.armDSCP()
@@ -913,12 +856,8 @@ func (p *Pinger) handleEchoReply(msg *icmp.Message, ttl, dscp int) {
 	if !ok {
 		return
 	}
-	id := echo.ID
-	if payloadID, ok := extractTargetID(echo.Data); ok {
-		id = payloadID
-	}
 	p.mapMu.RLock()
-	ch, exists := p.targetChans[id]
+	ch, exists := p.targetChans[echo.ID]
 	p.mapMu.RUnlock()
 	if exists {
 		reply := Reply{TTL: ttl, DSCP: dscp, Seq: echo.Seq}
@@ -1259,7 +1198,6 @@ func (p *Pinger) sendProbe(t *stats.TargetStats, id, seq int, payload []byte, ds
 	// the embedded timestamp and the pendingProbe fallback in runWorker, so
 	// the two stay consistent with each other.
 	start := time.Now()
-	embedTargetID(payload, id)
 	embedSendTimestamp(payload, start)
 
 	msg := icmp.Message{
