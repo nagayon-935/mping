@@ -34,9 +34,9 @@
 | OS | Architecture | Notes |
 | :--- | :--- | :--- |
 | Linux | amd64, arm64 | Recommended: grant `CAP_NET_RAW` via `setcap` |
-| macOS | amd64, arm64 (Apple Silicon) | Run with `sudo` |
+| macOS | amd64, arm64 (Apple Silicon) | Uses `setuid` |
 
-> **Privileges required** — mping uses raw ICMP sockets to obtain accurate TTL values. On Linux the preferred approach is granting `CAP_NET_RAW` with `setcap`; `install.sh` handles this automatically. On macOS, run mping with `sudo`. Setuid/setgid execution is rejected to prevent user-selected file paths from being accessed with elevated privileges.
+> **Privileges required** — mping uses raw ICMP sockets to obtain accurate TTL values. On Linux the preferred approach is granting `CAP_NET_RAW` with `setcap`; `install.sh` handles this automatically. On macOS a `setuid` bit is set instead.
 
 > **Terminal Compatibility** — Standard terminals on Linux and macOS may not render colors correctly. If you experience issues with color display, consider using a modern terminal emulator (e.g., iTerm2, Alacritty, or kitty).
 
@@ -53,7 +53,7 @@ Download the archive for your platform from the [Releases](https://github.com/na
 curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-linux-amd64.tar.gz
 tar -xzf mping-v0.4.5-linux-amd64.tar.gz
 
-# Install (grants CAP_NET_RAW via setcap; use sudo to run if setcap is unavailable)
+# Install (grants CAP_NET_RAW via setcap; falls back to setuid if setcap is unavailable)
 sudo ./install.sh
 ```
 
@@ -83,8 +83,8 @@ sudo ./install.sh
 
 `install.sh` copies the binary to `INSTALL_DIR` (default: `/usr/local/bin`) and sets the appropriate privilege:
 
-* **Linux** — `setcap cap_net_raw+ep`; if `setcap` is unavailable, run with `sudo`.
-* **macOS** — installs a root-owned, signed binary with mode `0755`; run with `sudo`.
+* **Linux** — `setcap cap_net_raw+ep` (falls back to `setuid` if `setcap` is not available)
+* **macOS** — `chown root` + `chmod u+s` (setuid)
 
 To install to a different directory:
 
@@ -92,13 +92,11 @@ To install to a different directory:
 sudo INSTALL_DIR=/usr/local/bin ./install.sh
 ```
 
-On Linux with `CAP_NET_RAW`, run mping **without** `sudo`:
+After installation, run mping **without** `sudo`:
 
 ```bash
 mping google.com 1.1.1.1
 ```
-
-On macOS or Linux without `setcap`, use `sudo mping google.com 1.1.1.1`. Reinstall older setuid installations using this version of `install.sh` to remove the setuid bit.
 
 ---
 
@@ -117,11 +115,11 @@ cd mping
 # Build only
 make build
 
-# Build + install (uses install.sh)
+# Build + install (sets setuid on macOS; use install.sh on Linux for setcap)
 make install
 ```
 
-> `make install` uses the same platform-specific setup as `install.sh`: `CAP_NET_RAW` on Linux when available, and explicit `sudo` execution otherwise.
+> **Note for Linux users:** `make install` sets a `setuid` bit, which works but is less secure than `setcap`. For production use, run `go build -o mping ./cmd/main` and then `sudo ./install.sh` to get `CAP_NET_RAW` via `setcap`.
 
 #### Using go build directly
 
@@ -133,7 +131,7 @@ sudo ./install.sh
 ## Usage
 
 ```bash
-# Basic (Linux with CAP_NET_RAW; otherwise prepend sudo)
+# Basic (no sudo needed after install.sh)
 mping google.com 1.1.1.1 8.8.8.8
 
 # Specify network interface
@@ -191,7 +189,7 @@ mping --rtt-warn 30 --rtt-crit 100 --loss-warn 10 --loss-crit 50 google.com
 mping -a google.com 1.1.1.1
 ```
 
-> If `CAP_NET_RAW` has not been granted (including on macOS), prepend `sudo`:
+> If you run mping **without** installing (i.e. without `setcap`/`setuid`), prepend `sudo`:
 > ```bash
 > sudo ./mping google.com
 > ```

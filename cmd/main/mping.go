@@ -862,10 +862,6 @@ func setupHTTPChecker(urls []string, interval, timeout time.Duration, bind pinge
 }
 
 func run(args []string, out io.Writer, errOut io.Writer) int {
-	if err := checkPrivileges(os.Getuid(), os.Geteuid(), os.Getgid(), os.Getegid()); err != nil {
-		fmt.Fprintf(errOut, "Error: %v\n", err)
-		return 1
-	}
 	if len(args) > 0 && args[0] == "completion" {
 		return runCompletion(args[1:], out, errOut)
 	}
