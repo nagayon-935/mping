@@ -201,8 +201,8 @@ func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resol
 			dscp = &v
 		}
 	}
-	var targetDSCP map[string]int
-	for _, s := range specs {
+	var targetDSCP map[int]int
+	for i, s := range specs {
 		if s.DSCP == "" {
 			continue
 		}
@@ -211,33 +211,31 @@ func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resol
 			continue
 		}
 		if targetDSCP == nil {
-			targetDSCP = make(map[string]int, len(specs))
+			targetDSCP = make(map[int]int, len(specs))
 		}
-		targetDSCP[s.display()] = v
+		targetDSCP[i] = v
 	}
 
+	resolve := func(ctx context.Context, _ string, address string) (*net.IPAddr, error) {
+		if ip, ok := pinned[address]; ok {
+			address = ip
+		}
+		resolver := net.DefaultResolver
+		if customResolver != nil && cfg.dnsServer != "" {
+			resolver = customResolver
+		}
+		return pinger.ResolveIPAddrContext(ctx, resolver, resNetwork, address)
+	}
 	return pinger.Options{
 		ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {
-			if ip, ok := pinned[address]; ok {
-				return net.ResolveIPAddr(network, ip)
-			}
-			if customResolver != nil && cfg.dnsServer != "" {
-				ips, err := customResolver.LookupIP(context.Background(), network, address)
-				if err != nil {
-					return nil, err
-				}
-				if len(ips) == 0 {
-					return nil, &net.DNSError{Err: "no such host", Name: address}
-				}
-				return &net.IPAddr{IP: ips[0]}, nil
-			}
-			return net.ResolveIPAddr(resNetwork, address)
+			return resolve(context.Background(), network, address)
 		},
-		Resolver:   customResolver,
-		AsnEnabled: cfg.asnEnabled,
-		PtrEnabled: cfg.ptrEnabled,
-		DSCP:       dscp,
-		TargetDSCP: targetDSCP,
+		ResolveIPAddrContext: resolve,
+		Resolver:             customResolver,
+		AsnEnabled:           cfg.asnEnabled,
+		PtrEnabled:           cfg.ptrEnabled,
+		DSCP:                 dscp,
+		TargetDSCP:           targetDSCP,
 	}
 }
 

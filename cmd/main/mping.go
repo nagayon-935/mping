@@ -44,6 +44,7 @@ type pingerController interface {
 	Start(interval, timeout time.Duration) error
 	Stop()
 	Wait()
+	WaitWorkers()
 	Close()
 	DiscoverMaxPayload(ctx context.Context, dest string, start int, min int, logf func(string)) (int, string, error)
 	TraceRoute(ctx context.Context, dest string, maxHops int, timeout time.Duration) ([]string, error)
@@ -104,8 +105,8 @@ type pingerMTRAdapter struct {
 	p *pinger.Pinger
 }
 
-func (a *pingerMTRAdapter) OpenHopSocket(dest string) (mtr.HopSocket, error) {
-	return a.p.OpenHopSocket(dest)
+func (a *pingerMTRAdapter) OpenHopSocket(ctx context.Context, dest string) (mtr.HopSocket, error) {
+	return a.p.OpenHopSocketContext(ctx, dest)
 }
 
 func (a *pingerMTRAdapter) ProbeHop(ctx context.Context, sock mtr.HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error) {
@@ -355,6 +356,9 @@ func syncDuration(fs *pflag.FlagSet, flag string, docVal *string, cfgField *time
 // the TargetGroup slice for grouped display, and the merged config.
 func mergeHosts(cfg config, fs *pflag.FlagSet, hosts []string) ([]targetSpec, []ui.TargetGroup, config, error) {
 	if cfg.hostsFile == "" {
+		if err := validateMergedHosts(cfg, nil, nil, hosts); err != nil {
+			return nil, nil, cfg, err
+		}
 		specs := make([]targetSpec, len(hosts))
 		for i, h := range hosts {
 			specs[i] = targetSpec{Host: h}
@@ -367,6 +371,9 @@ func mergeHosts(cfg config, fs *pflag.FlagSet, hosts []string) ([]targetSpec, []
 	}
 	docHosts, docGroups, merged, err := applyDocToCfg(cfg, fs, doc)
 	if err != nil {
+		return nil, nil, merged, err
+	}
+	if err := validateMergedHosts(merged, docHosts, docGroups, hosts); err != nil {
 		return nil, nil, merged, err
 	}
 	allHosts, uiGroups := buildHostsAndGroups(docHosts, docGroups, hosts)
@@ -413,6 +420,27 @@ const (
 	minIntervalMs = 100
 	maxIntervalMs = 60000
 )
+
+// Validate the effective configuration after CLI overrides are applied. This
+// is shared by initial loading and reload admission, before any probes stop.
+func validateMergedHosts(cfg config, hosts []hostEntry, groups []groupYAML, cliHosts []string) error {
+	allHosts := append([]hostEntry(nil), hosts...)
+	for _, host := range cliHosts {
+		allHosts = append(allHosts, hostEntry{Host: host})
+	}
+	duration := cfg.duration.String()
+	doc := hostsFileYAML{
+		Hosts: allHosts, Groups: groups,
+		IntervalMs: &cfg.intervalMs, TimeoutMs: &cfg.timeoutMs,
+		PacketSize: &cfg.packetSize, Count: &cfg.count,
+		Duration: &duration, Ipv4Only: &cfg.ipv4Only, Ipv6Only: &cfg.ipv6Only,
+		DNSServer: &cfg.dnsServer, DSCP: &cfg.dscp,
+	}
+	if err := validateHostsDoc(doc); err != nil {
+		return err
+	}
+	return cfg.thresholds.Validate()
+}
 
 func validateHostsDoc(doc hostsFileYAML) error {
 	totalHosts := len(doc.Hosts)
@@ -834,6 +862,10 @@ func setupHTTPChecker(urls []string, interval, timeout time.Duration, bind pinge
 }
 
 func run(args []string, out io.Writer, errOut io.Writer) int {
+	if err := checkPrivileges(os.Getuid(), os.Geteuid(), os.Getgid(), os.Getegid()); err != nil {
+		fmt.Fprintf(errOut, "Error: %v\n", err)
+		return 1
+	}
 	if len(args) > 0 && args[0] == "completion" {
 		return runCompletion(args[1:], out, errOut)
 	}
@@ -929,6 +961,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			bind:         bind,
 			traceEnabled: currentCfg.trace,
 			mtrEnabled:   currentCfg.mtr,
+			countLimited: currentCfg.count > 0,
 			logCh:        logCh,
 		})
 
@@ -952,15 +985,9 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			resetPort = sup.resetPort
 		}
 
-		// doneCh is closed when the pinger finishes (count-limited mode).
-		var doneCh chan struct{}
-		if currentCfg.count > 0 {
-			doneCh = make(chan struct{})
-			go func() {
-				sup.waitPinger()
-				close(doneCh)
-			}()
-		}
+		// Each natural count completion sends a notification, including after
+		// restart. Other monitors and duration/reload handling remain active.
+		doneCh := sup.finished
 
 		// sig is closed to signal TUI shutdown, either by the YAML watcher, an
 		// in-memory add/delete-host request, or (below) --duration elapsing.

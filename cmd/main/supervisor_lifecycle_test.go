@@ -36,6 +36,8 @@ func (f *lifecycleFakePinger) Stop() {
 	f.stopped = true
 }
 
+func (f *lifecycleFakePinger) WaitWorkers() { f.Wait() }
+
 func (f *lifecycleFakePinger) Wait() {}
 
 func (f *lifecycleFakePinger) Close() {
@@ -81,7 +83,7 @@ func (f *lifecycleFakePinger) MTRProber() mtr.HopProber { return noopHopProber{}
 // immediately instead of doing any real probing.
 type noopHopProber struct{}
 
-func (noopHopProber) OpenHopSocket(dest string) (mtr.HopSocket, error) {
+func (noopHopProber) OpenHopSocket(ctx context.Context, dest string) (mtr.HopSocket, error) {
 	return nil, errors.New("noopHopProber: no socket available")
 }
 

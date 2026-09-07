@@ -34,9 +34,9 @@
 | OS | アーキテクチャ | 備考 |
 | :--- | :--- | :--- |
 | Linux | amd64, arm64 | `setcap` による `CAP_NET_RAW` 付与を推奨 |
-| macOS | amd64, arm64 (Apple Silicon) | `setuid` を使用 |
+| macOS | amd64, arm64 (Apple Silicon) | `sudo` で起動 |
 
-> **権限について** — mping は正確な TTL を取得するために Raw ICMP ソケットを使用します。Linux では `setcap cap_net_raw+ep` での権限付与を推奨します (`install.sh` が自動で処理します)。macOS では `setuid` を使用します。
+> **権限について** — mping は正確な TTL を取得するために Raw ICMP ソケットを使用します。Linux では `setcap cap_net_raw+ep` での権限付与を推奨します (`install.sh` が自動で処理します)。macOS では `sudo` で起動してください。ユーザーが指定したファイルを昇格権限で操作しないよう、setuid/setgid での実行は拒否します。
 
 > **ターミナルの互換性** — Linux や macOS の標準ターミナルでは、色が正しく描画されないことがあります。色が正しく表示されない場合は、モダンなターミナルエミュレータ（iTerm2, Alacritty, kitty など）の使用を検討してください。
 
@@ -53,7 +53,7 @@
 curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-linux-amd64.tar.gz
 tar -xzf mping-v0.4.5-linux-amd64.tar.gz
 
-# インストール (setcap で CAP_NET_RAW を付与。setcap が無い場合は setuid にフォールバック)
+# インストール (setcap で CAP_NET_RAW を付与。setcap が無い場合は起動時に sudo が必要)
 sudo ./install.sh
 ```
 
@@ -83,8 +83,8 @@ sudo ./install.sh
 
 `install.sh` はバイナリを `INSTALL_DIR` (デフォルト: `/usr/local/bin`) にコピーし、OS に応じて権限を設定します:
 
-* **Linux**: `setcap cap_net_raw+ep` を付与 (未インストールの場合は setuid にフォールバック)
-* **macOS**: `chown root` + `chmod u+s` で setuid を付与
+* **Linux**: `setcap cap_net_raw+ep` を付与。`setcap` がない場合は `sudo` で起動します。
+* **macOS**: root 所有・モード `0755` の署名済みバイナリを配置。`sudo` で起動します。
 
 インストール先を変更する場合:
 
@@ -92,17 +92,19 @@ sudo ./install.sh
 sudo INSTALL_DIR=/usr/local/bin ./install.sh
 ```
 
-インストール後は `sudo` なしで実行できます:
+Linux で `CAP_NET_RAW` が付与されていれば `sudo` なしで実行できます:
 
 ```bash
 mping google.com 1.1.1.1
 ```
 
+macOS と `setcap` のない Linux では `sudo mping google.com 1.1.1.1` と実行してください。旧バージョンを setuid でインストールしている場合は、新しい `install.sh` で再インストールすると setuid ビットが除去されます。
+
 ---
 
 ### ソースコードからビルド
 
-**必須要件:** Go 1.26 以上
+**必須要件:** Go 1.26.6 以上
 
 ```bash
 git clone https://github.com/nagayon-935/mping.git
@@ -115,11 +117,11 @@ cd mping
 # ビルドのみ
 make build
 
-# ビルド + インストール (macOS では setuid を付与。Linux では setcap のために install.sh を使用することを推奨)
+# ビルド + インストール (install.sh を使用)
 make install
 ```
 
-> **Linux ユーザーへ:** `make install` は setuid を設定しますが、これは動作しますが setcap より安全性が低くなります。本番環境では `go build -o mping ./cmd/main` の後に `sudo ./install.sh` を実行して `setcap` で `CAP_NET_RAW` を付与することを推奨します。
+> `make install` も `install.sh` と同じ設定を行います。Linux では利用可能なら `CAP_NET_RAW` を付与し、それ以外では起動時に `sudo` が必要です。
 
 #### go build を使ったビルド
 
@@ -131,7 +133,7 @@ sudo ./install.sh
 ## 使い方
 
 ```bash
-# 基本的な使い方 (install.sh 実行後は sudo 不要)
+# 基本的な使い方 (Linux の CAP_NET_RAW 付与済み環境。それ以外は sudo を付ける)
 mping google.com 1.1.1.1 8.8.8.8
 
 # インターフェイスを指定して実行
@@ -183,7 +185,7 @@ mping --rtt-warn 30 --rtt-crit 100 --loss-warn 10 --loss-crit 50 google.com
 mping -a google.com 1.1.1.1
 ```
 
-> インストールせずに実行する場合 (`setcap`/`setuid` なし) は `sudo` を付けてください:
+> macOS など `CAP_NET_RAW` が付与されていない環境では、`sudo` を付けてください:
 > ```bash
 > sudo ./mping google.com
 > ```

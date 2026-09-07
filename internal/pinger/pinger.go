@@ -272,17 +272,9 @@ type Pinger struct {
 	// target.
 	DSCP int
 
-	// TargetDSCP holds a per-target override of the outbound DSCP byte,
-	// keyed by stats.TargetStats.Host (the same string cmd/main's
-	// targetSpec.display() produces, matching how Targets was built).
-	// Because every target shares one underlying socket, a per-target
-	// override can't use SetTOS/SetTrafficClass (which is socket-wide);
-	// sendProbe instead attaches an explicit per-packet
-	// ipv4.ControlMessage{TOS: ...} / ipv6.ControlMessage{TrafficClass: ...}
-	// to just that target's WriteTo calls, leaving DSCP's socket-wide
-	// default (or the OS default when DSCP is unset) in place for every
-	// other target.
-	TargetDSCP map[string]int
+	// TargetDSCP holds per-target outbound overrides by stats identity, so two
+	// entries for the same host can use different IPv6 traffic classes.
+	TargetDSCP map[*stats.TargetStats]int
 
 	connV4      PacketConnV4
 	connV6      PacketConnV6
@@ -323,12 +315,14 @@ type Pinger struct {
 	done     chan struct{} // Signal to close receiver
 	stopOnce sync.Once     // guards close(done); Stop may be called concurrently
 	wg       sync.WaitGroup
+	workers  sync.WaitGroup // probe completion excludes the long-lived receivers
 
-	resolveIPAddr resolveIPAddrFunc
-	now           func() time.Time
-	listenPacket  listenPacketFunc
-	lookupTXT     func(string) ([]string, error)
-	lookupAddr    func(string) ([]string, error)
+	resolveIPAddr      resolveIPAddrFunc
+	resolveWithContext func(context.Context, string, string) (*net.IPAddr, error)
+	now                func() time.Time
+	listenPacket       listenPacketFunc
+	lookupTXT          func(string) ([]string, error)
+	lookupAddr         func(string) ([]string, error)
 }
 
 type resolveIPAddrFunc func(network, address string) (*net.IPAddr, error)
@@ -343,14 +337,15 @@ type listenPacketFunc func(network, address string) (net.PacketConn, error)
 var bindToInterfaceFn = bindToInterface
 
 type Options struct {
-	ResolveIPAddr resolveIPAddrFunc
-	Resolver      *net.Resolver
-	Now           func() time.Time
-	ListenPacket  listenPacketFunc
-	LookupTXT     func(string) ([]string, error)
-	LookupAddr    func(string) ([]string, error)
-	AsnEnabled    bool
-	PtrEnabled    bool
+	ResolveIPAddr        resolveIPAddrFunc
+	ResolveIPAddrContext func(context.Context, string, string) (*net.IPAddr, error)
+	Resolver             *net.Resolver
+	Now                  func() time.Time
+	ListenPacket         listenPacketFunc
+	LookupTXT            func(string) ([]string, error)
+	LookupAddr           func(string) ([]string, error)
+	AsnEnabled           bool
+	PtrEnabled           bool
 
 	// InitialSeq overrides the starting value of runWorker's logical seq
 	// counter. Zero value matches production behavior (start at 0); tests
@@ -363,11 +358,8 @@ type Options struct {
 	// from an explicit "0" (CS0/Default) selection.
 	DSCP *int
 
-	// TargetDSCP overrides DSCP for specific targets, keyed by target Host
-	// (matching stats.TargetStats.Host / targetSpec.display()). See
-	// Pinger.TargetDSCP for why this needs per-packet handling instead of a
-	// socket-wide call.
-	TargetDSCP map[string]int
+	// TargetDSCP overrides DSCP by index in the targets passed to the constructor.
+	TargetDSCP map[int]int
 }
 
 // NewPinger creates a Pinger with default options for the given targets.
@@ -381,6 +373,12 @@ func NewPinger(targets []*stats.TargetStats) *Pinger {
 // NewPingerWithOptions creates a Pinger with the provided options.
 func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 	resolve := opts.ResolveIPAddr
+	resolveContext := opts.ResolveIPAddrContext
+	if resolveContext == nil && resolve == nil {
+		resolveContext = func(ctx context.Context, network, address string) (*net.IPAddr, error) {
+			return ResolveIPAddrContext(ctx, opts.Resolver, network, address)
+		}
+	}
 	if resolve == nil {
 		if opts.Resolver != nil {
 			resolve = func(network, address string) (*net.IPAddr, error) {
@@ -431,29 +429,40 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		dscp = *opts.DSCP
 	}
 
+	var targetDSCP map[*stats.TargetStats]int
+	if len(opts.TargetDSCP) > 0 {
+		targetDSCP = make(map[*stats.TargetStats]int, len(opts.TargetDSCP))
+		for i, value := range opts.TargetDSCP {
+			if i >= 0 && i < len(targets) {
+				targetDSCP[targets[i]] = value
+			}
+		}
+	}
+
 	return &Pinger{
-		Targets:         targets,
-		targetMap:       make(map[int]*stats.TargetStats),
-		targetChans:     make(map[int]chan Reply),
-		asnCache:        make(map[string]ASNInfo),
-		ptrCache:        make(map[string]string),
-		baseID:          os.Getpid() & 0xffff,
-		Size:            56, // Default payload size (like standard ping)
-		ResolveInterval: 60 * time.Second,
-		AsnEnabled:      opts.AsnEnabled,
-		PtrEnabled:      opts.PtrEnabled,
-		DSCP:            dscp,
-		TargetDSCP:      opts.TargetDSCP,
-		traceChans:      make(map[int]chan traceMsg),
-		done:            make(chan struct{}),
-		initialSeq:      opts.InitialSeq,
-		resolveIPAddr:   resolve,
-		now:             now,
-		listenPacket:    listen,
-		lookupTXT:       lookup,
-		lookupAddr:      lookupAddr,
-		asnJitter:       func() time.Duration { return time.Duration(rand.Int63n(int64(asnJitterMax))) },
-		ptrJitter:       func() time.Duration { return time.Duration(rand.Int63n(int64(ptrJitterMax))) },
+		Targets:            targets,
+		targetMap:          make(map[int]*stats.TargetStats),
+		targetChans:        make(map[int]chan Reply),
+		asnCache:           make(map[string]ASNInfo),
+		ptrCache:           make(map[string]string),
+		baseID:             os.Getpid() & 0xffff,
+		Size:               56, // Default payload size (like standard ping)
+		ResolveInterval:    60 * time.Second,
+		AsnEnabled:         opts.AsnEnabled,
+		PtrEnabled:         opts.PtrEnabled,
+		DSCP:               dscp,
+		TargetDSCP:         targetDSCP,
+		traceChans:         make(map[int]chan traceMsg),
+		done:               make(chan struct{}),
+		initialSeq:         opts.InitialSeq,
+		resolveIPAddr:      resolve,
+		resolveWithContext: resolveContext,
+		now:                now,
+		listenPacket:       listen,
+		lookupTXT:          lookup,
+		lookupAddr:         lookupAddr,
+		asnJitter:          func() time.Duration { return time.Duration(rand.Int63n(int64(asnJitterMax))) },
+		ptrJitter:          func() time.Duration { return time.Duration(rand.Int63n(int64(ptrJitterMax))) },
 	}
 }
 
@@ -555,6 +564,7 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 	p.armDSCP()
 
 	// Register targets and start workers
+	p.workers.Add(len(p.Targets))
 	for i, t := range p.Targets {
 		id := (p.baseID + i) & 0xffff
 
@@ -566,6 +576,7 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 		p.wg.Add(1)
 		go func(t *stats.TargetStats, id int) {
 			defer p.wg.Done()
+			defer p.workers.Done()
 			p.runWorker(t, id, interval, timeout)
 		}(t, id)
 	}
@@ -615,6 +626,13 @@ func isIPv4(s string) bool {
 
 func (p *Pinger) Wait() {
 	p.wg.Wait()
+}
+
+// WaitWorkers waits for all targets to finish their outstanding probes. Unlike
+// Wait, it can return on Count completion while receivers serve MTR/traceroute.
+// Call only after Start has returned.
+func (p *Pinger) WaitWorkers() {
+	p.workers.Wait()
 }
 
 func (p *Pinger) Close() {
@@ -876,19 +894,38 @@ func (p *Pinger) handleICMPError(msg *icmp.Message, errorStringFn func(icmp.Type
 	}
 }
 
-// resolveIPAddrBounded wraps p.resolveIPAddr with resolveTimeout and aborts
-// early when Stop() closes p.done. Mirrors lookupTXTBounded: the resolver
-// goroutine is left to finish into a buffered channel (resolveIPAddrFunc
-// has no cancellation seam) while the caller is released immediately, so a
-// hung resolver cannot stall Pinger.Wait() and with it the whole shutdown.
+// resolveIPAddrBounded applies resolveTimeout and aborts when Stop closes
+// p.done, so a hung resolver cannot stall workers or Pinger.Wait.
 func (p *Pinger) resolveIPAddrBounded(network, address string) (*net.IPAddr, error) {
+	return p.resolveIPAddrContext(context.Background(), network, address)
+}
+
+// Honor both the operation's cancellation and the pinger lifetime. Legacy
+// resolver test doubles have no context parameter, so retain a bounded wait
+// around them; production resolvers also receive the deadline directly.
+func (p *Pinger) resolveIPAddrContext(ctx context.Context, network, address string) (*net.IPAddr, error) {
+	ctx, cancel := context.WithTimeout(ctx, resolveTimeout)
+	defer cancel()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-p.done:
+		return nil, errPingerStopped
+	default:
+	}
 	type result struct {
 		addr *net.IPAddr
 		err  error
 	}
 	ch := make(chan result, 1)
 	go func() {
-		addr, err := p.resolveIPAddr(network, address)
+		var addr *net.IPAddr
+		var err error
+		if p.resolveWithContext != nil {
+			addr, err = p.resolveWithContext(ctx, network, address)
+		} else {
+			addr, err = p.resolveIPAddr(network, address)
+		}
 		ch <- result{addr, err}
 	}()
 	select {
@@ -896,8 +933,8 @@ func (p *Pinger) resolveIPAddrBounded(network, address string) (*net.IPAddr, err
 		return r.addr, r.err
 	case <-p.done:
 		return nil, errPingerStopped
-	case <-time.After(resolveTimeout):
-		return nil, fmt.Errorf("dns resolution for %q timed out after %s", address, resolveTimeout)
+	case <-ctx.Done():
+		return nil, fmt.Errorf("dns resolution for %q: %w", address, ctx.Err())
 	}
 }
 
@@ -1103,16 +1140,13 @@ func (p *Pinger) lookupOrg(asnNumber string) (string, error) {
 	return desc, nil
 }
 
-// dscpFor returns the outbound DSCP override for t, if any, sourced from
-// Pinger.TargetDSCP (keyed by t.Host — see the field's doc for why per-
-// target overrides can't just use SetTOS/SetTrafficClass). ok is false when
-// t has no override, in which case the caller should fall back to the
-// socket-wide default Start() already armed via DSCP.
+// dscpFor returns the override belonging to this target instance. Without an
+// override, the write uses the socket-wide default armed by Start.
 func (p *Pinger) dscpFor(t *stats.TargetStats) (int, bool) {
 	if p.TargetDSCP == nil {
 		return 0, false
 	}
-	v, ok := p.TargetDSCP[t.Host]
+	v, ok := p.TargetDSCP[t]
 	return v, ok
 }
 

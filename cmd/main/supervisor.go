@@ -30,6 +30,7 @@ type supervisorConfig struct {
 	bind         pinger.BindConfig
 	traceEnabled bool
 	mtrEnabled   bool
+	countLimited bool
 	logCh        chan string
 }
 
@@ -74,6 +75,7 @@ const (
 	cmdResetPort
 	cmdResetHTTP
 	cmdTerminate
+	cmdProbesFinished
 )
 
 func (k cmdKind) String() string {
@@ -94,6 +96,8 @@ func (k cmdKind) String() string {
 		return "resetHTTP"
 	case cmdTerminate:
 		return "terminate"
+	case cmdProbesFinished:
+		return "probesFinished"
 	}
 	return "unknown"
 }
@@ -101,8 +105,9 @@ func (k cmdKind) String() string {
 // command is one unit of work for the supervisor. reply may be nil when the
 // sender does not care about the outcome.
 type command struct {
-	kind  cmdKind
-	reply chan error
+	kind   cmdKind
+	reply  chan error
+	pinger pingerController // identity of the instance reporting completion
 }
 
 // errSupervisorTerminated is returned for a command that would have started
@@ -132,17 +137,21 @@ type supervisor struct {
 	done         chan struct{}
 	loopDone     chan struct{}
 	shutdownOnce sync.Once
+	finished     chan struct{} // buffered count-completion notifications; nil when unlimited
 
 	// Snapshots published by the loop for readers that must not block on it:
-	// the render loop (httpSnap), count-limited runs (pingerSnap), tests
-	// (stateSnap).
+	// the render loop (httpSnap) and tests (pingerSnap, stateSnap).
 	httpSnap   atomic.Pointer[[]*stats.HTTPCheckResult]
 	pingerSnap atomic.Pointer[pingerController]
 	stateSnap  atomic.Int32
 }
 
 func newSupervisor(cfg supervisorConfig) *supervisor {
-	return &supervisor{cfg: cfg}
+	s := &supervisor{cfg: cfg}
+	if cfg.countLimited {
+		s.finished = make(chan struct{}, 1)
+	}
+	return s
 }
 
 // startTraceroutes cancels any previous traceroute goroutine, launches a new
@@ -183,6 +192,14 @@ func (s *supervisor) onFlap(host, desc string) {
 // without starting a goroutine.
 func (s *supervisor) handle(c command) error {
 	switch c.kind {
+	case cmdProbesFinished:
+		if s.state == stateRunning && s.p == c.pinger {
+			select {
+			case s.finished <- struct{}{}:
+			default:
+			}
+		}
+		return nil
 	case cmdStart:
 		if s.state == stateTerminated {
 			return errSupervisorTerminated
@@ -269,6 +286,10 @@ func (s *supervisor) handle(c command) error {
 // real join — Pinger.Stop is sync.Once-guarded and Pinger.Close reuses that
 // same guard (pinger.go).
 func (s *supervisor) startAll() error {
+	select {
+	case <-s.finished:
+	default:
+	}
 	next := s.cfg.makePinger(s.cfg.packetSize)
 	if err := next.Start(s.cfg.interval, s.cfg.timeout); err != nil {
 		return err
@@ -284,6 +305,15 @@ func (s *supervisor) startAll() error {
 	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout, s.cfg.bind)
 	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout, s.cfg.bind)
 	s.state = stateRunning
+	if s.cfg.countLimited {
+		go func() {
+			next.WaitWorkers()
+			select {
+			case s.cmds <- command{kind: cmdProbesFinished, pinger: next}:
+			case <-s.done:
+			}
+		}()
+	}
 	if prev != nil && prev != next {
 		prev.Stop()
 		prev.Wait()
@@ -397,12 +427,4 @@ func (s *supervisor) httpResults() []*stats.HTTPCheckResult {
 		return *r
 	}
 	return nil
-}
-
-// waitPinger blocks until the current pinger finishes (used for
-// count-limited runs).
-func (s *supervisor) waitPinger() {
-	if p := s.pingerSnap.Load(); p != nil {
-		(*p).Wait()
-	}
 }

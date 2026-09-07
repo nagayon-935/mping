@@ -24,7 +24,7 @@ type RunOptions struct {
 	Targets      []*stats.TargetStats
 	Interval     time.Duration
 	Timeout      time.Duration
-	DoneCh       chan struct{} // closed when pinger finishes (count-limited mode); nil means unlimited
+	DoneCh       chan struct{} // receives count-completion notifications; nil means unlimited
 	SourceIPv4   string
 	SourceIPv6   string
 	PacketSize   int

@@ -34,7 +34,7 @@ func (p *Pinger) DiscoverMaxPayload(ctx context.Context, dest string, start int,
 		min = 0
 	}
 
-	dstAddr, err := p.resolveIPAddr("ip", dest)
+	dstAddr, err := p.resolveIPAddrContext(ctx, "ip", dest)
 	if err != nil {
 		return 0, "", fmt.Errorf("resolve %s: %w", dest, err)
 	}

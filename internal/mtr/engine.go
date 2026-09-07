@@ -32,7 +32,7 @@ type HopSocket interface {
 // HopProber is the interface satisfied by *pinger.Pinger (via cmd/main adapter).
 // It provides all primitives the engine needs to send probes and receive replies.
 type HopProber interface {
-	OpenHopSocket(dest string) (HopSocket, error)
+	OpenHopSocket(ctx context.Context, dest string) (HopSocket, error)
 	ProbeHop(ctx context.Context, sock HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error)
 	NextTraceID() int
 	ASNInfoFor(ip string) pinger.ASNInfo
@@ -127,11 +127,11 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 		dest = v.Host
 	}
 
-	sock, err := prober.OpenHopSocket(dest)
+	sock, err := prober.OpenHopSocket(ctx, dest)
 	if err != nil {
 		return
 	}
-	defer sock.Close()
+	defer func() { sock.Close() }()
 
 	mtr := ts.MTR()
 
@@ -158,11 +158,11 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 				currentDest = v.Host
 			}
 			if currentDest != dest {
-				sock.Close()
-				newSock, err := prober.OpenHopSocket(currentDest)
+				newSock, err := prober.OpenHopSocket(ctx, currentDest)
 				if err != nil {
 					return
 				}
+				sock.Close()
 				sock = newSock
 				dest = currentDest
 			}

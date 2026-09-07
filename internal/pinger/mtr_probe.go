@@ -104,10 +104,19 @@ func (p *Pinger) GetASNInfoFor(ip string) ASNInfo {
 // OpenHopSocket opens a send socket for TTL-limited probes to dest.
 // The caller must call HopSocket.Close() when done.
 func (p *Pinger) OpenHopSocket(dest string) (*HopSocket, error) {
-	dstAddr, err := p.resolveIPAddr("ip", dest)
+	return p.OpenHopSocketContext(context.Background(), dest)
+}
+
+// OpenHopSocketContext cancels DNS resolution with the MTR engine's context.
+func (p *Pinger) OpenHopSocketContext(ctx context.Context, dest string) (*HopSocket, error) {
+	dstAddr, err := p.resolveIPAddrContext(ctx, "ip", dest)
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", dest, err)
 	}
+	return p.openHopSocketAddr(dstAddr)
+}
+
+func (p *Pinger) openHopSocketAddr(dstAddr *net.IPAddr) (*HopSocket, error) {
 	isV4 := dstAddr.IP.To4() != nil
 
 	sock := &HopSocket{isV4: isV4, pinger: p}
@@ -159,7 +168,7 @@ func (p *Pinger) OpenHopSocket(dest string) (*HopSocket, error) {
 // traceID must be unique per probe round (use p.NextTraceID()).
 // Returns HopReply with Responded=false on timeout.
 func (p *Pinger) ProbeHop(ctx context.Context, sock *HopSocket, dest string, ttl, traceID int, timeout time.Duration) (HopReply, error) {
-	dstAddr, err := p.resolveIPAddr("ip", dest)
+	dstAddr, err := p.resolveIPAddrContext(ctx, "ip", dest)
 	if err != nil {
 		return HopReply{}, fmt.Errorf("resolve %s: %w", dest, err)
 	}
@@ -194,6 +203,14 @@ func (p *Pinger) probeHopAddr(ctx context.Context, sock *HopSocket, dstAddr *net
 		return HopReply{}, fmt.Errorf("marshal probe: %w", err)
 	}
 
+	// The shared receiver can dispatch a reply before WriteTo returns.
+	// Register first so fast responses are buffered rather than discarded.
+	var traceCh chan traceMsg
+	if (sock.isV4 && p.connV4 != nil) || (!sock.isV4 && p.connV6 != nil) {
+		traceCh = p.RegisterTraceChan(traceID)
+		defer p.UnregisterTraceChan(traceID)
+	}
+
 	var sent time.Time
 	if sock.isV4 {
 		// sent is stamped after acquiring sendMu (not before) so a queued
@@ -217,12 +234,6 @@ func (p *Pinger) probeHopAddr(ctx context.Context, sock *HopSocket, dstAddr *net
 
 	accept := func(msg *icmp.Message, src net.Addr) (HopReply, bool) {
 		return acceptHopPacket(msg, src, traceID, ttl)
-	}
-
-	var traceCh chan traceMsg
-	if (sock.isV4 && p.connV4 != nil) || (!sock.isV4 && p.connV6 != nil) {
-		traceCh = p.RegisterTraceChan(traceID)
-		defer p.UnregisterTraceChan(traceID)
 	}
 
 	if traceCh != nil {

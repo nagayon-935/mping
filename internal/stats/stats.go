@@ -484,6 +484,7 @@ func (t *TargetStats) Reset() {
 	t.LastLossTime = time.Time{}
 	t.LastError = ""
 	t.rtt = rttAccumulator{}
+	t.jitter = 0
 	if t.mtrStats != nil {
 		t.mtrStats.Reset()
 	}

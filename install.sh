@@ -16,6 +16,7 @@ fi
 
 echo "Installing $BINARY to $INSTALL_DIR..."
 cp "./$BINARY" "$INSTALL_DIR/$BINARY"
+chown root "$INSTALL_DIR/$BINARY"
 chmod 755 "$INSTALL_DIR/$BINARY"
 
 OS="$(uname -s)"
@@ -25,20 +26,16 @@ case "$OS" in
       echo "Setting CAP_NET_RAW capability..."
       setcap cap_net_raw+ep "$INSTALL_DIR/$BINARY"
     else
-      echo "setcap not found, falling back to setuid..."
-      chown root "$INSTALL_DIR/$BINARY"
-      chmod u+s "$INSTALL_DIR/$BINARY"
+      echo "setcap not found. Run with sudo, or install setcap and reinstall."
     fi
     ;;
   Darwin)
-    echo "Setting setuid bit (macOS)..."
-    chown root "$INSTALL_DIR/$BINARY"
-    chmod u+s "$INSTALL_DIR/$BINARY"
-    echo "Code signing (macOS requires valid signature for setuid binaries)..."
+    echo "Code signing..."
     codesign --sign - --force "$INSTALL_DIR/$BINARY"
+    echo "Run mping with sudo on macOS."
     ;;
   *)
-    echo "Warning: Unsupported OS '$OS'. You may need to manually grant CAP_NET_RAW or set setuid."
+    echo "Warning: Unsupported OS '$OS'. Run with the privileges needed for raw ICMP sockets."
     ;;
 esac
 

@@ -96,8 +96,8 @@ func wireHostInputs(
 }
 
 // startRefreshLoop launches the goroutine that redraws the table on each
-// tick, delivers external log/close signals from outside the TUI, and stops
-// once the pinger finishes (doneCh) or the app quits (appStop). TD-23③:
+// tick, delivers external log/close and count-completion signals, and stops
+// when the app quits (appStop or externalCloseCh). TD-23③:
 // extracted out of Run() so its ~50 lines don't compete with construction
 // for reading attention.
 func startRefreshLoop(
@@ -146,15 +146,18 @@ func startRefreshLoop(
 				closeAppStop()
 				app.Stop()
 				return
-			case <-doneCh:
+			case _, open := <-doneCh:
+				if !open {
+					doneCh = nil // also accept one-shot closed channels
+				}
 				// Pinger finished (count limit reached)
 				app.QueueUpdateDraw(func() {
 					footer.SetText("Finished. Press 'q' to quit, 'R' to reset stats")
 					footer.SetTextColor(tcell.ColorGreen)
 					tr.update()
 				})
-				// Stop refreshing since pinger is done
-				return
+				// Keep servicing other monitors, duration/reload signals and
+				// subsequent completion notifications after a restart.
 			case <-appStop:
 				return
 			}
