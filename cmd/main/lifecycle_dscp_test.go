@@ -51,17 +51,15 @@ func TestBuildPingerOptions_PerTargetDSCP(t *testing.T) {
 	if opts.DSCP == nil || *opts.DSCP != 0 {
 		t.Fatalf("opts.DSCP = %v, want pointer to 0 (CS0)", opts.DSCP)
 	}
-	if got := opts.TargetDSCP["2001:db8::1"]; got != 46<<2 {
+	if got := opts.TargetDSCP[0]; got != 46<<2 {
 		t.Fatalf("TargetDSCP[2001:db8::1] = %d, want %d", got, 46<<2)
 	}
-	// specs[1].display() is "2001:db8::1 (2001:db8::2)" (Host != PinnedIP),
-	// matching the same key convention buildPingerOptions's pre-existing
-	// `pinned` map already uses.
-	wantKey := specs[1].display()
+	// Overrides follow target indices, independently of display labels.
+	wantKey := 1
 	if got := opts.TargetDSCP[wantKey]; got != 34<<2 {
-		t.Fatalf("TargetDSCP[%q] = %d, want %d", wantKey, got, 34<<2)
+		t.Fatalf("TargetDSCP[%d] = %d, want %d", wantKey, got, 34<<2)
 	}
-	if _, ok := opts.TargetDSCP["plain.example.com"]; ok {
+	if _, ok := opts.TargetDSCP[2]; ok {
 		t.Fatal("TargetDSCP should have no entry for a target with no override")
 	}
 }

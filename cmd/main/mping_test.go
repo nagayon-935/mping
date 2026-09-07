@@ -86,6 +86,8 @@ func (f *fakePinger) Close() {
 	f.closeCalled = true
 }
 
+func (f *fakePinger) WaitWorkers() { f.Wait() }
+
 func (f *fakePinger) Wait() {
 	f.waited.Store(true)
 }
@@ -514,7 +516,10 @@ func TestMergeHosts(t *testing.T) {
 	if err := os.WriteFile(path, []byte("hosts:\n  - a\n  - b\n"), 0644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	cfg := config{hostsFile: path}
+	cfg, _, _, _, err := parseArgs([]string{"-f", path})
+	if err != nil {
+		t.Fatal(err)
+	}
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	got, _, _, err := mergeHosts(cfg, fs, []string{"c"})
 	if err != nil {
@@ -544,7 +549,10 @@ hosts:
 	if err := os.WriteFile(path, []byte(yamlContent), 0644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	cfg := config{hostsFile: path}
+	cfg, _, _, _, err := parseArgs([]string{"-f", path})
+	if err != nil {
+		t.Fatal(err)
+	}
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 
 	got, _, mergedCfg, err := mergeHosts(cfg, fs, nil)
@@ -593,7 +601,10 @@ port:
 		t.Fatalf("write file: %v", err)
 	}
 
-	cfg := config{hostsFile: path}
+	cfg, _, _, _, err := parseArgs([]string{"-f", path})
+	if err != nil {
+		t.Fatal(err)
+	}
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	fs.Int("interval", 1000, "")
 	fs.Int("timeout", 1000, "")
@@ -672,9 +683,12 @@ func TestMergeHosts_IPv4AndIPv6Conflict(t *testing.T) {
 	if err := os.WriteFile(path, []byte("hosts:\n  - a\nipv4: true\nipv6: true\n"), 0644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	cfg := config{hostsFile: path}
+	cfg, _, _, _, err := parseArgs([]string{"-f", path})
+	if err != nil {
+		t.Fatal(err)
+	}
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	_, _, _, err := mergeHosts(cfg, fs, nil)
+	_, _, _, err = mergeHosts(cfg, fs, nil)
 	if err == nil {
 		t.Fatal("expected error for ipv4+ipv6 conflict, got nil")
 	}
@@ -1826,7 +1840,10 @@ groups:
 	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	cfg := config{hostsFile: path}
+	cfg, _, _, _, err := parseArgs([]string{"-f", path})
+	if err != nil {
+		t.Fatal(err)
+	}
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	hosts, groups, _, err := mergeHosts(cfg, fs, nil)
 	if err != nil {
@@ -1870,7 +1887,10 @@ func TestMergeHosts_GroupsOnly(t *testing.T) {
 	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	cfg := config{hostsFile: path}
+	cfg, _, _, _, err := parseArgs([]string{"-f", path})
+	if err != nil {
+		t.Fatal(err)
+	}
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	hosts, groups, _, err := mergeHosts(cfg, fs, nil)
 	if err != nil {

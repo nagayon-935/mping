@@ -41,9 +41,9 @@ func TestNewPingerWithOptionsDSCPSet(t *testing.T) {
 }
 
 func TestNewPingerWithOptionsTargetDSCP(t *testing.T) {
-	target := map[string]int{"example.com": 46 << 2}
-	p := NewPingerWithOptions(nil, Options{TargetDSCP: target})
-	if p.TargetDSCP["example.com"] != 46<<2 {
+	target := stats.NewTargetStats("example.com")
+	p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{TargetDSCP: map[int]int{0: 46 << 2}})
+	if p.TargetDSCP[target] != 46<<2 {
 		t.Fatalf("TargetDSCP not threaded through from Options: got %v", p.TargetDSCP)
 	}
 }
@@ -100,8 +100,8 @@ func TestDSCPForNoOverride(t *testing.T) {
 
 func TestDSCPForWithOverride(t *testing.T) {
 	p := NewPinger(nil)
-	p.TargetDSCP = map[string]int{"example.com": 46 << 2}
 	target := stats.NewTargetStats("example.com")
+	p.TargetDSCP = map[*stats.TargetStats]int{target: 46 << 2}
 	got, ok := p.dscpFor(target)
 	if !ok {
 		t.Fatal("expected ok=true for overridden target")
@@ -115,7 +115,7 @@ func TestDSCPForOtherTargetUnaffected(t *testing.T) {
 	// Regression guard for the "EF vs BE side-by-side" use case: a
 	// TargetDSCP override for one host must never leak onto another.
 	p := NewPinger(nil)
-	p.TargetDSCP = map[string]int{"ef.example.com": 46 << 2}
+	p.TargetDSCP = map[*stats.TargetStats]int{stats.NewTargetStats("ef.example.com"): 46 << 2}
 	other := stats.NewTargetStats("be.example.com")
 	if _, ok := p.dscpFor(other); ok {
 		t.Fatal("expected ok=false for a target with no override, even when TargetDSCP has entries for other hosts")
@@ -187,7 +187,7 @@ func TestSendProbeUsesPerTargetDSCPOverIPv6(t *testing.T) {
 	p := NewPinger([]*stats.TargetStats{target})
 	fake := &fakePacketConnV6{}
 	p.connV6 = fake
-	p.TargetDSCP = map[string]int{"ef.example.com": 46 << 2}
+	p.TargetDSCP = map[*stats.TargetStats]int{target: 46 << 2}
 
 	dst := &net.IPAddr{IP: net.ParseIP("2001:db8::1")}
 	if _, ok := p.sendProbe(target, 1, 1, []byte("MPING"), dst); !ok {

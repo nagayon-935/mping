@@ -60,7 +60,11 @@ func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile stri
 		}
 		return
 	}
-	if err := validateHostsDoc(doc); err != nil {
+	docHosts, docGroups, cfg, err := applyDocToCfg(rc.cliCfg, rc.fs, doc)
+	if err == nil {
+		err = validateMergedHosts(cfg, docHosts, docGroups, rc.cliHosts)
+	}
+	if err != nil {
 		select {
 		case logCh <- fmt.Sprintf("[red][%s] Reload validation error: %v[-]",
 			time.Now().Format("15:04:05"), err):
@@ -71,6 +75,7 @@ func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile stri
 	rc.mu.Lock()
 	rc.requested = true
 	rc.doc = doc
+	rc.newHosts = nil
 	rc.mu.Unlock()
 	sig.fire()
 }
@@ -105,6 +110,7 @@ func (rc *reloadCoordinator) apply(currentCfg config, currentHosts []targetSpec,
 
 	if newHosts != nil {
 		// In-memory add/delete: use the updated host list directly.
+		currentGroups = remapGroups(currentHosts, newHosts, currentGroups)
 		currentHosts = newHosts
 	} else {
 		// File-based reload: re-apply YAML doc.
@@ -140,4 +146,33 @@ func (rc *reloadCoordinator) apply(currentCfg config, currentHosts []targetSpec,
 	rc.mu.Unlock()
 
 	return currentHosts, currentGroups, currentCfg, reload, warning
+}
+
+// Match each surviving occurrence once, so duplicate hosts and DSCP variants
+// retain their original group membership when earlier entries are deleted.
+func remapGroups(oldHosts, newHosts []targetSpec, groups []ui.TargetGroup) []ui.TargetGroup {
+	positions := make(map[targetSpec][]int, len(newHosts))
+	for i, host := range newHosts {
+		positions[host] = append(positions[host], i)
+	}
+	oldToNew := make(map[int]int, len(oldHosts))
+	for i, host := range oldHosts {
+		if indices := positions[host]; len(indices) > 0 {
+			oldToNew[i] = indices[0]
+			positions[host] = indices[1:]
+		}
+	}
+	var result []ui.TargetGroup
+	for _, group := range groups {
+		var indices []int
+		for _, oldIdx := range group.Indices {
+			if newIdx, ok := oldToNew[oldIdx]; ok {
+				indices = append(indices, newIdx)
+			}
+		}
+		if len(indices) > 0 {
+			result = append(result, ui.TargetGroup{Name: group.Name, Indices: indices})
+		}
+	}
+	return result
 }

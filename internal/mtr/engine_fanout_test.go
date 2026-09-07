@@ -24,8 +24,8 @@ type concurrencyTrackingProber struct {
 	peak    int32
 }
 
-func (c *concurrencyTrackingProber) OpenHopSocket(dest string) (HopSocket, error) {
-	return c.delegate.OpenHopSocket(dest)
+func (c *concurrencyTrackingProber) OpenHopSocket(ctx context.Context, dest string) (HopSocket, error) {
+	return c.delegate.OpenHopSocket(ctx, dest)
 }
 
 func (c *concurrencyTrackingProber) ProbeHop(ctx context.Context, sock HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error) {

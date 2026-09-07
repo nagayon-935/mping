@@ -102,7 +102,7 @@ mping google.com 1.1.1.1
 
 ### ソースコードからビルド
 
-**必須要件:** Go 1.26 以上
+**必須要件:** Go 1.26.6 以上
 
 ```bash
 git clone https://github.com/nagayon-935/mping.git

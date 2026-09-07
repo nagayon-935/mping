@@ -23,12 +23,12 @@ func (p *Pinger) TraceRoute(ctx context.Context, dest string, maxHops int, timeo
 	if maxHops <= 0 {
 		return nil, fmt.Errorf("maxHops must be > 0")
 	}
-	dstAddr, err := p.resolveIPAddr("ip", dest)
+	dstAddr, err := p.resolveIPAddrContext(ctx, "ip", dest)
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", dest, err)
 	}
 
-	sock, err := p.OpenHopSocket(dest)
+	sock, err := p.openHopSocketAddr(dstAddr)
 	if err != nil {
 		return nil, fmt.Errorf("open traceroute send socket: %w", err)
 	}

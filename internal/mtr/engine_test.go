@@ -26,7 +26,7 @@ func newFakeProber(replies map[int]pinger.HopReply) *fakeProber {
 	return &fakeProber{replies: replies}
 }
 
-func (f *fakeProber) OpenHopSocket(dest string) (HopSocket, error) {
+func (f *fakeProber) OpenHopSocket(ctx context.Context, dest string) (HopSocket, error) {
 	return &fakeHopSocket{}, nil
 }
 
@@ -296,8 +296,8 @@ type callCountingProber struct {
 	delegate *fakeProber
 }
 
-func (c *callCountingProber) OpenHopSocket(dest string) (HopSocket, error) {
-	return c.delegate.OpenHopSocket(dest)
+func (c *callCountingProber) OpenHopSocket(ctx context.Context, dest string) (HopSocket, error) {
+	return c.delegate.OpenHopSocket(ctx, dest)
 }
 func (c *callCountingProber) ProbeHop(ctx context.Context, sock HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error) {
 	c.mu.Lock()
@@ -328,8 +328,8 @@ func (s *switchingProber) setReplies(r map[int]pinger.HopReply) {
 	s.mu.Unlock()
 }
 
-func (s *switchingProber) OpenHopSocket(dest string) (HopSocket, error) {
-	return s.inner.OpenHopSocket(dest)
+func (s *switchingProber) OpenHopSocket(ctx context.Context, dest string) (HopSocket, error) {
+	return s.inner.OpenHopSocket(ctx, dest)
 }
 func (s *switchingProber) ProbeHop(ctx context.Context, sock HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error) {
 	return s.inner.ProbeHop(ctx, sock, dest, ttl, traceID, timeout)
