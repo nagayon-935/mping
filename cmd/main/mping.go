@@ -698,7 +698,7 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 		fmt.Fprintln(&usageBuf, "Usage: mping [options] host1 host2 ...")
 		fmt.Fprintln(&usageBuf, "Options:")
 		fs.PrintDefaults()
-		fmt.Fprintln(&usageBuf, "Note: This program usually requires root privileges (sudo) for raw sockets.")
+		fmt.Fprintln(&usageBuf, "Note: Basic ping runs without elevated privileges on macOS and Linux; traceroute, MTR, and PMTU require raw-socket privileges.")
 	}
 
 	if err := fs.Parse(args); err != nil {
@@ -969,7 +969,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 
 		if err := sup.startPinger(); err != nil {
 			fmt.Fprintf(errOut, "Error starting pinger: %v\n", err)
-			fmt.Fprintln(errOut, "This program requires root privileges (sudo) for raw ICMP sockets.")
+			fmt.Fprintln(errOut, "Basic ping uses non-privileged ICMP on macOS and Linux; raw-socket features require CAP_NET_RAW or sudo.")
 			sup.Shutdown()
 			return 1
 		}

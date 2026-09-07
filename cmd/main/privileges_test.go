@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,10 +46,12 @@ func TestInstallerNeverGrantsSetuid(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
+		name string
 		os   string
+		uid  int
 		caps bool
-	}{{"Darwin", false}, {"Linux", false}, {"Linux", true}} {
-		t.Run(tc.os+map[bool]string{true: "/capabilities", false: "/sudo"}[tc.caps], func(t *testing.T) {
+	}{{"Darwin/root", "Darwin", 0, false}, {"Darwin/user", "Darwin", 501, false}, {"Linux/root-no-capabilities", "Linux", 0, false}, {"Linux/user", "Linux", 1000, false}, {"Linux/capabilities", "Linux", 0, true}} {
+		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			bin := filepath.Join(dir, "tools")
 			dest := filepath.Join(dir, "installed")
@@ -63,11 +66,15 @@ func TestInstallerNeverGrantsSetuid(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			writeTool("id", "echo 0")
+			writeTool("id", fmt.Sprintf("echo %d", tc.uid))
 			writeTool("uname", "echo "+tc.os)
-			writeTool("chown", "exit 0")
+			if tc.uid == 0 {
+				writeTool("chown", "exit 0")
+			} else {
+				writeTool("chown", "exit 99")
+			}
 			writeTool("codesign", "exit 0")
-			for _, name := range []string{"cp", "chmod"} {
+			for _, name := range []string{"cp", "chmod", "mkdir"} {
 				path, err := exec.LookPath(name)
 				if err != nil {
 					t.Fatal(err)

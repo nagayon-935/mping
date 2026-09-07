@@ -33,10 +33,10 @@
 
 | OS | Architecture | Notes |
 | :--- | :--- | :--- |
-| Linux | amd64, arm64 | Recommended: grant `CAP_NET_RAW` via `setcap` |
-| macOS | amd64, arm64 (Apple Silicon) | Run with `sudo` |
+| Linux | amd64, arm64 | Basic ping runs without elevated privileges |
+| macOS | amd64, arm64 (Apple Silicon) | Basic ping runs without elevated privileges |
 
-> **Privileges required** — mping uses raw ICMP sockets to obtain accurate TTL values. On Linux the preferred approach is granting `CAP_NET_RAW` with `setcap`; `install.sh` handles this automatically. On macOS, run mping with `sudo`. Setuid/setgid execution is rejected to prevent user-selected file paths from being accessed with elevated privileges.
+> **Privileges** — Basic ping uses non-privileged ICMP datagram sockets on Linux and macOS. Traceroute, MTR, and PMTU discovery require raw sockets: use `CAP_NET_RAW` on Linux or run those modes with `sudo` on macOS. Setuid/setgid execution is rejected.
 
 > **Terminal Compatibility** — Standard terminals on Linux and macOS may not render colors correctly. If you experience issues with color display, consider using a modern terminal emulator (e.g., iTerm2, Alacritty, or kitty).
 
@@ -53,8 +53,8 @@ Download the archive for your platform from the [Releases](https://github.com/na
 curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-linux-amd64.tar.gz
 tar -xzf mping-v0.4.5-linux-amd64.tar.gz
 
-# Install (grants CAP_NET_RAW via setcap; use sudo to run if setcap is unavailable)
-sudo ./install.sh
+# Install to ~/.local/bin (no sudo required)
+./install.sh
 ```
 
 #### Linux (arm64 — e.g. Raspberry Pi, AWS Graviton)
@@ -62,7 +62,7 @@ sudo ./install.sh
 ```bash
 curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-linux-arm64.tar.gz
 tar -xzf mping-v0.4.5-linux-arm64.tar.gz
-sudo ./install.sh
+./install.sh
 ```
 
 #### macOS (Intel)
@@ -70,7 +70,7 @@ sudo ./install.sh
 ```bash
 curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-darwin-amd64.tar.gz
 tar -xzf mping-v0.4.5-darwin-amd64.tar.gz
-sudo ./install.sh
+./install.sh
 ```
 
 #### macOS (Apple Silicon)
@@ -78,27 +78,27 @@ sudo ./install.sh
 ```bash
 curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-darwin-arm64.tar.gz
 tar -xzf mping-v0.4.5-darwin-arm64.tar.gz
-sudo ./install.sh
+./install.sh
 ```
 
-`install.sh` copies the binary to `INSTALL_DIR` (default: `/usr/local/bin`) and sets the appropriate privilege:
+For a normal user, `install.sh` installs to `~/.local/bin` without elevated privileges. When run as root, it defaults to `/usr/local/bin`.
 
-* **Linux** — `setcap cap_net_raw+ep`; if `setcap` is unavailable, run with `sudo`.
-* **macOS** — installs a root-owned, signed binary with mode `0755`; run with `sudo`.
+* **Linux** — basic ping works as installed. A root installation also grants `CAP_NET_RAW` when `setcap` is available, enabling traceroute, MTR, and PMTU without `sudo`.
+* **macOS** — basic ping works as installed. Traceroute, MTR, and PMTU still require `sudo`.
 
 To install to a different directory:
 
 ```bash
-sudo INSTALL_DIR=/usr/local/bin ./install.sh
+INSTALL_DIR="$HOME/bin" ./install.sh
 ```
 
-On Linux with `CAP_NET_RAW`, run mping **without** `sudo`:
+Ensure the user installation directory is in `PATH`, then run mping without `sudo`:
 
 ```bash
 mping google.com 1.1.1.1
 ```
 
-On macOS or Linux without `setcap`, use `sudo mping google.com 1.1.1.1`. Reinstall older setuid installations using this version of `install.sh` to remove the setuid bit.
+For raw-socket features on macOS, use commands such as `sudo mping --trace google.com`. Reinstall older setuid installations using this version of `install.sh` to remove the setuid bit.
 
 ---
 
@@ -121,19 +121,19 @@ make build
 make install
 ```
 
-> `make install` uses the same platform-specific setup as `install.sh`: `CAP_NET_RAW` on Linux when available, and explicit `sudo` execution otherwise.
+> `make install` installs to `~/.local/bin` for a normal user. Run it as root only when a system-wide installation or Linux `CAP_NET_RAW` is required.
 
 #### Using go build directly
 
 ```bash
 go build -o mping ./cmd/main
-sudo ./install.sh
+./install.sh
 ```
 
 ## Usage
 
 ```bash
-# Basic (Linux with CAP_NET_RAW; otherwise prepend sudo)
+# Basic ping (no sudo required on Linux or macOS)
 mping google.com 1.1.1.1 8.8.8.8
 
 # Specify network interface
@@ -191,9 +191,9 @@ mping --rtt-warn 30 --rtt-crit 100 --loss-warn 10 --loss-crit 50 google.com
 mping -a google.com 1.1.1.1
 ```
 
-> If `CAP_NET_RAW` has not been granted (including on macOS), prepend `sudo`:
+> Traceroute, MTR, and PMTU require raw-socket privileges. On macOS, prepend `sudo` for those modes:
 > ```bash
-> sudo ./mping google.com
+> sudo mping --trace google.com
 > ```
 
 ### hosts.yaml example
