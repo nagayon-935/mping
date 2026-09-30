@@ -322,8 +322,10 @@ func watchDurationLimit(durationCtx context.Context, sig *reloadSignal, logCh ch
 		return func() {}
 	}
 	done := make(chan struct{})
+	exited := make(chan struct{})
 	var once sync.Once
 	go func() {
+		defer close(exited)
 		select {
 		case <-durationCtx.Done():
 			select {
@@ -335,7 +337,10 @@ func watchDurationLimit(durationCtx context.Context, sig *reloadSignal, logCh ch
 		case <-done:
 		}
 	}()
-	return func() { once.Do(func() { close(done) }) }
+	return func() {
+		once.Do(func() { close(done) })
+		<-exited
+	}
 }
 
 // runOptionsParams bundles the per-iteration values buildRunOptions needs to
@@ -409,6 +414,7 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 		OnRestart: func() error {
 			return p.sup.do(cmdRestart)
 		},
+		OnReset:      p.sup.resetStats,
 		OnResetTrace: p.sup.resetTrace,
 		OnResetMTR:   p.resetMTR,
 		OnResetPort:  p.resetPort,
@@ -450,22 +456,20 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 }
 
 // finishIteration performs the standard post-uiRun cleanup: stop the JSON
-// writer and write a final snapshot, tear the supervisor's components down,
-// stop its command loop, then stop the file watcher — in that order, joining
-// each before moving on.
+// writer, join all measurement producers, write their final snapshot, stop
+// the command loop, and join the file watcher.
 //
-// cmdTerminate must be processed BEFORE Shutdown(): terminate is what
-// actually stops the pinger and checkers, and Shutdown() ends the goroutine
-// that would execute it.
+// Terminate before exporting so the final snapshot includes every completed
+// measurement. Shutdown also terminates defensively and joins the loop.
 func finishIteration(cfg config, targets []*stats.TargetStats, sup *supervisor, errOut io.Writer, jsonCancel func(), jsonDone chan struct{}, watchCancel func(), watchDone chan struct{}) {
 	jsonCancel()
 	<-jsonDone
+	_ = sup.do(cmdTerminate)
 	if cfg.jsonOutputFile != "" {
 		if err := writeJSONSnapshot(cfg.jsonOutputFile, targets, sup.httpResults()); err != nil {
 			fmt.Fprintf(errOut, "Warning: Final JSON snapshot write failed: %v\n", err)
 		}
 	}
-	_ = sup.do(cmdTerminate)
 	sup.Shutdown()
 	watchCancel()
 	<-watchDone

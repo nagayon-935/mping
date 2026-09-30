@@ -312,6 +312,8 @@ type Pinger struct {
 
 	LogWriter io.Writer // Optional logger
 
+	ctx      context.Context // lifetime of all context-aware DNS operations
+	cancel   context.CancelFunc
 	done     chan struct{} // Signal to close receiver
 	stopOnce sync.Once     // guards close(done); Stop may be called concurrently
 	wg       sync.WaitGroup
@@ -323,6 +325,8 @@ type Pinger struct {
 	listenPacket       listenPacketFunc
 	lookupTXT          func(string) ([]string, error)
 	lookupAddr         func(string) ([]string, error)
+	lookupTXTContext   func(context.Context, string) ([]string, error)
+	lookupAddrContext  func(context.Context, string) ([]string, error)
 }
 
 type resolveIPAddrFunc func(network, address string) (*net.IPAddr, error)
@@ -337,6 +341,10 @@ type listenPacketFunc func(network, address string) (net.PacketConn, error)
 var bindToInterfaceFn = bindToInterface
 
 type Options struct {
+	// Context-aware hooks must honor cancellation. Default DNS uses these
+	// hooks synchronously on the owning worker/trace. Context-free hooks are
+	// retained for compatibility: their bounded adapters may outlive Stop,
+	// so injectors must ensure they return. Context-aware hooks take priority.
 	ResolveIPAddr        resolveIPAddrFunc
 	ResolveIPAddrContext func(context.Context, string, string) (*net.IPAddr, error)
 	Resolver             *net.Resolver
@@ -344,6 +352,8 @@ type Options struct {
 	ListenPacket         listenPacketFunc
 	LookupTXT            func(string) ([]string, error)
 	LookupAddr           func(string) ([]string, error)
+	LookupTXTContext     func(context.Context, string) ([]string, error)
+	LookupAddrContext    func(context.Context, string) ([]string, error)
 	AsnEnabled           bool
 	PtrEnabled           bool
 
@@ -379,22 +389,7 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 			return ResolveIPAddrContext(ctx, opts.Resolver, network, address)
 		}
 	}
-	if resolve == nil {
-		if opts.Resolver != nil {
-			resolve = func(network, address string) (*net.IPAddr, error) {
-				ips, err := opts.Resolver.LookupIP(context.Background(), network, address)
-				if err != nil {
-					return nil, err
-				}
-				if len(ips) == 0 {
-					return nil, &net.DNSError{Err: "no such host", Name: address}
-				}
-				return &net.IPAddr{IP: ips[0]}, nil
-			}
-		} else {
-			resolve = net.ResolveIPAddr
-		}
-	}
+
 	now := opts.Now
 	if now == nil {
 		now = time.Now
@@ -403,25 +398,17 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 	if listen == nil {
 		listen = net.ListenPacket
 	}
-	lookup := opts.LookupTXT
-	if lookup == nil {
-		if opts.Resolver != nil {
-			lookup = func(name string) ([]string, error) {
-				return opts.Resolver.LookupTXT(context.Background(), name)
-			}
-		} else {
-			lookup = net.LookupTXT
-		}
+	resolver := opts.Resolver
+	if resolver == nil {
+		resolver = net.DefaultResolver
 	}
-	lookupAddr := opts.LookupAddr
-	if lookupAddr == nil {
-		if opts.Resolver != nil {
-			lookupAddr = func(ip string) ([]string, error) {
-				return opts.Resolver.LookupAddr(context.Background(), ip)
-			}
-		} else {
-			lookupAddr = net.LookupAddr
-		}
+	lookupContext := opts.LookupTXTContext
+	if lookupContext == nil && opts.LookupTXT == nil {
+		lookupContext = resolver.LookupTXT
+	}
+	lookupAddrContext := opts.LookupAddrContext
+	if lookupAddrContext == nil && opts.LookupAddr == nil {
+		lookupAddrContext = resolver.LookupAddr
 	}
 
 	dscp := dscpUnset
@@ -439,6 +426,7 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		}
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Pinger{
 		Targets:            targets,
 		targetMap:          make(map[int]*stats.TargetStats),
@@ -453,14 +441,18 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		DSCP:               dscp,
 		TargetDSCP:         targetDSCP,
 		traceChans:         make(map[int]chan traceMsg),
+		ctx:                ctx,
+		cancel:             cancel,
 		done:               make(chan struct{}),
 		initialSeq:         opts.InitialSeq,
 		resolveIPAddr:      resolve,
 		resolveWithContext: resolveContext,
 		now:                now,
 		listenPacket:       listen,
-		lookupTXT:          lookup,
-		lookupAddr:         lookupAddr,
+		lookupTXT:          opts.LookupTXT,
+		lookupAddr:         opts.LookupAddr,
+		lookupTXTContext:   lookupContext,
+		lookupAddrContext:  lookupAddrContext,
 		asnJitter:          func() time.Duration { return time.Duration(rand.Int63n(int64(asnJitterMax))) },
 		ptrJitter:          func() time.Duration { return time.Duration(rand.Int63n(int64(ptrJitterMax))) },
 	}
@@ -496,16 +488,18 @@ func (p *Pinger) applyLastErrSource(errMsg string) string {
 	return errMsg
 }
 
-// Stop signals the receiver and worker goroutines to exit. Safe to call
-// from multiple goroutines concurrently and any number of times, matching
-// PortChecker.Stop and HTTPChecker.Stop. The UI reaches this concurrently:
-// the 's' key handler runs stopAll in its own goroutine while run()'s
-// cleanup path calls stopAll on the main goroutine.
+// Stop cancels the pinger lifetime and signals workers/receivers. The owner
+// calls Wait before releasing sockets through Close; Stop is idempotent.
 func (p *Pinger) Stop() {
 	if p.done == nil {
 		return
 	}
-	p.stopOnce.Do(func() { close(p.done) })
+	p.stopOnce.Do(func() {
+		close(p.done)
+		if p.cancel != nil {
+			p.cancel()
+		}
+	})
 }
 
 func (p *Pinger) Start(interval, timeout time.Duration) error {
@@ -904,28 +898,37 @@ func (p *Pinger) resolveIPAddrBounded(network, address string) (*net.IPAddr, err
 // resolver test doubles have no context parameter, so retain a bounded wait
 // around them; production resolvers also receive the deadline directly.
 func (p *Pinger) resolveIPAddrContext(ctx context.Context, network, address string) (*net.IPAddr, error) {
-	ctx, cancel := context.WithTimeout(ctx, resolveTimeout)
+	if p.stopped() {
+		return nil, errPingerStopped
+	}
+	ctx, cancel := p.lookupContext(ctx, resolveTimeout)
 	defer cancel()
 	select {
 	case <-ctx.Done():
+		if p.stopped() {
+			return nil, errPingerStopped
+		}
 		return nil, ctx.Err()
 	case <-p.done:
 		return nil, errPingerStopped
 	default:
 	}
+	if p.resolveWithContext != nil {
+		addr, err := p.resolveWithContext(ctx, network, address)
+		if p.stopped() {
+			return nil, errPingerStopped
+		}
+		return addr, err
+	}
+	// Compatibility adapter for explicitly injected context-free resolvers.
+	// Such hooks cannot be cancelled; their owner must arrange their return.
 	type result struct {
 		addr *net.IPAddr
 		err  error
 	}
 	ch := make(chan result, 1)
 	go func() {
-		var addr *net.IPAddr
-		var err error
-		if p.resolveWithContext != nil {
-			addr, err = p.resolveWithContext(ctx, network, address)
-		} else {
-			addr, err = p.resolveIPAddr(network, address)
-		}
+		addr, err := p.resolveIPAddr(network, address)
 		ch <- result{addr, err}
 	}()
 	select {
@@ -934,6 +937,9 @@ func (p *Pinger) resolveIPAddrContext(ctx context.Context, network, address stri
 	case <-p.done:
 		return nil, errPingerStopped
 	case <-ctx.Done():
+		if p.stopped() {
+			return nil, errPingerStopped
+		}
 		return nil, fmt.Errorf("dns resolution for %q: %w", address, ctx.Err())
 	}
 }
@@ -942,6 +948,7 @@ func (p *Pinger) resolveIPAddrContext(ctx context.Context, network, address stri
 // Returns the resolved address, or nil if resolution failed or the pinger
 // was stopped mid-resolution.
 func (p *Pinger) resolveTarget(t *stats.TargetStats) *net.IPAddr {
+	probe := t.NewProbe()
 	addr, err := p.resolveIPAddrBounded("ip", t.Host)
 	if err != nil {
 		// A stop is not a ping failure: recording one here would inflate
@@ -952,12 +959,12 @@ func (p *Pinger) resolveTarget(t *stats.TargetStats) *net.IPAddr {
 		// resolveIPAddrBounded formats (which host, which timeout) is
 		// deliberately dropped here rather than truncated on screen.
 		if !errors.Is(err, errPingerStopped) {
-			t.OnFailure("DNS Error")
+			probe.OnFailure("DNS Error")
 		}
 		return nil
 	}
 	if addr == nil {
-		t.OnFailure("DNS Error")
+		probe.OnFailure("DNS Error")
 		return nil
 	}
 	ipStr := addr.String()
@@ -986,15 +993,9 @@ type ASNInfo struct {
 	Org     string // "Google LLC"
 }
 
-// lookupASN performs a (potentially slow) Team Cymru DNS lookup for ipStr
-// and records the result on t. Guarded by p.done so that a lookup queued
-// just before Stop() doesn't fire at all. Once a lookup is in flight,
-// getASNInfo's calls to lookupTXTBounded also race against p.done: if
-// Stop() closes it mid-lookup, getASNInfo returns immediately instead of
-// waiting out the underlying DNS query, so Wait() (which blocks on the
-// wg.Add/Done in resolveTarget's caller) no longer stalls for
-// asnLookupTimeout. The abandoned DNS goroutine is left to finish on its
-// own into a buffered channel; only its result is discarded.
+// lookupASN runs on a pinger-owned metadata goroutine (or a trace caller).
+// Its DNS calls share the pinger lifetime, so Stop cancels them and Wait
+// joins the metadata goroutine before its statistics can be reused.
 func (p *Pinger) lookupASN(t *stats.TargetStats, ipStr string) {
 	select {
 	case <-p.done:
@@ -1085,12 +1086,21 @@ func (p *Pinger) getASNInfo(ipStr string) ASNInfo {
 	return info
 }
 
-// lookupTXTBounded wraps p.lookupTXT with asnLookupTimeout and aborts early
-// when Stop() closes p.done. The lookup goroutine is left to finish into a
-// buffered channel rather than being interrupted — net.LookupTXT has no
-// cancellation seam — but the caller is released immediately so Wait()
-// doesn't stall the shutdown path.
+// lookupTXTBounded runs cancellable DNS on the calling goroutine. Only
+// explicitly injected context-free hooks use the legacy bounded adapter.
 func (p *Pinger) lookupTXTBounded(name string) ([]string, error) {
+	if p.stopped() {
+		return nil, errPingerStopped
+	}
+	if p.lookupTXTContext != nil {
+		ctx, cancel := p.lookupContext(context.Background(), asnLookupTimeout)
+		defer cancel()
+		txts, err := p.lookupTXTContext(ctx, name)
+		if p.stopped() {
+			return nil, errPingerStopped
+		}
+		return txts, err
+	}
 	type result struct {
 		txts []string
 		err  error
@@ -1185,10 +1195,14 @@ func (p *Pinger) getWriteFunc(dstAddr *net.IPAddr, dscp int, ok bool) (icmp.Type
 
 // sendProbe marshals and sends an ICMP echo request. Returns the send time, or an error string.
 func (p *Pinger) sendProbe(t *stats.TargetStats, id, seq int, payload []byte, dstAddr *net.IPAddr) (time.Time, bool) {
+	return p.sendProbeWithStats(t, t.NewProbe(), id, seq, payload, dstAddr)
+}
+
+func (p *Pinger) sendProbeWithStats(t *stats.TargetStats, probe stats.Probe, id, seq int, payload []byte, dstAddr *net.IPAddr) (time.Time, bool) {
 	dscp, dscpOK := p.dscpFor(t)
 	msgType, writeFunc, errStr := p.getWriteFunc(dstAddr, dscp, dscpOK)
 	if writeFunc == nil {
-		t.OnFailure(errStr)
+		probe.OnFailure(errStr)
 		return time.Time{}, false
 	}
 
@@ -1217,12 +1231,12 @@ func (p *Pinger) sendProbe(t *stats.TargetStats, id, seq int, payload []byte, ds
 	_, err = writeFunc(b, dstAddr)
 	if err != nil {
 		errMsg := p.applyLastErrSource(err.Error())
-		t.OnFailure(errMsg)
+		probe.OnFailure(errMsg)
 		p.log(t, seq, "SendError", 0, 0, err.Error())
 		return time.Time{}, false
 	}
 
-	t.IncSent()
+	probe.IncSent()
 	return start, true
 }
 
@@ -1231,6 +1245,7 @@ func (p *Pinger) sendProbe(t *stats.TargetStats, id, seq int, payload []byte, ds
 type pendingProbe struct {
 	logicalSeq int
 	start      time.Time
+	stats      stats.Probe
 }
 
 // resolutionKind records how a wire seq was most recently resolved, so a
@@ -1257,6 +1272,7 @@ type recentEntry struct {
 	logicalSeq int
 	kind       resolutionKind
 	start      time.Time
+	stats      stats.Probe
 }
 
 // recentSeqHistory is a small, size-bounded FIFO cache mapping a
@@ -1286,11 +1302,11 @@ func newRecentSeqHistory() *recentSeqHistory {
 // already-present wireSeq (not expected in normal operation -- a given wire
 // seq is only resolved once per generation -- but handled safely) replaces
 // its entry and moves it to the back as the newest.
-func (h *recentSeqHistory) record(wireSeq, logicalSeq int, kind resolutionKind, start time.Time) {
+func (h *recentSeqHistory) record(wireSeq, logicalSeq int, kind resolutionKind, start time.Time, probe stats.Probe) {
 	if el, ok := h.index[wireSeq]; ok {
 		h.order.Remove(el)
 	}
-	el := h.order.PushBack(recentEntry{wireSeq: wireSeq, logicalSeq: logicalSeq, kind: kind, start: start})
+	el := h.order.PushBack(recentEntry{wireSeq: wireSeq, logicalSeq: logicalSeq, kind: kind, start: start, stats: probe})
 	h.index[wireSeq] = el
 
 	for h.order.Len() > recentSeqHistoryCap {
@@ -1465,9 +1481,10 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 
 			seq++
 
-			start, ok := p.sendProbe(t, id, seq, payload, dstAddr)
+			probe := t.NewProbe()
+			start, ok := p.sendProbeWithStats(t, probe, id, seq, payload, dstAddr)
 			if ok {
-				unacked[seq&seqMask] = pendingProbe{logicalSeq: seq, start: start}
+				unacked[seq&seqMask] = pendingProbe{logicalSeq: seq, start: start, stats: probe}
 				rearmSweepTimer(sweepTimer, unacked, timeout)
 				replyCh = ch
 			}
@@ -1482,7 +1499,7 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 			if pend, found := unacked[reply.Seq]; found {
 				delete(unacked, reply.Seq)
 				if reply.Err != "" {
-					t.OnFailure(reply.Err)
+					pend.stats.OnFailure(reply.Err)
 					p.log(t, pend.logicalSeq, "ICMPError", 0, 0, reply.Err)
 				} else {
 					// Prefer the RTT the receiver goroutine computed from the
@@ -1499,14 +1516,13 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 					if rtt <= 0 {
 						rtt = time.Since(pend.start)
 					}
-					t.OnSuccess(rtt, reply.TTL)
-					t.SetLastDSCP(reply.DSCP)
+					pend.stats.OnSuccess(rtt, reply.TTL, reply.DSCP)
 					p.log(t, pend.logicalSeq, "OK", rtt, reply.TTL, "")
 				}
 				// Remember how this wire seq was resolved so a further reply
 				// for it (a genuine network-level duplicate) can be
 				// classified as a DUP below instead of silently discarded.
-				hist.record(reply.Seq, pend.logicalSeq, resolvedAcked, pend.start)
+				hist.record(reply.Seq, pend.logicalSeq, resolvedAcked, pend.start, pend.stats)
 				rearmSweepTimer(sweepTimer, unacked, timeout)
 			} else if entry, foundHist := hist.lookup(reply.Seq); foundHist {
 				// No `unacked` entry, but this wire seq was recently
@@ -1522,14 +1538,14 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 					// NAT/load-balancer anomaly). Never counted as Recv --
 					// see TargetStats.Duplicates' doc -- so the loss rate
 					// isn't understated.
-					t.OnDuplicate()
+					entry.stats.OnDuplicate()
 					p.log(t, entry.logicalSeq, "DUP", rtt, reply.TTL, "")
 				case resolvedTimeout:
 					// Arrived after its probe was already swept as a loss:
 					// the target is slow but reachable, not truly dropping
 					// this probe. The Loss already recorded stands; see
 					// TargetStats.LateReplies' doc.
-					t.OnLateReply()
+					entry.stats.OnLateReply()
 					p.log(t, entry.logicalSeq, "LateReply", rtt, reply.TTL, "")
 				}
 			}
@@ -1545,12 +1561,12 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 				if now.Sub(pend.start) >= timeout {
 					delete(unacked, wireSeq)
 					errMsg := p.applyLastErrSource("Timeout")
-					t.OnFailure(errMsg)
+					pend.stats.OnFailure(errMsg)
 					p.log(t, pend.logicalSeq, "Timeout", 0, 0, "Request timed out")
 					// Remember this seq timed out so a reply that shows up
 					// later can be classified as a late arrival below,
 					// instead of silently discarded.
-					hist.record(wireSeq, pend.logicalSeq, resolvedTimeout, pend.start)
+					hist.record(wireSeq, pend.logicalSeq, resolvedTimeout, pend.start, pend.stats)
 				}
 			}
 			rearmSweepTimer(sweepTimer, unacked, timeout)

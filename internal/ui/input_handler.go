@@ -45,6 +45,7 @@ type inputHandlerDeps struct {
 	portEnabled  bool
 	httpEnabled  bool
 
+	onReset      func()
 	onStop       func()
 	onRestart    func() error
 	onResetTrace func()
@@ -54,28 +55,50 @@ type inputHandlerDeps struct {
 	onAddHost    func(host string) error
 	onDeleteHost func(host string) error
 
-	closeAppStop func()
-	// appStop is the channel closeAppStop closes. Callback goroutines read
-	// it to tell whether Run() has begun tearing down: after app.Stop() the
-	// update queue is no longer drained, so a QueueUpdateDraw from a
-	// goroutine that outlived the application would block there forever —
-	// and on a YAML reload run() keeps looping, so one would pile up per
-	// reload.
-	appStop <-chan struct{}
+	session *uiSession
 }
 
-// newInputHandler returns the SetInputCapture callback for Run()'s
-// application. stopRequested is owned entirely by the returned closure
-// (nothing outside the key handler reads or writes it), so it lives here
-// rather than in inputHandlerDeps.
+// These states describe UI operation progress. The supervisor owns the
+// actual measurement state: stopping/restarting last until its callback
+// completes. S during stopping is queued after stop; repeated S while
+// restarting is ignored. R leaves the running/stopped state unchanged.
+type monitorState uint8
+
+const (
+	monitorRunning monitorState = iota
+	monitorStopping
+	monitorStopped
+	monitorRestarting
+)
+
+// newInputHandler owns UI state transitions on the event loop. Callback
+// operations execute FIFO on the session worker, and results return through
+// its cancellable UI mailbox. Stop, restart, and reset can never overtake.
 func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.EventKey {
-	// stopRequested is owned entirely by the returned closure and is only
-	// ever touched on tview's event-loop goroutine (both the input capture
-	// and QueueUpdateDraw callbacks run there), so it needs no
-	// synchronisation. There is no re-entrancy guard: supervisor commands are
-	// queued and executed one at a time, so a second 'S' mid-restart simply
-	// restarts again — slower, but safe.
-	stopRequested := false
+	state := monitorRunning
+	showState := func() {
+		if d.footer == nil {
+			return
+		}
+		switch state {
+		case monitorRunning:
+			d.footer.SetText("Tab: Focus | a: Add host | d: Del host | q: Quit | s: Stop | R: Reset")
+		case monitorStopping:
+			d.footer.SetText("Stopping... Press 'S' to restart after stop, 'q' to quit")
+		case monitorStopped:
+			d.footer.SetText("Stopped. Press 'S' to restart, 'q' to quit, 'R' to reset stats")
+		case monitorRestarting:
+			d.footer.SetText("Restarting... Press 'q' to quit")
+		}
+		d.footer.SetTextColor(tcell.ColorYellow)
+	}
+	submit := func(f func()) bool {
+		if d.session.Submit(f) {
+			return true
+		}
+		d.vs.appendLog("[yellow]Operation queue full; please try again[-]")
+		return false
+	}
 
 	return func(event *tcell.EventKey) *tcell.EventKey {
 		// Pass all events through when a text input or modal list is focused.
@@ -182,74 +205,86 @@ func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.Even
 				return nil
 			}
 		case 'q':
-			d.closeAppStop() // stop refresh goroutine before screen teardown
+			d.session.Stop()
 			d.app.Stop()
 		case 's':
-			if !stopRequested {
-				stopRequested = true
+			if state == monitorRunning {
+				state = monitorStopping
 				d.vs.appendLog(fmt.Sprintf("[yellow][%s] Stop requested by user[-]", time.Now().Format("15:04:05")))
-				if d.onStop != nil {
-					go d.onStop()
+				if !submit(func() {
+					if d.onStop != nil {
+						d.onStop()
+					}
+					d.session.Post(func() {
+						if state == monitorStopping {
+							state = monitorStopped
+							showState()
+						}
+					})
+				}) {
+					state = monitorRunning
+					break
 				}
-				if d.footer != nil {
-					d.footer.SetText("Stopped. Press 'S' to restart, 'q' to quit, 'R' to reset stats")
-					d.footer.SetTextColor(tcell.ColorYellow)
-				}
+				showState()
 			}
 		case 'S':
-			if stopRequested {
+			if (state == monitorStopping || state == monitorStopped) && d.onRestart != nil {
+				previous := state
+				state = monitorRestarting
 				d.vs.appendLog(fmt.Sprintf("[yellow][%s] Restart requested by user[-]", time.Now().Format("15:04:05")))
-				if d.onRestart != nil {
-					go func() {
-						err := d.onRestart()
-						select {
-						case <-d.appStop:
-							// run() is tearing this iteration down; the
-							// update queue is no longer drained, so posting
-							// here would block this goroutine forever.
+				if !submit(func() {
+					err := d.onRestart()
+					d.session.Post(func() {
+						if err != nil {
+							state = monitorStopped
+							showState()
+							d.vs.appendLog(fmt.Sprintf("[red][%s] Restart failed: %v[-]", time.Now().Format("15:04:05"), err))
 							return
-						default:
 						}
-						d.app.QueueUpdateDraw(func() {
-							if err != nil {
-								d.vs.appendLog(fmt.Sprintf("[red][%s] Restart failed: %v[-]", time.Now().Format("15:04:05"), err))
-								return
-							}
-							stopRequested = false
-							if d.footer != nil {
-								d.footer.SetText("Tab: Switch Focus | q: Quit | s: Stop ping | R: Reset stats")
-								d.footer.SetTextColor(tcell.ColorYellow)
-							}
-						})
-					}()
+						state = monitorRunning
+						showState()
+					})
+				}) {
+					state = previous
 				}
+				showState()
 			}
 		case 'R':
-			for _, t := range d.targets {
-				t.Reset()
-			}
-			// Also clear error log and per-host render state.
 			d.vs.reset()
-			if !stopRequested {
+			if d.onReset != nil {
+				submit(d.onReset)
+				break
+			}
+			// Compatibility path for standalone callers. Keep even the
+			// counter reset on the same FIFO worker as stop and restart.
+			running := state == monitorRunning || state == monitorRestarting
+			submit(func() {
+				for _, t := range d.targets {
+					t.Reset()
+				}
+				if !running {
+					return
+				}
 				if d.traceEnabled {
 					for _, t := range d.targets {
 						t.SetTraceHops(nil)
 					}
 					if d.onResetTrace != nil {
-						go d.onResetTrace()
+						d.onResetTrace()
 					}
 				}
 				if d.mtrEnabled && d.onResetMTR != nil {
-					go d.onResetMTR()
+					d.onResetMTR()
 				}
 				if d.portEnabled && d.onResetPort != nil {
-					go d.onResetPort()
+					d.onResetPort()
 				}
 				if d.httpEnabled && d.onResetHTTP != nil {
-					go d.onResetHTTP()
+					d.onResetHTTP()
 				}
-			}
+			})
 		}
+
 		return event
 	}
 }

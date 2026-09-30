@@ -121,7 +121,8 @@ type TargetStats struct {
 	rtt rttAccumulator
 
 	// Jitter (RFC 1889)
-	jitter int64 // Stored as nanoseconds for smooth calculation
+	jitter     int64  // Stored as nanoseconds for smooth calculation
+	probeEpoch uint64 // Reset invalidates every probe from the previous window.
 
 	mu sync.RWMutex
 }
@@ -414,7 +415,10 @@ func (t *TargetStats) OnSuccess(rtt time.Duration, ttl int) {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.onSuccessLocked(rtt, ttl)
+}
 
+func (t *TargetStats) onSuccessLocked(rtt time.Duration, ttl int) {
 	// RFC 1889 Jitter Calculation: J = J + (|D| - J) / 16
 	if t.Recv > 0 {
 		t.jitter = updateJitter(t.jitter, rtt, t.LastRTT)
@@ -463,6 +467,10 @@ func (t *TargetStats) OnFailure(reason string) {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.onFailureLocked(reason)
+}
+
+func (t *TargetStats) onFailureLocked(reason string) {
 	t.Loss++
 	t.LastLossTime = time.Now()
 	t.LastError = reason
@@ -473,6 +481,7 @@ func (t *TargetStats) Reset() {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.probeEpoch++
 	t.Sent = 0
 	t.Recv = 0
 	t.Loss = 0

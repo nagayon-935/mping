@@ -120,6 +120,9 @@ func (hc *HTTPChecker) loop(r *stats.HTTPCheckResult) {
 }
 
 func (hc *HTTPChecker) check(r *stats.HTTPCheckResult) {
+	if hc.ctx.Err() != nil {
+		return
+	}
 	start := time.Now()
 	req, err := http.NewRequestWithContext(hc.ctx, "GET", r.URL, nil)
 	if err != nil {
@@ -129,6 +132,9 @@ func (hc *HTTPChecker) check(r *stats.HTTPCheckResult) {
 	resp, err := hc.client.Do(req)
 	rtt := time.Since(start)
 	if err != nil {
+		if hc.ctx.Err() != nil {
+			return // preserve the last measurement when shutting down
+		}
 		r.SetResult(0, rtt, err)
 		return
 	}

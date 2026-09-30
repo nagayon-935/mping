@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,8 +24,8 @@ type PortSpec struct {
 func ParsePortSpec(s string) (PortSpec, error) {
 	s = strings.TrimSpace(s)
 	parts := strings.SplitN(s, "/", 2)
-	port := 0
-	if _, err := fmt.Sscanf(parts[0], "%d", &port); err != nil || port < 1 || port > 65535 {
+	port, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil || port < 1 || port > 65535 {
 		return PortSpec{}, fmt.Errorf("invalid port: %q", parts[0])
 	}
 	proto := "tcp"
@@ -149,6 +150,9 @@ func (pc *PortChecker) loop(t *stats.TargetStats, spec PortSpec, result *stats.P
 }
 
 func (pc *PortChecker) check(t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
+	if pc.ctx.Err() != nil {
+		return
+	}
 	ip := t.GetView().IP
 	if ip == "" {
 		return
@@ -162,6 +166,9 @@ func (pc *PortChecker) check(t *stats.TargetStats, spec PortSpec, result *stats.
 		status, rtt = checkTCP(pc.ctx, pc.tcpDialer, addr)
 	case "udp":
 		status, rtt = checkUDP(pc.ctx, pc.udpDialer, addr, pc.timeout)
+	}
+	if pc.ctx.Err() != nil {
+		return // shutdown is not a failed health check
 	}
 	result.SetResult(status, rtt)
 }
@@ -188,8 +195,13 @@ func checkUDP(ctx context.Context, dialer *net.Dialer, addr string, timeout time
 	defer conn.Close()
 
 	doneChan := make(chan struct{})
-	defer close(doneChan)
+	watcherDone := make(chan struct{})
+	defer func() {
+		close(doneChan)
+		<-watcherDone
+	}()
 	go func() {
+		defer close(watcherDone)
 		select {
 		case <-ctx.Done():
 			_ = conn.Close()

@@ -24,8 +24,8 @@ import (
 //
 // Concurrency invariant: like viewState, every field below is mutated only
 // from tview's single draw/event-loop goroutine (update() runs inside
-// QueueUpdateDraw); no mutex guards them and none may be added from another
-// goroutine without first hopping through QueueUpdateDraw.
+// the uiSession mailbox); no mutex guards them and background goroutines
+// must post updates through that mailbox.
 type tableRenderer struct {
 	targets    []*stats.TargetStats
 	sourceIPv4 string

@@ -53,12 +53,18 @@ func TestRunStopOrder_TraceJoinsBeforePingerStop(t *testing.T) {
 	})
 
 	returned := make(chan struct{})
-	base := &fakePinger{blockTraceUntilCtxDone: true, traceRouteReturned: returned}
+	started := make(chan struct{})
+	base := &fakePinger{blockTraceUntilCtxDone: true, traceRouteStarted: started, traceRouteReturned: returned}
 	tracker := &orderTrackingPinger{fakePinger: base}
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return tracker
 	}
 	uiRun = func(opts ui.RunOptions) error {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("traceroute did not start")
+		}
 		opts.OnStop()
 		if tracker.stopViolation {
 			t.Error("pinger.Stop() was called before the traceroute goroutine had joined (shutdown order violation)")

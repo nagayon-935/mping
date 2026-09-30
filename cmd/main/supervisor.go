@@ -39,6 +39,15 @@ type supervisorConfig struct {
 // pressed 's'" with "run() is tearing this iteration down" — a restart
 // racing with the teardown could therefore resurrect the pinger and
 // checkers. stateTerminated is one-way: nothing revives a supervisor from it.
+//
+// Command       stopped           running               terminated
+// start         start -> running  no-op                 error
+// stop          no-op             join -> stopped       no-op
+// restart       start -> running  join/start -> running error
+// resetStats    clear only        clear/recreate checks no-op
+// terminate     -> terminated     join -> terminated    no-op
+// A reset keeps the ping instance and its remaining count budget. A restart
+// keeps statistics but gives the replacement instance a fresh count budget.
 type supervisorState int
 
 const (
@@ -76,6 +85,7 @@ const (
 	cmdResetHTTP
 	cmdTerminate
 	cmdProbesFinished
+	cmdResetStats
 )
 
 func (k cmdKind) String() string {
@@ -98,6 +108,8 @@ func (k cmdKind) String() string {
 		return "terminate"
 	case cmdProbesFinished:
 		return "probesFinished"
+	case cmdResetStats:
+		return "resetStats"
 	}
 	return "unknown"
 }
@@ -117,10 +129,10 @@ var errSupervisorTerminated = errors.New("supervisor terminated")
 // supervisor owns the pinger/traceroute/MTR/port/HTTP checker lifecycle for
 // one run() loop iteration.
 //
-// Every field below except the channels and the snapshots is touched only by
-// the command goroutine (see supervisor_loop.go), so none of them is
-// synchronized. That is the point of the command loop: the components no
-// longer each need their own defence against concurrent callers.
+// Component references and state belong exclusively to the command loop.
+// It creates and joins traceDone, owns Stop/Wait for the pinger and checkers,
+// and calls MTR.Stop (which joins internally). Shutdown joins the command
+// loop and count observers. Readers outside the loop use atomic snapshots.
 type supervisor struct {
 	cfg supervisorConfig
 
@@ -137,7 +149,8 @@ type supervisor struct {
 	done         chan struct{}
 	loopDone     chan struct{}
 	shutdownOnce sync.Once
-	finished     chan struct{} // buffered count-completion notifications; nil when unlimited
+	observers    sync.WaitGroup // owns count-completion observers through Shutdown
+	finished     chan struct{}  // buffered count-completion notifications; nil when unlimited
 
 	// Snapshots published by the loop for readers that must not block on it:
 	// the render loop (httpSnap) and tests (pingerSnap, stateSnap).
@@ -154,14 +167,12 @@ func newSupervisor(cfg supervisorConfig) *supervisor {
 	return s
 }
 
-// startTraceroutes cancels any previous traceroute goroutine, launches a new
+// startTraceroutes cancels and joins any previous traceroute, launches a new
 // one, and tracks it via s.traceDone so tearDownAll can join it on shutdown
 // instead of leaving it to be reaped by process exit. Caller must be running
 // on the command goroutine (see supervisor_loop.go).
 func (s *supervisor) startTraceroutes(pr tracer) {
-	if s.traceCancel != nil {
-		s.traceCancel()
-	}
+	s.stopTraceroutes()
 	ctx, cancel := context.WithCancel(context.Background())
 	s.traceCancel = cancel
 	done := make(chan struct{})
@@ -187,7 +198,7 @@ func (s *supervisor) onFlap(host, desc string) {
 
 // handle executes one command against the current state. It is the single
 // place where supervisor state changes, and it assumes it is never called
-// concurrently with itself — Task 2's command loop is what guarantees that.
+// concurrently with itself — the command loop guarantees that.
 // Splitting it out from the loop keeps the whole state machine testable
 // without starting a goroutine.
 func (s *supervisor) handle(c command) error {
@@ -234,6 +245,33 @@ func (s *supervisor) handle(c command) error {
 		s.startTraceroutes(s.p)
 		return nil
 
+	case cmdResetStats:
+		if s.state == stateTerminated {
+			return nil
+		}
+		// Stop route writers before resetting their state. Ping workers keep
+		// their count budget; TargetStats.Reset invalidates their old probes.
+		s.stopTraceroutes()
+		s.stopMTR()
+		for _, t := range s.cfg.targets {
+			t.Reset()
+			if s.state == stateRunning && s.cfg.traceEnabled {
+				t.SetTraceHops(nil)
+			}
+		}
+		if s.state != stateRunning {
+			return nil // a reset never resumes stopped measurements
+		}
+		if s.cfg.traceEnabled {
+			s.startTraceroutes(s.p)
+		}
+		if s.cfg.mtrEnabled {
+			s.restartMTR(false)
+		}
+		s.restartPortChecker()
+		s.restartHTTPChecker()
+		return nil
+
 	case cmdResetMTR:
 		if s.state != stateRunning {
 			return nil
@@ -268,23 +306,8 @@ func (s *supervisor) handle(c command) error {
 	return fmt.Errorf("supervisor: unknown command %d", c.kind)
 }
 
-// startAll brings up the pinger, traceroute, MTR engine and the port/HTTP
-// checkers. Any pinger it supersedes is released at the end — with commands
-// serialized that can only be a pinger cmdRestart already stopped, so this
-// is a cheap no-op safety net rather than the race guard it used to be.
-//
-// prev.Stop()/Wait()/Close() run here on the command goroutine, same as
-// everything else handle() does; there is no mutex left to stall, and
-// httpResults() no longer shares anything with this call — it reads a
-// snapshot published by the loop instead. prev is nil only on the very first
-// start; on every later start (cmdRestart from stateRunning always tears the
-// previous pinger down via tearDownAll before calling startAll, and handle()
-// only ever runs on the single command goroutine in loop()
-// (supervisor_loop.go), which drains s.cmds one at a time, so a second
-// concurrent cmdRestart cannot race in) prev is a pinger tearDownAll already
-// stopped, so releasing it again here is an idempotent no-op rather than a
-// real join — Pinger.Stop is sync.Once-guarded and Pinger.Close reuses that
-// same guard (pinger.go).
+// startAll runs only in stateStopped, after the previous measurement has
+// been joined. A failed Start is released here and leaves the state stopped.
 func (s *supervisor) startAll() error {
 	select {
 	case <-s.finished:
@@ -292,9 +315,11 @@ func (s *supervisor) startAll() error {
 	}
 	next := s.cfg.makePinger(s.cfg.packetSize)
 	if err := next.Start(s.cfg.interval, s.cfg.timeout); err != nil {
+		next.Stop()
+		next.Wait()
+		next.Close()
 		return err
 	}
-	prev := s.p
 	s.p = next
 	if s.cfg.traceEnabled {
 		s.startTraceroutes(next)
@@ -306,18 +331,15 @@ func (s *supervisor) startAll() error {
 	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout, s.cfg.bind)
 	s.state = stateRunning
 	if s.cfg.countLimited {
+		s.observers.Add(1)
 		go func() {
+			defer s.observers.Done()
 			next.WaitWorkers()
 			select {
 			case s.cmds <- command{kind: cmdProbesFinished, pinger: next}:
 			case <-s.done:
 			}
 		}()
-	}
-	if prev != nil && prev != next {
-		prev.Stop()
-		prev.Wait()
-		prev.Close()
 	}
 	return nil
 }
@@ -331,18 +353,8 @@ func (s *supervisor) startAll() error {
 // UI keeps showing each pane's last values after a stop instead of blanking
 // them, which is the pre-existing behaviour.
 func (s *supervisor) tearDownAll() {
-	if s.traceCancel != nil {
-		s.traceCancel()
-		s.traceCancel = nil
-	}
-	if s.traceDone != nil {
-		<-s.traceDone
-		s.traceDone = nil
-	}
-	if s.mtrEngine != nil {
-		s.mtrEngine.Stop()
-		s.mtrEngine = nil
-	}
+	s.stopTraceroutes()
+	s.stopMTR()
 	if s.p != nil {
 		s.p.Stop()
 		s.p.Wait()
@@ -358,21 +370,29 @@ func (s *supervisor) tearDownAll() {
 	}
 }
 
-// restartMTR replaces the MTR engine. It never calls TargetStats.Reset:
-// that clears the ping counters too, and clearing those is the 'R' key's job
-// — the key handler already resets every target before calling in here.
-// Doing it a second time from this side also leaked into startAll, which
-// reaches restartMTR on every (re)start, so a restart used to wipe the ping
-// counters with --mtr on and keep them with --mtr off.
-//
-// resetStats clears the per-hop counters only, which is what the 'R' key
-// wants and what startAll must not do (a plain restart keeps the counters,
-// matching how --mtr off already behaves).
-func (s *supervisor) restartMTR(resetStats bool) {
+func (s *supervisor) stopTraceroutes() {
+	if s.traceCancel != nil {
+		s.traceCancel()
+		s.traceCancel = nil
+	}
+	if s.traceDone != nil {
+		<-s.traceDone
+		s.traceDone = nil
+	}
+}
+
+func (s *supervisor) stopMTR() {
 	if s.mtrEngine != nil {
 		s.mtrEngine.Stop()
 		s.mtrEngine = nil
 	}
+}
+
+// restartMTR joins the outgoing engine before replacing it. resetStats
+// clears per-hop counters only; cmdResetStats owns resetting ping counters.
+// A plain start/restart preserves both sets of counters.
+func (s *supervisor) restartMTR(resetStats bool) {
+	s.stopMTR()
 	// Cleared here rather than by the 'R' key handler: Stop above has joined
 	// the outgoing engine's goroutines and the replacement has not started,
 	// so this is the only window in which a probe reply cannot land in the
@@ -417,6 +437,7 @@ func (s *supervisor) resetTrace()        { _ = s.do(cmdResetTrace) }
 func (s *supervisor) resetMTR()          { _ = s.do(cmdResetMTR) }
 func (s *supervisor) resetHTTP()         { _ = s.do(cmdResetHTTP) }
 func (s *supervisor) resetPort()         { _ = s.do(cmdResetPort) }
+func (s *supervisor) resetStats()        { _ = s.do(cmdResetStats) }
 
 // httpResults returns the current HTTP checker's results, or nil when no
 // HTTP checker is active. Reads a snapshot rather than the live field: the

@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/stats"
@@ -59,12 +58,13 @@ type RunOptions struct {
 	// the case.
 	ExternalLogCh <-chan string
 	OnStop        func()
-	// OnRestart restarts the pinger and checkers. It returns an error both
-	// for a genuine restart failure and when the supervisor has already been
-	// shut down by run(); the key handler distinguishes them by checking
-	// appStop rather than inspecting the error, since internal/ui cannot
-	// import cmd/main.
-	OnRestart    func() error
+	// OnRestart restarts the pinger and checkers. On failure the UI stays
+	// stopped and permits another attempt. All operation callbacks execute
+	// FIFO on the session worker; Run joins the worker before returning.
+	OnRestart func() error
+	// OnReset owns resetting statistics and monitors as one operation. When
+	// nil, Run resets statistics itself and uses the individual reset callbacks.
+	OnReset      func()
 	OnResetTrace func()
 	OnResetMTR   func()
 	OnResetPort  func()
@@ -201,14 +201,12 @@ func Run(opts RunOptions) error {
 
 	updateTickerCh := make(chan time.Duration, 1)
 
-	wireHostInputs(app, table, pages, addHostInput, deleteHostInput, vs, onAddHost, onDeleteHost)
-
-	appStop := make(chan struct{})
-	var appStopOnce sync.Once
-	closeAppStop := func() { appStopOnce.Do(func() { close(appStop) }) }
+	session := newUISession()
+	defer func() { session.Stop(); session.Wait() }()
+	wireHostInputs(app, table, pages, addHostInput, deleteHostInput, vs, session, onAddHost, onDeleteHost)
 
 	// Keys
-	app.SetInputCapture(newInputHandler(inputHandlerDeps{
+	session.bind(app, newInputHandler(inputHandlerDeps{
 		app:             app,
 		table:           table,
 		addHostInput:    addHostInput,
@@ -227,21 +225,21 @@ func Run(opts RunOptions) error {
 		httpEnabled:     httpEnabled,
 		onStop:          onStop,
 		onRestart:       onRestart,
+		onReset:         opts.OnReset,
 		onResetTrace:    onResetTrace,
 		onResetMTR:      onResetMTR,
 		onResetPort:     onResetPort,
 		onResetHTTP:     onResetHTTP,
 		onAddHost:       onAddHost,
 		onDeleteHost:    onDeleteHost,
-		closeAppStop:    closeAppStop,
-		appStop:         appStop,
+		session:         session,
 	}))
 	startRefreshLoop(app, tr, footer, interval, updateTickerCh, externalLogCh, externalCloseCh, doneCh,
-		vs, closeAppStop, appStop)
+		vs, session)
 
 	flex := buildLayout(header, tablePane, sidePanes, graphView, errorView, pages)
 
 	err := app.SetRoot(flex, true).Run()
-	closeAppStop() // fallback: ensure goroutine stops even on non-interactive exit
+	session.Stop() // also covers Ctrl-C, terminal failure, and external app.Stop
 	return err
 }

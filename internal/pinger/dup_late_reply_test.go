@@ -131,7 +131,7 @@ func TestRecentSeqHistory_BoundedEviction(t *testing.T) {
 	h := newRecentSeqHistory()
 	const n = recentSeqHistoryCap * 3
 	for i := 0; i < n; i++ {
-		h.record(i%(seqMask+1), i, resolvedAcked, time.Now())
+		h.record(i%(seqMask+1), i, resolvedAcked, time.Now(), stats.Probe{})
 	}
 	if got := h.order.Len(); got > recentSeqHistoryCap {
 		t.Fatalf("recentSeqHistory grew to %d entries, want <= %d", got, recentSeqHistoryCap)
@@ -156,7 +156,7 @@ func TestRecentSeqHistory_WraparoundSafety(t *testing.T) {
 
 	h := newRecentSeqHistory()
 	const staleWireSeq = 42
-	h.record(staleWireSeq, 42, resolvedAcked, time.Now())
+	h.record(staleWireSeq, 42, resolvedAcked, time.Now(), stats.Probe{})
 
 	// Fill the cache with recentSeqHistoryCap other, distinct entries -- more
 	// than enough to evict the stale one above, but nowhere near a full
@@ -166,7 +166,7 @@ func TestRecentSeqHistory_WraparoundSafety(t *testing.T) {
 		if wire == staleWireSeq {
 			continue
 		}
-		h.record(wire, i+1000, resolvedAcked, time.Now())
+		h.record(wire, i+1000, resolvedAcked, time.Now(), stats.Probe{})
 	}
 
 	if _, ok := h.lookup(staleWireSeq); ok {

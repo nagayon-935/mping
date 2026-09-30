@@ -119,6 +119,10 @@ func hopCountString(hops []string) string {
 	if len(hops) == 0 {
 		return "-"
 	}
+	// Status messages occupy the route field but are not measured hops.
+	if len(hops) == 1 && (hops[0] == "Tracing..." || hops[0] == "no route found" || strings.HasPrefix(hops[0], "error: ")) {
+		return "-"
+	}
 	return fmt.Sprintf("%d", len(hops))
 }
 

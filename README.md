@@ -115,11 +115,11 @@ cd mping
 # Build only
 make build
 
-# Build + install (sets setuid on macOS; use install.sh on Linux for setcap)
+# Build + install (setuid on macOS; setcap on Linux when available)
 make install
 ```
 
-> **Note for Linux users:** `make install` sets a `setuid` bit, which works but is less secure than `setcap`. For production use, run `go build -o mping ./cmd/main` and then `sudo ./install.sh` to get `CAP_NET_RAW` via `setcap`.
+`make install` rebuilds the binary and runs `sudo ./install.sh`, which installs it to `/usr/local/bin/mping` by default and grants the platform-specific privileges described above. If another `mping` appears earlier in your PATH, that copy will still run: check with `type -a mping`. After moving or removing an old copy, clear the shell's command cache with `hash -r`.
 
 #### Using go build directly
 
@@ -280,15 +280,17 @@ See [examples/hosts-groups.yaml](examples/hosts-groups.yaml) for a runnable exam
 | Key | Action |
 | :--- | :--- |
 | **q** | Quit the application |
-| **s** | Pause ping |
-| **S** | Resume ping (only valid after **s**) |
-| **R** | Reset all statistics and logs |
+| **s** | Stop all measurements and preserve their last statistics |
+| **S** | Restart measurements with new workers, preserving statistics (after **s**) |
+| **R** | Reset statistics and UI logs; remain stopped if measurements are stopped |
 | **a** | Open "Add host" dialog — type a hostname or IP and press Enter to add it at runtime |
 | **d** | Open "Delete host" input — type the hostname or IP shown in the Ping Monitor table and press Enter to remove it at runtime |
 | **Tab** | Cycle focus: Ping Monitor → Traceroute Monitor → MTR Monitor → Port Monitor → HTTP Monitor → RTT Graphs → Log |
 | **↑ / ↓ / PgUp / PgDn** | Scroll focused pane (Table / Traceroute / RTT Graphs) |
 
 > **Note:** Adding or deleting a host resets all statistics for all targets, equivalent to a YAML configuration reload.
+
+Stop, restart and reset operations execute in keypress order. A running reset discards results from probes sent before the reset and recreates enabled route/port/HTTP monitors. It keeps the remaining `--count` budget; restarting starts a fresh budget. When stopped, reset clears ping and MTR counters while preserving the last route and port/HTTP results. Quitting waits for measurement workers before writing the final JSON snapshot.
 
 ## Shell completion
 

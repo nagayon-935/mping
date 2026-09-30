@@ -1,6 +1,7 @@
 package pinger
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -62,12 +63,21 @@ func (p *Pinger) getPTR(ipStr string) string {
 	return name
 }
 
-// lookupAddrBounded wraps p.lookupAddr with ptrLookupTimeout and aborts
-// early when Stop() closes p.done. Mirrors lookupTXTBounded: net.LookupAddr
-// has no cancellation seam, so the lookup goroutine is left to finish into a
-// buffered channel while the caller is released immediately, so a hung
-// resolver cannot stall Pinger.Wait().
+// lookupAddrBounded runs cancellable DNS on the calling goroutine. Only
+// explicitly injected context-free hooks use the legacy bounded adapter.
 func (p *Pinger) lookupAddrBounded(ipStr string) ([]string, error) {
+	if p.stopped() {
+		return nil, errPingerStopped
+	}
+	if p.lookupAddrContext != nil {
+		ctx, cancel := p.lookupContext(context.Background(), ptrLookupTimeout)
+		defer cancel()
+		names, err := p.lookupAddrContext(ctx, ipStr)
+		if p.stopped() {
+			return nil, errPingerStopped
+		}
+		return names, err
+	}
 	type result struct {
 		names []string
 		err   error

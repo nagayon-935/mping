@@ -65,6 +65,7 @@ type fakePinger struct {
 	// immediately. traceRouteReturned, if non-nil, is closed right before
 	// TraceRoute returns, letting a test observe when it actually exited.
 	blockTraceUntilCtxDone bool
+	traceRouteStarted      chan struct{}
 	traceRouteReturned     chan struct{}
 
 	// interfaceSet records the last value passed to SetInterface, so tests
@@ -110,6 +111,9 @@ func (f *fakePinger) DiscoverMaxPayload(ctx context.Context, dest string, start 
 
 func (f *fakePinger) TraceRoute(ctx context.Context, dest string, maxHops int, timeout time.Duration) ([]string, error) {
 	if f.blockTraceUntilCtxDone {
+		if f.traceRouteStarted != nil {
+			close(f.traceRouteStarted)
+		}
 		<-ctx.Done()
 		if f.traceRouteReturned != nil {
 			close(f.traceRouteReturned)
@@ -447,11 +451,17 @@ func TestRunStop_JoinsTracerouteGoroutine(t *testing.T) {
 	})
 
 	returned := make(chan struct{})
-	fp := &fakePinger{blockTraceUntilCtxDone: true, traceRouteReturned: returned}
+	started := make(chan struct{})
+	fp := &fakePinger{blockTraceUntilCtxDone: true, traceRouteStarted: started, traceRouteReturned: returned}
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return fp
 	}
 	uiRun = func(opts ui.RunOptions) error {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("traceroute did not start")
+		}
 		opts.OnStop()
 		select {
 		case <-returned:

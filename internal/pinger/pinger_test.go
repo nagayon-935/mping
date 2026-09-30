@@ -650,7 +650,7 @@ func TestNewPingerDefaults(t *testing.T) {
 	if p.ResolveInterval <= 0 {
 		t.Fatalf("expected positive ResolveInterval, got %v", p.ResolveInterval)
 	}
-	if p.resolveIPAddr == nil || p.now == nil || p.listenPacket == nil {
+	if p.resolveWithContext == nil || p.lookupTXTContext == nil || p.lookupAddrContext == nil || p.now == nil || p.listenPacket == nil {
 		t.Fatal("expected default option funcs to be set")
 	}
 	if p.done == nil {

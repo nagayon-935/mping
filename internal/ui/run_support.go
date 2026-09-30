@@ -49,55 +49,39 @@ func refreshTickInterval(interval time.Duration) time.Duration {
 func wireHostInputs(
 	app *tview.Application, table *tview.Table, pages *tview.Pages,
 	addHostInput, deleteHostInput *tview.InputField,
-	vs *viewState,
+	vs *viewState, session *uiSession,
 	onAddHost, onDeleteHost func(host string) error,
 ) {
-	addHostInput.SetDoneFunc(func(key tcell.Key) {
-		if key == tcell.KeyEnter {
-			host := strings.TrimSpace(addHostInput.GetText())
-			addHostInput.SetText("")
-			if host != "" && onAddHost != nil {
-				go func() {
-					if err := onAddHost(host); err != nil {
-						app.QueueUpdateDraw(func() {
-							vs.appendLog(fmt.Sprintf("[red][%s] Add host error: %v[-]",
-								time.Now().Format("15:04:05"), err))
-						})
+	wire := func(input *tview.InputField, action string, callback func(string) error) {
+		input.SetDoneFunc(func(key tcell.Key) {
+			if key == tcell.KeyEnter {
+				host := strings.TrimSpace(input.GetText())
+				input.SetText("")
+				if host != "" && callback != nil {
+					if !session.Submit(func() {
+						if err := callback(host); err != nil {
+							session.Post(func() {
+								vs.appendLog(fmt.Sprintf("[red][%s] %s host error: %v[-]", time.Now().Format("15:04:05"), action, err))
+							})
+						}
+					}) {
+						vs.appendLog("[yellow]Operation queue full; please try again[-]")
 					}
-				}()
+				}
+			} else if key == tcell.KeyEscape {
+				input.SetText("")
 			}
-		} else if key == tcell.KeyEscape {
-			addHostInput.SetText("")
-		}
-		pages.SwitchToPage("footer")
-		app.SetFocus(table)
-	})
-
-	deleteHostInput.SetDoneFunc(func(key tcell.Key) {
-		if key == tcell.KeyEnter {
-			host := strings.TrimSpace(deleteHostInput.GetText())
-			deleteHostInput.SetText("")
-			if host != "" && onDeleteHost != nil {
-				go func() {
-					if err := onDeleteHost(host); err != nil {
-						app.QueueUpdateDraw(func() {
-							vs.appendLog(fmt.Sprintf("[red][%s] Delete host error: %v[-]",
-								time.Now().Format("15:04:05"), err))
-						})
-					}
-				}()
-			}
-		} else if key == tcell.KeyEscape {
-			deleteHostInput.SetText("")
-		}
-		pages.SwitchToPage("footer")
-		app.SetFocus(table)
-	})
+			pages.SwitchToPage("footer")
+			app.SetFocus(table)
+		})
+	}
+	wire(addHostInput, "Add", onAddHost)
+	wire(deleteHostInput, "Delete", onDeleteHost)
 }
 
 // startRefreshLoop launches the goroutine that redraws the table on each
 // tick, delivers external log/close and count-completion signals, and stops
-// when the app quits (appStop or externalCloseCh). TD-23③:
+// when the owning session stops. TD-23③:
 // extracted out of Run() so its ~50 lines don't compete with construction
 // for reading attention.
 func startRefreshLoop(
@@ -105,9 +89,9 @@ func startRefreshLoop(
 	interval time.Duration, updateTickerCh chan time.Duration,
 	externalLogCh <-chan string, externalCloseCh <-chan struct{}, doneCh chan struct{},
 	vs *viewState,
-	closeAppStop func(), appStop chan struct{},
+	session *uiSession,
 ) {
-	go func() {
+	session.start(func() {
 		ticker := time.NewTicker(refreshTickInterval(interval))
 		defer ticker.Stop()
 
@@ -120,7 +104,11 @@ func startRefreshLoop(
 
 		for {
 			select {
-			case newInterval := <-updateTickerCh:
+			case newInterval, open := <-updateTickerCh:
+				if !open {
+					updateTickerCh = nil
+					continue
+				}
 				ticker.Reset(refreshTickInterval(newInterval))
 			case <-ticker.C:
 				now := time.Now()
@@ -130,39 +118,43 @@ func startRefreshLoop(
 				}
 				lastGen = gen
 				lastRedraw = now
-				app.QueueUpdateDraw(tr.update)
-			case msg := <-externalLogCh:
+				session.Post(tr.update)
+			case msg, open := <-externalLogCh:
+				if !open {
+					externalLogCh = nil
+					continue
+				}
 				// Deliver external log messages (e.g. watcher validation errors)
 				// immediately to the Log pane without waiting for the next tick.
-				app.QueueUpdateDraw(func() {
+				session.Post(func() {
 					vs.appendLog(msg)
 				})
 			case <-externalCloseCh:
 				// External reload requested (e.g. YAML file changed).
-				app.QueueUpdateDraw(func() {
+				session.Post(func() {
 					vs.appendLog(fmt.Sprintf("[yellow][%s] Reloading configuration...[-]",
 						time.Now().Format("15:04:05")))
+					session.Stop()
+					app.Stop()
 				})
-				closeAppStop()
-				app.Stop()
 				return
 			case _, open := <-doneCh:
 				if !open {
 					doneCh = nil // also accept one-shot closed channels
 				}
 				// Pinger finished (count limit reached)
-				app.QueueUpdateDraw(func() {
+				session.Post(func() {
 					footer.SetText("Finished. Press 'q' to quit, 'R' to reset stats")
 					footer.SetTextColor(tcell.ColorGreen)
 					tr.update()
 				})
 				// Keep servicing other monitors, duration/reload signals and
 				// subsequent completion notifications after a restart.
-			case <-appStop:
+			case <-session.done:
 				return
 			}
 		}
-	}()
+	})
 }
 
 // buildLayout assembles the top-level Flex layout: header, Ping Monitor

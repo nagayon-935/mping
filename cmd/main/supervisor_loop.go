@@ -7,8 +7,8 @@ import "errors"
 // once run() has torn the iteration down.
 var errSupervisorShutDown = errors.New("supervisor shut down")
 
-// cmdChanBuffer lets a burst of key presses enqueue without blocking the
-// goroutines the tview key handler spawns.
+// cmdChanBuffer accommodates commands from the UI worker and completion
+// observers. Each caller still waits for its command to finish.
 const cmdChanBuffer = 16
 
 // Start launches the command goroutine. Every supervisor mutation happens on
@@ -20,12 +20,16 @@ func (s *supervisor) Start() {
 	go s.loop()
 }
 
-// Shutdown stops the command goroutine and waits for it to exit. Safe to
-// call more than once: run()'s error path and its normal cleanup path can
-// both reach it.
+// Shutdown terminates measurements, closes the command loop, and joins its
+// completion observers. Safe to call more than once. No owned goroutine may
+// outlive the supervisor, even when a caller omits an explicit cmdTerminate.
 func (s *supervisor) Shutdown() {
-	s.shutdownOnce.Do(func() { close(s.done) })
+	s.shutdownOnce.Do(func() {
+		_ = s.do(cmdTerminate)
+		close(s.done)
+	})
 	<-s.loopDone
+	s.observers.Wait()
 }
 
 func (s *supervisor) loop() {
@@ -46,11 +50,10 @@ func (s *supervisor) loop() {
 
 // do sends a command and waits for its result.
 //
-// The command channel is deliberately never closed. UI callbacks run on
-// goroutines that can still be in flight after uiRun() returns, so closing
-// would risk a send on a closed channel — the same class of bug this
-// refactor exists to remove. Instead both the send and the reply wait select
-// on s.done, so a late caller gets errSupervisorShutDown and returns.
+// The command channel is deliberately never closed: completion observers or
+// other callers may still attempt a send during Shutdown. Both the send and
+// reply wait watch done so late callers return errSupervisorShutDown. UI Run
+// separately joins its callback worker before the iteration is torn down.
 //
 // Waiting on the reply MUST also watch s.done: without it, a caller whose
 // command was accepted just before Shutdown would block forever.

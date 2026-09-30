@@ -40,8 +40,8 @@ func TestNewPingerWithOptions_WithResolver(t *testing.T) {
 	if p == nil {
 		t.Fatal("expected non-nil Pinger")
 	}
-	_, _ = p.resolveIPAddr("ip4", "nonexistent.invalid.")
-	_, _ = p.lookupTXT("nonexistent.invalid.")
+	_, _ = p.resolveIPAddrBounded("ip4", "nonexistent.invalid.")
+	_, _ = p.lookupTXTBounded("nonexistent.invalid.")
 }
 
 // TestTraceRoute_ListenPacketFailureV4 covers the v4 send-socket open error path.

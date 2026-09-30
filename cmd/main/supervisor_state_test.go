@@ -49,6 +49,7 @@ func TestHandle_CommandTable(t *testing.T) {
 		{"start from stopped", stateStopped, cmdStart, stateRunning, nil},
 		{"stop from stopped", stateStopped, cmdStop, stateStopped, nil},
 		{"restart from stopped", stateStopped, cmdRestart, stateRunning, nil},
+		{"resetStats from stopped", stateStopped, cmdResetStats, stateStopped, nil},
 		{"resetTrace from stopped", stateStopped, cmdResetTrace, stateStopped, nil},
 		{"resetMTR from stopped", stateStopped, cmdResetMTR, stateStopped, nil},
 		{"resetPort from stopped", stateStopped, cmdResetPort, stateStopped, nil},
@@ -58,6 +59,7 @@ func TestHandle_CommandTable(t *testing.T) {
 		{"start from running", stateRunning, cmdStart, stateRunning, nil},
 		{"stop from running", stateRunning, cmdStop, stateStopped, nil},
 		{"restart from running", stateRunning, cmdRestart, stateRunning, nil},
+		{"resetStats from running", stateRunning, cmdResetStats, stateRunning, nil},
 		{"resetTrace from running", stateRunning, cmdResetTrace, stateRunning, nil},
 		{"resetMTR from running", stateRunning, cmdResetMTR, stateRunning, nil},
 		{"resetPort from running", stateRunning, cmdResetPort, stateRunning, nil},
@@ -68,6 +70,7 @@ func TestHandle_CommandTable(t *testing.T) {
 		{"start from terminated", stateTerminated, cmdStart, stateTerminated, errSupervisorTerminated},
 		{"stop from terminated", stateTerminated, cmdStop, stateTerminated, nil},
 		{"restart from terminated", stateTerminated, cmdRestart, stateTerminated, errSupervisorTerminated},
+		{"resetStats from terminated", stateTerminated, cmdResetStats, stateTerminated, nil},
 		{"resetTrace from terminated", stateTerminated, cmdResetTrace, stateTerminated, nil},
 		{"resetMTR from terminated", stateTerminated, cmdResetMTR, stateTerminated, nil},
 		{"resetPort from terminated", stateTerminated, cmdResetPort, stateTerminated, nil},
@@ -78,6 +81,7 @@ func TestHandle_CommandTable(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			sup, _ := newStateTestSupervisor(t)
+			t.Cleanup(func() { _ = doCmd(t, sup, cmdTerminate) })
 			// Reach the starting state through real commands rather than
 			// poking the field, so the fixture can't construct a state the
 			// machine would never produce.
@@ -140,7 +144,7 @@ func TestHandle_ResetAfterTerminateCreatesNothing(t *testing.T) {
 			portCheckerAfter, httpCheckerAfter)
 	}
 
-	for _, k := range []cmdKind{cmdResetTrace, cmdResetMTR, cmdResetPort, cmdResetHTTP} {
+	for _, k := range []cmdKind{cmdResetStats, cmdResetTrace, cmdResetMTR, cmdResetPort, cmdResetHTTP} {
 		if err := doCmd(t, sup, k); err != nil {
 			t.Fatalf("reset %v after terminate: %v", k, err)
 		}

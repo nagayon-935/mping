@@ -43,6 +43,9 @@ func TestHopCountString(t *testing.T) {
 	}{
 		{"nil", nil, "-"},
 		{"empty", []string{}, "-"},
+		{"tracing", []string{"Tracing..."}, "-"},
+		{"no route", []string{"no route found"}, "-"},
+		{"socket error", []string{"error: socket: operation not permitted"}, "-"},
 		{"one hop", []string{"1.1.1.1"}, "1"},
 		{"three hops", []string{"1.1.1.1", "2.2.2.2", "3.3.3.3"}, "3"},
 		{"with unreachable", []string{"1.1.1.1", "*", "8.8.8.8"}, "3"},
