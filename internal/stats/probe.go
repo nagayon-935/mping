@@ -60,3 +60,9 @@ func (p Probe) OnDuplicate() bool {
 func (p Probe) OnLateReply() bool {
 	return p.update(func(t *TargetStats) { t.LateReplies++ })
 }
+
+// OnCancelled accounts for an outstanding probe discarded by a user operation.
+// It does not alter loss, RTT, or last-error state.
+func (p Probe) OnCancelled() bool {
+	return p.update(func(t *TargetStats) { t.Cancelled++ })
+}

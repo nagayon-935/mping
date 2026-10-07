@@ -11,19 +11,24 @@ import (
 	"github.com/nagayon-935/mping/internal/mtr"
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
+	ui "github.com/nagayon-935/mping/internal/ui"
 )
 
 // supervisorConfig holds the values a supervisor needs for the lifetime of
 // one run() loop iteration. A fresh supervisor is created each time the main
 // loop re-enters (on YAML reload), mirroring the closures it replaces.
 type supervisorConfig struct {
-	makePinger func(size int) pingerController
-	packetSize int
-	targets    []*stats.TargetStats
-	interval   time.Duration
-	timeout    time.Duration
-	portSpecs  []pinger.PortSpec
-	httpURLs   []string
+	makePinger       func(size int) pingerController
+	makeTargetPinger func(int, []*stats.TargetStats, []targetSpec) pingerController
+	specs            []targetSpec
+	groups           []ui.TargetGroup
+	config           config
+	packetSize       int
+	targets          []*stats.TargetStats
+	interval         time.Duration
+	timeout          time.Duration
+	portSpecs        []pinger.PortSpec
+	httpURLs         []string
 	// bind is the -S source address / -I interface pair the ICMP pinger is
 	// bound to; the port and HTTP checkers get the same one so a single mping
 	// invocation cannot split its probes across different egress paths.
@@ -86,6 +91,7 @@ const (
 	cmdTerminate
 	cmdProbesFinished
 	cmdResetStats
+	cmdEditTargets
 )
 
 func (k cmdKind) String() string {
@@ -119,6 +125,7 @@ func (k cmdKind) String() string {
 type command struct {
 	kind   cmdKind
 	reply  chan error
+	edit   func(*supervisor) error
 	pinger pingerController // identity of the instance reporting completion
 }
 
@@ -138,11 +145,15 @@ type supervisor struct {
 
 	p           pingerController
 	traceCancel context.CancelFunc
+	traceCtx    context.Context
+	traceWG     *sync.WaitGroup
 	traceDone   chan struct{} // closed when the current runTraceroutes goroutine returns
 	portChecker *pinger.PortChecker
 	httpChecker *pinger.HTTPChecker
 	mtrEngine   *mtr.Engine
 	state       supervisorState
+	traces      map[*stats.TargetStats]*traceRun
+	targetSnap  atomic.Pointer[targetSnapshot]
 
 	// Command plumbing. cmds is never closed — see do()'s comment.
 	cmds         chan command
@@ -173,18 +184,15 @@ func newSupervisor(cfg supervisorConfig) *supervisor {
 // on the command goroutine (see supervisor_loop.go).
 func (s *supervisor) startTraceroutes(pr tracer) {
 	s.stopTraceroutes()
-	ctx, cancel := context.WithCancel(context.Background())
-	s.traceCancel = cancel
-	done := make(chan struct{})
-	s.traceDone = done
-	// Pass the local ctx rather than storing it in a shared field: a
-	// concurrent resetTrace()/startPinger() call would reassign a shared
-	// field on the next command-loop iteration, racing with this goroutine
-	// reading it later. ctx here is only ever touched by this one goroutine.
-	go func() {
-		defer close(done)
-		runTraceroutes(ctx, pr, s.cfg.targets)
-	}()
+	s.traces = make(map[*stats.TargetStats]*traceRun)
+	s.traceCtx, s.traceCancel = context.WithCancel(context.Background())
+	s.traceWG = &sync.WaitGroup{}
+	s.traceDone = make(chan struct{})
+	ctx, wg, done := s.traceCtx, s.traceWG, s.traceDone
+	go func() { <-ctx.Done(); wg.Wait(); close(done) }()
+	for _, t := range s.cfg.targets {
+		s.startTargetTrace(pr, t)
+	}
 }
 
 // onFlap is the shared callback for MTR route-flap events.
@@ -203,8 +211,16 @@ func (s *supervisor) onFlap(host, desc string) {
 // without starting a goroutine.
 func (s *supervisor) handle(c command) error {
 	switch c.kind {
+	case cmdEditTargets:
+		if s.state == stateTerminated {
+			return errSupervisorTerminated
+		}
+		return c.edit(s)
 	case cmdProbesFinished:
 		if s.state == stateRunning && s.p == c.pinger {
+			if dynamic, ok := s.p.(dynamicPinger); ok && !dynamic.WorkersFinished() {
+				return nil
+			}
 			select {
 			case s.finished <- struct{}{}:
 			default:
@@ -313,7 +329,12 @@ func (s *supervisor) startAll() error {
 	case <-s.finished:
 	default:
 	}
-	next := s.cfg.makePinger(s.cfg.packetSize)
+	var next pingerController
+	if s.cfg.makeTargetPinger != nil {
+		next = s.cfg.makeTargetPinger(s.cfg.packetSize, s.cfg.targets, s.cfg.specs)
+	} else {
+		next = s.cfg.makePinger(s.cfg.packetSize)
+	}
 	if err := next.Start(s.cfg.interval, s.cfg.timeout); err != nil {
 		next.Stop()
 		next.Wait()
@@ -334,10 +355,30 @@ func (s *supervisor) startAll() error {
 		s.observers.Add(1)
 		go func() {
 			defer s.observers.Done()
-			next.WaitWorkers()
-			select {
-			case s.cmds <- command{kind: cmdProbesFinished, pinger: next}:
-			case <-s.done:
+			notify := func() bool {
+				select {
+				case s.cmds <- command{kind: cmdProbesFinished, pinger: next}:
+					return true
+				case <-s.done:
+					return false
+				}
+			}
+			if dynamic, ok := next.(dynamicPinger); ok {
+				for {
+					select {
+					case <-dynamic.WorkerEvents():
+						if !notify() {
+							return
+						}
+					case <-s.done:
+						return
+					case <-dynamic.Done():
+						return
+					}
+				}
+			} else {
+				next.WaitWorkers()
+				notify()
 			}
 		}()
 	}
@@ -374,6 +415,9 @@ func (s *supervisor) stopTraceroutes() {
 	if s.traceCancel != nil {
 		s.traceCancel()
 		s.traceCancel = nil
+	}
+	for t := range s.traces {
+		s.stopTargetTrace(t)
 	}
 	if s.traceDone != nil {
 		<-s.traceDone

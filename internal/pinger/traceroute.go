@@ -52,6 +52,12 @@ func (p *Pinger) TraceRoute(ctx context.Context, dest string, maxHops int, timeo
 	}()
 
 	traceID := p.NextTraceID()
+	if traceID < 0 {
+		return nil, fmt.Errorf("route-probe IDs exhausted")
+	}
+	if p.ids != nil {
+		defer p.ids.releaseTrace(traceID)
+	}
 	hops := make([]string, 0, maxHops)
 
 	for ttl := 1; ttl <= maxHops; ttl++ {

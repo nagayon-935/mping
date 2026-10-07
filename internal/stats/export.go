@@ -11,15 +11,18 @@ type ExportSnapshot struct {
 
 // TargetSummary is a JSON-serialisable summary for a single ping target.
 type TargetSummary struct {
-	Host    string `json:"host"`
-	IP      string `json:"ip"`
-	ASN     string `json:"asn,omitempty"`
-	Country string `json:"country,omitempty"`
-	Org     string `json:"org,omitempty"`
-	PTR     string `json:"ptr,omitempty"`
-	Sent    int    `json:"sent"`
-	Recv    int    `json:"recv"`
-	Loss    int    `json:"loss"`
+	ID        uint64    `json:"id"`
+	StartedAt time.Time `json:"started_at"`
+	Cancelled int       `json:"cancelled,omitempty"`
+	Host      string    `json:"host"`
+	IP        string    `json:"ip"`
+	ASN       string    `json:"asn,omitempty"`
+	Country   string    `json:"country,omitempty"`
+	Org       string    `json:"org,omitempty"`
+	PTR       string    `json:"ptr,omitempty"`
+	Sent      int       `json:"sent"`
+	Recv      int       `json:"recv"`
+	Loss      int       `json:"loss"`
 	// Duplicates and LateReplies are omitempty since the overwhelming
 	// majority of runs never see either; see stats.TargetStats' fields of
 	// the same name for what each counts and why neither is folded into
@@ -152,6 +155,7 @@ func BuildSnapshot(targets []*TargetStats, httpResults []*HTTPCheckResult) Expor
 		}
 
 		snap.Targets = append(snap.Targets, TargetSummary{
+			ID: v.ID, StartedAt: v.StartedAt, Cancelled: v.Cancelled,
 			Host:             v.Host,
 			IP:               v.IP,
 			ASN:              v.ASN,

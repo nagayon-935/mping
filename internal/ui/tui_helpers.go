@@ -608,3 +608,11 @@ func makeDoubleBorderDrawFunc(title string, borderColor *tcell.Color) func(scree
 		return x + 1, y + 1, width - 2, height - 2
 	}
 }
+
+// Stable keys distinguish repeated hosts, DSCP variants and re-added targets.
+func targetViewKey(v stats.TargetView) string {
+	if v.ID == 0 {
+		return v.Host
+	}
+	return fmt.Sprintf("%d", v.ID)
+}

@@ -288,7 +288,9 @@ See [examples/hosts-groups.yaml](examples/hosts-groups.yaml) for a runnable exam
 | **Tab** | Cycle focus: Ping Monitor → Traceroute Monitor → MTR Monitor → Port Monitor → HTTP Monitor → RTT Graphs → Log |
 | **↑ / ↓ / PgUp / PgDn** | Scroll focused pane (Table / Traceroute / RTT Graphs) |
 
-> **Note:** Adding or deleting a host resets all statistics for all targets, equivalent to a YAML configuration reload.
+> Live host edits preserve surviving targets' statistics, graphs, routes, port results, and independent HTTP checks. Editing a stopped session does not resume it. Re-adding a deleted host starts a new measurement. Existing `--count` budgets and the session's `--duration` deadline are preserved. Outstanding probes cancelled by deletion or stopping are exported as `cancelled`, not packet loss. YAML configuration reloads still reinitialize measurements and statistics.
+>
+> Text-based deletion rejects ambiguous display names. Echo IDs are never recycled within a session; after 32,768 worker allocations across initial starts, additions, and restarts, restart mping to obtain a fresh session.
 
 Stop, restart and reset operations execute in keypress order. A running reset discards results from probes sent before the reset and recreates enabled route/port/HTTP monitors. It keeps the remaining `--count` budget; restarting starts a fresh budget. When stopped, reset clears ping and MTR counters while preserving the last route and port/HTTP results. Quitting waits for measurement workers before writing the final JSON snapshot.
 

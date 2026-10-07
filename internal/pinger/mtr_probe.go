@@ -90,6 +90,9 @@ func (p *Pinger) UnregisterTraceChan(traceID int) {
 
 // NextTraceID returns a unique trace ID for an MTR probe round.
 func (p *Pinger) NextTraceID() int {
+	if p.ids != nil {
+		return p.ids.traceID()
+	}
 	return (p.baseID + 0x1234 + int(p.traceCounter.Add(1))) & 0xffff
 }
 
@@ -168,6 +171,12 @@ func (p *Pinger) openHopSocketAddr(dstAddr *net.IPAddr) (*HopSocket, error) {
 // traceID must be unique per probe round (use p.NextTraceID()).
 // Returns HopReply with Responded=false on timeout.
 func (p *Pinger) ProbeHop(ctx context.Context, sock *HopSocket, dest string, ttl, traceID int, timeout time.Duration) (HopReply, error) {
+	if traceID < 0 {
+		return HopReply{}, fmt.Errorf("route-probe IDs exhausted")
+	}
+	if p.ids != nil {
+		defer p.ids.releaseTrace(traceID)
+	}
 	dstAddr, err := p.resolveIPAddrContext(ctx, "ip", dest)
 	if err != nil {
 		return HopReply{}, fmt.Errorf("resolve %s: %w", dest, err)

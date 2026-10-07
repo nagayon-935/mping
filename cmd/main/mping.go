@@ -287,6 +287,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	// never re-derived on reload; see checkPortReloadDrift, TD-25).
 	activePortSpecsRaw := cfg.portSpecs
 	var pendingWarnings []string
+	sessionIDs := &pinger.IDAllocator{}
 
 	// Main run loop (re-entered on YAML reload).
 	for {
@@ -298,6 +299,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		bind := checkerBindConfig(currentCfg, bindIP)
 		customResolver := newCustomResolver(currentCfg.dnsServer, bind)
 		opts := buildPingerOptions(currentCfg, resNetwork, customResolver, currentHosts)
+		opts.IDs = sessionIDs
 
 		ifaceMTU, mtuErr := getInterfaceMTU(currentCfg.ifaceName, bindIP, currentHosts[0].resolveAddr())
 		if mtuErr == nil {
@@ -319,7 +321,13 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		logCh := make(chan string, 16)
 
 		sup := newSupervisor(supervisorConfig{
-			makePinger:   makePinger,
+			makePinger: makePinger,
+			specs:      currentHosts, groups: currentGroups, config: currentCfg,
+			makeTargetPinger: func(size int, targets []*stats.TargetStats, specs []targetSpec) pingerController {
+				options := buildPingerOptions(currentCfg, resNetwork, customResolver, specs)
+				options.IDs = sessionIDs
+				return makePingerFactory(targets, options, currentCfg, bindIP, logWriter)(size)
+			},
 			packetSize:   packetSizeToUse,
 			targets:      targets,
 			interval:     interval,
@@ -362,7 +370,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		sig := newReloadSignal()
 		onFileChange := func() { rc.requestFileReload(sig, currentCfg.hostsFile, logCh) }
 		watchCancel, watchDone := startWatcher(currentCfg.hostsFile, onFileChange, logCh)
-		jsonCancel, jsonDone := startJSONWriter(currentCfg.jsonOutputFile, targets, sup.httpResults, errOut)
+		jsonCancel, jsonDone := startLiveJSONWriter(currentCfg.jsonOutputFile, func() []*stats.TargetStats { return sup.liveTargets().Targets }, sup.httpResults, errOut)
 
 		// stopDurationWatch converges --duration onto the same sig/
 		// ExternalCloseCh path as a YAML reload: nothing here calls
@@ -380,7 +388,15 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			thresholds: currentCfg.thresholds, sig: sig, logCh: logCh, rc: rc,
 			currentHosts: currentHosts, currentGroups: currentGroups,
 		})
+		runOpts.TargetSource = sup.liveTargets
+		runOpts.OnAddHost = sup.addHost
+		runOpts.OnDeleteHost = sup.deleteHost
 		uiErr := uiRun(runOpts)
+		if snap := sup.targetSnap.Load(); snap != nil {
+			targets = snap.targets
+			currentHosts = snap.specs
+			currentGroups = snap.groups
+		}
 		stopDurationWatch()
 		if uiErr != nil {
 			fmt.Fprintf(errOut, "Error running application: %v\n", uiErr)

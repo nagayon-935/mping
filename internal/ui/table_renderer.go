@@ -60,7 +60,8 @@ type tableRenderer struct {
 	compactLayout bool
 	groupRowMap   []groupTableRow
 
-	vs *viewState
+	beforeUpdate func()
+	vs           *viewState
 }
 
 // newTableRenderer builds the column schema (from mainTableColumns, keyed
@@ -208,6 +209,9 @@ func fetchViews(targets []*stats.TargetStats) []stats.TargetView {
 // update re-renders the Ping Monitor table (full or compact layout, flat or
 // grouped) and every side pane, for one refresh tick.
 func (tr *tableRenderer) update() {
+	if tr.beforeUpdate != nil {
+		tr.beforeUpdate()
+	}
 	tr.table.Clear()
 	tr.tablePane.SetTitle(" Ping Monitor ")
 
@@ -320,9 +324,9 @@ func (tr *tableRenderer) update() {
 		view := views[i]
 		rowSourceIP := displaySourceIPForDst(view.IP, tr.sourceIPv4, tr.sourceIPv6)
 		if !view.LastLossTime.IsZero() {
-			lastTime, exists := tr.vs.lastLossTimes[view.Host]
+			lastTime, exists := tr.vs.lastLossTimes[targetViewKey(view)]
 			if !exists || view.LastLossTime.After(lastTime) {
-				tr.vs.lastLossTimes[view.Host] = view.LastLossTime
+				tr.vs.lastLossTimes[targetViewKey(view)] = view.LastLossTime
 				msg := buildErrorLogMessage(view, rowSourceIP, view.LastError, view.LastLossTime)
 				tr.vs.appendLog(msg)
 			}
@@ -334,12 +338,12 @@ func (tr *tableRenderer) update() {
 			}
 			rowCtxCache[i] = ctx
 			textsCache[i] = renderRowTexts(tr.cols, ctx)
-			state := tr.vs.alertState[view.Host]
+			state := tr.vs.alertState[targetViewKey(view)]
 			state, msgs := updateAlertState(view, rowSourceIP, ctx.lossRate, now, state)
 			for _, msg := range msgs {
 				tr.vs.appendLog(msg)
 			}
-			tr.vs.alertState[view.Host] = state
+			tr.vs.alertState[targetViewKey(view)] = state
 		}
 	}
 

@@ -18,9 +18,15 @@ const (
 
 var newApplication = tview.NewApplication
 
+type TargetSet struct {
+	Targets []*stats.TargetStats
+	Groups  []TargetGroup
+}
+
 // RunOptions contains all parameters for the Run function.
 type RunOptions struct {
 	Targets      []*stats.TargetStats
+	TargetSource func() TargetSet
 	Interval     time.Duration
 	Timeout      time.Duration
 	DoneCh       chan struct{} // receives count-completion notifications; nil means unlimited
@@ -70,10 +76,10 @@ type RunOptions struct {
 	OnResetPort  func()
 	OnResetHTTP  func()
 	// OnAddHost is called when the user adds a host via the 'a' key dialog.
-	// A non-nil error is displayed in the Log pane; nil triggers a reload.
+	// A non-nil error is displayed in the Log pane; nil updates the live target list.
 	OnAddHost func(host string) error
 	// OnDeleteHost is called when the user deletes a host via the 'd' key dialog.
-	// A non-nil error is displayed in the Log pane; nil triggers a reload.
+	// A non-nil error is displayed in the Log pane; nil updates the live target list.
 	OnDeleteHost func(host string) error
 	// Groups defines named groups of targets for grouped display.
 	// Nil means flat (ungrouped) layout — existing behaviour.
@@ -165,6 +171,15 @@ func Run(opts RunOptions) error {
 	tr := newTableRenderer(targets, sourceIPv4, sourceIPv6, packetSize, asnEnabled, ptrEnabled, dscpEnabled, groups,
 		table, tablePane, initialLogs, vs)
 	tr.sidePanes = sidePanes
+	if opts.TargetSource != nil {
+		tr.beforeUpdate = func() {
+			set := opts.TargetSource()
+			targets = set.Targets
+			tr.targets = targets
+			tr.groups = set.Groups
+			graphView.targets = targets
+		}
+	}
 
 	header := tview.NewTextView().
 		SetText(fmt.Sprintf("MPING - Multi Ping Tool | Interval: %dms", interval.Milliseconds())).

@@ -52,12 +52,14 @@ type PortChecker struct {
 	// Per-protocol dialers built once from bind: net.Dialer.LocalAddr must be
 	// a *net.TCPAddr for tcp and a *net.UDPAddr for udp, so the two cannot
 	// share one dialer.
-	tcpDialer *net.Dialer
-	udpDialer *net.Dialer
-	ctx       context.Context
-	cancel    context.CancelFunc
-	stopOnce  sync.Once
-	wg        sync.WaitGroup
+	tcpDialer  *net.Dialer
+	udpDialer  *net.Dialer
+	ctx        context.Context
+	cancel     context.CancelFunc
+	stopOnce   sync.Once
+	targetMu   sync.Mutex
+	targetRuns map[*stats.TargetStats]*portTargetRun
+	wg         sync.WaitGroup
 }
 
 // NewPortChecker creates a PortChecker and initialises PortResults on each
@@ -75,16 +77,17 @@ func NewPortChecker(targets []*stats.TargetStats, specs []PortSpec, interval, ti
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &PortChecker{
-		targets:   targets,
-		specs:     specs,
-		results:   results,
-		interval:  interval,
-		timeout:   timeout,
-		bind:      bind,
-		tcpDialer: newBoundDialer("tcp", timeout, bind),
-		udpDialer: newBoundDialer("udp", timeout, bind),
-		ctx:       ctx,
-		cancel:    cancel,
+		targets:    targets,
+		specs:      specs,
+		results:    results,
+		targetRuns: make(map[*stats.TargetStats]*portTargetRun),
+		interval:   interval,
+		timeout:    timeout,
+		bind:       bind,
+		tcpDialer:  newBoundDialer("tcp", timeout, bind),
+		udpDialer:  newBoundDialer("udp", timeout, bind),
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 }
 
@@ -95,11 +98,7 @@ func (pc *PortChecker) BindConfig() BindConfig { return pc.bind }
 // Start launches one goroutine per (target, spec) pair.
 func (pc *PortChecker) Start() {
 	for i, t := range pc.targets {
-		for j, spec := range pc.specs {
-			result := pc.results[i][j] // use internally stored pointer; never reads t.PortResults
-			pc.wg.Add(1)
-			go pc.loop(t, spec, result)
-		}
+		pc.launchTarget(t, pc.results[i])
 	}
 }
 
@@ -119,7 +118,10 @@ func (pc *PortChecker) Wait() {
 const maxDNSWait = 5 * time.Second
 
 func (pc *PortChecker) loop(t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
-	defer pc.wg.Done()
+	pc.loopContext(pc.ctx, t, spec, result)
+}
+
+func (pc *PortChecker) loopContext(ctx context.Context, t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
 
 	// Defer the first check until the target IP is resolved (or we time out),
 	// so the user sees a real Open/Closed/Filtered result on the first tick.
@@ -129,28 +131,32 @@ func (pc *PortChecker) loop(t *stats.TargetStats, spec PortSpec, result *stats.P
 		deadline := time.Now().Add(maxDNSWait)
 		for t.GetView().IP == "" && time.Now().Before(deadline) {
 			select {
-			case <-pc.ctx.Done():
+			case <-ctx.Done():
 				return
 			case <-waitTicker.C:
 			}
 		}
 	}
 
-	pc.check(t, spec, result)
+	pc.checkContext(ctx, t, spec, result)
 	ticker := time.NewTicker(pc.interval)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-pc.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			pc.check(t, spec, result)
+			pc.checkContext(ctx, t, spec, result)
 		}
 	}
 }
 
 func (pc *PortChecker) check(t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
-	if pc.ctx.Err() != nil {
+	pc.checkContext(pc.ctx, t, spec, result)
+}
+
+func (pc *PortChecker) checkContext(ctx context.Context, t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
+	if ctx.Err() != nil {
 		return
 	}
 	ip := t.GetView().IP
@@ -163,11 +169,11 @@ func (pc *PortChecker) check(t *stats.TargetStats, spec PortSpec, result *stats.
 	var rtt time.Duration
 	switch spec.Protocol {
 	case "tcp":
-		status, rtt = checkTCP(pc.ctx, pc.tcpDialer, addr)
+		status, rtt = checkTCP(ctx, pc.tcpDialer, addr)
 	case "udp":
-		status, rtt = checkUDP(pc.ctx, pc.udpDialer, addr, pc.timeout)
+		status, rtt = checkUDP(ctx, pc.udpDialer, addr, pc.timeout)
 	}
-	if pc.ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return // shutdown is not a failed health check
 	}
 	result.SetResult(status, rtt)
@@ -234,4 +240,49 @@ func checkUDP(ctx context.Context, dialer *net.Dialer, addr string, timeout time
 func isTimeout(err error) bool {
 	var netErr net.Error
 	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+type portTargetRun struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+func (pc *PortChecker) launchTarget(t *stats.TargetStats, results []*stats.PortCheckResult) {
+	ctx, cancel := context.WithCancel(pc.ctx)
+	run := &portTargetRun{cancel: cancel, done: make(chan struct{})}
+	pc.targetMu.Lock()
+	pc.targetRuns[t] = run
+	pc.targetMu.Unlock()
+	pc.wg.Add(1)
+	go func() {
+		defer pc.wg.Done()
+		defer close(run.done)
+		var wg sync.WaitGroup
+		for j, spec := range pc.specs {
+			wg.Add(1)
+			go func(spec PortSpec, result *stats.PortCheckResult) {
+				defer wg.Done()
+				pc.loopContext(ctx, t, spec, result)
+			}(spec, results[j])
+		}
+		wg.Wait()
+	}()
+}
+func (pc *PortChecker) AddTarget(t *stats.TargetStats) {
+	results := make([]*stats.PortCheckResult, len(pc.specs))
+	for j, s := range pc.specs {
+		results[j] = &stats.PortCheckResult{Port: s.Port, Protocol: s.Protocol, Status: "Checking..."}
+	}
+	t.SetPortResults(results)
+	pc.launchTarget(t, results)
+}
+func (pc *PortChecker) RemoveTarget(t *stats.TargetStats) {
+	pc.targetMu.Lock()
+	r := pc.targetRuns[t]
+	delete(pc.targetRuns, t)
+	pc.targetMu.Unlock()
+	if r != nil {
+		r.cancel()
+		<-r.done
+	}
 }

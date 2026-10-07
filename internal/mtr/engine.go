@@ -83,8 +83,11 @@ type Engine struct {
 	// Config.MaxConcurrentProbes.
 	sem chan struct{}
 
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	mu         sync.Mutex
+	targetRuns map[*stats.TargetStats]*targetRun
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
 }
 
 // NewEngine creates an Engine. Call Start to begin probing.
@@ -102,12 +105,10 @@ func NewEngine(prober HopProber, targets []*stats.TargetStats, cfg Config) *Engi
 func (e *Engine) Start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancel = cancel
+	e.ctx = ctx
+	e.targetRuns = make(map[*stats.TargetStats]*targetRun)
 	for _, t := range e.targets {
-		e.wg.Add(1)
-		go func(ts *stats.TargetStats) {
-			defer e.wg.Done()
-			runTarget(ctx, e.prober, ts, e.cfg, e.sem)
-		}(t)
+		e.AddTarget(t)
 	}
 }
 
@@ -328,4 +329,33 @@ func release(sem chan struct{}) {
 		return
 	}
 	<-sem
+}
+
+// Each target has its own lifetime, while all share the engine's probe limit.
+type targetRun struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+func (e *Engine) AddTarget(t *stats.TargetStats) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if _, exists := e.targetRuns[t]; exists {
+		return
+	}
+	ctx, cancel := context.WithCancel(e.ctx)
+	r := &targetRun{cancel: cancel, done: make(chan struct{})}
+	e.targetRuns[t] = r
+	e.wg.Add(1)
+	go func() { defer e.wg.Done(); defer close(r.done); runTarget(ctx, e.prober, t, e.cfg, e.sem) }()
+}
+func (e *Engine) RemoveTarget(t *stats.TargetStats) {
+	e.mu.Lock()
+	r := e.targetRuns[t]
+	delete(e.targetRuns, t)
+	e.mu.Unlock()
+	if r != nil {
+		r.cancel()
+		<-r.done
+	}
 }

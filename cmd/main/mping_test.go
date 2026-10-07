@@ -1941,7 +1941,7 @@ func TestParseHostsFile_GroupsYAML(t *testing.T) {
 	}
 }
 
-func TestRunOnAddHost_AddsHostAndReloads(t *testing.T) {
+func TestRunOnAddHost_PreservesSession(t *testing.T) {
 	origPinger := newPinger
 	origUI := uiRun
 	t.Cleanup(func() {
@@ -1949,7 +1949,7 @@ func TestRunOnAddHost_AddsHostAndReloads(t *testing.T) {
 		uiRun = origUI
 	})
 
-	fp := &fakePinger{}
+	fp := newLiveFakePinger()
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return fp
 	}
@@ -1963,6 +1963,9 @@ func TestRunOnAddHost_AddsHostAndReloads(t *testing.T) {
 				t.Errorf("OnAddHost: unexpected error: %v", err)
 			}
 		}
+		if got := len(opts.TargetSource().Targets); got != 2 {
+			t.Errorf("live target count=%d", got)
+		}
 		return nil
 	}
 
@@ -1971,8 +1974,8 @@ func TestRunOnAddHost_AddsHostAndReloads(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected 0, got %d; stderr: %s", code, errOut.String())
 	}
-	if reloadCount != 2 {
-		t.Fatalf("expected 2 UI runs (initial + reload), got %d", reloadCount)
+	if reloadCount != 1 {
+		t.Fatalf("expected one persistent UI run, got %d", reloadCount)
 	}
 }
 
@@ -2004,7 +2007,7 @@ func TestRunOnAddHost_DuplicateReturnsError(t *testing.T) {
 	}
 }
 
-func TestRunOnDeleteHost_RemovesHostAndReloads(t *testing.T) {
+func TestRunOnDeleteHost_PreservesSession(t *testing.T) {
 	origPinger := newPinger
 	origUI := uiRun
 	t.Cleanup(func() {
@@ -2012,7 +2015,7 @@ func TestRunOnDeleteHost_RemovesHostAndReloads(t *testing.T) {
 		uiRun = origUI
 	})
 
-	fp := &fakePinger{}
+	fp := newLiveFakePinger()
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return fp
 	}
@@ -2026,6 +2029,9 @@ func TestRunOnDeleteHost_RemovesHostAndReloads(t *testing.T) {
 				t.Errorf("OnDeleteHost: unexpected error: %v", err)
 			}
 		}
+		if got := len(opts.TargetSource().Targets); got != 1 {
+			t.Errorf("live target count=%d", got)
+		}
 		return nil
 	}
 
@@ -2034,8 +2040,8 @@ func TestRunOnDeleteHost_RemovesHostAndReloads(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected 0, got %d; stderr: %s", code, errOut.String())
 	}
-	if reloadCount != 2 {
-		t.Fatalf("expected 2 UI runs (initial + reload), got %d", reloadCount)
+	if reloadCount != 1 {
+		t.Fatalf("expected one persistent UI run, got %d", reloadCount)
 	}
 }
 

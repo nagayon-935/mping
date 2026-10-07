@@ -201,7 +201,7 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 		}
 		dataTargets = append(dataTargets, t)
 		for _, pr := range view.PortResults {
-			key := fmt.Sprintf("%s|%d/%s", view.Host, pr.Port, pr.Protocol)
+			key := fmt.Sprintf("%s|%d/%s", targetViewKey(view), pr.Port, pr.Protocol)
 			subject := fmt.Sprintf("[white]%s[-] [white]%d/%s:[white]", tview.Escape(view.Host), pr.Port, pr.Protocol)
 			logStatusChangeIfNeeded(lastPortStatuses, key, pr.Status, "Open", subject, errorLogs, errorView)
 		}

@@ -2,6 +2,7 @@ package stats
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -74,7 +75,21 @@ func (r *PortCheckResult) GetView() PortCheckView {
 }
 
 // TargetStats holds the statistics for a single ping target.
+var targetIDs atomic.Uint64
+
+type IPChange struct {
+	At time.Time `json:"at"`
+	IP string    `json:"ip"`
+}
+
 type TargetStats struct {
+	ID        uint64 // Immutable identity; never reused within this process.
+	StartedAt time.Time
+	DSCP      string
+	IPHistory []IPChange
+	IPChanges int
+	Cancelled int
+
 	Host             string
 	IP               string
 	ASN              string
@@ -200,6 +215,13 @@ func reconstructHistoryWindow(buf []time.Duration, idx, length, n int) []time.Du
 
 // TargetView represents a read-only snapshot of the stats for UI rendering.
 type TargetView struct {
+	ID        uint64
+	StartedAt time.Time
+	DSCP      string
+	IPHistory []IPChange
+	IPChanges int
+	Cancelled int
+
 	Host             string
 	IP               string
 	ASN              string
@@ -236,7 +258,9 @@ type TargetView struct {
 
 func NewTargetStats(host string) *TargetStats {
 	return &TargetStats{
-		Host: host,
+		Host:      host,
+		ID:        targetIDs.Add(1),
+		StartedAt: time.Now(),
 	}
 }
 
@@ -270,6 +294,10 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 	}
 
 	return TargetView{
+		DSCP: t.DSCP, IPHistory: append([]IPChange(nil), t.IPHistory...), IPChanges: t.IPChanges,
+		ID:               t.ID,
+		StartedAt:        t.StartedAt,
+		Cancelled:        t.Cancelled,
 		Host:             t.Host,
 		IP:               t.IP,
 		ASN:              t.ASN,
@@ -340,6 +368,15 @@ func (t *TargetStats) SetIP(ip string) {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.IP != ip {
+		if t.IP != "" {
+			t.IPChanges++
+		}
+		t.IPHistory = append(t.IPHistory, IPChange{At: time.Now(), IP: ip})
+		if len(t.IPHistory) > 64 {
+			t.IPHistory = append([]IPChange(nil), t.IPHistory[len(t.IPHistory)-64:]...)
+		}
+	}
 	t.IP = ip
 }
 
@@ -483,6 +520,7 @@ func (t *TargetStats) Reset() {
 	defer t.mu.Unlock()
 	t.probeEpoch++
 	t.Sent = 0
+	t.Cancelled = 0
 	t.Recv = 0
 	t.Loss = 0
 	t.Duplicates = 0

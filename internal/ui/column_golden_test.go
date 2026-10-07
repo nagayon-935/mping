@@ -7,7 +7,6 @@ package ui
 // and after introducing the column struct.
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +32,7 @@ func captureTableRows(t *testing.T, opts RunOptions, width, height int, headerMa
 	t.Cleanup(func() { newApplication = orig })
 
 	screenCh := make(chan tcell.SimulationScreen, 1)
+	captured := make(chan []string, 1)
 	newApplication = func() *tview.Application {
 		app := tview.NewApplication()
 		screen := tcell.NewSimulationScreen("UTF-8")
@@ -41,6 +41,22 @@ func captureTableRows(t *testing.T, opts RunOptions, width, height int, headerMa
 		}
 		app.SetScreen(screen)
 		screen.SetSize(width, height)
+		app.SetAfterDrawFunc(func(screen tcell.Screen) {
+			for y := 0; y+extraRows < height; y++ {
+				if !strings.Contains(screenRowString(screen, y, width), headerMarker) {
+					continue
+				}
+				rows := make([]string, extraRows+1)
+				for i := range rows {
+					rows[i] = strings.TrimRight(screenRowString(screen, y+i, width), " ")
+				}
+				select {
+				case captured <- rows:
+				default:
+				}
+				return
+			}
+		})
 		screenCh <- screen
 		return app
 	}
@@ -49,38 +65,13 @@ func captureTableRows(t *testing.T, opts RunOptions, width, height int, headerMa
 	go func() { errCh <- Run(opts) }()
 
 	screen := <-screenCh
-	time.Sleep(150 * time.Millisecond) // let the refresh ticker render at least once
-
-	// Capture content while the app is still running: Application.Stop()
-	// calls screen.Fini(), which clears the SimulationScreen's buffer, so
-	// reading after quitting would only ever see a blank screen.
-	headerY := -1
-	for y := range height {
-		if strings.Contains(screenRowString(screen, y, width), headerMarker) {
-			headerY = y
-			break
-		}
-	}
-	var dumpOnFail func()
-	if headerY < 0 {
-		var lines []string
-		for y := range height {
-			if row := strings.TrimRight(screenRowString(screen, y, width), " "); row != "" {
-				lines = append(lines, fmt.Sprintf("row %2d: %q", y, row))
-			}
-		}
-		dumpOnFail = func() {
-			for _, l := range lines {
-				t.Log(l)
-			}
-		}
-	}
-
-	rows := make([]string, extraRows+1)
-	if headerY >= 0 {
-		for i := 0; i <= extraRows; i++ {
-			rows[i] = strings.TrimRight(screenRowString(screen, headerY+i, width), " ")
-		}
+	var rows []string
+	select {
+	case rows = <-captured:
+	case <-time.After(3 * time.Second):
+		screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+		<-errCh
+		t.Fatalf("could not locate header row containing %q", headerMarker)
 	}
 
 	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
@@ -91,13 +82,6 @@ func captureTableRows(t *testing.T, opts RunOptions, width, height int, headerMa
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("Run did not stop")
-	}
-
-	if headerY < 0 {
-		if dumpOnFail != nil {
-			dumpOnFail()
-		}
-		t.Fatalf("could not locate header row containing %q", headerMarker)
 	}
 
 	return rows
