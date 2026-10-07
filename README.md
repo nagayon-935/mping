@@ -288,7 +288,11 @@ See [examples/hosts-groups.yaml](examples/hosts-groups.yaml) for a runnable exam
 | **Tab** | Cycle focus: Ping Monitor → Traceroute Monitor → MTR Monitor → Port Monitor → HTTP Monitor → RTT Graphs → Log |
 | **↑ / ↓ / PgUp / PgDn** | Select hosts in Ping Monitor; scroll other panes and host details |
 | **Enter** | Open selected host details: statistics, routes, MTR, ports, graphs, and target events |
-| **Esc** | Return from details to the overview |
+| **Esc** | Return from details, or restore the layout after maximizing a pane |
+| **f** | Fold or expand the focused pane |
+| **z** | Maximize the focused pane or restore its previous layout |
+
+Pane folding and maximization are available in the overview. Folded title rows remain reachable with Tab; press `f` to expand them. Measurements continue while panes are hidden. Tab stays within the maximized pane until it is restored.
 
 > Live host edits preserve surviving targets' statistics, graphs, routes, port results, and independent HTTP checks. Editing a stopped session does not resume it. Re-adding a deleted host starts a new measurement. Existing `--count` budgets and the session's `--duration` deadline are preserved. Outstanding probes cancelled by deletion or stopping are exported as `cancelled`, not packet loss. YAML configuration reloads still reinitialize measurements and statistics.
 >

@@ -85,7 +85,7 @@ func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.Even
 		}
 		switch state {
 		case monitorRunning:
-			d.footer.SetText("↑↓ Select | Enter Detail | Tab Pane | a Add | d Del | s Stop | R Reset | q Quit")
+			d.footer.SetText("Enter Detail | Tab Pane | f Fold | z Max | a Add | d Del | s Stop | R Reset | q Quit")
 		case monitorStopping:
 			d.footer.SetText("Stopping... Press 'S' to restart after stop, 'q' to quit")
 		case monitorStopped:

@@ -12,6 +12,7 @@ import (
 // /layout-assembly call sites, with one constructor and two methods shared
 // by all four.
 type monitorPane struct {
+	title   string
 	enabled bool
 	view    *tview.TextView
 	pane    *tview.Flex
@@ -33,7 +34,7 @@ type monitorPane struct {
 // newMonitorPane constructs a monitor pane. When enabled is false, view and
 // pane stay nil; refresh() and layout assembly skip it accordingly.
 func newMonitorPane(enabled bool, title string, render func(availW int) string) *monitorPane {
-	mp := &monitorPane{enabled: enabled, render: render, setBorderColor: func(tcell.Color) {}}
+	mp := &monitorPane{title: title, enabled: enabled, render: render, setBorderColor: func(tcell.Color) {}}
 	if !enabled {
 		return mp
 	}

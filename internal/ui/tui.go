@@ -191,7 +191,7 @@ func Run(opts RunOptions) error {
 	header.SetBackgroundColor(tcell.ColorBlack)
 
 	footer := tview.NewTextView().
-		SetText("↑↓ Select | Enter Detail | Tab Pane | a Add | d Del | s Stop | R Reset | q Quit").
+		SetText("Enter Detail | Tab Pane | f Fold | z Max | a Add | d Del | s Stop | R Reset | q Quit").
 		SetTextAlign(tview.AlignCenter).
 		SetTextColor(tcell.ColorYellow).
 		SetWrap(false)
@@ -224,6 +224,7 @@ func Run(opts RunOptions) error {
 
 	// Keys
 	mainLayout := buildLayout(header, tablePane, sidePanes, graphView, errorView, pages)
+	controls := newPaneControls(app, mainLayout, header, pages, table, tablePane, sidePanes, graphView, errorView)
 	root := tview.NewPages().AddPage("main", mainLayout, true, true)
 	details := newHostDetails(opts)
 	root.AddPage("details", details.pane, true, false)
@@ -324,6 +325,9 @@ func Run(opts RunOptions) error {
 			if event.Rune() != 'q' && event.Rune() != 's' && event.Rune() != 'S' && event.Rune() != 'R' {
 				return event
 			}
+		}
+		if !details.open && controls.handle(event) {
+			return nil
 		}
 		return input(event)
 	})
