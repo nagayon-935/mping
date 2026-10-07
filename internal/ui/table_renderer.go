@@ -60,8 +60,12 @@ type tableRenderer struct {
 	compactLayout bool
 	groupRowMap   []groupTableRow
 
-	beforeUpdate func()
-	vs           *viewState
+	selectionEnabled  bool
+	selectedID        uint64
+	afterUpdate       func()
+	scrollToSelection bool
+	beforeUpdate      func()
+	vs                *viewState
 }
 
 // newTableRenderer builds the column schema (from mainTableColumns, keyed
@@ -282,6 +286,11 @@ func (tr *tableRenderer) update() {
 		tr.rowCount = len(tr.groupRowMap) + 1
 	}
 
+	if tr.selectionEnabled {
+		tr.reconcileSelection()
+		offsetRow, _ = tr.table.GetOffset()
+	}
+
 	// Header
 	setHeaderRow(tr.table, 0, tr.activeHeaders, tr.widths, tr.activeAligns, tr.headerColor)
 
@@ -390,6 +399,12 @@ func (tr *tableRenderer) update() {
 		}
 	}
 
+	if tr.selectionEnabled {
+		tr.highlightSelection()
+	}
+	if tr.afterUpdate != nil {
+		tr.afterUpdate()
+	}
 	for _, mp := range tr.sidePanes {
 		mp.refresh()
 	}

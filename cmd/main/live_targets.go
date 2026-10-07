@@ -102,6 +102,9 @@ func (s *supervisor) addHost(host string) error {
 				}
 			}
 		}
+		for _, t := range added {
+			t.RecordEvent("added", "Target added")
+		}
 		s.cfg.targets = append(append([]*stats.TargetStats(nil), s.cfg.targets...), added...)
 		s.cfg.specs = append(append([]targetSpec(nil), s.cfg.specs...), specs...)
 		select {
@@ -149,6 +152,7 @@ func (s *supervisor) removeTarget(i int) error {
 		}
 		p.RemoveTarget(t)
 	}
+	t.RecordEvent("removed", "Target removed")
 	newSpecs := append([]targetSpec(nil), s.cfg.specs[:i]...)
 	newSpecs = append(newSpecs, s.cfg.specs[i+1:]...)
 	var groups []ui.TargetGroup
@@ -209,4 +213,15 @@ func (s *supervisor) stopTargetTrace(t *stats.TargetStats) {
 		<-r.done
 		delete(s.traces, t)
 	}
+}
+
+func (s *supervisor) deleteTargetID(id uint64) error {
+	return s.editTargets(func(s *supervisor) error {
+		for i, t := range s.cfg.targets {
+			if t.ID == id {
+				return s.removeTarget(i)
+			}
+		}
+		return fmt.Errorf("selected target is no longer active")
+	})
 }

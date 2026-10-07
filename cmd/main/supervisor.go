@@ -241,6 +241,9 @@ func (s *supervisor) handle(c command) error {
 			return nil
 		}
 		s.tearDownAll()
+		for _, t := range s.cfg.targets {
+			t.RecordEvent("stopped", "Measurements stopped")
+		}
 		s.state = stateStopped
 		return nil
 
@@ -351,6 +354,9 @@ func (s *supervisor) startAll() error {
 	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout, s.cfg.bind)
 	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout, s.cfg.bind)
 	s.state = stateRunning
+	for _, t := range s.cfg.targets {
+		t.RecordEvent("started", "Measurements started")
+	}
 	if s.cfg.countLimited {
 		s.observers.Add(1)
 		go func() {

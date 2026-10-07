@@ -391,6 +391,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		runOpts.TargetSource = sup.liveTargets
 		runOpts.OnAddHost = sup.addHost
 		runOpts.OnDeleteHost = sup.deleteHost
+		runOpts.OnDeleteTarget = sup.deleteTargetID
 		uiErr := uiRun(runOpts)
 		if snap := sup.targetSnap.Load(); snap != nil {
 			targets = snap.targets

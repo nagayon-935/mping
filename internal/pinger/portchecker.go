@@ -176,7 +176,11 @@ func (pc *PortChecker) checkContext(ctx context.Context, t *stats.TargetStats, s
 	if ctx.Err() != nil {
 		return // shutdown is not a failed health check
 	}
+	previous := result.GetView().Status
 	result.SetResult(status, rtt)
+	if previous != status {
+		t.RecordEvent("port", fmt.Sprintf("%d/%s: %s → %s", spec.Port, spec.Protocol, previous, status))
+	}
 }
 
 func checkTCP(ctx context.Context, dialer *net.Dialer, addr string) (string, time.Duration) {
