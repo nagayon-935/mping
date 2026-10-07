@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -58,7 +62,7 @@ func TestGenerateCompletion_ShellMarkers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bash: %v", err)
 	}
-	if !strings.Contains(bash, "complete -F _mping mping") {
+	if !strings.Contains(bash, "complete -o filenames -F _mping mping") {
 		t.Errorf("bash completion missing registration marker; got:\n%s", bash)
 	}
 
@@ -159,7 +163,7 @@ func TestRunCompletion_Dispatch(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("expected exit 0, got %d (stderr: %s)", code, errOut.String())
 		}
-		if !strings.Contains(out.String(), "complete -F _mping mping") {
+		if !strings.Contains(out.String(), "complete -o filenames -F _mping mping") {
 			t.Errorf("expected bash completion marker in stdout, got:\n%s", out.String())
 		}
 	})
@@ -212,5 +216,170 @@ func TestRunCompleteInterfaces_ListError(t *testing.T) {
 	code := runCompleteInterfaces(&out)
 	if code == 0 {
 		t.Fatal("expected non-zero exit when netInterfaces fails")
+	}
+}
+
+func TestBashCompletionCandidates(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is unavailable")
+	}
+	dir := t.TempDir()
+	for _, name := range []string{"hosts list.yaml", "hosts.yaml", "literal[1].yaml", "-Ienfile.yaml"} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// An absolute command path makes the test independent of installed mping.
+	command := filepath.Join(dir, "mping")
+	if err := os.WriteFile(command, []byte("#!/bin/sh\n[ \"$1\" = __complete-interfaces ] || exit 1\nprintf '%s\\n' en0 en1 lo0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	script, err := generateCompletion("bash", newCompletionFlagSet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name  string
+		words []string
+		want  []string
+	}{
+		{"long flag", []string{"--inter"}, []string{"--interface", "--interval"}},
+		{"command", []string{"comp"}, []string{"completion"}},
+		{"shells", []string{"completion", ""}, []string{"bash", "zsh", "fish", "--help"}},
+		{"shell prefix", []string{"completion", "z"}, []string{"zsh"}},
+		{"no arguments after shell", []string{"completion", "bash", ""}, nil},
+		{"file with spaces", []string{"-f", "hosts l"}, []string{"hosts list.yaml"}},
+		{"output path", []string{"--output", "hosts l"}, []string{"hosts list.yaml"}},
+		{"json path", []string{"-j", "hosts l"}, []string{"hosts list.yaml"}},
+		{"equals unsplit", []string{"--file=hosts l"}, []string{"--file=hosts list.yaml"}},
+		{"equals split", []string{"--file", "=", "hosts l"}, []string{"hosts list.yaml"}},
+		{"equals joined to flag", []string{"--file=", "hosts l"}, []string{"hosts list.yaml"}},
+		{"attached file", []string{"-fhosts l"}, []string{"-fhosts list.yaml"}},
+		{"literal glob", []string{"-f", "literal"}, []string{"literal[1].yaml"}},
+		{"filename resembling flag", []string{"-f", "-Ien"}, []string{"-Ienfile.yaml"}},
+		{"interface", []string{"-I", "en"}, []string{"en0", "en1"}},
+		{"equals interface", []string{"--interface=en"}, []string{"--interface=en0", "--interface=en1"}},
+		{"attached interface", []string{"-Ien"}, []string{"-Ien0", "-Ien1"}},
+		{"numeric value", []string{"--interval", "--inter"}, nil},
+		{"free form value", []string{"--http", "--inter"}, nil},
+		{"value resembling attached flag", []string{"--http", "-Ien"}, nil},
+		{"value resembling equals flag", []string{"--http", "--interface=en"}, nil},
+		{"after end of options", []string{"--", "--inter"}, nil},
+		{"after host", []string{"example.com", "--inter"}, []string{"--interface", "--interval"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			words := append([]string{command}, tt.words...)
+			var quoted []string
+			for _, word := range words {
+				quoted = append(quoted, shellQuote(word))
+			}
+			harness := fmt.Sprintf("\nCOMP_WORDS=(%s)\nCOMP_CWORD=%d\n_mping\nfor candidate in \"${COMPREPLY[@]}\"; do printf '%%s\\n' \"$candidate\"; done\n", strings.Join(quoted, " "), len(words)-1)
+			cmd := exec.Command(bash, "--noprofile", "--norc", "-c", script+harness)
+			cmd.Dir = dir
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("bash: %v\n%s", err, out)
+			}
+			var got []string
+			if len(out) > 0 {
+				got = strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("candidates = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompletionShellSyntax(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		t.Run(shell, func(t *testing.T) {
+			path, err := exec.LookPath(shell)
+			if err != nil {
+				t.Skipf("%s is unavailable", shell)
+			}
+			fs := newCompletionFlagSet()
+			fs.String("quote-test", "", "quotes ' and \\ plus [brackets]: $HOME `literal`")
+			script, err := generateCompletion(shell, fs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(path, "-n")
+			cmd.Stdin = strings.NewReader(script)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("invalid %s syntax: %v\n%s", shell, err, out)
+			}
+		})
+	}
+}
+
+func TestZshCompletionLoad(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh is unavailable")
+	}
+	dir := t.TempDir()
+	script, err := generateCompletion("zsh", newCompletionFlagSet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "_mping")
+	if err := os.WriteFile(path, []byte(script), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"source", "autoload"} {
+		t.Run(mode, func(t *testing.T) {
+			// Capture the specs passed to _arguments to check loading and
+			// quoting at runtime without needing an interactive terminal.
+			harness := `_arguments() { printf '%s\n' "$@"; }
+_describe() { :; }
+compdef() { :; }
+words=(mping --dscp '')
+CURRENT=3
+`
+			if mode == "source" {
+				harness += "source " + shellQuote(path) + "\n_mping\n"
+			} else {
+				harness += "fpath=(" + shellQuote(dir) + " $fpath)\nautoload -Uz _mping\n_mping\n"
+			}
+			cmd := exec.Command(zsh, "-f", "-c", harness)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("zsh %s: %v\n%s", mode, err, out)
+			}
+			for _, needle := range []string{`'dscp\:'`, "*--http=", "*-H+", "--file=", "-f+", ":interface:_mping_interfaces"} {
+				if !strings.Contains(string(out), needle) {
+					t.Errorf("zsh %s lost spec %q:\n%s", mode, needle, out)
+				}
+			}
+		})
+	}
+}
+
+func TestRunCompletionHelp(t *testing.T) {
+	for _, flag := range []string{"-h", "--help"} {
+		var out, errOut bytes.Buffer
+		if code := run([]string{"completion", flag}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "Usage:") || errOut.Len() != 0 {
+			t.Fatalf("completion %s: code=%d stdout=%q stderr=%q", flag, code, out.String(), errOut.String())
+		}
+	}
+	_, _, _, usage, _ := parseArgs([]string{"--help"})
+	if !strings.Contains(usage, "mping completion bash|zsh|fish") {
+		t.Fatalf("main help does not expose completion: %s", usage)
+	}
+}
+
+type failingCompletionWriter struct{}
+
+func (failingCompletionWriter) Write([]byte) (int, error) {
+	return 0, fmt.Errorf("write failed")
+}
+
+func TestRunCompletionWriteError(t *testing.T) {
+	var errOut bytes.Buffer
+	if code := runCompletion([]string{"bash"}, failingCompletionWriter{}, &errOut); code == 0 || !strings.Contains(errOut.String(), "write failed") {
+		t.Fatalf("code=%d stderr=%q", code, errOut.String())
 	}
 }

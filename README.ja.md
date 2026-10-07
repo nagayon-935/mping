@@ -289,20 +289,50 @@ groups:
 
 ## シェル補完
 
-mping は自身が保持するフラグ定義から bash/zsh/fish 用の補完スクリプトをその場で生成するため、`mping --help` とフラグ補完がずれることはありません。フラグ名に加え、`-f`/`-o`/`-j` のファイルパスと `-I` のネットワークインターフェース名も補完対象です。
+mping は `mping --help` と同じフラグ定義から bash/zsh/fish 用の補完スクリプトを生成します。フラグ名、`-f`/`-o`/`-j` のファイルパス、`-I` のネットワークインターフェース名、`mping completion bash|zsh|fish` を補完できます。ファイルパスとインターフェース名は `--file=...` / `--interface=...` 形式や `-Ien` のような短縮フラグに続けて入力する形式にも対応します。スクリプト生成とインターフェース一覧取得に `sudo` は不要です。
+
+対応シェルは `mping completion --help` でも確認できます。ソースコードから試す場合は、先に `make build` を実行し、以下の `mping` を `./mping` に置き換えてください。
+
+### Bash
 
 ```bash
-# bash — ~/.bashrc に追記
+# 現在のシェルで有効化。次回以降も使う場合は ~/.bashrc に追記
 source <(mping completion bash)
+```
 
-# zsh — $fpath 上のディレクトリに一度書き出し、新しいシェルを起動する
-mping completion zsh > "${fpath[1]}/_mping"
+### Zsh
 
-# fish
+現在のシェルで有効化します（補完が初期化されていない場合は先に `compinit` を実行）:
+
+```zsh
+autoload -Uz compinit
+compinit
+source <(mping completion zsh)
+```
+
+次回以降も使う場合は、自分が書き込めるディレクトリにスクリプトを保存します:
+
+```zsh
+mkdir -p ~/.zsh/completions
+mping completion zsh > ~/.zsh/completions/_mping
+```
+
+以下を `~/.zshrc` に追記し、新しいシェルを起動してください。既に `compinit` を実行している場合（シェルフレームワークによる実行を含む）、`fpath` の設定をその前に置きます:
+
+```zsh
+fpath=(~/.zsh/completions $fpath)
+autoload -Uz compinit
+compinit
+```
+
+### Fish
+
+```fish
+mkdir -p ~/.config/fish/completions
 mping completion fish > ~/.config/fish/completions/mping.fish
 ```
 
-> **注意:** `completion` は予約されたサブコマンド名のため、ホスト名として使用できません。
+保存したスクリプトは mping の更新後に再生成すると、新しいフラグも補完できます。`completion` というホスト名を監視する場合は `mping -- completion` と指定してください。
 
 ## 表示項目 (TUI カラム)
 

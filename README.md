@@ -294,20 +294,50 @@ Stop, restart and reset operations execute in keypress order. A running reset di
 
 ## Shell completion
 
-mping generates its own bash/zsh/fish completion scripts from its live flag set, so completion for flags never drifts from `mping --help`. Flag names, `-f`/`-o`/`-j` file paths, and `-I` network interface names all tab-complete once installed.
+mping generates bash/zsh/fish completion scripts from the same flag definitions used by `mping --help`. Completion covers flag names, `-f`/`-o`/`-j` file paths, `-I` network interface names, and `mping completion bash|zsh|fish`. File and interface values also support `--file=...` / `--interface=...` and attached short options such as `-Ien`. Generating scripts and listing interfaces do not require `sudo`.
+
+Use `mping completion --help` to show the supported shells. If running from a source checkout, build first with `make build` and use `./mping` in place of `mping` below.
+
+### Bash
 
 ```bash
-# bash — add to ~/.bashrc
+# Enable in the current shell; add this line to ~/.bashrc for future shells
 source <(mping completion bash)
+```
 
-# zsh — write once to a directory on $fpath, then start a new shell
-mping completion zsh > "${fpath[1]}/_mping"
+### Zsh
 
-# fish
+Enable in the current shell (run `compinit` first if your shell has not already initialized completion):
+
+```zsh
+autoload -Uz compinit
+compinit
+source <(mping completion zsh)
+```
+
+For persistent completion, save the script in a directory you own:
+
+```zsh
+mkdir -p ~/.zsh/completions
+mping completion zsh > ~/.zsh/completions/_mping
+```
+
+Add the following to `~/.zshrc`, placing the `fpath` line before any existing `compinit` call (including one run by a shell framework), then start a new shell:
+
+```zsh
+fpath=(~/.zsh/completions $fpath)
+autoload -Uz compinit
+compinit
+```
+
+### Fish
+
+```fish
+mkdir -p ~/.config/fish/completions
 mping completion fish > ~/.config/fish/completions/mping.fish
 ```
 
-> **Note:** `completion` is a reserved subcommand name and can't be used as a target hostname.
+Regenerate saved scripts after upgrading mping to include new flags. To monitor a host literally named `completion`, use `mping -- completion`.
 
 ## TUI columns
 
