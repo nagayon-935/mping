@@ -68,6 +68,7 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 
 	fs.Usage = func() {
 		fmt.Fprintln(&usageBuf, "Usage: mping [options] host1 host2 ...")
+		fmt.Fprintln(&usageBuf, "       mping completion bash|zsh|fish")
 		fmt.Fprintln(&usageBuf, "Options:")
 		fs.PrintDefaults()
 		fmt.Fprintln(&usageBuf, "Note: This program usually requires root privileges (sudo) for raw sockets.")

@@ -18,6 +18,7 @@ type flagInfo struct {
 	short    string
 	usage    string
 	takesArg bool
+	repeat   bool
 }
 
 // fileCompletionFlags are long flag names whose value is a filesystem path;
@@ -58,6 +59,7 @@ func collectFlags(fs *pflag.FlagSet) []flagInfo {
 			short:    f.Shorthand,
 			usage:    f.Usage,
 			takesArg: f.Value.Type() != "bool",
+			repeat:   f.Value.Type() == "stringSlice",
 		})
 	})
 	sort.Slice(flags, func(i, j int) bool { return flags[i].long < flags[j].long })
@@ -102,10 +104,59 @@ func bashCompletion(flags []flagInfo) string {
 	b.WriteString("# bash completion for mping\n")
 	b.WriteString("# Install: source <(mping completion bash)\n")
 	b.WriteString("_mping() {\n")
-	b.WriteString("    local cur prev opts\n")
+	b.WriteString("    local cur prev opts flag prefix candidate i value_expected=0\n")
 	b.WriteString("    COMPREPLY=()\n")
 	b.WriteString("    cur=\"${COMP_WORDS[COMP_CWORD]}\"\n")
 	b.WriteString("    prev=\"${COMP_WORDS[COMP_CWORD-1]}\"\n")
+	b.WriteString(`
+    if [[ "${COMP_WORDS[1]}" == completion ]] && (( COMP_CWORD > 1 )); then
+        if (( COMP_CWORD == 2 )); then
+            COMPREPLY=( $(compgen -W 'bash zsh fish --help' -- "$cur") )
+        fi
+        return 0
+    fi
+    for (( i=1; i<COMP_CWORD; i++ )); do
+        [[ "${COMP_WORDS[i]}" == -- ]] && return 0
+    done
+    flag="$prev"
+    prefix=""
+`)
+	b.WriteString("    case \"$prev\" in\n")
+	for _, f := range flags {
+		if f.takesArg {
+			names := "--" + f.long
+			if f.short != "" {
+				names = "-" + f.short + "|" + names
+			}
+			fmt.Fprintf(&b, "        %s) value_expected=1 ;;\n", names)
+		}
+	}
+	b.WriteString("    esac\n")
+	b.WriteString(`    if (( value_expected )); then
+        [[ "$cur" == = ]] && cur=""
+    else
+    # Bash normally splits '=' into its own COMP_WORDS entry. Also support
+    # shells with '=' removed from COMP_WORDBREAKS.
+    if [[ "$cur" == --*=* ]]; then
+        flag="${cur%%=*}"
+        prefix="$flag="
+        cur="${cur#*=}"
+    elif [[ "$prev" == = ]] && (( COMP_CWORD > 1 )); then
+        flag="${COMP_WORDS[COMP_CWORD-2]}"
+    elif [[ "$cur" == = ]]; then
+        cur=""
+    elif [[ "$prev" == --*= ]]; then
+        flag="${prev%=}"
+    fi
+`)
+	b.WriteString("    case \"$cur\" in\n")
+	for _, f := range flags {
+		if f.short != "" && f.takesArg {
+			fmt.Fprintf(&b, "        -%s?*) flag=-%s; prefix=-%s; cur=\"${cur:2}\" ;;\n", f.short, f.short, f.short)
+		}
+	}
+	b.WriteString("    esac\n")
+	b.WriteString("    fi\n")
 
 	var optWords []string
 	for _, f := range flags {
@@ -116,10 +167,10 @@ func bashCompletion(flags []flagInfo) string {
 	}
 	b.WriteString("    opts=\"" + strings.Join(optWords, " ") + "\"\n\n")
 
-	b.WriteString("    case \"$prev\" in\n")
+	b.WriteString("    case \"$flag\" in\n")
 	for _, f := range flags {
 		hint := valueHint(f)
-		if hint == "" || hint == "none" {
+		if hint == "" {
 			continue
 		}
 		names := "--" + f.long
@@ -129,24 +180,33 @@ func bashCompletion(flags []flagInfo) string {
 		switch hint {
 		case "file":
 			b.WriteString("        " + names + ")\n")
-			b.WriteString("            COMPREPLY=( $(compgen -f -- \"$cur\") )\n")
+			b.WriteString("            while IFS= read -r candidate; do\n")
+			b.WriteString("                COMPREPLY+=( \"$prefix$candidate\" )\n")
+			b.WriteString("            done < <(compgen -f -- \"$cur\")\n")
 			b.WriteString("            return 0\n")
 			b.WriteString("            ;;\n")
 		case "interface":
 			b.WriteString("        " + names + ")\n")
-			b.WriteString("            COMPREPLY=( $(compgen -W \"$(mping __complete-interfaces)\" -- \"$cur\") )\n")
+			b.WriteString("            while IFS= read -r candidate; do\n")
+			b.WriteString("                [[ \"$candidate\" == \"$cur\"* ]] && COMPREPLY+=( \"$prefix$candidate\" )\n")
+			b.WriteString("            done < <(\"${COMP_WORDS[0]}\" __complete-interfaces 2>/dev/null)\n")
 			b.WriteString("            return 0\n")
 			b.WriteString("            ;;\n")
+		case "none":
+			b.WriteString("        " + names + ") return 0 ;;\n")
 		}
 	}
 	b.WriteString("    esac\n\n")
 
-	b.WriteString("    if [[ \"$cur\" == -* ]]; then\n")
+	b.WriteString("    if (( COMP_CWORD == 1 )); then\n")
+	b.WriteString("        opts=\"completion $opts\"\n")
+	b.WriteString("    fi\n")
+	b.WriteString("    if [[ \"$cur\" == -* ]] || (( COMP_CWORD == 1 )); then\n")
 	b.WriteString("        COMPREPLY=( $(compgen -W \"$opts\" -- \"$cur\") )\n")
 	b.WriteString("        return 0\n")
 	b.WriteString("    fi\n")
 	b.WriteString("}\n")
-	b.WriteString("complete -F _mping mping\n")
+	b.WriteString("complete -o filenames -F _mping mping\n")
 	return b.String()
 }
 
@@ -154,41 +214,81 @@ func zshCompletion(flags []flagInfo) string {
 	var b strings.Builder
 	b.WriteString("#compdef mping\n")
 	b.WriteString("# zsh completion for mping\n")
-	b.WriteString("# Install: mping completion zsh > \"${fpath[1]}/_mping\"\n\n")
+	b.WriteString("# Install after compinit: source <(mping completion zsh)\n\n")
+	b.WriteString(`_mping_interfaces() {
+    local -a interfaces
+    interfaces=("${(@f)$("${words[1]}" __complete-interfaces 2>/dev/null)}")
+    _describe 'network interface' interfaces
+}
+
+`)
 	b.WriteString("_mping() {\n")
-	b.WriteString("    _arguments \\\n")
+	b.WriteString(`    local -a shells commands
+    shells=(bash zsh fish)
+    commands=('completion:generate shell completion script')
+    if [[ "${words[2]}" == completion ]] && (( CURRENT > 2 )); then
+        if (( CURRENT == 3 )); then
+            _describe 'shell' shells
+            _arguments '--help[show completion usage]' '-h[show completion usage]'
+        fi
+        return
+    fi
+    if (( CURRENT == 2 )); then
+        _describe 'command' commands
+    fi
+`)
+	b.WriteString("    _arguments -s -S \\\n")
 	for _, f := range flags {
 		spec := zshArgSpec(f)
 		b.WriteString("        " + spec + " \\\n")
 	}
 	b.WriteString("        '*:host:_hosts'\n")
 	b.WriteString("}\n\n")
-	b.WriteString("_mping \"$@\"\n")
+	b.WriteString(`if [[ "${funcstack[1]}" == _mping ]]; then
+    _mping "$@"
+else
+    compdef _mping mping
+fi
+`)
 	return b.String()
 }
 
 // zshArgSpec renders one flag's `_arguments` spec line, e.g.:
 //
-//	'(-i --interval)'{-i,--interval}'[ping interval in ms]:value:'
+//	'(-i --interval)-i+[ping interval in ms]:value:'
 func zshArgSpec(f flagInfo) string {
 	desc := zshEscape(f.usage)
-	var namePart string
-	if f.short != "" {
-		namePart = fmt.Sprintf("'(-%s --%s)'{-%s,--%s}", f.short, f.long, f.short, f.long)
-	} else {
-		namePart = fmt.Sprintf("'--%s'", f.long)
-	}
 
 	action := ""
 	switch valueHint(f) {
 	case "file":
 		action = ":file:_files"
 	case "interface":
-		action = ":interface:(${(f)\"$(mping __complete-interfaces)\"})"
+		action = ":interface:_mping_interfaces"
 	case "none":
 		action = ":value:"
 	}
-	return fmt.Sprintf("%s'[%s]%s'", namePart, desc, action)
+	exclude, repeat := "", ""
+	if f.repeat {
+		repeat = "*"
+	} else if f.short != "" {
+		exclude = fmt.Sprintf("(-%s --%s)", f.short, f.long)
+	}
+	longName, shortName := "--"+f.long, "-"+f.short
+	if f.takesArg {
+		longName += "="
+		shortName += "+"
+	}
+	suffix := "[" + desc + "]" + action
+	spec := shellQuote(exclude + repeat + longName + suffix)
+	if f.short != "" {
+		spec += " " + shellQuote(exclude+repeat+shortName+suffix)
+	}
+	return spec
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 // zshEscape escapes characters that are meaningful inside a zsh _arguments
@@ -197,6 +297,7 @@ func zshArgSpec(f flagInfo) string {
 // description field.
 func zshEscape(s string) string {
 	r := strings.NewReplacer(
+		`\`, `\\`,
 		`:`, `\:`,
 		`[`, `\[`,
 		`]`, `\]`,
@@ -208,9 +309,19 @@ func fishCompletion(flags []flagInfo) string {
 	var b strings.Builder
 	b.WriteString("# fish completion for mping\n")
 	b.WriteString("# Install: mping completion fish > ~/.config/fish/completions/mping.fish\n\n")
+	b.WriteString(`function __mping_completion_command
+    set -l tokens (commandline -opc)
+    test (count $tokens) -ge 2; and test "$tokens[2]" = completion
+end
+
+complete -c mping -f
+complete -c mping -n '__fish_use_subcommand' -a completion -d 'generate shell completion script'
+complete -c mping -n '__mping_completion_command; and test (count (commandline -opc)) -eq 2' -a 'bash zsh fish'
+complete -c mping -n '__mping_completion_command' -s h -l help -d 'show completion usage'
+`)
 	for _, f := range flags {
 		var line strings.Builder
-		line.WriteString("complete -c mping")
+		line.WriteString("complete -c mping -n 'not __mping_completion_command'")
 		if f.short != "" {
 			line.WriteString(" -s " + f.short)
 		}
@@ -233,12 +344,16 @@ func fishCompletion(flags []flagInfo) string {
 // fishEscape escapes single quotes inside a fish `-d '...'` description so
 // the literal string isn't terminated early.
 func fishEscape(s string) string {
-	return strings.ReplaceAll(s, `'`, `\'`)
+	return strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s)
 }
 
 // runCompletion implements `mping completion <shell>`, writing the generated
 // script to out on success or a usage message to errOut on failure.
 func runCompletion(args []string, out, errOut io.Writer) int {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		fmt.Fprintln(out, "Usage: mping completion bash|zsh|fish")
+		return 0
+	}
 	if len(args) != 1 {
 		fmt.Fprintln(errOut, "Usage: mping completion bash|zsh|fish")
 		return 1
@@ -249,7 +364,10 @@ func runCompletion(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, "Usage: mping completion bash|zsh|fish")
 		return 1
 	}
-	fmt.Fprint(out, script)
+	if _, err := fmt.Fprint(out, script); err != nil {
+		fmt.Fprintf(errOut, "Error writing completion script: %v\n", err)
+		return 1
+	}
 	return 0
 }
 
