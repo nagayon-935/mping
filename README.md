@@ -256,14 +256,14 @@ Host entries (in `hosts:`, `groups[].hosts:`, and include files) may be patterns
 
 A single pattern may expand to at most 1024 hosts and a whole hosts file (including include files) to at most 4096 targets. IPv6 ranges are not supported — use CIDR notation.
 
-Give a host a display `name` to show it instead of the address (the IP is still shown next to it). Names must be unique and must not equal another entry's host; a name cannot be used on a pattern that expands to several hosts.
+Give a host a display `name` to show it instead of the address (the IP is still shown next to it). Names must be unique and must not equal another entry's host; a name cannot be used on a pattern that expands to several hosts. The name also replaces the host in CSV/JSON output and reports (the resolved IP is still recorded).
 
 ```yaml
 hosts:
   - {host: 10.0.0.1, name: core-sw01}
 ```
 
-`include:` (top level or per group) appends hosts from text/CSV files, resolved relative to the YAML file. Each line is `host[,name[,dscp]]`; `#` starts a comment and a first line starting with `host` is treated as a header. Include files are watched for changes like the YAML file itself.
+`include:` (top level or per group) appends hosts from text/CSV files, resolved relative to the YAML file. Each line is `host[,name[,dscp]]`; `#` starts a comment and a first line whose first column is `host` or `hostname` is treated as a header. Every host must be an IP address or a hostname (letters, digits, `.`, `-`, `_`), and the file must be readable by the user running mping. Include files are watched for changes like the YAML file itself, including ones added to the YAML before they exist.
 
 ```yaml
 groups:
