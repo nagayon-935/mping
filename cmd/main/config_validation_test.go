@@ -13,6 +13,11 @@ func TestStartupAndReloadValidateEffectiveConfig(t *testing.T) {
 		name, yaml string
 		args       []string
 		valid      bool
+		// wantLog is the text a rejected reload must log; "" means
+		// "validation". Per-host DSCP is checked while expanding host
+		// patterns (so errors keep the entry's original index), which
+		// happens at parse time.
+		wantLog string
 	}{
 		{name: "zero interval", yaml: "interval: 0"},
 		{name: "negative interval", yaml: "interval: -1"},
@@ -22,7 +27,7 @@ func TestStartupAndReloadValidateEffectiveConfig(t *testing.T) {
 		{name: "large size", yaml: "size: 9873"},
 		{name: "negative count", yaml: "count: -1"},
 		{name: "invalid global DSCP", yaml: "dscp: bad"},
-		{name: "invalid host DSCP", yaml: "groups: [{name: qos, hosts: [{host: '::1', dscp: bad}]}]"},
+		{name: "invalid host DSCP", yaml: "groups: [{name: qos, hosts: [{host: '::1', dscp: bad}]}]", wantLog: `groups["qos"][0]: dscp:`},
 		{name: "invalid group", yaml: "groups: [{name: empty, hosts: []}]"},
 		{name: "invalid thresholds", yaml: "thresholds: {rtt-warn: 300}"},
 		{name: "CLI interval wins", yaml: "interval: 0", args: []string{"-i", "200"}, valid: true},
@@ -62,7 +67,11 @@ func TestStartupAndReloadValidateEffectiveConfig(t *testing.T) {
 			if !tc.valid {
 				select {
 				case msg := <-logs:
-					if !strings.Contains(msg, "validation") {
+					want := tc.wantLog
+					if want == "" {
+						want = "validation"
+					}
+					if !strings.Contains(msg, want) {
 						t.Fatalf("missing validation error: %s", msg)
 					}
 				default:

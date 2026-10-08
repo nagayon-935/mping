@@ -1,0 +1,22 @@
+# Host patterns, display names, and include files.
+# Run: mping -f examples/hosts-patterns.yaml
+
+hosts:
+  - {host: 1.1.1.1, name: cloudflare-dns}
+  - {host: 8.8.8.8, name: google-dns}
+
+groups:
+  - name: Cloudflare range
+    hosts:
+      - 1.0.0.1-3            # last-octet range: 1.0.0.1, 1.0.0.2, 1.0.0.3
+
+  - name: Google DNS
+    hosts:
+      - 8.8.4.4/32           # CIDR (a /32 is a single host)
+      - "dns.google"
+
+  - name: Branches
+    include: branches.csv    # host,name[,dscp] per line, relative to this file
+
+interval: 1000
+timeout: 2000

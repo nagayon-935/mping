@@ -585,9 +585,9 @@ func expandTargets(specs []targetSpec, groups []ui.TargetGroup, cfg config) ([]t
 
 		for _, ip := range ips {
 			if spec.Host != ip {
-				expandedSpecs = append(expandedSpecs, targetSpec{Host: spec.Host, PinnedIP: ip, DSCP: spec.DSCP})
+				expandedSpecs = append(expandedSpecs, targetSpec{Host: spec.Host, PinnedIP: ip, Name: spec.Name, DSCP: spec.DSCP})
 			} else {
-				expandedSpecs = append(expandedSpecs, targetSpec{Host: ip, DSCP: spec.DSCP})
+				expandedSpecs = append(expandedSpecs, targetSpec{Host: ip, Name: spec.Name, DSCP: spec.DSCP})
 			}
 		}
 

@@ -8,6 +8,10 @@ package main
 type targetSpec struct {
 	Host     string
 	PinnedIP string
+	// Name is an optional display name from the hosts file (hostEntry.Name).
+	// When set it replaces Host in display(); the pinger still reaches
+	// Host, via the display→address map built by buildPingerOptions.
+	Name string
 	// DSCP is this target's raw per-target dscp: override (a name like
 	// "EF" or a bare number), sourced from a hosts-file mapping entry
 	// (hostEntry.DSCP). "" means no override — the target falls back to
@@ -26,10 +30,15 @@ func (t targetSpec) resolveAddr() string {
 }
 
 // display returns the string shown to the user and handed to
-// stats.NewTargetStats: "host (ip)" for a pinned entry, otherwise just Host.
+// stats.NewTargetStats: Name (or Host when unnamed), followed by " (ip)" for
+// a pinned entry.
 func (t targetSpec) display() string {
-	if t.PinnedIP != "" {
-		return t.Host + " (" + t.PinnedIP + ")"
+	label := t.Host
+	if t.Name != "" {
+		label = t.Name
 	}
-	return t.Host
+	if t.PinnedIP != "" {
+		return label + " (" + t.PinnedIP + ")"
+	}
+	return label
 }

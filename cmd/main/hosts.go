@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	ui "github.com/nagayon-935/mping/internal/ui"
 	"github.com/spf13/pflag"
@@ -21,6 +22,9 @@ import (
 // targetSpec.DSCP).
 type hostEntry struct {
 	Host string
+	// Name is an optional display name shown instead of Host (from the
+	// mapping form's 'name' key, or an include file's second column).
+	Name string
 	// DSCP is the raw dscp: value for this entry (a name like "EF" or a
 	// bare number), or "" when absent — parsed lazily, same rationale as
 	// config.dscp.
@@ -37,17 +41,19 @@ func (h *hostEntry) UnmarshalYAML(value *yaml.Node) error {
 		return nil
 	}
 	if value.Kind != yaml.MappingNode {
-		return fmt.Errorf("host entry: expected a string or a mapping with 'host'/'dscp' keys, got %v", value.Kind)
+		return fmt.Errorf("host entry: expected a string or a mapping with 'host'/'name'/'dscp' keys, got %v", value.Kind)
 	}
 	for i := 0; i+1 < len(value.Content); i += 2 {
 		key, val := value.Content[i].Value, value.Content[i+1]
 		switch key {
 		case "host":
 			h.Host = val.Value
+		case "name":
+			h.Name = val.Value
 		case "dscp":
 			h.DSCP = val.Value
 		default:
-			return fmt.Errorf("host entry: unknown field %q (expected 'host' or 'dscp')", key)
+			return fmt.Errorf("host entry: unknown field %q (expected 'host', 'name' or 'dscp')", key)
 		}
 	}
 	if h.Host == "" {
@@ -58,12 +64,16 @@ func (h *hostEntry) UnmarshalYAML(value *yaml.Node) error {
 
 // groupYAML represents a named host group in the YAML config file.
 type groupYAML struct {
-	Name  string      `yaml:"name"`
-	Hosts []hostEntry `yaml:"hosts"`
+	Name    string      `yaml:"name"`
+	Hosts   []hostEntry `yaml:"hosts"`
+	Include includeList `yaml:"include"`
 }
 
+// hostsFileYAML is a decoded hosts file. After parseHostsFile, Hosts and
+// every group's Hosts hold concrete, expanded hosts and Include is empty.
 type hostsFileYAML struct {
 	Hosts      []hostEntry     `yaml:"hosts"`
+	Include    includeList     `yaml:"include"`
 	Groups     []groupYAML     `yaml:"groups"`
 	IntervalMs *int            `yaml:"interval"`
 	TimeoutMs  *int            `yaml:"timeout"`
@@ -100,6 +110,9 @@ type thresholdsYAML struct {
 	LossCrit   *float64 `yaml:"loss-crit"`
 }
 
+// parseHostsFile reads, decodes, and expands a hosts file: host patterns
+// (ranges, CIDRs, {N..M}) become concrete hosts and include files are read
+// relative to the hosts file's directory.
 func parseHostsFile(path string) (hostsFileYAML, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -112,7 +125,11 @@ func parseHostsFile(path string) (hostsFileYAML, error) {
 	if err := dec.Decode(&doc); err != nil && err != io.EOF {
 		return hostsFileYAML{}, fmt.Errorf("parse hosts file %q: %w", path, err)
 	}
-	return doc, nil
+	expanded, err := expandHostsDoc(doc, filepath.Dir(path))
+	if err != nil {
+		return hostsFileYAML{}, fmt.Errorf("hosts file %q: %w", path, err)
+	}
+	return expanded, nil
 }
 
 // mergeHosts merges a hosts-file's configuration into cfg and host list.
@@ -149,7 +166,7 @@ func mergeHosts(cfg config, fs *pflag.FlagSet, hosts []string) ([]targetSpec, []
 func buildHostsAndGroups(docHosts []hostEntry, docGroups []groupYAML, cliHosts []string) ([]targetSpec, []ui.TargetGroup) {
 	allHosts := make([]targetSpec, 0, len(docHosts)+len(cliHosts))
 	for _, h := range docHosts {
-		allHosts = append(allHosts, targetSpec{Host: h.Host, DSCP: h.DSCP})
+		allHosts = append(allHosts, targetSpec{Host: h.Host, Name: h.Name, DSCP: h.DSCP})
 	}
 	for _, h := range cliHosts {
 		allHosts = append(allHosts, targetSpec{Host: h})
@@ -158,7 +175,7 @@ func buildHostsAndGroups(docHosts []hostEntry, docGroups []groupYAML, cliHosts [
 	for _, g := range docGroups {
 		startIdx := len(allHosts)
 		for _, h := range g.Hosts {
-			allHosts = append(allHosts, targetSpec{Host: h.Host, DSCP: h.DSCP})
+			allHosts = append(allHosts, targetSpec{Host: h.Host, Name: h.Name, DSCP: h.DSCP})
 		}
 		indices := make([]int, len(g.Hosts))
 		for j := range g.Hosts {

@@ -20,6 +20,7 @@ func TestApplyDocToCfg_EveryFieldHasEffect(t *testing.T) {
 	skip := map[string]bool{
 		"Hosts":      true, // returned directly, not merged into cfg
 		"Groups":     true, // returned directly, not merged into cfg
+		"Include":    true, // resolved into Hosts by parseHostsFile
 		"Thresholds": true, // covered by TestApplyThresholdsDoc_EveryFieldHasEffect
 	}
 
