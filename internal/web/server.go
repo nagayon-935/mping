@@ -38,12 +38,15 @@ type handlerConfig struct {
 	streamInterval    time.Duration
 	heartbeatInterval time.Duration
 	generation        func() uint64
+	// token authorizes control requests; empty makes the server read-only.
+	token string
 }
 
 // Server is a running web UI listener.
 type Server struct {
 	srv       *http.Server
 	addr      string
+	token     string
 	cancel    context.CancelFunc
 	done      chan struct{}
 	closeOnce sync.Once
@@ -61,6 +64,10 @@ func Start(opts Options) (*Server, error) {
 	}
 	if opts.Source == nil {
 		return nil, errors.New("web: nil Source")
+	}
+	token, err := newToken()
+	if err != nil {
+		return nil, fmt.Errorf("web: %w", err)
 	}
 	ln4, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(opts.Port)))
 	if err != nil {
@@ -80,12 +87,14 @@ func Start(opts Options) (*Server, error) {
 			Handler: newHandler(ctx, opts.Source, handlerConfig{
 				streamInterval:    defaultStreamInterval,
 				heartbeatInterval: defaultHeartbeatInterval,
+				token:             token,
 			}),
 			ReadHeaderTimeout: 5 * time.Second,
 			IdleTimeout:       60 * time.Second,
 			// No WriteTimeout: /api/v1/stream responses are open-ended.
 		},
 		addr:   ln4.Addr().String(),
+		token:  token,
 		cancel: cancel,
 		done:   make(chan struct{}),
 	}
@@ -110,8 +119,13 @@ func Start(opts Options) (*Server, error) {
 // Addr is the bound host:port.
 func (s *Server) Addr() string { return s.addr }
 
-// URL is the address to open in a browser.
+// URL is the read-only address to open in a browser.
 func (s *Server) URL() string { return "http://" + s.addr + "/" }
+
+// ControlURL is URL plus the per-launch control token. The token rides in
+// the fragment, which browsers never send to the server or log in requests;
+// the page moves it into storage and sends it as a header.
+func (s *Server) ControlURL() string { return s.URL() + "#token=" + s.token }
 
 // Close ends open streams, shuts the listener down, and waits for the serve
 // goroutine to exit. Safe to call more than once.
@@ -143,6 +157,10 @@ func newHandler(ctx context.Context, src *Source, cfg handlerConfig) http.Handle
 	mux.HandleFunc("GET /api/v1/history", handleBulkHistory(src))
 	mux.HandleFunc("GET /api/v1/targets/{id}/history", handleHistory(src))
 	mux.HandleFunc("GET /api/v1/targets/{id}/events", handleEvents(src))
+	mux.HandleFunc("GET /api/v1/session", handleSession(src, cfg.token))
+	mux.HandleFunc("POST /api/v1/targets", controlled(src, cfg.token, handleAddHost))
+	mux.HandleFunc("DELETE /api/v1/targets/{id}", controlled(src, cfg.token, handleDeleteTarget))
+	mux.HandleFunc("POST /api/v1/reset", controlled(src, cfg.token, handleReset))
 	mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such endpoint")
 	})
