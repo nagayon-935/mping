@@ -213,6 +213,8 @@ port:
 json-output: stats.json
 dns-server: 8.8.8.8
 resolve-all: true
+web: true
+web-port: 8080
 thresholds:
   rtt-warn: 50      # ms (orange)
   rtt-crit: 200     # ms (red)
@@ -264,6 +266,8 @@ See [examples/hosts-groups.yaml](examples/hosts-groups.yaml) for a runnable exam
 | `--output` | `-o` | CSV log output file path | `""` |
 | `--port` | `-p` | Ports to check (e.g. `443/tcp`, `53/udp`, `443`). Comma-separated for multiple. | `""` |
 | `--json-output` | `-j` | Write a JSON statistics snapshot to this file every 5 seconds | `""` |
+| `--web` | | Serve the web UI on `http://127.0.0.1:<web-port>/` (this machine only; see [Web UI](#web-ui-experimental)) | `false` |
+| `--web-port` | | Port for `--web` (1–65535) | `8080` |
 | `--asn` | `-a` | Look up and display AS numbers for target IPs | `false` |
 | `--http` | `-H` | URL(s) to health-check, e.g. `https://example.com/health`. Comma-separated or repeated for multiple. | `""` |
 | `--rtt-warn` | | RTT warn threshold in ms (orange) | `50` |
@@ -452,6 +456,25 @@ Regenerate saved scripts after upgrading mping to include new flags. To monitor 
 * Enabled with `--discovery-mtu` / `-m`.
 * Probes maximum payload size using DF-bit ICMP, starting from 9872 bytes.
 * The discovered size is reflected in the **Size** column.
+
+## Web UI (experimental)
+
+`--web` starts a web server alongside the TUI so the same statistics can be viewed in a browser on the machine running mping:
+
+```bash
+mping --web google.com 1.1.1.1      # then open http://127.0.0.1:8080/
+```
+
+- It listens on loopback only (`127.0.0.1`, plus `[::1]` when available) and is not reachable from other machines. Requests whose `Host` or `Origin` header is not this server are rejected (DNS-rebinding / cross-site protection).
+- `--web` / `--web-port` are read at startup; a hosts-file reload does not restart the server.
+- The browser dashboard page is still in development. The JSON API is available now:
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/v1/snapshot` | Current statistics (same schema as `--json-output`, under `snapshot`) plus `meta` (enabled features, thresholds, groups) and a `reloading` flag |
+| `GET /api/v1/stream` | Server-sent events: a `snapshot` event on connect and at most once per second while statistics change |
+| `GET /api/v1/targets/{id}/history?n=300` | Trailing RTT samples in ms, oldest first; `null` marks a lost probe (`n` 1–3000) |
+| `GET /api/v1/targets/{id}/events` | Recorded events for the target (DNS changes, route flaps, losses) |
 
 ## License
 

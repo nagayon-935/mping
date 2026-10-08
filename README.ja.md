@@ -207,6 +207,8 @@ port:
 json-output: stats.json
 dns-server: 8.8.8.8
 resolve-all: true
+web: true
+web-port: 8080
 thresholds:
   rtt-warn: 50      # ミリ秒 (オレンジ)
   rtt-crit: 200     # ミリ秒 (赤)
@@ -259,6 +261,8 @@ groups:
 | `--output` | `-o` | CSV 形式でのログ出力ファイルパス | `""` |
 | `--port` | `-p` | 疎通確認するポート (例: `443/tcp`, `53/udp`, `443`)。カンマ区切りで複数指定可 | `""` |
 | `--json-output` | `-j` | 統計情報の JSON スナップショットを出力するファイルパス (5 秒ごとに更新) | `""` |
+| `--web` | | Web UI を `http://127.0.0.1:<web-port>/` で提供する (このマシンからのみ接続可。[Web UI](#web-ui-実験的機能) 参照) | `false` |
+| `--web-port` | | `--web` の待ち受けポート (1–65535) | `8080` |
 | `--asn` | `-a` | ターゲット IP の AS 番号を検索して表示する | `false` |
 | `--http` | `-H` | ヘルスチェックする URL (例: `https://example.com/health`)。カンマ区切りまたは繰り返し指定で複数可 | `""` |
 | `--rtt-warn` | | RTT の warn 閾値 (ミリ秒・オレンジ) | `50` |
@@ -443,6 +447,25 @@ mping completion fish > ~/.config/fish/completions/mping.fish
 * `--discovery-mtu` / `-m` 指定時に最大 payload サイズを探索します。
 * DF 付き ICMP を使い、payload 上限は 9872 バイトから開始します。
 * 探索結果は **Size** カラムに反映されます。
+
+## Web UI (実験的機能)
+
+`--web` を付けると TUI と並行して Web サーバーが起動し、mping を実行しているマシンのブラウザから同じ統計を確認できます。
+
+```bash
+mping --web google.com 1.1.1.1      # http://127.0.0.1:8080/ を開く
+```
+
+- 待ち受けは loopback のみ (`127.0.0.1`、利用可能なら `[::1]` も) で、他のマシンからは接続できません。`Host` / `Origin` ヘッダがこのサーバー以外のリクエストは拒否します (DNS rebinding・クロスサイト対策)。
+- `--web` / `--web-port` は起動時にのみ読み込まれます。hosts ファイルのリロードではサーバーは再起動しません。
+- ブラウザ用のダッシュボード画面は開発中です。JSON API は現在利用できます:
+
+| エンドポイント | 内容 |
+|---|---|
+| `GET /api/v1/snapshot` | 現在の統計 (`snapshot` 配下は `--json-output` と同じスキーマ)、`meta` (有効な機能・閾値・グループ)、`reloading` フラグ |
+| `GET /api/v1/stream` | Server-Sent Events。接続時と、統計が変化している間は最大 1 秒に 1 回 `snapshot` イベントを送信 |
+| `GET /api/v1/targets/{id}/history?n=300` | 直近の RTT (ミリ秒、古い順)。`null` は応答なし (`n` は 1–3000) |
+| `GET /api/v1/targets/{id}/events` | ターゲットの記録済みイベント (DNS 変化・経路フラップ・ロス) |
 
 ## ライセンス
 
