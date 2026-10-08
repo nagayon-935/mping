@@ -382,17 +382,6 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			return 1
 		}
 
-		var resetMTR, resetHTTP, resetPort func()
-		if currentCfg.mtr {
-			resetMTR = sup.resetMTR
-		}
-		if len(currentCfg.httpURLs) > 0 {
-			resetHTTP = sup.resetHTTP
-		}
-		if len(portSpecs) > 0 {
-			resetPort = sup.resetPort
-		}
-
 		webSrc.Set(newWebProvider(sup, currentCfg, currentHosts, len(portSpecs), logCh))
 		if webSrv != nil {
 			preLogs = append(preLogs, webAnnouncement(webSrv, showToken))
@@ -402,8 +391,8 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		// restart. Other monitors and duration/reload handling remain active.
 		doneCh := sup.finished
 
-		// sig is closed to signal TUI shutdown, either by the YAML watcher, an
-		// in-memory add/delete-host request, or (below) --duration elapsing.
+		// sig is closed to signal TUI shutdown, either by the YAML watcher or
+		// (below) --duration elapsing.
 		sig := newReloadSignal()
 		onFileChange := func() { rc.requestFileReload(sig, currentCfg.hostsFile, logCh) }
 		watchCancel, watchDone := startWatcher(currentCfg.hostsFile, onFileChange, logCh)
@@ -411,7 +400,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 
 		// stopDurationWatch converges --duration onto the same sig/
 		// ExternalCloseCh path as a YAML reload: nothing here calls
-		// rc.requestFileReload/requestHostsChange, so once uiRun returns,
+		// rc.requestFileReload, so once uiRun returns,
 		// rc.apply() below finds no pending reload and the loop breaks to
 		// printExitSummary exactly as it would after a plain 'q' quit.
 		stopDurationWatch := watchDurationLimit(durationCtx, sig, logCh)
@@ -421,15 +410,9 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			dispV4: displaySourceIPv4, dispV6: displaySourceIPv6,
 			packetSize: packetSizeToUse, preLogs: preLogs, cfg: currentCfg,
 			portCount: len(portSpecs), sup: sup,
-			resetMTR: resetMTR, resetHTTP: resetHTTP, resetPort: resetPort,
-			thresholds: currentCfg.thresholds, sig: sig, logCh: logCh, rc: rc,
+			thresholds: currentCfg.thresholds, sig: sig, logCh: logCh,
 			currentHosts: currentHosts, currentGroups: currentGroups,
 		})
-		runOpts.TargetSource = sup.liveTargets
-		runOpts.OnAddHost = sup.addHost
-		runOpts.OnDeleteHost = sup.deleteHost
-		runOpts.OnDeleteTarget = sup.deleteTargetID
-		runOpts.OnSaveReport = sup.saveReport
 		uiErr := runUI(runOpts)
 		// Stop accepting browser edits before the host list is captured and
 		// the supervisor torn down: an edit accepted from here on would be

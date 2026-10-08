@@ -22,16 +22,15 @@ func newReloadSignal() *reloadSignal {
 }
 
 // fire closes the signal channel. Safe to call more than once (e.g. a file
-// reload and an add/delete-host reload racing).
+// reload racing --duration).
 func (s *reloadSignal) fire() {
 	s.once.Do(func() { close(s.ch) })
 }
 
-// reloadCoordinator owns the YAML-reload / add-host / delete-host request
-// state (run()'s former reloadMu/reloadRequested/reloadDoc/reloadNewHosts)
-// and the logic to apply a pending request once the previous iteration's
-// pinger/watcher have been fully stopped. TD-22③: extracted out of run() as
-// a behavior-preserving move.
+// reloadCoordinator owns the pending hosts-file reload (the parsed YAML doc)
+// and applies it once the previous iteration's pinger/watcher have been
+// fully stopped. Host edits from the TUI or web UI do not go through here:
+// the supervisor applies them live (see live_targets.go).
 type reloadCoordinator struct {
 	fs       *pflag.FlagSet
 	cliCfg   config
@@ -40,7 +39,6 @@ type reloadCoordinator struct {
 	mu        sync.Mutex
 	requested bool
 	doc       hostsFileYAML
-	newHosts  []targetSpec // non-nil when triggered by add/delete (skips applyDocToCfg)
 }
 
 func newReloadCoordinator(fs *pflag.FlagSet, cliCfg config, cliHosts []string) *reloadCoordinator {
@@ -75,17 +73,6 @@ func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile stri
 	rc.mu.Lock()
 	rc.requested = true
 	rc.doc = doc
-	rc.newHosts = nil
-	rc.mu.Unlock()
-	sig.fire()
-}
-
-// requestHostsChange arms an in-memory reload (OnAddHost/OnDeleteHost),
-// bypassing the YAML doc entirely.
-func (rc *reloadCoordinator) requestHostsChange(sig *reloadSignal, newHosts []targetSpec) {
-	rc.mu.Lock()
-	rc.requested = true
-	rc.newHosts = newHosts
 	rc.mu.Unlock()
 	sig.fire()
 }
@@ -100,7 +87,6 @@ func (rc *reloadCoordinator) requestHostsChange(sig *reloadSignal, newHosts []ta
 func (rc *reloadCoordinator) apply(currentCfg config, currentHosts []targetSpec, currentGroups []ui.TargetGroup) ([]targetSpec, []ui.TargetGroup, config, bool, string) {
 	rc.mu.Lock()
 	reload := rc.requested
-	newHosts := rc.newHosts
 	doc := rc.doc
 	rc.mu.Unlock()
 
@@ -108,20 +94,13 @@ func (rc *reloadCoordinator) apply(currentCfg config, currentHosts []targetSpec,
 		return currentHosts, currentGroups, currentCfg, false, ""
 	}
 
-	if newHosts != nil {
-		// In-memory add/delete: use the updated host list directly.
-		currentGroups = remapGroups(currentHosts, newHosts, currentGroups)
-		currentHosts = newHosts
+	docHosts, docGroups, newCfg, applyErr := applyDocToCfg(rc.cliCfg, rc.fs, doc)
+	if applyErr != nil {
+		// Shouldn't happen (validateHostsDoc passed), but be safe.
+		reload = false
 	} else {
-		// File-based reload: re-apply YAML doc.
-		docHosts, docGroups, newCfg, applyErr := applyDocToCfg(rc.cliCfg, rc.fs, doc)
-		if applyErr != nil {
-			// Shouldn't happen (validateHostsDoc passed), but be safe.
-			reload = false
-		} else {
-			currentHosts, currentGroups = buildHostsAndGroups(docHosts, docGroups, rc.cliHosts)
-			currentCfg = newCfg
-		}
+		currentHosts, currentGroups = buildHostsAndGroups(docHosts, docGroups, rc.cliHosts)
+		currentCfg = newCfg
 	}
 
 	var warning string
@@ -142,37 +121,7 @@ func (rc *reloadCoordinator) apply(currentCfg config, currentHosts []targetSpec,
 	rc.mu.Lock()
 	rc.requested = false
 	rc.doc = hostsFileYAML{}
-	rc.newHosts = nil
 	rc.mu.Unlock()
 
 	return currentHosts, currentGroups, currentCfg, reload, warning
-}
-
-// Match each surviving occurrence once, so duplicate hosts and DSCP variants
-// retain their original group membership when earlier entries are deleted.
-func remapGroups(oldHosts, newHosts []targetSpec, groups []ui.TargetGroup) []ui.TargetGroup {
-	positions := make(map[targetSpec][]int, len(newHosts))
-	for i, host := range newHosts {
-		positions[host] = append(positions[host], i)
-	}
-	oldToNew := make(map[int]int, len(oldHosts))
-	for i, host := range oldHosts {
-		if indices := positions[host]; len(indices) > 0 {
-			oldToNew[i] = indices[0]
-			positions[host] = indices[1:]
-		}
-	}
-	var result []ui.TargetGroup
-	for _, group := range groups {
-		var indices []int
-		for _, oldIdx := range group.Indices {
-			if newIdx, ok := oldToNew[oldIdx]; ok {
-				indices = append(indices, newIdx)
-			}
-		}
-		if len(indices) > 0 {
-			result = append(result, ui.TargetGroup{Name: group.Name, Indices: indices})
-		}
-	}
-	return result
 }
