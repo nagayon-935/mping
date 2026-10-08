@@ -15,6 +15,7 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 	ui "github.com/nagayon-935/mping/internal/ui"
 	"github.com/nagayon-935/mping/internal/web"
+	"github.com/rivo/tview"
 )
 
 const (
@@ -195,8 +196,10 @@ func setupPMTU(makePinger func(size int) pingerController, cfg config, ifaceMTU 
 	if ifaceMTU > pmtuHeaderBytes {
 		startPayload = ifaceMTU - pmtuHeaderBytes
 	}
+	// Progress lines are plain text ("[PMTU] payload=…"); escape them so the
+	// Log pane does not read "[PMTU]" as a colour tag.
 	maxPayload, bottleneckIP, err := probe.DiscoverMaxPayload(context.Background(), firstHost, startPayload, cfg.packetSize, func(line string) {
-		preLogs = append(preLogs, line)
+		preLogs = append(preLogs, fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), tview.Escape(line)))
 	})
 	if err != nil {
 		fmt.Fprintf(errOut, "PMTU discovery failed: %v\n", err)

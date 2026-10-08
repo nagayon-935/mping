@@ -42,10 +42,11 @@ func startWebUI(cfg config, src *web.Source, errOut io.Writer) (srv *web.Server,
 // or a headless run writing to an interactive terminal (not a pipe, file or
 // service journal).
 func webAnnouncement(srv *web.Server, showToken bool) string {
+	text := "Web UI: " + srv.URL() + " (read-only: the control link is printed only to a terminal; to make changes, set MPING_WEB_TOKEN as described in the README)"
 	if showToken {
-		return "Web UI: " + tview.Escape(srv.ControlURL())
+		text = "Web UI: " + srv.ControlURL()
 	}
-	return "Web UI: " + srv.URL() + " (read-only: the control link is printed only to a terminal; to make changes, set MPING_WEB_TOKEN as described in the README)"
+	return fmt.Sprintf("[blue][%s] %s[-]", time.Now().Format("15:04:05"), tview.Escape(text))
 }
 
 // closeWebUI stops srv (nil-safe). A shutdown error only means a stream

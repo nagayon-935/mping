@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -40,6 +41,7 @@ type fakePinger struct {
 	discoverMTU          int
 	discoverBottleneckIP string
 	discoverErr          error
+	discoverLogs         []string
 	traceErr             error
 	logWriterSet         bool
 
@@ -102,6 +104,9 @@ func (f *fakePinger) Waited() bool {
 func (f *fakePinger) DiscoverMaxPayload(ctx context.Context, dest string, start int, min int, logf func(string)) (int, string, error) {
 	if f.discoverErr != nil {
 		return 0, "", f.discoverErr
+	}
+	for _, line := range f.discoverLogs {
+		logf(line)
 	}
 	if f.discoverMTU == 0 {
 		return start, "", nil
@@ -1313,6 +1318,26 @@ func TestSetupPMTU_SuccessNoBottleneck(t *testing.T) {
 	// bottleneckIP is empty so SetPMTUBottleneckIP should not have been called
 	if view.PMTUBottleneckIP != "" {
 		t.Fatalf("expected empty bottleneck IP, got %q", view.PMTUBottleneckIP)
+	}
+}
+
+// The Log pane parses tview tags, so a raw "[PMTU]" prefix would be eaten as
+// an (unknown) colour tag. Progress lines must read like every other line.
+func TestSetupPMTU_ProgressLinesKeepTheirPrefixAndTimestamp(t *testing.T) {
+	makeFn := func(size int) pingerController {
+		return &fakePinger{discoverMTU: 1472, discoverLogs: []string{"[PMTU] payload=1471 OK"}}
+	}
+	var errOut bytes.Buffer
+	cfg := config{mtuEnabled: true, packetSize: 56}
+
+	_, preLogs := setupPMTU(makeFn, cfg, 1500, nil, "example.com", &errOut)
+
+	if len(preLogs) != 1 {
+		t.Fatalf("preLogs = %q, want one line", preLogs)
+	}
+	want := regexp.MustCompile(`^\[\d{2}:\d{2}:\d{2}\] \[PMTU\] payload=1471 OK$`)
+	if got := plainLogLine(preLogs[0]); !want.MatchString(got) {
+		t.Errorf("rendered line = %q, want %v", got, want)
 	}
 }
 

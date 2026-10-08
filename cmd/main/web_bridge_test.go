@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -522,5 +523,25 @@ func TestWebControllerReportsRejectionsWithoutLogging(t *testing.T) {
 	}
 	if len(logCh) != 0 {
 		t.Errorf("rejected edits logged %d line(s) to the TUI", len(logCh))
+	}
+}
+
+// The announcement sits among timestamped Log lines and must look like them.
+func TestWebAnnouncementIsATimestampedLogLine(t *testing.T) {
+	srv, err := web.Start(web.Options{Port: 0, Source: web.NewSource()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+
+	want := regexp.MustCompile(`^\[\d{2}:\d{2}:\d{2}\] Web UI: http://127\.0\.0\.1:\d+/`)
+	for _, showToken := range []bool{true, false} {
+		line := webAnnouncement(srv, showToken)
+		if got := plainLogLine(line); !want.MatchString(got) {
+			t.Errorf("showToken=%v: rendered line = %q, want %v", showToken, got, want)
+		}
+		if strings.Contains(line, "#token=") != showToken {
+			t.Errorf("showToken=%v: line %q", showToken, line)
+		}
 	}
 }
