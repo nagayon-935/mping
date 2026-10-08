@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
+	"testing"
+	"time"
 
 	"github.com/nagayon-935/mping/internal/stats"
 	"golang.org/x/net/ipv4"
-	"net"
-	"testing"
-	"time"
 )
 
 func TestResetRejectsOutstandingProbeResults(t *testing.T) {

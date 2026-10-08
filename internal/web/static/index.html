@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mping</title>
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="js/app.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <h1 class="brand">mping</h1>
+  <span id="badge" class="badge lvl-pending" role="status">
+    <span class="badge-icon" aria-hidden="true">○</span>
+    <span class="badge-label">Connecting</span>
+  </span>
+  <span id="updated" class="muted"></span>
+  <span class="spacer"></span>
+  <ul id="summary" class="summary" aria-label="Target summary"></ul>
+  <input id="filter" class="filter" type="search" placeholder="Filter host, IP, PTR, AS" aria-label="Filter targets">
+  <form id="add-form" class="add-form" hidden>
+    <label class="visually-hidden" for="add-host">Host to add</label>
+    <input id="add-host" class="filter" placeholder="Add host or IP" autocomplete="off" spellcheck="false" maxlength="253">
+    <button class="btn" type="submit">Add</button>
+  </form>
+  <span id="reset-slot" hidden></span>
+  <details id="readonly-help" class="readonly-help" hidden>
+    <summary id="readonly-hint" class="readonly-hint">Read-only · How to enable</summary>
+    <div class="readonly-popover">
+      <strong>Enable browser controls</strong>
+      <p id="readonly-explanation"></p>
+      <p>You can then add hosts, delete targets and reset statistics.</p>
+    </div>
+  </details>
+  <p id="notice" class="notice" role="status" aria-live="polite"></p>
+</header>
+
+<div class="workspace">
+  <section id="pane-monitor" class="pane" aria-labelledby="targets-title">
+    <div class="pane-head">
+      <div>
+        <h2 id="targets-title" class="pane-title">Ping monitor</h2>
+        <p class="pane-hint">Select a target to inspect it.</p>
+      </div>
+    </div>
+    <p class="status-guide">Status uses latest RTT, jitter and overall loss. Averages and peaks describe the run since start or reset.</p>
+    <div class="pane-scroll">
+      <div class="table-wrap">
+        <table id="targets" class="grid">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p id="targets-empty" class="empty" hidden></p>
+    </div>
+  </section>
+
+  <section id="pane-inspect" class="pane" aria-label="Inspect">
+    <div class="pane-head">
+      <div id="inspect-tabs" class="tabs" role="tablist" aria-label="Inspect"></div>
+      <span id="inspect-target" class="pane-hint"></span>
+    </div>
+    <div id="inspect-body" class="inspect-body" role="tabpanel"></div>
+  </section>
+
+  <section id="pane-graphs" class="pane" aria-labelledby="graphs-title">
+    <div class="pane-head">
+      <div>
+        <h2 id="graphs-title" class="pane-title">RTT graphs</h2>
+        <p id="graphs-cursor" class="pane-hint"></p>
+      </div>
+      <div class="pane-tools">
+        <label class="tool">Window <select id="graph-window" aria-label="Time window"></select></label>
+        <div class="segmented" role="group" aria-label="Y-axis scale">
+          <button id="scale-each" type="button" aria-pressed="true">Per target</button>
+          <button id="scale-shared" type="button" aria-pressed="false">Shared</button>
+        </div>
+      </div>
+    </div>
+    <div class="pane-scroll">
+      <div id="graphs" class="graph-grid"></div>
+    </div>
+  </section>
+</div>
+</body>
+</html>

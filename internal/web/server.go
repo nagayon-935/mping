@@ -1,0 +1,259 @@
+package web
+
+import (
+	"context"
+	"embed"
+	"errors"
+	"fmt"
+	"io/fs"
+	"net"
+	"net/http"
+	"net/url"
+	"path"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/nagayon-935/mping/internal/stats"
+)
+
+//go:embed static
+var staticFiles embed.FS
+
+const (
+	defaultStreamInterval    = time.Second
+	defaultHeartbeatInterval = 15 * time.Second
+	shutdownTimeout          = 2 * time.Second
+)
+
+// Options configures Start.
+type Options struct {
+	// Port is the TCP port on 127.0.0.1; 0 lets the kernel pick one.
+	Port   int
+	Source *Source
+	// Token fixes the control token (e.g. from MPING_WEB_TOKEN for an
+	// unattended run). Empty generates a random one per launch.
+	Token string
+}
+
+type handlerConfig struct {
+	streamInterval    time.Duration
+	heartbeatInterval time.Duration
+	generation        func() uint64
+	// token authorizes control requests; empty makes the server read-only.
+	token string
+}
+
+// Server is a running web UI listener.
+type Server struct {
+	srv       *http.Server
+	addr      string
+	token     string
+	cancel    context.CancelFunc
+	done      chan struct{}
+	closeOnce sync.Once
+	closeErr  error
+}
+
+// Start listens on loopback only — the UI is meant for a browser on the
+// machine running mping, and mping may hold raw-socket privileges — and
+// serves in the background until Close. 127.0.0.1 is required; [::1] on the
+// same port is added when available so a browser that resolves "localhost"
+// to IPv6 first still connects directly.
+func Start(opts Options) (*Server, error) {
+	token := opts.Token
+	if token == "" {
+		var err error
+		if token, err = newToken(); err != nil {
+			return nil, fmt.Errorf("web: %w", err)
+		}
+	} else if err := CheckToken(token); err != nil {
+		return nil, fmt.Errorf("web: %w", err)
+	}
+	return start(opts, token)
+}
+
+// start is Start with a caller-chosen token (TestDevServer pins one so
+// browser checks can authenticate).
+func start(opts Options, token string) (*Server, error) {
+	if opts.Port < 0 || opts.Port > 65535 {
+		return nil, fmt.Errorf("web: port %d out of range 0-65535", opts.Port)
+	}
+	if opts.Source == nil {
+		return nil, errors.New("web: nil Source")
+	}
+	ln4, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(opts.Port)))
+	if err != nil {
+		return nil, fmt.Errorf("web: listen on 127.0.0.1:%d: %w", opts.Port, err)
+	}
+	listeners := []net.Listener{ln4}
+	port := ln4.Addr().(*net.TCPAddr).Port
+	// Best effort by design: IPv6 may be disabled, and the advertised URL is
+	// the 127.0.0.1 one, so a missing [::1] listener loses nothing.
+	if ln6, err := net.Listen("tcp6", net.JoinHostPort("::1", strconv.Itoa(port))); err == nil {
+		listeners = append(listeners, ln6)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &Server{
+		srv: &http.Server{
+			Handler: newHandler(ctx, opts.Source, handlerConfig{
+				streamInterval:    defaultStreamInterval,
+				heartbeatInterval: defaultHeartbeatInterval,
+				token:             token,
+			}),
+			ReadHeaderTimeout: 5 * time.Second,
+			IdleTimeout:       60 * time.Second,
+			// No WriteTimeout: /api/v1/stream responses are open-ended.
+		},
+		addr:   ln4.Addr().String(),
+		token:  token,
+		cancel: cancel,
+		done:   make(chan struct{}),
+	}
+	var wg sync.WaitGroup
+	for _, ln := range listeners {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Serve only ever returns ErrServerClosed after Shutdown, or a
+			// listener error that leaves nothing to recover; Close reports
+			// the shutdown outcome either way.
+			_ = s.srv.Serve(ln)
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(s.done)
+	}()
+	return s, nil
+}
+
+// Addr is the bound host:port.
+func (s *Server) Addr() string { return s.addr }
+
+// URL is the read-only address to open in a browser.
+func (s *Server) URL() string { return "http://" + s.addr + "/" }
+
+// ControlURL is URL plus the per-launch control token. The token rides in
+// the fragment, which browsers never send to the server or log in requests;
+// the page moves it into storage and sends it as a header.
+func (s *Server) ControlURL() string { return s.URL() + "#token=" + s.token }
+
+// Close ends open streams, shuts the listener down, and waits for the serve
+// goroutine to exit. Safe to call more than once.
+func (s *Server) Close() error {
+	s.closeOnce.Do(func() {
+		// Streams never go idle on their own, so end them before Shutdown
+		// waits for in-flight requests.
+		s.cancel()
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := s.srv.Shutdown(ctx); err != nil {
+			s.closeErr = fmt.Errorf("web: shutdown: %w", err)
+			_ = s.srv.Close()
+		}
+		<-s.done
+	})
+	return s.closeErr
+}
+
+// newHandler builds the full route table; ctx bounds open streams.
+func newHandler(ctx context.Context, src *Source, cfg handlerConfig) http.Handler {
+	if cfg.generation == nil {
+		cfg.generation = stats.Generation
+	}
+	cache := newSnapshotCache(src, cfg.generation)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/snapshot", handleSnapshot(cache))
+	mux.HandleFunc("GET /api/v1/stream", handleStream(ctx, cache, cfg))
+	mux.HandleFunc("GET /api/v1/history", handleBulkHistory(src))
+	mux.HandleFunc("GET /api/v1/events", handleBulkEvents(src))
+	mux.HandleFunc("GET /api/v1/targets/{id}/history", handleHistory(src))
+	mux.HandleFunc("GET /api/v1/targets/{id}/events", handleEvents(src))
+	mux.HandleFunc("GET /api/v1/session", handleSession(src, cfg.token))
+	mux.HandleFunc("POST /api/v1/targets", controlled(src, cfg.token, handleAddHost))
+	mux.HandleFunc("DELETE /api/v1/targets/{id}", controlled(src, cfg.token, handleDeleteTarget))
+	mux.HandleFunc("POST /api/v1/reset", controlled(src, cfg.token, handleReset))
+	mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, "no such endpoint")
+	})
+	static, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		panic(fmt.Sprintf("web: embedded static dir missing: %v", err))
+	}
+	mux.Handle("GET /", staticHandler(static))
+	return guard(mux)
+}
+
+// staticHandler serves files from fsys, answering 404 for any directory
+// other than the root so http.FileServer never renders a listing.
+func staticHandler(fsys fs.FS) http.Handler {
+	files := http.FileServerFS(fsys)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+		if name != "" {
+			if fi, err := fs.Stat(fsys, name); err != nil || fi.IsDir() {
+				http.NotFound(w, r)
+				return
+			}
+		}
+		files.ServeHTTP(w, r)
+	})
+}
+
+// guard rejects requests that did not come from a same-machine page:
+//   - a non-loopback Host header means DNS rebinding (an attacker's
+//     hostname resolved to 127.0.0.1), so the browser would treat the
+//     response as same-origin with the attacker's page;
+//   - an Origin other than exactly this server (scheme, host and port) means
+//     another page — a foreign site or another local app on a different
+//     port — is calling us.
+//
+// It also sets defensive response headers on everything.
+func guard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+
+		if !isLoopbackHost(hostOnly(r.Host)) {
+			http.Error(w, "forbidden host", http.StatusForbidden)
+			return
+		}
+		if origin := r.Header.Get("Origin"); origin != "" && !isSameOrigin(origin, r.Host) {
+			http.Error(w, "forbidden origin", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// hostOnly strips an optional port (and IPv6 brackets) from a Host value.
+func hostOnly(hostport string) string {
+	if host, _, err := net.SplitHostPort(hostport); err == nil {
+		return host
+	}
+	return strings.TrimSuffix(strings.TrimPrefix(hostport, "["), "]")
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// isSameOrigin reports whether origin is http://<host> for the Host header
+// the browser sent, which guard has already confirmed is loopback.
+func isSameOrigin(origin, host string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme != "http" || u.Path != "" || u.RawQuery != "" {
+		return false
+	}
+	return strings.EqualFold(u.Host, host)
+}

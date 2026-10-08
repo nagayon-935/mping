@@ -207,6 +207,8 @@ port:
 json-output: stats.json
 dns-server: 8.8.8.8
 resolve-all: true
+web: true
+web-port: 8080
 thresholds:
   rtt-warn: 50      # ミリ秒 (オレンジ)
   rtt-crit: 200     # ミリ秒 (赤)
@@ -291,6 +293,9 @@ groups:
 | `--output` | `-o` | CSV 形式でのログ出力ファイルパス | `""` |
 | `--port` | `-p` | 疎通確認するポート (例: `443/tcp`, `53/udp`, `443`)。カンマ区切りで複数指定可 | `""` |
 | `--json-output` | `-j` | 統計情報の JSON スナップショットを出力するファイルパス (5 秒ごとに更新) | `""` |
+| `--web` | | Web UI を `http://127.0.0.1:<web-port>/` で提供する (このマシンからのみ接続可。[Web UI](#web-ui-実験的機能) 参照) | `false` |
+| `--web-port` | | `--web` の待ち受けポート (1–65535) | `8080` |
+| `--no-tui` | | TUI を使わずに実行する ([ヘッドレスモード](#ヘッドレスモード---no-tui) 参照) | `false` |
 | `--asn` | `-a` | ターゲット IP の AS 番号を検索して表示する | `false` |
 | `--http` | `-H` | ヘルスチェックする URL (例: `https://example.com/health`)。カンマ区切りまたは繰り返し指定で複数可 | `""` |
 | `--rtt-warn` | | RTT の warn 閾値 (ミリ秒・オレンジ) | `50` |
@@ -475,6 +480,47 @@ mping completion fish > ~/.config/fish/completions/mping.fish
 * `--discovery-mtu` / `-m` 指定時に最大 payload サイズを探索します。
 * DF 付き ICMP を使い、payload 上限は 9872 バイトから開始します。
 * 探索結果は **Size** カラムに反映されます。
+
+## Web UI (実験的機能)
+
+`--web` を付けると TUI と並行して Web サーバーが起動し、mping を実行しているマシンのブラウザから同じ統計を確認できます。
+
+```bash
+mping --web google.com 1.1.1.1      # http://127.0.0.1:8080/ を開く
+```
+
+- 待ち受けは loopback のみ (`127.0.0.1`、利用可能なら `[::1]` も) で、他のマシンからは接続できません。`Host` / `Origin` ヘッダがこのサーバー以外のリクエストは拒否します (DNS rebinding・クロスサイト対策)。
+- `--web` / `--web-port` は起動時にのみ読み込まれます。hosts ファイルのリロードではサーバーは再起動しません (hosts ファイルで変更すると「再起動が必要」という警告を Log ペインに表示します)。
+- ダッシュボードは TUI と同じくペインで構成しています。**Ping monitor**: ターゲット一覧 (グループ表示・TUI と同じ閾値による色分け・行ごとの RTT 推移)。**RTT graphs**: 全ターゲットのグラフを共通の時間軸で並べます (表示範囲は計測間隔に応じて 1 分〜1 時間、縦軸はターゲットごと／共通を切替可能)。どれかのグラフにカーソルを合わせると全グラフの同じ時刻に縦線が出るので、同時刻の様子を比較できます。**Inspect**: Summary・Traceroute / MTR (TUI のペイン名に合わせた名前で、`-T` または `-M` 指定時に表示)・Ports・HTTP のタブと、全ターゲットのイベントを並べた Log。一覧・グラフ・Log のどこでターゲットを選んでも各タブがそのターゲットに切り替わります。広い画面では一覧と Inspect を同じ高さで横に並べ、その下に RTT グラフを全幅で表示します。狭い画面では縦に並べます。
+- 一覧は画面の幅に収まる限りの列を表示し、狭いときは重要度の低い列から隠します (ロス・最新／平均／ジッター RTT・推移グラフを最後まで残し、状態とホストは常に表示)。状態の理由は各行に表示し、判定には最新 RTT・ジッター・累積ロス率を使います。平均・ピーク RTT は開始／リセット以降の履歴値として表示します。広い画面では一覧と詳細を並べて表示します。閲覧専用の場合は `Read-only · How to enable` をクリックすると操作を有効にする方法を確認できます。
+- 列幅・行高は計測値の更新で変わらないレイアウトです。長い名前や IPv6 は省略表示し、全文はツールチップや詳細で確認できます。大きなカウントは M/B/T、非常に大きな RTT は指数表記にし、元の値はツールチップに残します。[列幅と表示桁数の仕様](internal/web/COLUMNS.md)を参照してください。
+- **ブラウザからの操作**: Log ペインに表示されるリンク (例: `Web UI: http://127.0.0.1:8080/#token=…`) を開くと、ホストの追加・ターゲットの削除 (確認のため 2 回押し)・統計のリセットができます。token は起動ごとに生成され、操作内容は TUI の Log ペインにも記録されます。token なし (または以前の起動時の token) で開いた場合は閲覧のみです。計測の停止・再開は TUI から行います。
+- 同じデータを JSON でも取得できます:
+
+| エンドポイント | 内容 |
+|---|---|
+| `GET /api/v1/snapshot` | 現在の統計 (`snapshot` 配下は `--json-output` と同じスキーマ)、`meta` (有効な機能・閾値・グループ)、`state` (`starting` / `running` / `reloading` / `stopped`) |
+| `GET /api/v1/events?limit=200` | 全ターゲットのイベントを新しい順に 1 つのリストで返す (ホスト名付き、`limit` は 1–1000) |
+| `GET /api/v1/history?n=60` | 全ターゲットの直近 RTT を 1 回のレスポンスで返す (`n` は 1–3000) |
+| `GET /api/v1/stream` | Server-Sent Events。接続時と、統計が変化している間は最大 1 秒に 1 回 `snapshot` イベントを送信 |
+| `GET /api/v1/targets/{id}/history?n=300` | 直近の RTT (ミリ秒、古い順)。`null` は応答なし (`n` は 1–3000) |
+| `GET /api/v1/targets/{id}/events` | ターゲットの記録済みイベント (DNS 変化・経路フラップ・ロス) |
+| `GET /api/v1/session` | 有効な `X-Mping-Token` ヘッダ付きなら `{"control": true}` |
+| `POST /api/v1/targets` | ホスト追加。JSON `{"host": "example.com"}`、`X-Mping-Token` が必要 |
+| `DELETE /api/v1/targets/{id}` | ターゲット削除。`X-Mping-Token` が必要 |
+| `POST /api/v1/reset` | 統計リセット。`X-Mping-Token` が必要 |
+
+## ヘッドレスモード (`--no-tui`)
+
+`--no-tui` を付けると TUI を使わずに実行します。小型機でのサービス常駐などを想定しており、通常は `--web`・`--json-output`・`--output` と組み合わせます。
+
+```bash
+mping --no-tui --web -f hosts.yaml
+```
+
+- TUI の Log ペインに出るログ (経路フラップ、リロード通知、Web からの操作など) をプレーンテキストで stdout に出力し、終了時には通常どおり統計サマリーを表示します。TUI 自身が出すロス率・RTT のアラート行は出力されません。
+- Ctrl-C / SIGTERM、`--count` の完了、`--duration` の経過で終了します。hosts ファイルのリロードでは終了しません (保留中のリロードが Ctrl-C / SIGTERM より優先されることはありません)。終了処理が止まった場合は、もう一度 Ctrl-C を押すと即座に終了します。
+- Web UI の操作用リンクには秘密の token が含まれるため、stdout が端末のときだけ表示します。無人運用では環境変数 `MPING_WEB_TOKEN` で token を指定し (英数字と `-._~` で 16 文字以上。コマンドラインやシェル履歴に残さず、systemd の `EnvironmentFile=` などで渡してください)、`http://127.0.0.1:8080/#token=<指定した token>` を開いてください。`MPING_WEB_TOKEN` は TUI 使用時にも有効です。
 
 ## ライセンス
 

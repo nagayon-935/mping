@@ -3,11 +3,9 @@ package main
 import (
 	"context"
 	"net"
-	"reflect"
 	"testing"
 
 	"github.com/nagayon-935/mping/internal/pinger"
-	ui "github.com/nagayon-935/mping/internal/ui"
 )
 
 func TestDuplicateHostDSCPRemainsIndependent(t *testing.T) {
@@ -53,51 +51,5 @@ func TestResolverHonorsConfiguredFamily(t *testing.T) {
 	cancel()
 	if _, err := opts.ResolveIPAddrContext(ctx, "ip", "cancelled.invalid"); err == nil {
 		t.Fatal("canceled lookup succeeded")
-	}
-}
-
-func TestHostEditsPreserveGroups(t *testing.T) {
-	hosts := []targetSpec{{Host: "127.0.0.1"}, {Host: "127.0.0.2"}, {Host: "127.0.0.3"}}
-	groups := []ui.TargetGroup{{Name: "group", Indices: []int{1, 2}}}
-	for _, remove := range []string{"127.0.0.1", "127.0.0.2", "127.0.0.3"} {
-		cfg, _, fs, _, err := parseArgs([]string{"-4", "127.0.0.1"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		rc := newReloadCoordinator(fs, cfg, nil)
-		opts := buildRunOptions(runOptionsParams{cfg: cfg, sup: &supervisor{}, rc: rc, sig: newReloadSignal(), currentHosts: hosts, currentGroups: groups})
-		if err := opts.OnDeleteHost(remove); err != nil {
-			t.Fatal(err)
-		}
-		updated, gs, _, _, _ := rc.apply(cfg, hosts, groups)
-		var want, got []string
-		for _, idx := range groups[0].Indices {
-			if hosts[idx].Host != remove {
-				want = append(want, hosts[idx].Host)
-			}
-		}
-		for _, idx := range gs[0].Indices {
-			if idx >= len(updated) {
-				t.Fatalf("stale index: %v", gs)
-			}
-			got = append(got, updated[idx].Host)
-		}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("delete %s: members=%v want=%v", remove, got, want)
-		}
-	}
-	duplicates := []targetSpec{{Host: "a"}, {Host: "same", DSCP: "EF"}, {Host: "same", DSCP: "CS0"}, {Host: "same", DSCP: "EF"}}
-	gs := []ui.TargetGroup{{Name: "first", Indices: []int{1, 2}}, {Name: "second", Indices: []int{3}}}
-	got := remapGroups(duplicates, duplicates[1:], gs)
-	want := []ui.TargetGroup{{Name: "first", Indices: []int{0, 1}}, {Name: "second", Indices: []int{2}}}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("duplicate memberships=%v want=%v", got, want)
-	}
-	added := append(append([]targetSpec(nil), hosts...), targetSpec{Host: "new"})
-	if got := remapGroups(hosts, added, groups); !reflect.DeepEqual(got, groups) {
-		t.Fatalf("add changed groups: %v", got)
-	}
-	if got := remapGroups(hosts, hosts[:1], groups); len(got) != 0 {
-		t.Fatalf("empty group retained: %v", got)
 	}
 }

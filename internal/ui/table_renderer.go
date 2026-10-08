@@ -219,23 +219,47 @@ func (tr *tableRenderer) update() {
 	tr.table.Clear()
 	tr.tablePane.SetTitle(" Ping Monitor ")
 
-	// The current scroll offset, used below to render only the visible
-	// (plus margin) row window instead of every row regardless of scroll
-	// position — see visibleRowWindow.
+	// One GetView() snapshot per target for this whole tick — width calc,
+	// compact layout, and row rendering all read from this same slice
+	// instead of each calling GetView() independently (P2: GetView() copies
+	// the full RTT history ring, so this collapses what used to be 10+
+	// redundant calls per target per tick down to exactly one).
+	views := fetchViews(tr.targets)
+	compactRows := tr.chooseLayout(views)
+	if tr.selectionEnabled {
+		tr.reconcileSelection()
+	}
+	// Only the visible (plus margin) row window is rendered — see
+	// visibleRowWindow. rowCount stays the full logical count regardless,
+	// so input_handler.go's scroll math is unaffected.
 	offsetRow, _ := tr.table.GetOffset()
 
-	// One GetView() snapshot per target for this whole tick — width calc,
-	// compact layout, and row rendering below all read from this same
-	// slice instead of each calling GetView() independently (P2: GetView()
-	// copies the full RTT history ring, so this collapses what used to be
-	// 10+ redundant calls per target per tick down to exactly one).
-	views := fetchViews(tr.targets)
-
-	_, _, availableTableWidth, _ := tr.tablePane.GetInnerRect()
-	availableColumnsWidth := availableTableWidth - (len(tr.fullHeaders) + 1)
-	if availableColumnsWidth < 0 {
-		availableColumnsWidth = 0
+	setHeaderRow(tr.table, 0, tr.activeHeaders, tr.widths, tr.activeAligns, tr.headerColor)
+	rowCtx, texts := tr.scanTargets(views)
+	if tr.compactLayout {
+		tr.renderCompactRows(compactRows, offsetRow)
+	} else {
+		tr.renderFullRows(rowCtx, texts, offsetRow)
 	}
+
+	if tr.selectionEnabled {
+		tr.highlightSelection()
+	}
+	if tr.afterUpdate != nil {
+		tr.afterUpdate()
+	}
+	for _, mp := range tr.sidePanes {
+		mp.refresh()
+	}
+}
+
+// chooseLayout fits the full layout to the pane, falling back to the compact
+// one when it does not fit, and sets the active headers, widths and row
+// count. When neither fits the previous tick's layout stays. It returns the
+// compact rows whenever the full layout did not fit.
+func (tr *tableRenderer) chooseLayout(views []stats.TargetView) []compactRow {
+	_, _, availableTableWidth, _ := tr.tablePane.GetInnerRect()
+	availableColumnsWidth := max(availableTableWidth-(len(tr.fullHeaders)+1), 0)
 
 	updatedWidths := tr.calcColumnWidths(views)
 	dynamicMaxWidths := append([]int(nil), tr.maxWidths...)
@@ -247,37 +271,25 @@ func (tr *tableRenderer) update() {
 	fitted, ok := fitWidthsToAvailable(updatedWidths, tr.minWidths, dynamicMaxWidths, tr.shrinkPriorities, tr.growPriorities, availableColumnsWidth)
 
 	// The compact layout is only a fallback for when the full layout
-	// doesn't fit; skip computing it entirely in the common case (ok ==
-	// true) rather than computing and discarding it every tick.
+	// doesn't fit; skip computing it entirely in the common case.
 	var compactRows []compactRow
-	var compactHeaders []string
-	var compactAligns []int
-	var compactWidths []int
-	compactOK := false
-	if !ok {
-		compact := buildCompactLayout(views, tr.packetSize, tr.sourceIPv4, tr.sourceIPv6, tr.lastLossBase)
-		compactRows = compact.rows
-		compactHeaders = compact.headers
-		compactAligns = compact.aligns
-		compactAvailableColumnsWidth := availableTableWidth - (len(compactHeaders) + 1)
-		if compactAvailableColumnsWidth < 0 {
-			compactAvailableColumnsWidth = 0
-		}
-		compactWidths, compactOK = fitWidthsToAvailable(compact.desired, compact.min, compact.max, tr.compactShrinkPriorities, tr.compactGrowPriorities, compactAvailableColumnsWidth)
-	}
-
 	if ok {
 		tr.compactLayout = false
 		tr.widths = fitted
 		tr.activeHeaders = append([]string(nil), tr.fullHeaders...)
 		tr.activeAligns = append([]int(nil), tr.fullAligns...)
 		tr.rowCount = len(tr.targets) + 1
-	} else if compactOK {
-		tr.compactLayout = true
-		tr.widths = compactWidths
-		tr.activeHeaders = append([]string(nil), compactHeaders...)
-		tr.activeAligns = append([]int(nil), compactAligns...)
-		tr.rowCount = len(compactRows) + 1
+	} else {
+		compact := buildCompactLayout(views, tr.packetSize, tr.sourceIPv4, tr.sourceIPv6, tr.lastLossBase)
+		compactRows = compact.rows
+		compactAvailableColumnsWidth := max(availableTableWidth-(len(compact.headers)+1), 0)
+		if widths, fits := fitWidthsToAvailable(compact.desired, compact.min, compact.max, tr.compactShrinkPriorities, tr.compactGrowPriorities, compactAvailableColumnsWidth); fits {
+			tr.compactLayout = true
+			tr.widths = widths
+			tr.activeHeaders = append([]string(nil), compact.headers...)
+			tr.activeAligns = append([]int(nil), compact.aligns...)
+			tr.rowCount = len(compactRows) + 1
+		}
 	}
 
 	// When groups are active, override rowCount with the group layout.
@@ -285,49 +297,19 @@ func (tr *tableRenderer) update() {
 		tr.groupRowMap = buildGroupRows(tr.targets, tr.groups)
 		tr.rowCount = len(tr.groupRowMap) + 1
 	}
+	return compactRows
+}
 
-	if tr.selectionEnabled {
-		tr.reconcileSelection()
-		offsetRow, _ = tr.table.GetOffset()
-	}
-
-	// Header
-	setHeaderRow(tr.table, 0, tr.activeHeaders, tr.widths, tr.activeAligns, tr.headerColor)
-
-	pickCompact := func(right, left string) string {
-		if right != "" {
-			return right
-		}
-		return left
-	}
-	if tr.compactLayout {
-		start, end := visibleRowWindow(offsetRow, len(compactRows))
-		for i := start; i < end; i++ {
-			r := compactRows[i]
-			row := i + 1
-			values := []string{
-				pickCompact(r.hostR, r.hostL),
-				pickCompact(r.pathR, r.pathL),
-				pickCompact(r.statR, r.statL),
-				pickCompact(r.errR, r.errL),
-			}
-			cells := buildCompactRowCells(values, tr.widths, tr.activeAligns, tr.rowColor)
-			for c, cell := range cells {
-				tr.table.SetCell(row, c, cell)
-			}
-		}
-	}
-
-	// Pass 1: check for new errors and alert state for all targets, and
-	// cache each target's rendered cell text so pass 2 doesn't re-render
-	// every column a second time per target per tick. Reuses the views
-	// slice fetched once at the top of update() rather than re-fetching.
+// scanTargets logs new losses and alert transitions for every target and,
+// in the full layout, renders each target's cell texts once so rows can
+// reuse them (nil slices in the compact layout).
+func (tr *tableRenderer) scanTargets(views []stats.TargetView) ([]columnRowContext, [][]string) {
 	now := time.Now()
-	var rowCtxCache []columnRowContext
-	var textsCache [][]string
+	var rowCtx []columnRowContext
+	var texts [][]string
 	if !tr.compactLayout {
-		rowCtxCache = make([]columnRowContext, len(tr.targets))
-		textsCache = make([][]string, len(tr.targets))
+		rowCtx = make([]columnRowContext, len(tr.targets))
+		texts = make([][]string, len(tr.targets))
 	}
 	for i := range tr.targets {
 		view := views[i]
@@ -336,76 +318,73 @@ func (tr *tableRenderer) update() {
 			lastTime, exists := tr.vs.lastLossTimes[targetViewKey(view)]
 			if !exists || view.LastLossTime.After(lastTime) {
 				tr.vs.lastLossTimes[targetViewKey(view)] = view.LastLossTime
-				msg := buildErrorLogMessage(view, rowSourceIP, view.LastError, view.LastLossTime)
-				tr.vs.appendLog(msg)
+				tr.vs.appendLog(buildErrorLogMessage(view, rowSourceIP, view.LastError, view.LastLossTime))
 			}
 		}
-		if !tr.compactLayout {
-			ctx := columnRowContext{
-				view: view, sourceIPv4: tr.sourceIPv4, sourceIPv6: tr.sourceIPv6,
-				packetSize: tr.packetSize, lossRate: calcLossRate(view),
-			}
-			rowCtxCache[i] = ctx
-			textsCache[i] = renderRowTexts(tr.cols, ctx)
-			state := tr.vs.alertState[targetViewKey(view)]
-			state, msgs := updateAlertState(view, rowSourceIP, ctx.lossRate, now, state)
-			for _, msg := range msgs {
-				tr.vs.appendLog(msg)
-			}
-			tr.vs.alertState[targetViewKey(view)] = state
+		if tr.compactLayout {
+			continue
 		}
+		ctx := columnRowContext{
+			view: view, sourceIPv4: tr.sourceIPv4, sourceIPv6: tr.sourceIPv6,
+			packetSize: tr.packetSize, lossRate: calcLossRate(view),
+		}
+		rowCtx[i] = ctx
+		texts[i] = renderRowTexts(tr.cols, ctx)
+		state, msgs := updateAlertState(view, rowSourceIP, ctx.lossRate, now, tr.vs.alertState[targetViewKey(view)])
+		for _, msg := range msgs {
+			tr.vs.appendLog(msg)
+		}
+		tr.vs.alertState[targetViewKey(view)] = state
 	}
+	return rowCtx, texts
+}
 
-	// Pass 2: render table rows. Only the visible (plus margin) row window
-	// is actually SetCell'd — rowCount above stays the full logical count
-	// regardless, so input_handler.go's scroll math is unaffected by how
-	// few rows this pass renders.
-	if len(tr.groups) > 0 && !tr.compactLayout {
-		// Group-aware rendering: header → [targets] per group. Windowed by
-		// table-row index (tr.groupRowMap), not target index, since group
-		// header rows don't correspond to a target — a header that falls
-		// inside the window must still render even if all its members
-		// don't.
-		start, end := visibleRowWindow(offsetRow, len(tr.groupRowMap))
-		for rowIdx := start; rowIdx < end; rowIdx++ {
-			row := tr.groupRowMap[rowIdx]
-			tableRow := rowIdx + 1
-			switch row.kind {
-			case groupRowSpacer:
-				setGroupSpacerRow(tr.table, tableRow, len(tr.activeHeaders))
-			case groupRowHeader:
-				memberCount := len(tr.groups[row.groupIdx].Indices)
-				setGroupHeaderRow(tr.table, tableRow, len(tr.activeHeaders),
-					row.groupName, memberCount)
-			case groupRowSubHeader:
-				setHeaderRow(tr.table, tableRow, tr.activeHeaders, tr.widths, tr.activeAligns, tr.headerColor)
-			case groupRowUngrouped, groupRowTarget:
-				cells := renderRowCells(tr.cols, textsCache[row.targetIdx], tr.widths, tr.fullAligns, rowCtxCache[row.targetIdx], tr.rowColor)
-				for c, cell := range cells {
-					tr.table.SetCell(tableRow, c, cell)
-				}
-			}
+func (tr *tableRenderer) renderCompactRows(rows []compactRow, offsetRow int) {
+	pick := func(right, left string) string {
+		if right != "" {
+			return right
 		}
-	} else if !tr.compactLayout {
-		// Flat rendering (no groups, not compact — compact rows were
-		// already rendered earlier via the compactRows loop above).
+		return left
+	}
+	start, end := visibleRowWindow(offsetRow, len(rows))
+	for i := start; i < end; i++ {
+		r := rows[i]
+		values := []string{pick(r.hostR, r.hostL), pick(r.pathR, r.pathL), pick(r.statR, r.statL), pick(r.errR, r.errL)}
+		tr.setRow(i+1, buildCompactRowCells(values, tr.widths, tr.activeAligns, tr.rowColor))
+	}
+}
+
+// renderFullRows renders the full layout, flat or grouped. Grouped rows are
+// windowed by table-row index (tr.groupRowMap), not target index, since
+// group header rows don't correspond to a target — a header inside the
+// window must render even if its members don't.
+func (tr *tableRenderer) renderFullRows(rowCtx []columnRowContext, texts [][]string, offsetRow int) {
+	if len(tr.groups) == 0 {
 		start, end := visibleRowWindow(offsetRow, len(tr.targets))
 		for i := start; i < end; i++ {
-			row := i + 1
-			cells := renderRowCells(tr.cols, textsCache[i], tr.widths, tr.fullAligns, rowCtxCache[i], tr.rowColor)
-			for c, cell := range cells {
-				tr.table.SetCell(row, c, cell)
-			}
+			tr.setRow(i+1, renderRowCells(tr.cols, texts[i], tr.widths, tr.fullAligns, rowCtx[i], tr.rowColor))
+		}
+		return
+	}
+	start, end := visibleRowWindow(offsetRow, len(tr.groupRowMap))
+	for rowIdx := start; rowIdx < end; rowIdx++ {
+		row := tr.groupRowMap[rowIdx]
+		tableRow := rowIdx + 1
+		switch row.kind {
+		case groupRowSpacer:
+			setGroupSpacerRow(tr.table, tableRow, len(tr.activeHeaders))
+		case groupRowHeader:
+			setGroupHeaderRow(tr.table, tableRow, len(tr.activeHeaders), row.groupName, len(tr.groups[row.groupIdx].Indices))
+		case groupRowSubHeader:
+			setHeaderRow(tr.table, tableRow, tr.activeHeaders, tr.widths, tr.activeAligns, tr.headerColor)
+		case groupRowUngrouped, groupRowTarget:
+			tr.setRow(tableRow, renderRowCells(tr.cols, texts[row.targetIdx], tr.widths, tr.fullAligns, rowCtx[row.targetIdx], tr.rowColor))
 		}
 	}
+}
 
-	if tr.selectionEnabled {
-		tr.highlightSelection()
-	}
-	if tr.afterUpdate != nil {
-		tr.afterUpdate()
-	}
-	for _, mp := range tr.sidePanes {
-		mp.refresh()
+func (tr *tableRenderer) setRow(row int, cells []*tview.TableCell) {
+	for c, cell := range cells {
+		tr.table.SetCell(row, c, cell)
 	}
 }

@@ -96,6 +96,8 @@ type hostsFileYAML struct {
 	ResolveAll *bool           `yaml:"resolve-all"`
 	Duration   *string         `yaml:"duration"`
 	DSCP       *string         `yaml:"dscp"`
+	Web        *bool           `yaml:"web"`
+	WebPort    *int            `yaml:"web-port"`
 	Thresholds *thresholdsYAML `yaml:"thresholds"`
 }
 

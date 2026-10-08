@@ -51,105 +51,61 @@ func logStatusChangeIfNeeded(lastStatuses map[string]string, key, newStatus, hea
 	lastStatuses[key] = newStatus
 }
 
-// renderTracerouteTable builds the traceroute monitor table string.
+// renderTracerouteTable builds the traceroute monitor table string. Narrow
+// panes drop the Hops and Init TTL columns.
 func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
 	hostColW := maxHostWidth("Host", targets)
-
 	hopsColW := runewidth.StringWidth("Hops") + 2
 	initTTLColW := runewidth.StringWidth("Init TTL") + 2
-
 	fullRouteContentW := availW - hostColW - hopsColW - initTTLColW - 5
-	traceCompact := fullRouteContentW < minRouteContentWidth
+	compact := fullRouteContentW < minRouteContentWidth
 
-	dataTargets := make([]*stats.TargetStats, 0, len(targets))
+	cols := []boxColumn{{header: "Host", width: hostColW, leftAlign: true}}
+	if compact {
+		cols = append(cols, boxColumn{header: "Route", width: max(availW-hostColW-3, minRouteContentWidth)})
+	} else {
+		cols = append(cols,
+			boxColumn{header: "Hops", width: hopsColW, leftAlign: true},
+			boxColumn{header: "Init TTL", width: initTTLColW, leftAlign: true},
+			boxColumn{header: "Route", width: fullRouteContentW})
+	}
+	routeContentW := cols[len(cols)-1].width - 1
+
+	var groups [][][]boxCell
 	for _, t := range targets {
-		if len(t.GetView().TraceHops) > 0 {
-			dataTargets = append(dataTargets, t)
+		view := t.GetView()
+		if len(view.TraceHops) == 0 {
+			continue
 		}
+		routeLines := wrapHops(view.TraceHops, routeContentW)
+		if len(routeLines) == 0 {
+			routeLines = []string{""}
+		}
+		// Host, hop count and initial TTL go on the first line only.
+		first := []string{tview.Escape(view.Host)}
+		if !compact {
+			first = append(first, hopCountString(view.TraceHops), inferInitialTTL(view.LastTTL))
+		}
+		rows := make([][]boxCell, len(routeLines))
+		for j, line := range routeLines {
+			texts := make([]string, len(cols)-1, len(cols))
+			if j == 0 {
+				copy(texts, first)
+			}
+			rows[j] = plainCells(append(texts, line)...)
+		}
+		groups = append(groups, rows)
 	}
 
 	var sb strings.Builder
-
-	if traceCompact {
-		routeColW := availW - hostColW - 3
-		if routeColW < minRouteContentWidth {
-			routeColW = minRouteContentWidth
-		}
-		routeContentW := routeColW - 1
-		cols := []int{hostColW, routeColW}
-
-		fmt.Fprintln(&sb, boxBorder(cols, borderTop))
-		// Host is right-padded, Route center-padded — custom header (not boxHeaderRow).
-		fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
-			rightPaddedCell("Host", hostColW), paddedCell("Route", routeColW))
-		fmt.Fprintln(&sb, boxBorder(cols, borderMid))
-
-		for i, t := range dataTargets {
-			view := t.GetView()
-			routeLines := wrapHops(view.TraceHops, routeContentW)
-			if len(routeLines) == 0 {
-				routeLines = []string{""}
-			}
-			midIdx := 0
-			for j, rl := range routeLines {
-				hostStr := ""
-				if j == midIdx {
-					hostStr = tview.Escape(view.Host)
-				}
-				fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[-]\n",
-					rightPaddedCell(hostStr, hostColW), paddedCell(rl, routeColW))
-			}
-			if i < len(dataTargets)-1 {
-				fmt.Fprintln(&sb, boxBorder(cols, borderMid))
-			}
-		}
-		fmt.Fprintln(&sb, boxBorder(cols, borderBottom))
-	} else {
-		routeColW := fullRouteContentW
-		routeContentW := routeColW - 1
-		cols := []int{hostColW, hopsColW, initTTLColW, routeColW}
-
-		fmt.Fprintln(&sb, boxBorder(cols, borderTop))
-		// Host/Hops/Init TTL right-padded, Route center-padded — custom header.
-		fmt.Fprintf(&sb, "[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[yellow::b]%s[white]│[-]\n",
-			rightPaddedCell("Host", hostColW), rightPaddedCell("Hops", hopsColW), rightPaddedCell("Init TTL", initTTLColW), paddedCell("Route", routeColW))
-		fmt.Fprintln(&sb, boxBorder(cols, borderMid))
-
-		for i, t := range dataTargets {
-			view := t.GetView()
-			hopsStrVal := hopCountString(view.TraceHops)
-			initTTLStrVal := inferInitialTTL(view.LastTTL)
-			routeLines := wrapHops(view.TraceHops, routeContentW)
-			if len(routeLines) == 0 {
-				routeLines = []string{""}
-			}
-			midIdx := 0
-			for j, rl := range routeLines {
-				hostStr := ""
-				hopsStr := ""
-				initTTLStr := ""
-				if j == midIdx {
-					hostStr = tview.Escape(view.Host)
-					hopsStr = hopsStrVal
-					initTTLStr = initTTLStrVal
-				}
-				fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[-]\n",
-					rightPaddedCell(hostStr, hostColW), rightPaddedCell(hopsStr, hopsColW), rightPaddedCell(initTTLStr, initTTLColW), paddedCell(rl, routeColW))
-			}
-			if i < len(dataTargets)-1 {
-				fmt.Fprintln(&sb, boxBorder(cols, borderMid))
-			}
-		}
-		fmt.Fprintln(&sb, boxBorder(cols, borderBottom))
-	}
-
+	writeBoxTable(&sb, cols, groups, "")
 	return sb.String()
 }
 
-func maxPortColumnWidth(header string, targets []*stats.TargetStats, extractor func(stats.PortCheckView) string) int {
+func maxPortColumnWidth(header string, views []stats.TargetView, extractor func(stats.PortCheckView) string) int {
 	w := runewidth.StringWidth(header)
-	for _, t := range targets {
-		for _, pr := range t.GetView().PortResults {
+	for _, view := range views {
+		for _, pr := range view.PortResults {
 			if cur := runewidth.StringWidth(extractor(pr)); cur > w {
 				w = cur
 			}
@@ -158,48 +114,26 @@ func maxPortColumnWidth(header string, targets []*stats.TargetStats, extractor f
 	return w + 2
 }
 
-// renderPortMonitorTable builds the port monitor table string.
-// It also detects status changes and appends log messages.
+// portColumn is a port monitor column with the cell it shows per result.
+type portColumn struct {
+	boxColumn
+	cell func(stats.PortCheckView) boxCell
+}
+
+func portLabel(pr stats.PortCheckView) string { return fmt.Sprintf("%d/%s", pr.Port, pr.Protocol) }
+
+// renderPortMonitorTable builds the port monitor table string. Narrow panes
+// show only Target, Port, Status and Last. It also detects status changes
+// and appends log messages.
 func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortStatuses map[string]string, errorLogs *[]string, errorView *tview.TextView) string {
-	targetColW := maxHostWidth("Target", targets)
-
-	portColW := maxPortColumnWidth("Port", targets, func(pr stats.PortCheckView) string {
-		return fmt.Sprintf("%d/%s", pr.Port, pr.Protocol)
-	})
-
-	serviceColW := maxPortColumnWidth("Service", targets, func(pr stats.PortCheckView) string {
-		return portServiceName(pr.Port, pr.Protocol)
-	})
-
-	statusColW := runewidth.StringWidth("Open|Filtered") + 2
-
-	lastColW := maxPortColumnWidth("Last", targets, func(pr stats.PortCheckView) string {
-		return formatRTT(pr.RTT)
-	})
-	minColW := maxPortColumnWidth("Min", targets, func(pr stats.PortCheckView) string {
-		return formatRTT(pr.MinRTT)
-	})
-	avgColW := maxPortColumnWidth("Avg", targets, func(pr stats.PortCheckView) string {
-		return formatRTT(pr.AvgRTT)
-	})
-	maxColW := maxPortColumnWidth("Max", targets, func(pr stats.PortCheckView) string {
-		return formatRTT(pr.MaxRTT)
-	})
-
-	countColW := runewidth.StringWidth("Open/Closed") + 2
-	changeColW := runewidth.StringWidth("Last Change") + 2
-
-	usedFull := targetColW + portColW + serviceColW + statusColW + lastColW + minColW + avgColW + maxColW + countColW + changeColW + 11
-	portCompact := availW-targetColW-portColW-statusColW-lastColW-5 < minPortContentWidth
-
-	// Collect targets that have results; detect status changes
-	dataTargets := make([]*stats.TargetStats, 0, len(targets))
+	// Targets that have results; detect status changes.
+	var views []stats.TargetView
 	for _, t := range targets {
 		view := t.GetView()
 		if len(view.PortResults) == 0 {
 			continue
 		}
-		dataTargets = append(dataTargets, t)
+		views = append(views, view)
 		for _, pr := range view.PortResults {
 			key := fmt.Sprintf("%s|%d/%s", targetViewKey(view), pr.Port, pr.Protocol)
 			subject := fmt.Sprintf("[white]%s[-] [white]%d/%s:[white]", tview.Escape(view.Host), pr.Port, pr.Protocol)
@@ -207,88 +141,69 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 		}
 	}
 
-	var sb strings.Builder
-
-	if portCompact {
-		cols := []int{targetColW, portColW, statusColW, lastColW}
-
-		fmt.Fprintln(&sb, boxBorder(cols, borderTop))
-		fmt.Fprintln(&sb, boxHeaderRow([]string{"Target", "Port", "Status", "Last"}, cols))
-		fmt.Fprintln(&sb, boxBorder(cols, borderMid))
-
-		rowCount := 0
-		for ti, t := range dataTargets {
-			view := t.GetView()
-			for i, pr := range view.PortResults {
-				targetName := ""
-				if i == 0 {
-					targetName = tview.Escape(view.Host)
-				}
-				fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│%s%s[-][white]│[white]%s[white]│[-]\n",
-					paddedCell(targetName, targetColW),
-					paddedCell(fmt.Sprintf("%d/%s", pr.Port, pr.Protocol), portColW),
-					statusColorTag(pr.Status), paddedCell(pr.Status, statusColW),
-					paddedCell(formatRTT(pr.RTT), lastColW))
-				rowCount++
-			}
-			if ti < len(dataTargets)-1 {
-				fmt.Fprintln(&sb, boxBorder(cols, borderMid))
-			}
+	// sized fits a plain column to its widest value.
+	sized := func(header string, text func(stats.PortCheckView) string) portColumn {
+		return portColumn{boxColumn{header: header, width: maxPortColumnWidth(header, views, text)},
+			func(pr stats.PortCheckView) boxCell { return boxCell{text: text(pr)} }}
+	}
+	rtt := func(get func(stats.PortCheckView) time.Duration) func(stats.PortCheckView) string {
+		return func(pr stats.PortCheckView) string { return formatRTT(get(pr)) }
+	}
+	fixed := func(header, widest string, text func(stats.PortCheckView) string) portColumn {
+		return portColumn{boxColumn{header: header, width: runewidth.StringWidth(widest) + 2},
+			func(pr stats.PortCheckView) boxCell { return boxCell{text: text(pr)} }}
+	}
+	target := portColumn{boxColumn: boxColumn{header: "Target", width: maxHostWidth("Target", targets)}}
+	port := sized("Port", portLabel)
+	service := sized("Service", func(pr stats.PortCheckView) string { return portServiceName(pr.Port, pr.Protocol) })
+	status := portColumn{boxColumn{header: "Status", width: runewidth.StringWidth("Open|Filtered") + 2},
+		func(pr stats.PortCheckView) boxCell { return boxCell{text: pr.Status, tag: statusColorTag(pr.Status)} }}
+	last := sized("Last", rtt(func(pr stats.PortCheckView) time.Duration { return pr.RTT }))
+	minC := sized("Min", rtt(func(pr stats.PortCheckView) time.Duration { return pr.MinRTT }))
+	avg := sized("Avg", rtt(func(pr stats.PortCheckView) time.Duration { return pr.AvgRTT }))
+	maxC := sized("Max", rtt(func(pr stats.PortCheckView) time.Duration { return pr.MaxRTT }))
+	count := fixed("Open/Closed", "Open/Closed", func(pr stats.PortCheckView) string {
+		return fmt.Sprintf("%d/%d", pr.OpenCount, pr.ClosedCount)
+	})
+	change := fixed("Last Change", "Last Change", func(pr stats.PortCheckView) string {
+		if pr.LastChange.IsZero() {
+			return "-"
 		}
-		if rowCount == 0 {
-			total := targetColW + portColW + statusColW + lastColW + 3
-			fmt.Fprintln(&sb, boxSpanRow(" Waiting for results...", total, "[darkgray]"))
-		}
-		fmt.Fprintln(&sb, boxBorder(cols, borderBottom))
-	} else {
-		if availW > usedFull {
-			changeColW += availW - usedFull
-		}
+		return formatLossAgo(pr.LastChange)
+	})
 
-		cols := []int{targetColW, portColW, serviceColW, statusColW, lastColW,
-			minColW, avgColW, maxColW, countColW, changeColW}
-
-		fmt.Fprintln(&sb, boxBorder(cols, borderTop))
-		fmt.Fprintln(&sb, boxHeaderRow([]string{"Target", "Port", "Service", "Status",
-			"Last", "Min", "Avg", "Max", "Open/Closed", "Last Change"}, cols))
-		fmt.Fprintln(&sb, boxBorder(cols, borderMid))
-
-		rowCount := 0
-		for ti, t := range dataTargets {
-			view := t.GetView()
-			for i, pr := range view.PortResults {
-				countStr := fmt.Sprintf("%d/%d", pr.OpenCount, pr.ClosedCount)
-				changeStr := "-"
-				if !pr.LastChange.IsZero() {
-					changeStr = formatLossAgo(pr.LastChange)
-				}
-				targetName := ""
-				if i == 0 {
-					targetName = tview.Escape(view.Host)
-				}
-				fmt.Fprintf(&sb, "[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│%s%s[-][white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[-]\n",
-					paddedCell(targetName, targetColW),
-					paddedCell(fmt.Sprintf("%d/%s", pr.Port, pr.Protocol), portColW),
-					paddedCell(portServiceName(pr.Port, pr.Protocol), serviceColW),
-					statusColorTag(pr.Status), paddedCell(pr.Status, statusColW),
-					paddedCell(formatRTT(pr.RTT), lastColW),
-					paddedCell(formatRTT(pr.MinRTT), minColW),
-					paddedCell(formatRTT(pr.AvgRTT), avgColW),
-					paddedCell(formatRTT(pr.MaxRTT), maxColW),
-					paddedCell(countStr, countColW),
-					paddedCell(changeStr, changeColW))
-				rowCount++
-			}
-			if ti < len(dataTargets)-1 {
-				fmt.Fprintln(&sb, boxBorder(cols, borderMid))
-			}
+	cols := []portColumn{target, port, status, last}
+	if availW-target.width-port.width-status.width-last.width-5 >= minPortContentWidth {
+		cols = []portColumn{target, port, service, status, last, minC, avg, maxC, count, change}
+	}
+	boxCols := make([]boxColumn, len(cols))
+	for i, c := range cols {
+		boxCols[i] = c.boxColumn
+	}
+	if len(cols) > 4 {
+		// The last column takes any spare width.
+		if spare := availW - (boxInnerWidth(boxCols) + 2); spare > 0 {
+			boxCols[len(boxCols)-1].width += spare
 		}
-		if rowCount == 0 {
-			total := targetColW + portColW + serviceColW + statusColW + lastColW + minColW + avgColW + maxColW + countColW + changeColW + 9
-			fmt.Fprintln(&sb, boxSpanRow(" Waiting for results...", total, "[darkgray]"))
-		}
-		fmt.Fprintln(&sb, boxBorder(cols, borderBottom))
 	}
 
+	groups := make([][][]boxCell, len(views))
+	for ti, view := range views {
+		for i, pr := range view.PortResults {
+			cells := make([]boxCell, len(cols))
+			for ci, c := range cols {
+				switch {
+				case c.cell != nil:
+					cells[ci] = c.cell(pr)
+				case i == 0: // the target name, on its first port only
+					cells[ci] = boxCell{text: tview.Escape(view.Host)}
+				}
+			}
+			groups[ti] = append(groups[ti], cells)
+		}
+	}
+
+	var sb strings.Builder
+	writeBoxTable(&sb, boxCols, groups, " Waiting for results...")
 	return sb.String()
 }

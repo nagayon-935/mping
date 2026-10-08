@@ -334,14 +334,20 @@ func TestRunWorker_FallsBackToStartTimeWhenRTTZero(t *testing.T) {
 		return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
 	}
 	p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{ResolveIPAddr: resolve})
-	p.connV4 = &fakePacketConn{}
+	conn := &sendNotifyingConn{fakePacketConn: &fakePacketConn{}, sent: make(chan struct{}, 1)}
+	p.connV4 = conn
 	p.Count = 1
 
 	id := p.baseID & 0xffff
 	ch := make(chan Reply, 1)
 	p.targetChans[id] = ch
 
+	// Time the reply from the actual send, not from goroutine start: the
+	// probe's start time is taken just before WriteTo, so replying 20ms
+	// after WriteTo guarantees a fallback RTT of at least 20ms. Timing it
+	// from before runWorker made the assertion race the worker's startup.
 	go func() {
+		<-conn.sent
 		time.Sleep(20 * time.Millisecond)
 		ch <- Reply{TTL: 64, Seq: 1} // RTT left zero
 	}()
@@ -352,4 +358,19 @@ func TestRunWorker_FallsBackToStartTimeWhenRTTZero(t *testing.T) {
 	if view.LastRTT < 20*time.Millisecond {
 		t.Fatalf("LastRTT = %v, want >= ~20ms (fallback to start-time bookkeeping)", view.LastRTT)
 	}
+}
+
+// sendNotifyingConn signals the first WriteTo so a test can time a reply
+// relative to when the probe actually went out.
+type sendNotifyingConn struct {
+	*fakePacketConn
+	sent chan struct{}
+}
+
+func (c *sendNotifyingConn) WriteTo(b []byte, cm *ipv4.ControlMessage, dst net.Addr) (int, error) {
+	select {
+	case c.sent <- struct{}{}:
+	default:
+	}
+	return c.fakePacketConn.WriteTo(b, cm, dst)
 }

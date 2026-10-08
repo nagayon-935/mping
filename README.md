@@ -213,6 +213,8 @@ port:
 json-output: stats.json
 dns-server: 8.8.8.8
 resolve-all: true
+web: true
+web-port: 8080
 thresholds:
   rtt-warn: 50      # ms (orange)
   rtt-crit: 200     # ms (red)
@@ -296,6 +298,9 @@ See [examples/hosts-patterns.yaml](examples/hosts-patterns.yaml) and [examples/b
 | `--output` | `-o` | CSV log output file path | `""` |
 | `--port` | `-p` | Ports to check (e.g. `443/tcp`, `53/udp`, `443`). Comma-separated for multiple. | `""` |
 | `--json-output` | `-j` | Write a JSON statistics snapshot to this file every 5 seconds | `""` |
+| `--web` | | Serve the web UI on `http://127.0.0.1:<web-port>/` (this machine only; see [Web UI](#web-ui-experimental)) | `false` |
+| `--web-port` | | Port for `--web` (1–65535) | `8080` |
+| `--no-tui` | | Run without the terminal UI (see [Headless mode](#headless-mode---no-tui)) | `false` |
 | `--asn` | `-a` | Look up and display AS numbers for target IPs | `false` |
 | `--http` | `-H` | URL(s) to health-check, e.g. `https://example.com/health`. Comma-separated or repeated for multiple. | `""` |
 | `--rtt-warn` | | RTT warn threshold in ms (orange) | `50` |
@@ -484,6 +489,47 @@ Regenerate saved scripts after upgrading mping to include new flags. To monitor 
 * Enabled with `--discovery-mtu` / `-m`.
 * Probes maximum payload size using DF-bit ICMP, starting from 9872 bytes.
 * The discovered size is reflected in the **Size** column.
+
+## Web UI (experimental)
+
+`--web` starts a web server alongside the TUI so the same statistics can be viewed in a browser on the machine running mping:
+
+```bash
+mping --web google.com 1.1.1.1      # then open http://127.0.0.1:8080/
+```
+
+- It listens on loopback only (`127.0.0.1`, plus `[::1]` when available) and is not reachable from other machines. Requests whose `Host` or `Origin` header is not this server are rejected (DNS-rebinding / cross-site protection).
+- `--web` / `--web-port` are read at startup; a hosts-file reload does not restart the server (changing them in the hosts file logs a restart-required warning).
+- The dashboard follows the TUI's panes. **Ping monitor**: the target table (grouped, colour-coded with the same thresholds as the TUI, with a per-row RTT trend). **RTT graphs**: one chart per target on a shared time axis (window 1m–1h depending on the probe interval, per-target or shared y scale); hovering any chart moves one cursor across all of them, so targets can be compared at the same moment. **Inspect**: Summary, Traceroute / MTR (named after the TUI panes; shown when `-T` or `-M` is on), Ports and HTTP tabs, plus a Log of every target's events. Selecting a target in the monitor, a graph or the log points the per-target tabs at it. Wide screens show the monitor and the inspect pane side by side at one height, with the RTT graphs across the full width below; narrower ones stack the panes.
+- The table shows as many columns as fit the window, dropping the least important first (loss, latest/average/jitter RTT and the trend are kept longest, always with status and host). Each row explains its status, based on the latest RTT, jitter and overall loss rate. Average and peak RTT describe the run since start/reset. Wide screens show the list and details side by side. Click `Read-only · How to enable` for instructions on enabling browser controls.
+- Column widths and row heights stay stable as measurements update. Long names and IPv6 addresses are ellipsized, with full text in tooltips/details. Large counts use M/B/T and very large RTTs use scientific notation, with unabridged values in tooltips. See the [column width and display budgets](internal/web/COLUMNS.md).
+- **Making changes from the browser.** The Log pane shows the link to open, e.g. `Web UI: http://127.0.0.1:8080/#token=…`. The token is generated for each launch and lets that page add hosts, delete targets (after a confirming second click) and reset statistics; each change is noted in the TUI Log pane. Opened without the token (or with one from an earlier run) the page is read-only. Stopping and restarting measurements stays in the TUI.
+- The same data is available as JSON:
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/v1/snapshot` | Current statistics (same schema as `--json-output`, under `snapshot`) plus `meta` (enabled features, thresholds, groups) and `state` (`starting`, `running`, `reloading` or `stopped`) |
+| `GET /api/v1/events?limit=200` | Every target's recorded events in one list, newest first, each with its host (`limit` 1–1000) |
+| `GET /api/v1/history?n=60` | Trailing RTT samples for every target in one response (`n` 1–3000) |
+| `GET /api/v1/stream` | Server-sent events: a `snapshot` event on connect and at most once per second while statistics change |
+| `GET /api/v1/targets/{id}/history?n=300` | Trailing RTT samples in ms, oldest first; `null` marks a lost probe (`n` 1–3000) |
+| `GET /api/v1/targets/{id}/events` | Recorded events for the target (DNS changes, route flaps, losses) |
+| `GET /api/v1/session` | `{"control": true}` when the request carries a valid `X-Mping-Token` |
+| `POST /api/v1/targets` | Add a host: JSON body `{"host": "example.com"}`; needs `X-Mping-Token` |
+| `DELETE /api/v1/targets/{id}` | Delete a target; needs `X-Mping-Token` |
+| `POST /api/v1/reset` | Reset statistics; needs `X-Mping-Token` |
+
+## Headless mode (`--no-tui`)
+
+`--no-tui` runs mping without the terminal UI, e.g. as a service on a small box, usually together with `--web`, `--json-output` or `--output`:
+
+```bash
+mping --no-tui --web -f hosts.yaml
+```
+
+- Log lines the TUI would show in its Log pane (route flaps, reload notices, web edits, …) are printed to stdout as plain text, and the usual statistics summary is printed on exit. The TUI's own loss/RTT alert lines are not produced.
+- It exits on Ctrl-C or SIGTERM, when `--count` completes, or when `--duration` elapses; hosts-file reloads keep it running (a pending reload never overrides Ctrl-C/SIGTERM). A second Ctrl-C forces an immediate exit if shutdown stalls.
+- The web control link contains a secret token, so it is printed only when stdout is a terminal. For unattended runs, choose the token yourself with the `MPING_WEB_TOKEN` environment variable (at least 16 characters of letters, digits and `-._~`; keep it out of command lines and shell history, e.g. in a systemd `EnvironmentFile=`) and open `http://127.0.0.1:8080/#token=<your token>`. `MPING_WEB_TOKEN` also applies when the TUI is used.
 
 ## License
 

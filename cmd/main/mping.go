@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/netip"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 	ui "github.com/nagayon-935/mping/internal/ui"
+	"github.com/nagayon-935/mping/internal/web"
+	"github.com/rivo/tview"
 )
 
 const (
@@ -98,14 +98,6 @@ func determineSourceIPs(cfg config, hosts []targetSpec) (string, string, string,
 
 	displaySourceIPv4, displaySourceIPv6 = detectAutoSourceIPs(hosts)
 	return bindIP, displaySourceIPv4, displaySourceIPv6, nil
-}
-
-func initTargets(specs []targetSpec) []*stats.TargetStats {
-	targets := make([]*stats.TargetStats, 0, len(specs))
-	for _, spec := range specs {
-		targets = append(targets, stats.NewTargetStats(spec.display()))
-	}
-	return targets
 }
 
 func setupLogger(path string) (*os.File, error) {
@@ -201,8 +193,10 @@ func setupPMTU(makePinger func(size int) pingerController, cfg config, ifaceMTU 
 	if ifaceMTU > pmtuHeaderBytes {
 		startPayload = ifaceMTU - pmtuHeaderBytes
 	}
+	// Progress lines are plain text ("[PMTU] payload=…"); escape them so the
+	// Log pane does not read "[PMTU]" as a colour tag.
 	maxPayload, bottleneckIP, err := probe.DiscoverMaxPayload(context.Background(), firstHost, startPayload, cfg.packetSize, func(line string) {
-		preLogs = append(preLogs, line)
+		preLogs = append(preLogs, fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), tview.Escape(line)))
 	})
 	if err != nil {
 		fmt.Fprintf(errOut, "PMTU discovery failed: %v\n", err)
@@ -268,6 +262,19 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	resNetwork, bindIP := env.resNetwork, env.bindIP
 	displaySourceIPv4, displaySourceIPv6 := env.dispV4, env.dispV6
 	portSpecs := env.portSpecs
+
+	// The web UI outlives reload iterations: it is started once here and
+	// each iteration swaps its supervisor into webSrc.
+	webSrc := web.NewSource()
+	webSrv, ok := startWebUI(cfg, webSrc, errOut)
+	if !ok {
+		return 1
+	}
+	defer closeWebUI(webSrv, errOut)
+
+	runUI, headless, stopHeadless := chooseUIRunner(cfg, out, errOut)
+	defer stopHeadless()
+	showToken := !cfg.noTUI || isTerminal(out)
 
 	rc := newReloadCoordinator(fs, cliCfg, cliHosts)
 	currentCfg := cfg
@@ -363,23 +370,17 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			return 1
 		}
 
-		var resetMTR, resetHTTP, resetPort func()
-		if currentCfg.mtr {
-			resetMTR = sup.resetMTR
-		}
-		if len(currentCfg.httpURLs) > 0 {
-			resetHTTP = sup.resetHTTP
-		}
-		if len(portSpecs) > 0 {
-			resetPort = sup.resetPort
+		webSrc.Set(newWebProvider(sup, currentCfg, currentHosts, len(portSpecs), logCh))
+		if webSrv != nil {
+			preLogs = append(preLogs, webAnnouncement(webSrv, showToken))
 		}
 
 		// Each natural count completion sends a notification, including after
 		// restart. Other monitors and duration/reload handling remain active.
 		doneCh := sup.finished
 
-		// sig is closed to signal TUI shutdown, either by the YAML watcher, an
-		// in-memory add/delete-host request, or (below) --duration elapsing.
+		// sig is closed to signal TUI shutdown, either by the YAML watcher or
+		// (below) --duration elapsing.
 		sig := newReloadSignal()
 		onFileChange := func() { rc.requestFileReload(sig, currentCfg.hostsFile, logCh) }
 		watchCancel, watchDone := startWatcher(currentCfg.hostsFile, onFileChange, logCh)
@@ -387,7 +388,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 
 		// stopDurationWatch converges --duration onto the same sig/
 		// ExternalCloseCh path as a YAML reload: nothing here calls
-		// rc.requestFileReload/requestHostsChange, so once uiRun returns,
+		// rc.requestFileReload, so once uiRun returns,
 		// rc.apply() below finds no pending reload and the loop breaks to
 		// printExitSummary exactly as it would after a plain 'q' quit.
 		stopDurationWatch := watchDurationLimit(durationCtx, sig, logCh)
@@ -397,16 +398,15 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			dispV4: displaySourceIPv4, dispV6: displaySourceIPv6,
 			packetSize: packetSizeToUse, preLogs: preLogs, cfg: currentCfg,
 			portCount: len(portSpecs), sup: sup,
-			resetMTR: resetMTR, resetHTTP: resetHTTP, resetPort: resetPort,
-			thresholds: currentCfg.thresholds, sig: sig, logCh: logCh, rc: rc,
+			thresholds: currentCfg.thresholds, sig: sig, logCh: logCh,
 			currentHosts: currentHosts, currentGroups: currentGroups,
 		})
-		runOpts.TargetSource = sup.liveTargets
-		runOpts.OnAddHost = sup.addHost
-		runOpts.OnDeleteHost = sup.deleteHost
-		runOpts.OnDeleteTarget = sup.deleteTargetID
-		runOpts.OnSaveReport = sup.saveReport
-		uiErr := uiRun(runOpts)
+		uiErr := runUI(runOpts)
+		// Stop accepting browser edits before the host list is captured and
+		// the supervisor torn down: an edit accepted from here on would be
+		// acknowledged and then lost. The final state (stopped, or running
+		// again after a reload) is set below and still reaches open streams.
+		webSrc.MarkReloading()
 		if snap := sup.targetSnap.Load(); snap != nil {
 			targets = snap.targets
 			currentHosts = snap.specs
@@ -414,6 +414,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		}
 		stopDurationWatch()
 		if uiErr != nil {
+			webSrc.MarkStopped()
 			fmt.Fprintf(errOut, "Error running application: %v\n", uiErr)
 			finishIteration(currentCfg, targets, sup, errOut, jsonCancel, jsonDone, watchCancel, watchDone)
 			return 1
@@ -421,18 +422,22 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 
 		finishIteration(currentCfg, targets, sup, errOut, jsonCancel, jsonDone, watchCancel, watchDone)
 
+		// A signal means exit, even if a hosts-file change armed a reload
+		// while the iteration was ending.
+		if headless != nil && headless.quitRequested() {
+			webSrc.MarkStopped()
+			break
+		}
+
 		var reload bool
 		var expandWarning string
 		currentHosts, currentGroups, currentCfg, reload, expandWarning = rc.apply(currentCfg, currentHosts, currentGroups)
 		if !reload {
+			webSrc.MarkStopped()
 			break
 		}
-		if portWarning := checkPortReloadDrift(activePortSpecsRaw, currentCfg.portSpecs); portWarning != "" {
-			pendingWarnings = append(pendingWarnings, portWarning)
-		}
-		if expandWarning != "" {
-			pendingWarnings = append(pendingWarnings, expandWarning)
-		}
+		webSrc.MarkReloading()
+		pendingWarnings = reloadWarnings(cfg, currentCfg, activePortSpecsRaw, expandWarning)
 		// Loop continues: targets are re-initialised with the new currentHosts.
 	}
 
@@ -441,6 +446,38 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		return exitCodeNoResponse
 	}
 	return 0
+}
+
+// chooseUIRunner returns the TUI, or with --no-tui a headless runner that
+// prints the Log to out and stops on SIGINT/SIGTERM. stop releases the
+// signal handlers; headless is nil for the TUI.
+func chooseUIRunner(cfg config, out, errOut io.Writer) (runUI func(ui.RunOptions) error, headless *headlessRunner, stop func()) {
+	if !cfg.noTUI {
+		return uiRun, nil, func() {}
+	}
+	if !cfg.webEnabled && cfg.jsonOutputFile == "" && cfg.outputFile == "" {
+		fmt.Fprintln(errOut, "Note: --no-tui without --web, --json-output or --output prints only log lines and the final summary.")
+	}
+	sigs, stopSignals := headlessSignals()
+	headless = newHeadlessRunner(out, sigs, stopSignals)
+	return headless.run, headless, stopSignals
+}
+
+// reloadWarnings collects the Log notices for a reload: settings that only
+// take effect after a restart (web, ports) and a failed --resolve-all
+// re-expansion. startup is the config mping was started with.
+func reloadWarnings(startup, reloaded config, activePortSpecs []string, expandWarning string) []string {
+	var warnings []string
+	for _, w := range []string{
+		checkWebReloadDrift(startup, reloaded),
+		checkPortReloadDrift(activePortSpecs, reloaded.portSpecs),
+		expandWarning,
+	} {
+		if w != "" {
+			warnings = append(warnings, w)
+		}
+	}
+	return warnings
 }
 
 // allTargetsUnresponsive reports whether every target finished with zero
@@ -486,139 +523,6 @@ func printExitSummary(out io.Writer, targets []*stats.TargetStats) {
 		}
 		fmt.Fprintln(out)
 	}
-}
-
-type tracer interface {
-	TraceRoute(ctx context.Context, dest string, maxHops int, timeout time.Duration) ([]string, error)
-}
-
-func runTraceroutes(ctx context.Context, p tracer, targets []*stats.TargetStats) {
-	ticker := time.NewTicker(tracerouteInterval)
-	defer ticker.Stop()
-
-	runOnce := func() {
-		if ctx.Err() != nil {
-			return
-		}
-		for _, t := range targets {
-			if len(t.GetView().TraceHops) == 0 {
-				t.SetTraceHops([]string{"Tracing..."})
-			}
-		}
-
-		var wg sync.WaitGroup
-		for _, t := range targets {
-			wg.Add(1)
-			go func(t *stats.TargetStats) {
-				defer wg.Done()
-				var hops []string
-				var err error
-				hops, err = p.TraceRoute(ctx, t.Host, tracerouteMaxHops, tracerouteHopTimeout)
-				if ctx.Err() != nil {
-					return // a cancelled run must not replace the displayed route
-				}
-				if err != nil {
-					t.SetTraceHops([]string{"error: " + err.Error()})
-					return
-				}
-				if len(hops) == 0 {
-					t.SetTraceHops([]string{"no route found"})
-					return
-				}
-				t.SetTraceHops(hops)
-			}(t)
-		}
-		wg.Wait()
-	}
-
-	runOnce() // Initial run
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			runOnce()
-		}
-	}
-}
-
-func expandTargets(specs []targetSpec, groups []ui.TargetGroup, cfg config) ([]targetSpec, []ui.TargetGroup, error) {
-	if !cfg.resolveAll {
-		return specs, groups, nil
-	}
-
-	resolver := newCustomResolver(cfg.dnsServer, resolverBindConfig(cfg, specs))
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	resolvedIPs := make(map[string][]string)
-	for _, spec := range specs {
-		if spec.PinnedIP != "" {
-			continue
-		}
-		rawHost := spec.Host
-		if _, err := netip.ParseAddr(rawHost); err == nil {
-			resolvedIPs[spec.Host] = []string{rawHost}
-			continue
-		}
-
-		network := resolveNetwork(cfg)
-		ips, err := resolver.LookupIP(ctx, network, rawHost)
-		if err != nil || len(ips) == 0 {
-			resolvedIPs[spec.Host] = []string{rawHost}
-			continue
-		}
-
-		var ipStrs []string
-		for _, ip := range ips {
-			ipStrs = append(ipStrs, ip.String())
-		}
-		resolvedIPs[spec.Host] = ipStrs
-	}
-
-	var expandedSpecs []targetSpec
-	expansionMap := make(map[int][]int)
-
-	for i, spec := range specs {
-		if spec.PinnedIP != "" {
-			expandedSpecs = append(expandedSpecs, spec)
-			expansionMap[i] = []int{len(expandedSpecs) - 1}
-			continue
-		}
-
-		ips := resolvedIPs[spec.Host]
-		startIdx := len(expandedSpecs)
-
-		for _, ip := range ips {
-			if spec.Host != ip {
-				expandedSpecs = append(expandedSpecs, targetSpec{Host: spec.Host, PinnedIP: ip, Name: spec.Name, DSCP: spec.DSCP})
-			} else {
-				expandedSpecs = append(expandedSpecs, targetSpec{Host: ip, Name: spec.Name, DSCP: spec.DSCP})
-			}
-		}
-
-		endIdx := len(expandedSpecs)
-		var indices []int
-		for j := startIdx; j < endIdx; j++ {
-			indices = append(indices, j)
-		}
-		expansionMap[i] = indices
-	}
-
-	var expandedGroups []ui.TargetGroup
-	for _, g := range groups {
-		var newIndices []int
-		for _, oldIdx := range g.Indices {
-			newIndices = append(newIndices, expansionMap[oldIdx]...)
-		}
-		expandedGroups = append(expandedGroups, ui.TargetGroup{
-			Name:    g.Name,
-			Indices: newIndices,
-		})
-	}
-
-	return expandedSpecs, expandedGroups, nil
 }
 
 func main() {

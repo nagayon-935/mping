@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -366,13 +365,9 @@ type runOptionsParams struct {
 	cfg           config
 	portCount     int
 	sup           *supervisor
-	resetMTR      func()
-	resetHTTP     func()
-	resetPort     func()
 	thresholds    ui.Thresholds
 	sig           *reloadSignal
 	logCh         chan string
-	rc            *reloadCoordinator
 	currentHosts  []targetSpec
 	currentGroups []ui.TargetGroup
 }
@@ -395,12 +390,13 @@ func dscpColumnEnabled(cfg config, hosts []targetSpec) bool {
 	return false
 }
 
-// buildRunOptions assembles the ui.RunOptions for one loop iteration,
-// including the OnAddHost/OnDeleteHost callbacks that arm an in-memory
-// reload via the reloadCoordinator.
+// buildRunOptions assembles the ui.RunOptions for one loop iteration. Every
+// operation goes to the iteration's supervisor; host edits apply live,
+// without a reload. Reset callbacks exist only for the monitors running.
 func buildRunOptions(p runOptionsParams) ui.RunOptions {
-	return ui.RunOptions{
+	opts := ui.RunOptions{
 		Targets:         p.targets,
+		TargetSource:    p.sup.liveTargets,
 		Interval:        p.interval,
 		Timeout:         p.timeout,
 		DoneCh:          p.doneCh,
@@ -423,45 +419,24 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 		OnRestart: func() error {
 			return p.sup.do(cmdRestart)
 		},
-		OnReset:      p.sup.resetStats,
-		OnResetTrace: p.sup.resetTrace,
-		OnResetMTR:   p.resetMTR,
-		OnResetPort:  p.resetPort,
-		OnResetHTTP:  p.resetHTTP,
-		OnAddHost: func(host string) error {
-			host = strings.TrimSpace(host)
-			if host == "" {
-				return fmt.Errorf("host cannot be empty")
-			}
-			for _, h := range p.currentHosts {
-				if h.display() == host {
-					return fmt.Errorf("host %q is already in the list", host)
-				}
-			}
-			newHosts := make([]targetSpec, len(p.currentHosts)+1)
-			copy(newHosts, p.currentHosts)
-			newHosts[len(p.currentHosts)] = targetSpec{Host: host}
-			p.rc.requestHostsChange(p.sig, newHosts)
-			return nil
-		},
-		OnDeleteHost: func(host string) error {
-			newHosts := make([]targetSpec, 0, len(p.currentHosts))
-			for _, h := range p.currentHosts {
-				if h.display() != host {
-					newHosts = append(newHosts, h)
-				}
-			}
-			if len(newHosts) == len(p.currentHosts) {
-				return fmt.Errorf("host %q not found", host)
-			}
-			if len(newHosts) == 0 {
-				return fmt.Errorf("cannot delete the last host")
-			}
-			p.rc.requestHostsChange(p.sig, newHosts)
-			return nil
-		},
-		Groups: p.currentGroups,
+		OnReset:        p.sup.resetStats,
+		OnResetTrace:   p.sup.resetTrace,
+		OnAddHost:      p.sup.addHost,
+		OnDeleteHost:   p.sup.deleteHost,
+		OnDeleteTarget: p.sup.deleteTargetID,
+		OnSaveReport:   p.sup.saveReport,
+		Groups:         p.currentGroups,
 	}
+	if p.cfg.mtr {
+		opts.OnResetMTR = p.sup.resetMTR
+	}
+	if len(p.cfg.httpURLs) > 0 {
+		opts.OnResetHTTP = p.sup.resetHTTP
+	}
+	if p.portCount > 0 {
+		opts.OnResetPort = p.sup.resetPort
+	}
+	return opts
 }
 
 // finishIteration performs the standard post-uiRun cleanup: stop the JSON

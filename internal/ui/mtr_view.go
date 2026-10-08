@@ -102,74 +102,58 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, 
 		label += fmt.Sprintf("  [FLAP ×%d %s]", view.MTRFlapCount, view.MTRLastFlapAt.Format("15:04:05"))
 	}
 
-	if compact {
-		// ── Compact: Hop | Host | Loss% | Snt | Last | Avg ──────────────
-		cols := []int{mtrHopColW, hostW, mtrLossColW, mtrSntColW, mtrLatColW, mtrLatColW}
-		// innerW = sum of all column widths + internal separators (5 for 6 cols)
-		innerW := mtrHopColW + hostW + mtrLossColW + mtrSntColW + mtrLatColW*2 + 5
-
-		// Full-width top border → label row → ├─┬─┤ introduces columns
-		fmt.Fprintln(sb, boxBorder([]int{innerW}, borderTop))
-		fmt.Fprintln(sb, boxSpanRow(" "+label, innerW, "[yellow::b]"))
-		fmt.Fprintln(sb, boxBorder(cols, borderIntro))
-		fmt.Fprintln(sb, boxHeaderRow([]string{"Hop", "Host", "Loss%", "Snt", "Last", "Avg"}, cols))
-		fmt.Fprintln(sb, boxBorder(cols, borderMid))
-
-		if len(hops) == 0 {
-			fmt.Fprintln(sb, boxSpanRow(" Discovering...", innerW, "[darkgray]"))
-		} else {
-			for _, h := range hops {
-				hopStr := fmt.Sprintf("%3d.", h.TTL)
-				ipStr := mtrIPStr(h)
-				lossStr := fmt.Sprintf("%.1f%%", h.LossPct)
-				fmt.Fprintf(sb, "[white]│[white]%s[white]│[white]%s[white]│%s%s[-][white]│[white]%s[white]│%s%s[-][white]│%s%s[-][white]│[-]\n",
-					paddedCell(hopStr, mtrHopColW),
-					paddedCell(ipStr, hostW),
-					mtrLossColorTag(h.LossPct), paddedCell(lossStr, mtrLossColW),
-					paddedCell(fmt.Sprintf("%d", h.Sent), mtrSntColW),
-					mtrRTTColorTag(h.LastRTT), paddedCell(formatRTT(h.LastRTT), mtrLatColW),
-					mtrRTTColorTag(h.AvgRTT), paddedCell(formatRTT(h.AvgRTT), mtrLatColW))
-			}
-		}
-		fmt.Fprintln(sb, boxBorder(cols, borderBottom))
-
-	} else {
-		// ── Full: Hop | Host | Loss% | Snt | Recv | Last | Avg | Min | Max | Jitter ──
-		cols := []int{mtrHopColW, hostW, mtrLossColW, mtrSntColW, mtrRecvColW,
-			mtrLatColW, mtrLatColW, mtrLatColW, mtrLatColW, mtrLatColW}
-		// innerW = sum of all column widths + internal separators (9 for 10 cols)
-		innerW := mtrHopColW + hostW + mtrLossColW + mtrSntColW + mtrRecvColW + mtrLatColW*5 + 9
-
-		// Full-width top border → label row → ├─┬─┤ introduces columns
-		fmt.Fprintln(sb, boxBorder([]int{innerW}, borderTop))
-		fmt.Fprintln(sb, boxSpanRow(" "+label, innerW, "[yellow::b]"))
-		fmt.Fprintln(sb, boxBorder(cols, borderIntro))
-		fmt.Fprintln(sb, boxHeaderRow([]string{"Hop", "Host", "Loss%", "Snt", "Recv",
-			"Last", "Avg", "Min", "Max", "Jitter"}, cols))
-		fmt.Fprintln(sb, boxBorder(cols, borderMid))
-
-		if len(hops) == 0 {
-			fmt.Fprintln(sb, boxSpanRow(" Discovering...", innerW, "[darkgray]"))
-		} else {
-			for _, h := range hops {
-				hopStr := fmt.Sprintf("%3d.", h.TTL)
-				ipStr := mtrIPStr(h)
-				lossStr := fmt.Sprintf("%.1f%%", h.LossPct)
-				fmt.Fprintf(sb, "[white]│[white]%s[white]│[white]%s[white]│%s%s[-][white]│[white]%s[white]│[white]%s[white]│%s%s[-][white]│%s%s[-][white]│%s%s[-][white]│%s%s[-][white]│%s%s[-][white]│[-]\n",
-					paddedCell(hopStr, mtrHopColW),
-					paddedCell(ipStr, hostW),
-					mtrLossColorTag(h.LossPct), paddedCell(lossStr, mtrLossColW),
-					paddedCell(fmt.Sprintf("%d", h.Sent), mtrSntColW),
-					paddedCell(fmt.Sprintf("%d", h.Recv), mtrRecvColW),
-					mtrRTTColorTag(h.LastRTT), paddedCell(formatRTT(h.LastRTT), mtrLatColW),
-					mtrRTTColorTag(h.AvgRTT), paddedCell(formatRTT(h.AvgRTT), mtrLatColW),
-					mtrRTTColorTag(h.MinRTT), paddedCell(formatRTT(h.MinRTT), mtrLatColW),
-					mtrRTTColorTag(h.MaxRTT), paddedCell(formatRTT(h.MaxRTT), mtrLatColW),
-					mtrRTTColorTag(h.Jitter), paddedCell(formatRTT(h.Jitter), mtrLatColW))
-			}
-		}
-		fmt.Fprintln(sb, boxBorder(cols, borderBottom))
+	// Compact: Hop | Host | Loss% | Snt | Last | Avg
+	// Full:    Hop | Host | Loss% | Snt | Recv | Last | Avg | Min | Max | Jitter
+	type mtrColumn struct {
+		boxColumn
+		cell func(stats.HopView) boxCell
+		full bool // shown only in the full layout
 	}
+	rtt := func(get func(stats.HopView) time.Duration) func(stats.HopView) boxCell {
+		return func(h stats.HopView) boxCell { return boxCell{text: formatRTT(get(h)), tag: mtrRTTColorTag(get(h))} }
+	}
+	plain := func(text func(stats.HopView) string) func(stats.HopView) boxCell {
+		return func(h stats.HopView) boxCell { return boxCell{text: text(h)} }
+	}
+	all := []mtrColumn{
+		{boxColumn{header: "Hop", width: mtrHopColW}, plain(func(h stats.HopView) string { return fmt.Sprintf("%3d.", h.TTL) }), false},
+		{boxColumn{header: "Host", width: hostW}, plain(mtrIPStr), false},
+		{boxColumn{header: "Loss%", width: mtrLossColW}, func(h stats.HopView) boxCell {
+			return boxCell{text: fmt.Sprintf("%.1f%%", h.LossPct), tag: mtrLossColorTag(h.LossPct)}
+		}, false},
+		{boxColumn{header: "Snt", width: mtrSntColW}, plain(func(h stats.HopView) string { return fmt.Sprintf("%d", h.Sent) }), false},
+		{boxColumn{header: "Recv", width: mtrRecvColW}, plain(func(h stats.HopView) string { return fmt.Sprintf("%d", h.Recv) }), true},
+		{boxColumn{header: "Last", width: mtrLatColW}, rtt(func(h stats.HopView) time.Duration { return h.LastRTT }), false},
+		{boxColumn{header: "Avg", width: mtrLatColW}, rtt(func(h stats.HopView) time.Duration { return h.AvgRTT }), false},
+		{boxColumn{header: "Min", width: mtrLatColW}, rtt(func(h stats.HopView) time.Duration { return h.MinRTT }), true},
+		{boxColumn{header: "Max", width: mtrLatColW}, rtt(func(h stats.HopView) time.Duration { return h.MaxRTT }), true},
+		{boxColumn{header: "Jitter", width: mtrLatColW}, rtt(func(h stats.HopView) time.Duration { return h.Jitter }), true},
+	}
+	var cols []mtrColumn
+	for _, c := range all {
+		if !c.full || !compact {
+			cols = append(cols, c)
+		}
+	}
+	boxCols := make([]boxColumn, len(cols))
+	for i, c := range cols {
+		boxCols[i] = c.boxColumn
+	}
+
+	// One row per hop, with no rule between hops.
+	var rows [][]boxCell
+	for _, h := range hops {
+		cells := make([]boxCell, len(cols))
+		for i, c := range cols {
+			cells[i] = c.cell(h)
+		}
+		rows = append(rows, cells)
+	}
+	var groups [][][]boxCell
+	if len(rows) > 0 {
+		groups = [][][]boxCell{rows}
+	}
+	writeLabelledBoxTable(sb, boxCols, label, groups, " Discovering...")
 }
 
 // mtrIPStr returns the display string for a hop's IP/ASN/operator name.

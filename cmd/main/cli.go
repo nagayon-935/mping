@@ -46,6 +46,9 @@ func registerFlags(fs *pflag.FlagSet, cfg *config, th *thresholdFlags) {
 	fs.BoolVarP(&cfg.mtr, "mtr", "M", false, "enable MTR-style per-hop monitor pane")
 	fs.StringVarP(&cfg.dnsServer, "dns-server", "d", "", "custom DNS server IP to use for hostname resolution")
 	fs.BoolVar(&cfg.resolveAll, "resolve-all", false, "resolve target hostname to all IP addresses and monitor them concurrently")
+	fs.BoolVar(&cfg.webEnabled, "web", false, "serve a browser dashboard on http://127.0.0.1:<web-port>/ (this machine only)")
+	fs.IntVar(&cfg.webPort, "web-port", 8080, "port for --web (1-65535)")
+	fs.BoolVar(&cfg.noTUI, "no-tui", false, "run without the terminal UI: print log lines to stdout and exit on Ctrl-C/SIGTERM, --count completion or --duration")
 	fs.StringVar(&cfg.dscp, "dscp", "", "outbound DSCP marking: a codepoint name (EF, CS0-CS7, AF11-AF43, VA, DF) or a 0-255 TOS/TrafficClass byte; overridable per host in a hosts file via 'dscp:' (IPv6 only for per-host overrides — see docs)")
 
 	fs.IntVar(&th.rttWarnMs, "rtt-warn", 50, "RTT warn threshold in ms (orange)")
@@ -104,6 +107,10 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 	if cfg.intervalMs < minIntervalMs || cfg.intervalMs > maxIntervalMs {
 		return config{}, nil, nil, usageBuf.String(),
 			fmt.Errorf("-i/--interval: must be %d–%d ms, got %d", minIntervalMs, maxIntervalMs, cfg.intervalMs)
+	}
+
+	if cfg.webPort < 1 || cfg.webPort > 65535 {
+		return config{}, nil, nil, usageBuf.String(), fmt.Errorf("--web-port: must be 1–65535, got %d", cfg.webPort)
 	}
 
 	if cfg.dscp != "" {

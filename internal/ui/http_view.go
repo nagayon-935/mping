@@ -132,71 +132,59 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 		}
 	}
 
-	var sb strings.Builder
-
-	if compact {
-		// Compact: URL | Status | Code | Last | Up | Down
-		cols := []int{urlW, httpStatusColW, httpCodeColW, httpLatColW, httpCountColW, httpCountColW}
-		innerW := urlW + httpStatusColW + httpCodeColW + httpLatColW + httpCountColW*2 + 5
-
-		fmt.Fprintln(&sb, boxBorder([]int{innerW}, borderTop))
-		fmt.Fprintln(&sb, boxBorder(cols, borderIntro))
-		fmt.Fprintln(&sb, boxHeaderRow([]string{"URL", "Status", "Code", "Last", "Up", "Down"}, cols))
-		fmt.Fprintln(&sb, boxBorder(cols, borderMid))
-
-		if len(results) == 0 {
-			fmt.Fprintln(&sb, boxSpanRow(" Waiting for results...", innerW, "[darkgray]"))
-		} else {
-			for i, r := range results {
-				v := r.GetView()
-				fmt.Fprintf(&sb, "[white]│[white]%s[white]│%s%s[-][white]│%s%s[-][white]│%s%s[-][white]│[white]%s[white]│[white]%s[white]│[-]\n",
-					paddedCell(tview.Escape(v.URL), urlW),
-					httpStatusColorTag(v.Status), paddedCell(v.Status, httpStatusColW),
-					httpCodeColorTag(v.StatusCode), paddedCell(httpCodeStr(v.StatusCode), httpCodeColW),
-					mtrRTTColorTag(v.RTT), paddedCell(formatHTTPRTT(v.RTT), httpLatColW),
-					paddedCell(fmt.Sprintf("%d", v.UpCount), httpCountColW),
-					paddedCell(fmt.Sprintf("%d", v.DownCount), httpCountColW))
-				if i < len(results)-1 {
-					fmt.Fprintln(&sb, boxBorder(cols, borderMid))
-				}
-			}
+	// Compact: URL | Status | Code | Last | Up | Down
+	// Full:    URL | Status | Code | Last | Min | Avg | Max | Up | Down | Since
+	type httpColumn struct {
+		boxColumn
+		cell func(stats.HTTPCheckView) boxCell
+		full bool // shown only in the full layout
+	}
+	rtt := func(get func(stats.HTTPCheckView) time.Duration) func(stats.HTTPCheckView) boxCell {
+		return func(v stats.HTTPCheckView) boxCell {
+			return boxCell{text: formatHTTPRTT(get(v)), tag: mtrRTTColorTag(get(v))}
 		}
-		fmt.Fprintln(&sb, boxBorder(cols, borderBottom))
-	} else {
-		// Full: URL | Status | Code | Last | Min | Avg | Max | Up | Down | Since
-		cols := []int{urlW, httpStatusColW, httpCodeColW, httpLatColW, httpLatColW, httpLatColW,
-			httpLatColW, httpCountColW, httpCountColW, httpSinceColW}
-		innerW := urlW + httpStatusColW + httpCodeColW + httpLatColW*4 + httpCountColW*2 + httpSinceColW + 9
-
-		fmt.Fprintln(&sb, boxBorder([]int{innerW}, borderTop))
-		fmt.Fprintln(&sb, boxBorder(cols, borderIntro))
-		fmt.Fprintln(&sb, boxHeaderRow([]string{"URL", "Status", "Code", "Last", "Min", "Avg",
-			"Max", "Up", "Down", "Since"}, cols))
-		fmt.Fprintln(&sb, boxBorder(cols, borderMid))
-
-		if len(results) == 0 {
-			fmt.Fprintln(&sb, boxSpanRow(" Waiting for results...", innerW, "[darkgray]"))
-		} else {
-			for i, r := range results {
-				v := r.GetView()
-				fmt.Fprintf(&sb, "[white]│[white]%s[white]│%s%s[-][white]│%s%s[-][white]│%s%s[-][white]│%s%s[-][white]│%s%s[-][white]│%s%s[-][white]│[white]%s[white]│[white]%s[white]│[white]%s[white]│[-]\n",
-					paddedCell(tview.Escape(v.URL), urlW),
-					httpStatusColorTag(v.Status), paddedCell(v.Status, httpStatusColW),
-					httpCodeColorTag(v.StatusCode), paddedCell(httpCodeStr(v.StatusCode), httpCodeColW),
-					mtrRTTColorTag(v.RTT), paddedCell(formatHTTPRTT(v.RTT), httpLatColW),
-					mtrRTTColorTag(v.MinRTT), paddedCell(formatHTTPRTT(v.MinRTT), httpLatColW),
-					mtrRTTColorTag(v.AvgRTT), paddedCell(formatHTTPRTT(v.AvgRTT), httpLatColW),
-					mtrRTTColorTag(v.MaxRTT), paddedCell(formatHTTPRTT(v.MaxRTT), httpLatColW),
-					paddedCell(fmt.Sprintf("%d", v.UpCount), httpCountColW),
-					paddedCell(fmt.Sprintf("%d", v.DownCount), httpCountColW),
-					paddedCell(httpSinceStr(v.LastChange), httpSinceColW))
-				if i < len(results)-1 {
-					fmt.Fprintln(&sb, boxBorder(cols, borderMid))
-				}
-			}
+	}
+	plain := func(text func(stats.HTTPCheckView) string) func(stats.HTTPCheckView) boxCell {
+		return func(v stats.HTTPCheckView) boxCell { return boxCell{text: text(v)} }
+	}
+	all := []httpColumn{
+		{boxColumn{header: "URL", width: urlW}, plain(func(v stats.HTTPCheckView) string { return tview.Escape(v.URL) }), false},
+		{boxColumn{header: "Status", width: httpStatusColW}, func(v stats.HTTPCheckView) boxCell {
+			return boxCell{text: v.Status, tag: httpStatusColorTag(v.Status)}
+		}, false},
+		{boxColumn{header: "Code", width: httpCodeColW}, func(v stats.HTTPCheckView) boxCell {
+			return boxCell{text: httpCodeStr(v.StatusCode), tag: httpCodeColorTag(v.StatusCode)}
+		}, false},
+		{boxColumn{header: "Last", width: httpLatColW}, rtt(func(v stats.HTTPCheckView) time.Duration { return v.RTT }), false},
+		{boxColumn{header: "Min", width: httpLatColW}, rtt(func(v stats.HTTPCheckView) time.Duration { return v.MinRTT }), true},
+		{boxColumn{header: "Avg", width: httpLatColW}, rtt(func(v stats.HTTPCheckView) time.Duration { return v.AvgRTT }), true},
+		{boxColumn{header: "Max", width: httpLatColW}, rtt(func(v stats.HTTPCheckView) time.Duration { return v.MaxRTT }), true},
+		{boxColumn{header: "Up", width: httpCountColW}, plain(func(v stats.HTTPCheckView) string { return fmt.Sprintf("%d", v.UpCount) }), false},
+		{boxColumn{header: "Down", width: httpCountColW}, plain(func(v stats.HTTPCheckView) string { return fmt.Sprintf("%d", v.DownCount) }), false},
+		{boxColumn{header: "Since", width: httpSinceColW}, plain(func(v stats.HTTPCheckView) string { return httpSinceStr(v.LastChange) }), true},
+	}
+	var cols []httpColumn
+	for _, c := range all {
+		if !c.full || !compact {
+			cols = append(cols, c)
 		}
-		fmt.Fprintln(&sb, boxBorder(cols, borderBottom))
+	}
+	boxCols := make([]boxColumn, len(cols))
+	for i, c := range cols {
+		boxCols[i] = c.boxColumn
 	}
 
+	var groups [][][]boxCell
+	for _, r := range results {
+		v := r.GetView()
+		cells := make([]boxCell, len(cols))
+		for i, c := range cols {
+			cells[i] = c.cell(v)
+		}
+		groups = append(groups, [][]boxCell{cells})
+	}
+
+	var sb strings.Builder
+	writeLabelledBoxTable(&sb, boxCols, "", groups, " Waiting for results...")
 	return sb.String()
 }
