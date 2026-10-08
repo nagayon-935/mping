@@ -55,6 +55,12 @@ func handleStream(ctx context.Context, cache *snapshotCache, cfg handlerConfig) 
 		for {
 			select {
 			case <-ctx.Done():
+				// The server is shutting down, typically right after
+				// MarkStopped and well inside one poll interval: push the
+				// final state so the browser shows "stopped" rather than a
+				// bare disconnect. A slow client cannot hold this up for
+				// long: Close bounds Shutdown and then force-closes.
+				_ = send()
 				return
 			case <-r.Context().Done():
 				return

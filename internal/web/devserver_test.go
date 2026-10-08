@@ -46,6 +46,7 @@ func TestDevServer(t *testing.T) {
 	for step := 0; ; step++ {
 		select {
 		case <-stop:
+			src.MarkStopped()
 			return
 		case <-tick.C:
 			sim.step(step)
