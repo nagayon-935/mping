@@ -68,7 +68,6 @@ func (d *saveDialog) show(selectedID uint64) {
 	})
 	d.formatPreview.SetText("Format: Text (.txt)")
 	d.form.AddButton("Save", d.submit).AddButton("Cancel", d.close)
-	d.form.SetButtonsAlign(tview.AlignCenter)
 	d.form.SetCancelFunc(d.close)
 	title := " Save session report "
 	if selectedID != 0 {
@@ -78,11 +77,10 @@ func (d *saveDialog) show(selectedID uint64) {
 		AddItem(d.path, 3, 0, true).
 		AddItem(d.formatPreview, 2, 0, false).
 		AddItem(d.form, 3, 0, false).
-		AddItem(d.status, 2, 0, false)
+		AddItem(nil, 0, 1, false)
 	content.SetBackgroundColor(tcell.ColorBlack)
 	content.SetBorder(true).SetBorderPadding(1, 1, 2, 2).SetTitle(title).SetTitleColor(tcell.ColorWhite).SetBorderColor(tcell.ColorWhite)
-	row := tview.NewFlex().AddItem(nil, 0, 1, false).AddItem(content, 0, 4, true).AddItem(nil, 0, 1, false)
-	pane := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(nil, 0, 1, false).AddItem(row, 14, 0, true).AddItem(nil, 0, 1, false)
+	pane := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(content, 0, 1, true).AddItem(d.status, 2, 0, false)
 	d.root.AddPage("saveReport", pane, true, true).SwitchToPage("saveReport")
 	d.app.SetFocus(d.path)
 }
