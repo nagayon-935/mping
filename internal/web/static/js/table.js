@@ -108,7 +108,7 @@ export function renderTargets(table, view, onOpen) {
         className: "target-row",
         attrs: {
           tabindex: "0",
-          "aria-selected": String(t.id === selectedId),
+          ...(t.id === selectedId ? { "aria-current": "true" } : {}),
           "aria-label": `${t.host}, details`,
           "data-target-id": String(t.id),
         },

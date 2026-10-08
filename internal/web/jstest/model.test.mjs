@@ -18,6 +18,8 @@ import {
   dscpName,
   tokenFromHash,
   validateHost,
+  summaryItems,
+  readOnlyHint,
 } from "../static/js/model.js";
 
 const th = {
@@ -160,4 +162,16 @@ test("validateHost mirrors the server's shape checks", () => {
   assert.ok(validateHost("a\u0007b").error);
   assert.ok(validateHost("a".repeat(254)).error);
   assert.equal(validateHost("a".repeat(253)).host.length, 253);
+});
+
+test("summaryItems lists waiting targets only when there are some", () => {
+  assert.deepEqual(summaryItems({ total: 3, ok: 1, warn: 1, crit: 1, pending: 0 }).map(([, l]) => l), ["targets", "OK", "warn", "crit"]);
+  assert.deepEqual(summaryItems({ total: 2, ok: 1, warn: 0, crit: 0, pending: 1 }), [[2, "targets"], [1, "OK"], [0, "warn"], [0, "crit"], [1, "waiting"]]);
+});
+
+test("readOnlyHint explains the 127.0.0.1 origin when opened via another host name", () => {
+  assert.match(readOnlyHint("127.0.0.1").title, /Log pane/);
+  assert.doesNotMatch(readOnlyHint("127.0.0.1").title, /instead/);
+  assert.match(readOnlyHint("localhost").title, /127\.0\.0\.1/);
+  assert.match(readOnlyHint("[::1]").text, /Read-only/);
 });

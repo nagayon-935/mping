@@ -21,6 +21,12 @@ function section(title, ...children) {
   return el("section", { className: "detail-section" }, el("h3", { text: title }), ...children);
 }
 
+function sectionWith(key, title, ...children) {
+  const node = section(title, ...children);
+  node.dataset.section = key;
+  return node;
+}
+
 function simpleTable(headers, rows) {
   const head = el("tr");
   for (const [label, num] of headers) head.append(el("th", { className: num ? "num" : "", text: label, attrs: { scope: "col" } }));
@@ -208,6 +214,8 @@ export function createDetail(dom) {
   };
   dom.closeButton.addEventListener("click", close);
   document.addEventListener("keydown", (e) => {
+    // Escape in a text field belongs to the field (e.g. clearing the filter).
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
     if (e.key === "Escape" && id != null && !e.defaultPrevented) close();
   });
   window.addEventListener("resize", () => id != null && chart.repaint());
@@ -236,7 +244,7 @@ export function createDetail(dom) {
         section("RTT", chart.node),
         hopsNode,
         section("Events", eventsNode),
-        actions && section("Actions", actions),
+        actions && sectionWith("actions", "Actions", actions),
       );
       dom.root.hidden = false;
       render();

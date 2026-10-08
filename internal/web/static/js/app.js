@@ -3,7 +3,7 @@
 import { el, badgeIcon, fetchJSON, selectionWithin } from "./dom.js";
 import { renderHTTP, renderTargets } from "./table.js";
 import { createDetail } from "./detail.js";
-import { badgeFor, summarize, validateHost } from "./model.js";
+import { badgeFor, readOnlyHint, summarize, summaryItems, validateHost } from "./model.js";
 import { confirmButton, createControl } from "./control.js";
 
 const SPARK_POINTS = 60;
@@ -78,8 +78,10 @@ function renderHeader() {
   node.querySelector(".badge-icon").textContent = badgeIcon(badge.level);
   node.querySelector(".badge-label").textContent = badge.label;
 
+  // Snapshots are only sent when something changed, so this is the time
+  // of the last change, not of the last check.
   $("updated").textContent = view.snapshot
-    ? `Updated ${new Date(view.snapshot.timestamp).toLocaleTimeString()}`
+    ? `Last change ${new Date(view.snapshot.timestamp).toLocaleTimeString()}`
     : "";
 
   const summary = $("summary");
@@ -88,10 +90,8 @@ function renderHeader() {
     return;
   }
   const s = summarize(view.snapshot.targets, view.meta.thresholds);
-  const item = (n, label) => el("li", {}, el("strong", { text: String(n) }), el("span", { text: label }));
-  summary.replaceChildren(
-    item(s.total, "targets"), item(s.ok, "OK"), item(s.warn, "warn"), item(s.crit, "crit"),
-  );
+  summary.replaceChildren(...summaryItems(s).map(([n, label]) =>
+    el("li", {}, el("strong", { text: String(n) }), el("span", { text: label }))));
 }
 
 // Rebuilding a table or the drawer drops any text the user is selecting, so
@@ -184,9 +184,15 @@ function renderControls() {
   $("add-form").hidden = !on;
   $("reset-slot").hidden = !on;
   $("readonly-hint").hidden = on;
+  // A rejected token (e.g. from an earlier mping run) also retracts the
+  // drawer's delete button, not just the header controls.
+  if (!on) document.querySelector('#detail-body [data-section="actions"]')?.remove();
 }
 
 function initControls() {
+  const hint = readOnlyHint(location.hostname);
+  $("readonly-hint").textContent = hint.text;
+  $("readonly-hint").title = hint.title;
   $("reset-slot").replaceChildren(confirmButton("Reset stats", "Confirm reset?", async () => {
     const res = await control.reset();
     notify(res.ok ? "Statistics reset." : `Couldn't reset: ${res.error}`, !res.ok);

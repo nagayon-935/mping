@@ -166,3 +166,22 @@ export function validateHost(raw) {
   if (/[\s\p{Cc}]/u.test(host)) return { error: "Host must not contain spaces or control characters." };
   return { host };
 }
+
+/** Header summary as [count, label] pairs; "waiting" only when non-zero. */
+export function summaryItems(s) {
+  const items = [[s.total, "targets"], [s.ok, "OK"], [s.warn, "warn"], [s.crit, "crit"]];
+  if (s.pending > 0) items.push([s.pending, "waiting"]);
+  return items;
+}
+
+/**
+ * Read-only badge text and tooltip. The token is stored per origin and the
+ * Log pane links to 127.0.0.1, so a page opened under another host name
+ * (e.g. localhost) never sees it.
+ */
+export function readOnlyHint(hostname) {
+  const base = "To add or delete hosts here, open the Web UI link shown in mping's Log pane";
+  return hostname === "127.0.0.1"
+    ? { text: "Read-only", title: `${base}.` }
+    : { text: "Read-only", title: `${base} (it uses 127.0.0.1; open that address instead of ${hostname}).` };
+}

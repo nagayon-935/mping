@@ -30,7 +30,7 @@ async function open(opts, context = browser, url = base) {
   page.on("console", (m) => {
     // The duplicate-host check provokes a 409 on purpose; the browser logs
     // every non-2xx fetch as a console error.
-    if (/status of 409/.test(m.text())) return;
+    if (/status of (409|403)/.test(m.text())) return;
     if (["error", "warning"].includes(m.type())) problems.push(m.text());
   });
   page.on("pageerror", (e) => problems.push(e.message));
@@ -57,6 +57,7 @@ try {
 
   await check("live badge and grouped rows", async () => {
     assert.match(await page.textContent("#badge"), /Live/);
+    assert.match(await page.textContent("#updated"), /^Last change /);
     assert.deepEqual(await page.$$eval("tr.group-row", (r) => r.map((x) => x.textContent)), ["core (2)", "internet (3)", "Ungrouped (1)"]);
     assert.equal(await page.$$eval("tr.target-row", (r) => r.length), 6);
     assert.ok(await page.isVisible("#http-panel"));
@@ -93,6 +94,9 @@ try {
     await page.waitForTimeout(2500);
     assert.deepEqual(await page.$$eval(".detail-section h3", (h) => h.map((x) => x.textContent)), ["Summary", "RTT", "MTR", "Events"]);
     assert.match(await page.evaluate(() => location.hash), /^#target-\d+$/);
+    assert.equal(await page.getAttribute("#detail", "role"), "dialog");
+    assert.equal(await page.$$eval('tr.target-row[aria-current="true"]', (r) => r.length), 1);
+    assert.equal(await page.$$eval("tr.target-row[aria-selected]", (r) => r.length), 0);
     const box = await page.locator("canvas.chart").boundingBox();
     await page.mouse.move(box.x + box.width * 0.6, box.y + box.height / 2);
     assert.match(await page.textContent(".tooltip"), /ms|Lost/);
@@ -123,6 +127,17 @@ try {
     await page.keyboard.press("Escape");
     await page.waitForTimeout(200);
     assert.ok(await page.isHidden("#detail"));
+  });
+
+  await check("Escape in the filter field leaves the drawer open", async () => {
+    await page.click("tr.target-row >> nth=0");
+    await page.fill("#filter", "core");
+    await page.focus("#filter");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
+    assert.ok(await page.isVisible("#detail"));
+    await page.click("#detail-close");
+    await page.fill("#filter", "");
   });
 
   await check("filter narrows the table", async () => {
@@ -207,6 +222,31 @@ try {
     await ctl.getByRole("button", { name: "Confirm reset?" }).click();
     await ctl.waitForFunction((b) => Number(document.querySelector("tr.target-row td.col-sent").textContent) < b, before, { timeout: 5000 });
     assert.match(await ctl.textContent("#notice"), /Statistics reset/);
+  });
+
+  await check("a token rejected mid-session retracts every control", async () => {
+    const other = await browser.newContext();
+    const page2 = await open({ viewport: { width: 1400, height: 900 } }, other, `${base}#token=${token}`);
+    await page2.waitForSelector("#add-form:not([hidden])");
+    await page2.route("**/api/v1/targets/*", (route) =>
+      route.request().method() === "DELETE"
+        ? route.fulfill({ status: 403, contentType: "application/json", body: '{"error":"control token missing or invalid"}' })
+        : route.continue());
+    await page2.click("tr.target-row >> nth=0");
+    await page2.getByRole("button", { name: /^Delete / }).click();
+    await page2.getByRole("button", { name: /^Confirm delete / }).click();
+    await page2.waitForFunction(() => document.querySelector("#add-form").hidden);
+    assert.ok(await page2.isVisible("#readonly-hint"));
+    assert.equal(await page2.$$eval('#detail-body [data-section="actions"]', (n) => n.length), 0);
+    await other.close();
+  });
+
+  await check("opening via localhost explains why the page is read-only", async () => {
+    const lh = await browser.newContext();
+    const page3 = await open({ viewport: { width: 1400, height: 900 } }, lh, base.replace("127.0.0.1", "localhost"));
+    assert.ok(await page3.isVisible("#readonly-hint"));
+    assert.match(await page3.getAttribute("#readonly-hint", "title"), /127\.0\.0\.1/);
+    await lh.close();
   });
 
   await check("a stale token falls back to read-only", async () => {

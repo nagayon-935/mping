@@ -24,8 +24,7 @@
     <button class="btn" type="submit">Add</button>
   </form>
   <span id="reset-slot" hidden></span>
-  <span id="readonly-hint" class="muted readonly-hint" hidden
-        title="To add or delete hosts here, open the Web UI link shown in mping's Log pane.">Read-only</span>
+  <span id="readonly-hint" class="muted readonly-hint" hidden>Read-only</span>
   <p id="notice" class="notice" role="status" aria-live="polite"></p>
 </header>
 
@@ -52,7 +51,7 @@
   </section>
 </main>
 
-<aside id="detail" class="detail" aria-labelledby="detail-title" hidden>
+<aside id="detail" class="detail" role="dialog" aria-modal="false" aria-labelledby="detail-title" hidden>
   <div class="detail-head">
     <div>
       <h2 id="detail-title" class="detail-title"></h2>
