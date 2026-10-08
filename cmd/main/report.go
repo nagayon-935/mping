@@ -134,5 +134,5 @@ func (s *supervisor) saveReport(path, format string, selectedID uint64) error {
 		return err
 	}
 	// File I/O happens outside the supervisor and holds no measurement locks.
-	return report.Write(path, format, snapshot)
+	return writeReportFile(path, format, snapshot)
 }

@@ -36,7 +36,7 @@
 | Linux | amd64, arm64 | Recommended: grant `CAP_NET_RAW` via `setcap` |
 | macOS | amd64, arm64 (Apple Silicon) | Uses `setuid` |
 
-> **Privileges required** — mping uses raw ICMP sockets to obtain accurate TTL values. On Linux the preferred approach is granting `CAP_NET_RAW` with `setcap`; `install.sh` handles this automatically. On macOS a `setuid` bit is set instead.
+> **Privileges required** — mping uses raw ICMP sockets to obtain accurate TTL values. On Linux the preferred approach is granting `CAP_NET_RAW` with `setcap`; `install.sh` handles this automatically. On macOS a `setuid` bit is set instead. With a `setuid` install, mping keeps root only for opening raw sockets: every file it reads or writes (`-f`, `include:`, `-o`, `-j`, saved reports) is accessed with the invoking user's permissions, so it cannot be used to read or modify files that user couldn't access directly.
 
 > **Terminal Compatibility** — Standard terminals on Linux and macOS may not render colors correctly. If you experience issues with color display, consider using a modern terminal emulator (e.g., iTerm2, Alacritty, or kitty).
 
@@ -343,7 +343,7 @@ Reports include the session and collection start times, capture interval, stable
 
 The most recent 128 removed targets, 128 events per target, and 64 destination IP history entries are retained; reports include omitted-entry counts. YAML reload starts a new collection and clears earlier targets and removal history. Manual reset starts a new ping statistics window; when stopped, port/HTTP results retain their previous counters. Measurements and auxiliary checks are captured sequentially within the recorded capture interval. Reports contain aggregate results and retained events; use CSV output for ongoing individual ping records.
 
-Reports are saved with owner-only read/write permissions (`0600`). When launched through sudo, ownership is assigned to the user who invoked sudo; setuid installations use the real user and group IDs. Ownership is set before publication; failure leaves no final report.
+Reports are saved with owner-only read/write permissions (`0600`). When launched through sudo, ownership is assigned to the user who invoked sudo; setuid installations create the report as the invoking user. Ownership is set before publication; failure leaves no final report.
 
 Existing files, including symlink destinations, are preserved. Each save writes a temporary file in the destination directory and atomically publishes the complete new file. Active CSV/JSON output paths are reserved for their existing writers. On a save error, choose a new writable path and retry with **w**.
 

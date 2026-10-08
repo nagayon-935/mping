@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/nagayon-935/mping/internal/privilege"
 	"github.com/nagayon-935/mping/internal/stats"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
@@ -341,12 +342,32 @@ type resolveIPAddrFunc func(network, address string) (*net.IPAddr, error)
 
 type listenPacketFunc func(network, address string) (net.PacketConn, error)
 
+// privilegedListenPacket is the default listenPacketFunc: raw ICMP sockets
+// need root (or CAP_NET_RAW), so they are opened inside privilege.Privileged,
+// never while a setuid-root run has dropped to the invoking user for file I/O.
+func privilegedListenPacket(network, address string) (net.PacketConn, error) {
+	var c net.PacketConn
+	err := privilege.Privileged(func() error {
+		var err error
+		c, err = net.ListenPacket(network, address)
+		return err
+	})
+	return c, err
+}
+
 // bindToInterfaceFn is a seam over the platform-specific bindToInterface
 // implementation (bindif_linux.go / bindif_darwin.go / bindif_other.go),
 // letting tests verify that Start() and OpenHopSocket() dispatch to it with
 // the correct interface name and address family without requiring root
 // privileges, real sockets, or real network interfaces.
-var bindToInterfaceFn = bindToInterface
+var bindToInterfaceFn = func(c net.PacketConn, ifaceName string, isIPv6 bool) {
+	// SO_BINDTODEVICE needs CAP_NET_RAW on Linux, which a setuid-root run
+	// only has while not inside privilege.AsRealUser.
+	_ = privilege.Privileged(func() error {
+		bindToInterface(c, ifaceName, isIPv6)
+		return nil
+	})
+}
 
 type Options struct {
 	IDs *IDAllocator // Shared for the session, including explicit restarts.
@@ -405,7 +426,7 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 	}
 	listen := opts.ListenPacket
 	if listen == nil {
-		listen = net.ListenPacket
+		listen = privilegedListenPacket
 	}
 	resolver := opts.Resolver
 	if resolver == nil {

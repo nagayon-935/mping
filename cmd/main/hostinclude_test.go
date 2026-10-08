@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -139,19 +138,6 @@ func TestReadIncludeFile_ErrorsDoNotEchoContent(t *testing.T) {
 				t.Fatalf("error %q echoes file content", err)
 			}
 		})
-	}
-}
-
-func TestReadIncludeFile_RequiresRealUserReadAccess(t *testing.T) {
-	path := writeTestFile(t, t.TempDir(), "list.txt", "10.0.0.1\n")
-	orig := realUserCanRead
-	t.Cleanup(func() { realUserCanRead = orig })
-	realUserCanRead = func(string) error { return errors.New("permission denied") }
-
-	_, err := readIncludeFile(path)
-
-	if err == nil || !strings.Contains(err.Error(), "not readable by the invoking user") {
-		t.Fatalf("error = %v, want a real-user access error", err)
 	}
 }
 

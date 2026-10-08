@@ -114,7 +114,12 @@ type thresholdsYAML struct {
 // (ranges, CIDRs, {N..M}) become concrete hosts and include files are read
 // relative to the hosts file's directory.
 func parseHostsFile(path string) (hostsFileYAML, error) {
-	data, err := os.ReadFile(path)
+	var data []byte
+	err := asRealUser(func() error {
+		var err error
+		data, err = os.ReadFile(path)
+		return err
+	})
 	if err != nil {
 		return hostsFileYAML{}, fmt.Errorf("read hosts file %q: %w", path, err)
 	}
