@@ -147,10 +147,6 @@ func (pc *PortChecker) loopContext(ctx context.Context, t *stats.TargetStats, sp
 	}
 }
 
-func (pc *PortChecker) check(t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
-	pc.checkContext(pc.ctx, t, spec, result)
-}
-
 func (pc *PortChecker) checkContext(ctx context.Context, t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
 	if ctx.Err() != nil {
 		return
