@@ -41,9 +41,9 @@ type SessionResponse struct {
 // hex characters.
 const minTokenLen = 16
 
-// checkToken accepts tokens that are long enough and URL-fragment safe
+// CheckToken accepts tokens that are long enough and URL-fragment safe
 // (unreserved characters only). Errors never repeat the token.
-func checkToken(token string) error {
+func CheckToken(token string) error {
 	if len(token) < minTokenLen {
 		return fmt.Errorf("control token must be at least %d characters", minTokenLen)
 	}

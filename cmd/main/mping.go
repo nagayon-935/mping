@@ -15,7 +15,6 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 	ui "github.com/nagayon-935/mping/internal/ui"
 	"github.com/nagayon-935/mping/internal/web"
-	"github.com/rivo/tview"
 )
 
 const (
@@ -273,6 +272,14 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	}
 	defer closeWebUI(webSrv, errOut)
 
+	runUI := uiRun
+	if cfg.noTUI {
+		sigs, stopSignals := headlessSignals()
+		defer stopSignals()
+		runUI = newHeadlessRunner(out, sigs)
+	}
+	showToken := !cfg.noTUI || isTerminal(out)
+
 	rc := newReloadCoordinator(fs, cliCfg, cliHosts)
 	currentCfg := cfg
 	currentHosts := hosts
@@ -380,9 +387,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 
 		webSrc.Set(newWebProvider(sup, currentCfg, currentHosts, len(portSpecs), logCh))
 		if webSrv != nil {
-			// The control URL carries this launch's token; it is shown only
-			// here, in the terminal of the user who started mping.
-			preLogs = append(preLogs, "Web UI: "+tview.Escape(webSrv.ControlURL()))
+			preLogs = append(preLogs, webAnnouncement(webSrv, showToken))
 		}
 
 		// Each natural count completion sends a notification, including after
@@ -417,7 +422,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		runOpts.OnDeleteHost = sup.deleteHost
 		runOpts.OnDeleteTarget = sup.deleteTargetID
 		runOpts.OnSaveReport = sup.saveReport
-		uiErr := uiRun(runOpts)
+		uiErr := runUI(runOpts)
 		// Stop accepting browser edits before the host list is captured and
 		// the supervisor torn down: an edit accepted from here on would be
 		// acknowledged and then lost. The final state (stopped, or running

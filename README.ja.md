@@ -263,6 +263,7 @@ groups:
 | `--json-output` | `-j` | 統計情報の JSON スナップショットを出力するファイルパス (5 秒ごとに更新) | `""` |
 | `--web` | | Web UI を `http://127.0.0.1:<web-port>/` で提供する (このマシンからのみ接続可。[Web UI](#web-ui-実験的機能) 参照) | `false` |
 | `--web-port` | | `--web` の待ち受けポート (1–65535) | `8080` |
+| `--no-tui` | | TUI を使わずに実行する ([ヘッドレスモード](#ヘッドレスモード---no-tui) 参照) | `false` |
 | `--asn` | `-a` | ターゲット IP の AS 番号を検索して表示する | `false` |
 | `--http` | `-H` | ヘルスチェックする URL (例: `https://example.com/health`)。カンマ区切りまたは繰り返し指定で複数可 | `""` |
 | `--rtt-warn` | | RTT の warn 閾値 (ミリ秒・オレンジ) | `50` |
@@ -473,6 +474,18 @@ mping --web google.com 1.1.1.1      # http://127.0.0.1:8080/ を開く
 | `POST /api/v1/targets` | ホスト追加。JSON `{"host": "example.com"}`、`X-Mping-Token` が必要 |
 | `DELETE /api/v1/targets/{id}` | ターゲット削除。`X-Mping-Token` が必要 |
 | `POST /api/v1/reset` | 統計リセット。`X-Mping-Token` が必要 |
+
+## ヘッドレスモード (`--no-tui`)
+
+`--no-tui` を付けると TUI を使わずに実行します。小型機でのサービス常駐などを想定しており、通常は `--web`・`--json-output`・`--output` と組み合わせます。
+
+```bash
+mping --no-tui --web -f hosts.yaml
+```
+
+- TUI の Log ペインに出るログ (経路フラップ、リロード通知、Web からの操作など) をプレーンテキストで stdout に出力し、終了時には通常どおり統計サマリーを表示します。TUI 自身が出すロス率・RTT のアラート行は出力されません。
+- Ctrl-C / SIGTERM、`--count` の完了、`--duration` の経過で終了します。hosts ファイルのリロードでは終了しません。
+- Web UI の操作用リンクには秘密の token が含まれるため、stdout が端末のときだけ表示します。無人運用では環境変数 `MPING_WEB_TOKEN` で token を指定し (英数字と `-._~` で 16 文字以上。コマンドラインやシェル履歴に残さず、systemd の `EnvironmentFile=` などで渡してください)、`http://127.0.0.1:8080/#token=<指定した token>` を開いてください。`MPING_WEB_TOKEN` は TUI 使用時にも有効です。
 
 ## ライセンス
 

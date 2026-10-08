@@ -268,6 +268,7 @@ See [examples/hosts-groups.yaml](examples/hosts-groups.yaml) for a runnable exam
 | `--json-output` | `-j` | Write a JSON statistics snapshot to this file every 5 seconds | `""` |
 | `--web` | | Serve the web UI on `http://127.0.0.1:<web-port>/` (this machine only; see [Web UI](#web-ui-experimental)) | `false` |
 | `--web-port` | | Port for `--web` (1–65535) | `8080` |
+| `--no-tui` | | Run without the terminal UI (see [Headless mode](#headless-mode---no-tui)) | `false` |
 | `--asn` | `-a` | Look up and display AS numbers for target IPs | `false` |
 | `--http` | `-H` | URL(s) to health-check, e.g. `https://example.com/health`. Comma-separated or repeated for multiple. | `""` |
 | `--rtt-warn` | | RTT warn threshold in ms (orange) | `50` |
@@ -482,6 +483,18 @@ mping --web google.com 1.1.1.1      # then open http://127.0.0.1:8080/
 | `POST /api/v1/targets` | Add a host: JSON body `{"host": "example.com"}`; needs `X-Mping-Token` |
 | `DELETE /api/v1/targets/{id}` | Delete a target; needs `X-Mping-Token` |
 | `POST /api/v1/reset` | Reset statistics; needs `X-Mping-Token` |
+
+## Headless mode (`--no-tui`)
+
+`--no-tui` runs mping without the terminal UI, e.g. as a service on a small box, usually together with `--web`, `--json-output` or `--output`:
+
+```bash
+mping --no-tui --web -f hosts.yaml
+```
+
+- Log lines the TUI would show in its Log pane (route flaps, reload notices, web edits, …) are printed to stdout as plain text, and the usual statistics summary is printed on exit. The TUI's own loss/RTT alert lines are not produced.
+- It exits on Ctrl-C or SIGTERM, when `--count` completes, or when `--duration` elapses; hosts-file reloads keep it running.
+- The web control link contains a secret token, so it is printed only when stdout is a terminal. For unattended runs, choose the token yourself with the `MPING_WEB_TOKEN` environment variable (at least 16 characters of letters, digits and `-._~`; keep it out of command lines and shell history, e.g. in a systemd `EnvironmentFile=`) and open `http://127.0.0.1:8080/#token=<your token>`. `MPING_WEB_TOKEN` also applies when the TUI is used.
 
 ## License
 

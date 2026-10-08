@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/stats"
@@ -21,12 +22,30 @@ func startWebUI(cfg config, src *web.Source, errOut io.Writer) (srv *web.Server,
 	if !cfg.webEnabled {
 		return nil, true
 	}
-	srv, err := webStart(web.Options{Port: cfg.webPort, Source: src})
+	token := os.Getenv("MPING_WEB_TOKEN")
+	if token != "" {
+		if err := web.CheckToken(token); err != nil {
+			fmt.Fprintf(errOut, "Error starting web UI: MPING_WEB_TOKEN: %v\n", err)
+			return nil, false
+		}
+	}
+	srv, err := webStart(web.Options{Port: cfg.webPort, Source: src, Token: token})
 	if err != nil {
 		fmt.Fprintf(errOut, "Error starting web UI: %v\n", err)
 		return nil, false
 	}
 	return srv, true
+}
+
+// webAnnouncement is the Log line offering the web UI. The control link
+// carries the token, so it is printed only where it stays private: the TUI,
+// or a headless run writing to an interactive terminal (not a pipe, file or
+// service journal).
+func webAnnouncement(srv *web.Server, showToken bool) string {
+	if showToken {
+		return "Web UI: " + tview.Escape(srv.ControlURL())
+	}
+	return "Web UI: " + srv.URL() + " (read-only: the control link is printed only to a terminal; to make changes, set MPING_WEB_TOKEN as described in the README)"
 }
 
 // closeWebUI stops srv (nil-safe). A shutdown error only means a stream
