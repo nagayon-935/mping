@@ -137,10 +137,12 @@ try {
 
   await check("selecting a target drives the monitor, graphs and inspect panes", async () => {
     const monitor = await page.locator("#pane-monitor").boundingBox();
-    const graphs = await page.locator("#pane-graphs").boundingBox();
     const inspect = await page.locator("#pane-inspect").boundingBox();
-    assert.ok(monitor.x + monitor.width <= graphs.x + 1, "monitor and graphs sit side by side on a wide screen");
-    assert.ok(inspect.y >= monitor.y + monitor.height - 1, "inspect pane sits below them");
+    const graphs = await page.locator("#pane-graphs").boundingBox();
+    assert.ok(monitor.x + monitor.width <= inspect.x + 1, "monitor and inspect sit side by side on a wide screen");
+    assert.ok(Math.abs(monitor.height - inspect.height) <= 1, `monitor ${monitor.height}px and inspect ${inspect.height}px share one height`);
+    assert.ok(graphs.y >= monitor.y + monitor.height - 1, "the RTT graphs sit below them");
+    assert.ok(Math.abs(graphs.width - (inspect.x + inspect.width - monitor.x)) <= 1, "the RTT graphs span the full width");
 
     await page.click("tr.target-row >> nth=2");
     await page.waitForFunction(() => document.querySelector("#inspect-target").textContent === "for cdn.example");
@@ -153,7 +155,9 @@ try {
     assert.equal(await page.textContent('#inspect-tabs [aria-selected="true"]'), "Summary");
     assert.deepEqual(await page.$$eval("#inspect-body .detail-section h3", (h) => h.map((x) => x.textContent)), ["Current", "Since start / reset"]);
     assert.equal(await page.$eval("#inspect-body", (n) => n.textContent.includes("null")), false);
-    await page.click('#inspect-tabs [data-tab="path"]');
+    // Named after the TUI pane it stands in for; the simulator enables MTR only.
+    assert.equal(await page.textContent('#inspect-tabs [data-tab="route"]'), "MTR");
+    await page.click('#inspect-tabs [data-tab="route"]');
     assert.ok((await page.$$eval("#inspect-body th", (h) => h.map((x) => x.textContent))).includes("Hop"));
     await shot(page, "panes");
   });

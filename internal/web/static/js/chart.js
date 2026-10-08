@@ -161,7 +161,8 @@ export function drawChart(canvas, series, th, intervalMs, opts = {}) {
     ctx.fillStyle = cssVar("--muted");
     ctx.textBaseline = "top";
     ctx.textAlign = "left";
-    ctx.fillText(agoLabel((series.length - 1) * (opts.samplesPerPoint ?? 1), intervalMs), left, baseY + 6);
+    // The left edge is where the window starts: a full window of samples ago.
+    ctx.fillText(agoLabel(series.length * (opts.samplesPerPoint ?? 1), intervalMs), left, baseY + 6);
     ctx.textAlign = "right";
     ctx.fillText("now", left + plotW, baseY + 6);
 

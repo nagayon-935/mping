@@ -55,9 +55,9 @@ the wrapper width to the widest the chosen columns can be, never below 1 and at
 most 2. Beyond that (very large monitors) the remainder stays empty. A column
 appearing as the screen widens resets the zoom to about 1.
 
-The ping monitor shares the width with the RTT graphs pane on screens of
-1100px and up (about 5/11 of it), so it shows fewer columns there than when
-the panes stack on narrower screens. On screens up to 640px every column uses the
+The ping monitor shares the width with the inspect pane on screens of 1100px
+and up (about 7/12 of it), so it shows fewer columns there than when the panes
+stack on narrower screens. On screens up to 640px every column uses the
 compact widths: status 72, host 94, loss 46, RTT 80 and trend 60 (4px cell
 padding, 12px text); up to 360px the status and host shrink to 68 and 90.
 Status, host, loss and latest RTT need 292px (72 + 94 + 46 + 80), so a phone

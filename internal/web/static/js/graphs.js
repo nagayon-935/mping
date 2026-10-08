@@ -41,8 +41,9 @@ export function createGraphs(dom) {
       card.geo = drawChart(card.canvas, values, state.meta.thresholds, state.meta.interval_ms,
         { yMax, lost, samplesPerPoint: size });
       if (cursor >= 0) drawCrosshair(card.canvas, card.geo, values, cursor);
-      const at = cursor >= 0 ? cursor : values.length - 1;
-      const v = values[at];
+      // At the cursor: that point's peak RTT. Otherwise the latest sample
+      // itself, matching the monitor's "Last" rather than a bucket peak.
+      const v = cursor >= 0 ? values[cursor] : full[i][full[i].length - 1];
       card.value.textContent = v === null ? "Lost" : v === undefined ? "–" : formatRTT(v);
       card.value.classList.toggle("is-lost", v === null);
     });

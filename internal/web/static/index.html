@@ -40,7 +40,7 @@
     <div class="pane-head">
       <div>
         <h2 id="targets-title" class="pane-title">Ping monitor</h2>
-        <p class="pane-hint">Select a target to inspect it below. <kbd>j</kbd>/<kbd>k</kbd> move, <kbd>Esc</kbd> clears.</p>
+        <p class="pane-hint">Select a target to inspect it. <kbd>j</kbd>/<kbd>k</kbd> move, <kbd>Esc</kbd> clears.</p>
       </div>
     </div>
     <p class="status-guide">Status uses latest RTT, jitter and overall loss. Averages and peaks describe the run since start or reset.</p>
@@ -53,6 +53,14 @@
       </div>
       <p id="targets-empty" class="empty" hidden></p>
     </div>
+  </section>
+
+  <section id="pane-inspect" class="pane" aria-label="Inspect">
+    <div class="pane-head">
+      <div id="inspect-tabs" class="tabs" role="tablist" aria-label="Inspect"></div>
+      <span id="inspect-target" class="pane-hint"></span>
+    </div>
+    <div id="inspect-body" class="inspect-body" role="tabpanel"></div>
   </section>
 
   <section id="pane-graphs" class="pane" aria-labelledby="graphs-title">
@@ -72,14 +80,6 @@
     <div class="pane-scroll">
       <div id="graphs" class="graph-grid"></div>
     </div>
-  </section>
-
-  <section id="pane-inspect" class="pane" aria-label="Inspect">
-    <div class="pane-head">
-      <div id="inspect-tabs" class="tabs" role="tablist" aria-label="Inspect"></div>
-      <span id="inspect-target" class="pane-hint"></span>
-    </div>
-    <div id="inspect-body" class="inspect-body" role="tabpanel"></div>
   </section>
 </div>
 </body>

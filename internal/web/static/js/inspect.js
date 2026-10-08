@@ -12,7 +12,7 @@ const EVENTS_LIMIT = 200;
 
 const TABS = [
   { key: "summary", label: "Summary", perTarget: true, enabled: () => true },
-  { key: "path", label: "Path", perTarget: true, enabled: (f) => f.traceroute || f.mtr },
+  { key: "route", label: routeLabel, perTarget: true, enabled: (f) => f.traceroute || f.mtr },
   { key: "ports", label: "Ports", perTarget: true, enabled: (f) => f.port },
   { key: "http", label: "HTTP", perTarget: false, enabled: (f) => f.http },
   { key: "log", label: "Log", perTarget: false, enabled: () => true },
@@ -90,27 +90,41 @@ function summaryParts(t, meta) {
   };
 }
 
-function pathFor(t, th) {
-  if (t.mtr_hops?.length) {
-    return [simpleTable(
-      [["Hop", true, "ttl"], ["Address", false, "ip"], ["AS", false, "asn"], ["Loss %", true, "hopLoss"], ["Sent", true, "count"],
-        ["Last", true, "rtt"], ["Avg", true, "rtt"], ["Best", true, "rtt"], ["Worst", true, "rtt"], ["Jitter", true, "rtt"]],
-      t.mtr_hops.map((h) => [
-        num(String(h.ttl)),
-        td(h.ip || "* no reply", "mono"),
-        td([h.asn, h.org].filter(Boolean).join(" ") || "–"),
-        el("td", { className: "num" }, statusChip(hopLossLevel(h.loss_pct, th), formatPct(h.loss_pct))),
-        count(h.sent), rtt(h.last_rtt_ms), rtt(h.avg_rtt_ms),
-        rtt(h.min_rtt_ms), rtt(h.max_rtt_ms), rtt(h.jitter_ms),
-      ]),
-    )];
-  }
-  if (t.trace_hops?.length) {
-    const ol = el("ol", { className: "mono trace" });
-    for (const hop of t.trace_hops) ol.append(el("li", { text: hop || "* no reply" }));
-    return [ol];
-  }
-  return [el("p", { className: "empty", text: "No path data for this target yet." })];
+/**
+ * Tab label named after the TUI panes it stands in for: "MTR" (per-hop loss
+ * and RTT, -M), "Traceroute" (the hop list, -T), or both when both are on.
+ */
+function routeLabel(f) {
+  if (f.mtr && f.traceroute) return "Traceroute / MTR";
+  return f.mtr ? "MTR" : "Traceroute";
+}
+
+function mtrTable(t, th) {
+  if (!t.mtr_hops?.length) return el("p", { className: "empty", text: "No MTR data for this target yet." });
+  return simpleTable(
+    [["Hop", true, "ttl"], ["Address", false, "ip"], ["AS", false, "asn"], ["Loss %", true, "hopLoss"], ["Sent", true, "count"],
+      ["Last", true, "rtt"], ["Avg", true, "rtt"], ["Best", true, "rtt"], ["Worst", true, "rtt"], ["Jitter", true, "rtt"]],
+    t.mtr_hops.map((h) => [
+      num(String(h.ttl)),
+      td(h.ip || "* no reply", "mono"),
+      td([h.asn, h.org].filter(Boolean).join(" ") || "–"),
+      el("td", { className: "num" }, statusChip(hopLossLevel(h.loss_pct, th), formatPct(h.loss_pct))),
+      count(h.sent), rtt(h.last_rtt_ms), rtt(h.avg_rtt_ms),
+      rtt(h.min_rtt_ms), rtt(h.max_rtt_ms), rtt(h.jitter_ms),
+    ]),
+  );
+}
+
+function traceList(t) {
+  if (!t.trace_hops?.length) return el("p", { className: "empty", text: "No traceroute result for this target yet." });
+  const ol = el("ol", { className: "mono trace" });
+  for (const hop of t.trace_hops) ol.append(el("li", { text: hop || "* no reply" }));
+  return ol;
+}
+
+function routeFor(t, th, f) {
+  if (f.mtr && f.traceroute) return [section("MTR", mtrTable(t, th)), section("Traceroute", traceList(t))];
+  return [f.mtr ? mtrTable(t, th) : traceList(t)];
 }
 
 function portsFor(t) {
@@ -166,7 +180,7 @@ export function createInspect(dom) {
     dom.tabs.replaceChildren(...tabs.map((t) => {
       const button = el("button", {
         className: "tab",
-        text: t.label,
+        text: typeof t.label === "function" ? t.label(view.meta.features) : t.label,
         attrs: { type: "button", role: "tab", "aria-selected": String(t.key === active), "data-tab": t.key },
       });
       button.addEventListener("click", () => choose(t.key));
@@ -242,7 +256,7 @@ export function createInspect(dom) {
         mounted.columns.replaceChildren(...parts.columns);
         return;
       }
-      case "path": dom.body.replaceChildren(...pathFor(target, th)); break;
+      case "route": dom.body.replaceChildren(...routeFor(target, th, view.meta.features)); break;
       case "ports": dom.body.replaceChildren(...portsFor(target)); break;
       case "http": {
         const table = el("table", { className: "grid", attrs: { id: "http" } }, el("thead"), el("tbody"));
