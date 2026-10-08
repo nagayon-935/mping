@@ -10,6 +10,7 @@ import (
 
 	"github.com/nagayon-935/mping/internal/mtr"
 	"github.com/nagayon-935/mping/internal/pinger"
+	"github.com/nagayon-935/mping/internal/report"
 	"github.com/nagayon-935/mping/internal/stats"
 	ui "github.com/nagayon-935/mping/internal/ui"
 )
@@ -18,17 +19,25 @@ import (
 // one run() loop iteration. A fresh supervisor is created each time the main
 // loop re-enters (on YAML reload), mirroring the closures it replaces.
 type supervisorConfig struct {
-	makePinger       func(size int) pingerController
-	makeTargetPinger func(int, []*stats.TargetStats, []targetSpec) pingerController
-	specs            []targetSpec
-	groups           []ui.TargetGroup
-	config           config
-	packetSize       int
-	targets          []*stats.TargetStats
-	interval         time.Duration
-	timeout          time.Duration
-	portSpecs        []pinger.PortSpec
-	httpURLs         []string
+	makePinger          func(size int) pingerController
+	makeTargetPinger    func(int, []*stats.TargetStats, []targetSpec) pingerController
+	specs               []targetSpec
+	groups              []ui.TargetGroup
+	config              config
+	startedAt           time.Time
+	collectionStartedAt time.Time
+	durationLimit       time.Duration
+	durationDeadline    time.Time
+	sourceIPv4          string
+	sourceIPv6          string
+	network             string
+	reservedOutputs     []string
+	packetSize          int
+	targets             []*stats.TargetStats
+	interval            time.Duration
+	timeout             time.Duration
+	portSpecs           []pinger.PortSpec
+	httpURLs            []string
 	// bind is the -S source address / -I interface pair the ICMP pinger is
 	// bound to; the port and HTTP checkers get the same one so a single mping
 	// invocation cannot split its probes across different egress paths.
@@ -143,17 +152,19 @@ var errSupervisorTerminated = errors.New("supervisor terminated")
 type supervisor struct {
 	cfg supervisorConfig
 
-	p           pingerController
-	traceCancel context.CancelFunc
-	traceCtx    context.Context
-	traceWG     *sync.WaitGroup
-	traceDone   chan struct{} // closed when the current runTraceroutes goroutine returns
-	portChecker *pinger.PortChecker
-	httpChecker *pinger.HTTPChecker
-	mtrEngine   *mtr.Engine
-	state       supervisorState
-	traces      map[*stats.TargetStats]*traceRun
-	targetSnap  atomic.Pointer[targetSnapshot]
+	p              pingerController
+	traceCancel    context.CancelFunc
+	traceCtx       context.Context
+	traceWG        *sync.WaitGroup
+	traceDone      chan struct{} // closed when the current runTraceroutes goroutine returns
+	portChecker    *pinger.PortChecker
+	httpChecker    *pinger.HTTPChecker
+	mtrEngine      *mtr.Engine
+	state          supervisorState
+	traces         map[*stats.TargetStats]*traceRun
+	targetSnap     atomic.Pointer[targetSnapshot]
+	removed        []report.Target
+	removedDropped int
 
 	// Command plumbing. cmds is never closed — see do()'s comment.
 	cmds         chan command
@@ -171,6 +182,12 @@ type supervisor struct {
 }
 
 func newSupervisor(cfg supervisorConfig) *supervisor {
+	if cfg.startedAt.IsZero() {
+		cfg.startedAt = time.Now().UTC()
+	}
+	if cfg.collectionStartedAt.IsZero() {
+		cfg.collectionStartedAt = time.Now().UTC()
+	}
 	s := &supervisor{cfg: cfg}
 	if cfg.countLimited {
 		s.finished = make(chan struct{}, 1)

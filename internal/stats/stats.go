@@ -83,12 +83,13 @@ type IPChange struct {
 }
 
 type TargetStats struct {
-	ID        uint64 // Immutable identity; never reused within this process.
-	StartedAt time.Time
-	DSCP      string
-	IPHistory []IPChange
-	IPChanges int
-	Cancelled int
+	ID              uint64 // Immutable identity; never reused within this process.
+	StartedAt       time.Time
+	WindowStartedAt time.Time
+	DSCP            string
+	IPHistory       []IPChange
+	IPChanges       int
+	Cancelled       int
 
 	Host             string
 	IP               string
@@ -217,12 +218,13 @@ func reconstructHistoryWindow(buf []time.Duration, idx, length, n int) []time.Du
 
 // TargetView represents a read-only snapshot of the stats for UI rendering.
 type TargetView struct {
-	ID        uint64
-	StartedAt time.Time
-	DSCP      string
-	IPHistory []IPChange
-	IPChanges int
-	Cancelled int
+	ID              uint64
+	StartedAt       time.Time
+	WindowStartedAt time.Time
+	DSCP            string
+	IPHistory       []IPChange
+	IPChanges       int
+	Cancelled       int
 
 	Host             string
 	IP               string
@@ -259,10 +261,12 @@ type TargetView struct {
 }
 
 func NewTargetStats(host string) *TargetStats {
+	now := time.Now()
 	return &TargetStats{
-		Host:      host,
-		ID:        targetIDs.Add(1),
-		StartedAt: time.Now(),
+		Host:            host,
+		ID:              targetIDs.Add(1),
+		StartedAt:       now,
+		WindowStartedAt: now,
 	}
 }
 
@@ -299,6 +303,7 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 		DSCP: t.DSCP, IPHistory: append([]IPChange(nil), t.IPHistory...), IPChanges: t.IPChanges,
 		ID:               t.ID,
 		StartedAt:        t.StartedAt,
+		WindowStartedAt:  t.WindowStartedAt,
 		Cancelled:        t.Cancelled,
 		Host:             t.Host,
 		IP:               t.IP,
@@ -526,6 +531,7 @@ func (t *TargetStats) Reset() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.probeEpoch++
+	t.WindowStartedAt = time.Now()
 	t.recordEventLocked("reset", "Statistics reset")
 	t.Sent = 0
 	t.Cancelled = 0

@@ -82,6 +82,7 @@ type RunOptions struct {
 	// A non-nil error is displayed in the Log pane; nil updates the live target list.
 	OnDeleteHost   func(host string) error
 	OnDeleteTarget func(id uint64) error
+	OnSaveReport   func(path, format string, selectedID uint64) error
 	// Groups defines named groups of targets for grouped display.
 	// Nil means flat (ungrouped) layout — existing behaviour.
 	Groups []TargetGroup
@@ -191,7 +192,7 @@ func Run(opts RunOptions) error {
 	header.SetBackgroundColor(tcell.ColorBlack)
 
 	footer := tview.NewTextView().
-		SetText("Enter Detail | Tab Pane | f Fold | z Max | a Add | d Del | s Stop | R Reset | q Quit").
+		SetText("Enter Detail | Tab Pane | f Fold | z Max | w Save | a Add | d Del | s Stop | q Quit").
 		SetTextAlign(tview.AlignCenter).
 		SetTextColor(tcell.ColorYellow).
 		SetWrap(false)
@@ -228,7 +229,36 @@ func Run(opts RunOptions) error {
 	root := tview.NewPages().AddPage("main", mainLayout, true, true)
 	details := newHostDetails(opts)
 	root.AddPage("details", details.pane, true, false)
-	closeDetails := func() { details.open = false; root.SwitchToPage("main"); app.SetFocus(table) }
+	var reportDialog *saveDialog
+	var reportReturnFocus tview.Primitive = table
+	closeDetails := func() {
+		details.open = false
+		if reportDialog != nil && reportDialog.open {
+			return
+		}
+		root.SwitchToPage("main")
+		app.SetFocus(table)
+	}
+	reportDialog = newSaveDialog(app, root, session, opts.OnSaveReport, func() {
+		if details.open {
+			root.SwitchToPage("details")
+			app.SetFocus(details.text)
+		} else {
+			root.SwitchToPage("main")
+			app.SetFocus(reportReturnFocus)
+		}
+	}, func(message string, failed bool) {
+		color := "green"
+		if failed {
+			color = "red"
+		}
+		text := "[" + color + "]" + tview.Escape(message) + "[-]"
+		vs.appendLog(text)
+		footer.SetDynamicColors(true).SetText(text)
+		if details.open {
+			details.footer.SetDynamicColors(true).SetText(text + " | w: Save | Esc: Back")
+		}
+	})
 	tr.afterUpdate = func() {
 		if details.open && !details.refresh(targets) {
 			closeDetails()
@@ -305,6 +335,20 @@ func Run(opts RunOptions) error {
 		session:      session,
 	})
 	session.bind(app, func(event *tcell.EventKey) *tcell.EventKey {
+		if reportDialog.open {
+			return reportDialog.handle(event)
+		}
+		if event.Rune() == 'w' && app.GetFocus() != addHostInput && app.GetFocus() != deleteHostInput && opts.OnSaveReport != nil {
+			id := uint64(0)
+			if details.open {
+				id = details.targetID
+			}
+			if !details.open {
+				reportReturnFocus = app.GetFocus()
+			}
+			reportDialog.show(id)
+			return nil
+		}
 		if details.open {
 			switch event.Key() {
 			case tcell.KeyEscape:

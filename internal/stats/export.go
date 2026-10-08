@@ -100,12 +100,24 @@ func durationMs(d time.Duration) float64 {
 // If targets is nil or empty, Targets in the returned snapshot is a non-nil,
 // empty slice (JSON encodes as [] rather than null).
 func BuildSnapshot(targets []*TargetStats, httpResults []*HTTPCheckResult) ExportSnapshot {
+	views := make([]TargetView, len(targets))
+	for i, t := range targets {
+		views[i] = t.GetView()
+	}
+	httpViews := make([]HTTPCheckView, len(httpResults))
+	for i, r := range httpResults {
+		httpViews[i] = r.GetView()
+	}
+	return BuildSnapshotFromViews(views, httpViews)
+}
+
+// BuildSnapshotFromViews converts immutable measurements without reading live state again.
+func BuildSnapshotFromViews(targets []TargetView, httpResults []HTTPCheckView) ExportSnapshot {
 	snap := ExportSnapshot{
 		Timestamp: time.Now().UTC(),
 		Targets:   make([]TargetSummary, 0, len(targets)),
 	}
-	for _, t := range targets {
-		v := t.GetView()
+	for _, v := range targets {
 
 		var lossRatePct float64
 		if v.Sent > 0 {
@@ -185,8 +197,7 @@ func BuildSnapshot(targets []*TargetStats, httpResults []*HTTPCheckResult) Expor
 		})
 	}
 
-	for _, r := range httpResults {
-		v := r.GetView()
+	for _, v := range httpResults {
 		snap.HTTPChecks = append(snap.HTTPChecks, HTTPCheckSummary{
 			URL:        v.URL,
 			Status:     v.Status,

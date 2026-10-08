@@ -32,3 +32,10 @@ func (t *TargetStats) Events() ([]Event, int) {
 	defer t.mu.RUnlock()
 	return append([]Event(nil), t.events...), t.eventsDropped
 }
+
+// ReportData captures counters and their events under the same target lock.
+func (t *TargetStats) ReportData() (TargetView, []Event, int) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.viewLocked(t.rtt.historySnapshot), append([]Event(nil), t.events...), t.eventsDropped
+}

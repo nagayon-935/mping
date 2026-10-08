@@ -291,6 +291,7 @@ See [examples/hosts-groups.yaml](examples/hosts-groups.yaml) for a runnable exam
 | **Esc** | Return from details, or restore the layout after maximizing a pane |
 | **f** | Fold or expand the focused pane |
 | **z** | Maximize the focused pane or restore its previous layout |
+| **w** | Save a session report from the overview, or one target from details |
 
 Pane folding and maximization are available in the overview. Folded title rows remain reachable with Tab; press `f` to expand them. Measurements continue while panes are hidden. Tab stays within the maximized pane until it is restored.
 
@@ -299,6 +300,16 @@ Pane folding and maximization are available in the overview. Folded title rows r
 > Selection and deletion use stable target IDs, including duplicate host names and DSCP variants. Echo IDs are never recycled within a session; after 32,768 worker allocations across initial starts, additions, and restarts, restart mping to obtain a fresh session.
 
 Stop, restart and reset operations execute in keypress order. A running reset discards results from probes sent before the reset and recreates enabled route/port/HTTP monitors. It keeps the remaining `--count` budget; restarting starts a fresh budget. When stopped, reset clears ping and MTR counters while preserving the last route and port/HTTP results. Quitting waits for measurement workers before writing the final JSON snapshot.
+
+### Saving investigation results
+
+Press **w**, enter a new file path, choose **Text** or **JSON**, and activate **Save**. **Tab** moves between fields and buttons; **Esc** cancels. Saving from the overview includes all active targets, retained final results of removed targets, and independent HTTP checks. Saving from host details includes only that target. Measurements continue during capture and writing; completion or errors appear in the footer and Log.
+
+Reports include the session and collection start times, capture interval, stable target IDs, ping statistics window, effective settings, DNS IP changes, Ping, traceroute, MTR, port results, and retained target events. JSON reports use `schema_version: 1`; fields ending in `_ms` are milliseconds. `statistics` reuses the existing JSON target summary, including its `loss_rate_pct` denominator (sent probes) and separate cancelled probes.
+
+The most recent 128 removed targets, 128 events per target, and 64 destination IP history entries are retained; reports include omitted-entry counts. YAML reload starts a new collection and clears earlier targets and removal history. Manual reset starts a new ping statistics window; when stopped, port/HTTP results retain their previous counters. Measurements and auxiliary checks are captured sequentially within the recorded capture interval. Reports contain aggregate results and retained events; use CSV output for ongoing individual ping records.
+
+Existing files, including symlink destinations, are preserved. Each save writes a temporary file in the destination directory and atomically publishes the complete new file. Active CSV/JSON output paths are reserved for their existing writers. On a save error, choose a new writable path and retry with **w**.
 
 ## Shell completion
 

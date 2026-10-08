@@ -25,7 +25,7 @@ func newHostDetails(opts RunOptions) *hostDetails {
 	d.text.SetBorder(true).SetTitle(" Host Details ").SetBackgroundColor(tcell.ColorBlack)
 	d.graph.includePorts = true
 	d.graph.SetBorder(true).SetTitle(" Target RTT ").SetBackgroundColor(tcell.ColorBlack)
-	d.footer = tview.NewTextView().SetText("Esc: Back | Tab: Text/Graph | ↑↓: Scroll | d: Delete target | q: Quit").SetWrap(false)
+	d.footer = tview.NewTextView().SetText("Esc: Back | Tab: Text/Graph | ↑↓: Scroll | d: Delete | w: Save | q: Quit").SetWrap(false)
 	d.footer.SetBackgroundColor(tcell.ColorBlack)
 	d.pane = tview.NewFlex().SetDirection(tview.FlexRow).AddItem(d.text, 0, 3, true).AddItem(d.graph, 0, 2, false).AddItem(d.footer, 1, 0, false)
 	return d
@@ -48,6 +48,7 @@ func renderHostDetails(t *stats.TargetStats, opts RunOptions) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[yellow::b]%s[-::-]  Target #%d\n", tview.Escape(v.Host), v.ID)
 	fmt.Fprintf(&b, "IP: %s\nSource: %s\nStarted: %s  (%s elapsed)\n", tview.Escape(v.IP), tview.Escape(displaySourceIPForDst(v.IP, opts.SourceIPv4, opts.SourceIPv6)), v.StartedAt.Format(time.RFC3339), time.Since(v.StartedAt).Round(time.Second))
+	fmt.Fprintf(&b, "Ping statistics window: %s\n", v.WindowStartedAt.Format(time.RFC3339))
 	fmt.Fprintf(&b, "Interval: %s | Timeout: %s | Payload: %d bytes | DSCP: %s\n\n", opts.Interval, opts.Timeout, opts.PacketSize, tview.Escape(v.DSCP))
 	fmt.Fprintf(&b, "[yellow]Ping[-]\nSent: %d | Received: %d | Loss: %d | Cancelled: %d\nLoss ratio (completed attempts): %.1f%% | DUP: %d | Late: %d\n", v.Sent, v.Recv, v.Loss, v.Cancelled, calcLossRate(v), v.Duplicates, v.LateReplies)
 	fmt.Fprintf(&b, "RTT last/min/avg/max: %s / %s / %s / %s\nJitter: %s | TTL: %s | Last loss: %s\nError: %s\n", formatRTT(v.LastRTT), formatRTT(v.MinRTT), formatRTT(v.AvgRTT), formatRTT(v.MaxRTT), formatRTT(v.Jitter), ttlString(v.LastTTL), formatLossAgo(v.LastLossTime), tview.Escape(v.LastError))

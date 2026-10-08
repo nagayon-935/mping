@@ -276,10 +276,12 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	// derived from the pre-loop cfg, not currentCfg, so a YAML reload cannot
 	// silently extend or shorten an already-running deadline.
 	var durationCtx context.Context
+	var durationDeadline time.Time
 	if cfg.duration > 0 {
 		var cancelDuration context.CancelFunc
 		durationCtx, cancelDuration = context.WithTimeout(context.Background(), cfg.duration)
 		defer cancelDuration()
+		durationDeadline, _ = durationCtx.Deadline()
 	}
 
 	// activePortSpecsRaw is the --port / port: value the running port
@@ -288,6 +290,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	activePortSpecsRaw := cfg.portSpecs
 	var pendingWarnings []string
 	sessionIDs := &pinger.IDAllocator{}
+	sessionStartedAt := time.Now().UTC()
 
 	// Main run loop (re-entered on YAML reload).
 	for {
@@ -323,6 +326,9 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		sup := newSupervisor(supervisorConfig{
 			makePinger: makePinger,
 			specs:      currentHosts, groups: currentGroups, config: currentCfg,
+			startedAt: sessionStartedAt, sourceIPv4: displaySourceIPv4, sourceIPv6: displaySourceIPv6,
+			durationLimit: cfg.duration, durationDeadline: durationDeadline,
+			network: resNetwork, reservedOutputs: []string{cfg.outputFile, currentCfg.jsonOutputFile},
 			makeTargetPinger: func(size int, targets []*stats.TargetStats, specs []targetSpec) pingerController {
 				options := buildPingerOptions(currentCfg, resNetwork, customResolver, specs)
 				options.IDs = sessionIDs
@@ -392,6 +398,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		runOpts.OnAddHost = sup.addHost
 		runOpts.OnDeleteHost = sup.deleteHost
 		runOpts.OnDeleteTarget = sup.deleteTargetID
+		runOpts.OnSaveReport = sup.saveReport
 		uiErr := uiRun(runOpts)
 		if snap := sup.targetSnap.Load(); snap != nil {
 			targets = snap.targets

@@ -153,6 +153,7 @@ func (s *supervisor) removeTarget(i int) error {
 		p.RemoveTarget(t)
 	}
 	t.RecordEvent("removed", "Target removed")
+	s.archiveTarget(t)
 	newSpecs := append([]targetSpec(nil), s.cfg.specs[:i]...)
 	newSpecs = append(newSpecs, s.cfg.specs[i+1:]...)
 	var groups []ui.TargetGroup
