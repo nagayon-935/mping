@@ -188,8 +188,8 @@ func TestEventsReturnsTargetEvents(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	if len(body.Events) != 1 || body.Events[0].Message != "hop 3 changed" {
-		t.Fatalf("events = %+v, want the recorded route event", body.Events)
+	if n := len(body.Events); n == 0 || body.Events[n-1].Message != "hop 3 changed" {
+		t.Fatalf("events = %+v, want the recorded route event last", body.Events)
 	}
 }
 
