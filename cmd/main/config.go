@@ -41,6 +41,12 @@ type config struct {
 	// reject a malformed spec before any pinger is constructed.
 	dscp string
 
+	// webEnabled/webPort control the loopback-only browser dashboard. Like
+	// --duration they are read once at startup: a YAML reload does not
+	// start, stop or move the web server.
+	webEnabled bool
+	webPort    int
+
 	// thresholds holds the colour-coding / alert boundaries (warn = orange,
 	// crit = red), unified onto ui.Thresholds directly (TD-10) instead of
 	// six separate ms/pct fields that had to be converted at every use site.
@@ -72,6 +78,8 @@ func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]hostEntr
 	syncField(fs, "dns-server", doc.DNSServer, &cfg.dnsServer)
 	syncField(fs, "resolve-all", doc.ResolveAll, &cfg.resolveAll)
 	syncField(fs, "dscp", doc.DSCP, &cfg.dscp)
+	syncField(fs, "web", doc.Web, &cfg.webEnabled)
+	syncField(fs, "web-port", doc.WebPort, &cfg.webPort)
 	if err := syncDuration(fs, "duration", doc.Duration, &cfg.duration); err != nil {
 		return nil, nil, cfg, err
 	}
@@ -156,7 +164,7 @@ func validateMergedHosts(cfg config, hosts []hostEntry, groups []groupYAML, cliH
 		IntervalMs: &cfg.intervalMs, TimeoutMs: &cfg.timeoutMs,
 		PacketSize: &cfg.packetSize, Count: &cfg.count,
 		Duration: &duration, Ipv4Only: &cfg.ipv4Only, Ipv6Only: &cfg.ipv6Only,
-		DNSServer: &cfg.dnsServer, DSCP: &cfg.dscp,
+		DNSServer: &cfg.dnsServer, DSCP: &cfg.dscp, WebPort: &cfg.webPort,
 	}
 	if err := validateHostsDoc(doc); err != nil {
 		return err
@@ -225,6 +233,9 @@ func validateHostsDoc(doc hostsFileYAML) error {
 		if _, err := parseNonNegativeDuration(*doc.Duration); err != nil {
 			return fmt.Errorf("duration: %w", err)
 		}
+	}
+	if doc.WebPort != nil && (*doc.WebPort < 1 || *doc.WebPort > 65535) {
+		return fmt.Errorf("web-port: must be 1–65535, got %d", *doc.WebPort)
 	}
 	if doc.Ipv4Only != nil && doc.Ipv6Only != nil && *doc.Ipv4Only && *doc.Ipv6Only {
 		return fmt.Errorf("ipv4 and ipv6 cannot both be true")

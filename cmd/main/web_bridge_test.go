@@ -56,7 +56,7 @@ func TestRunWithWebServesLiveSnapshotWhileUIRuns(t *testing.T) {
 	})
 
 	var out, errOut bytes.Buffer
-	code := run([]string{"-S", "10.0.0.2", "--web", "--mtr", "example.com"}, &out, &errOut)
+	code := run([]string{"-S", "10.0.0.2", "--web", "--dscp", "EF", "example.com"}, &out, &errOut)
 
 	if code != 0 {
 		t.Fatalf("run = %d, want 0 (stderr: %s)", code, errOut.String())
@@ -70,8 +70,8 @@ func TestRunWithWebServesLiveSnapshotWhileUIRuns(t *testing.T) {
 	if len(snap.Snapshot.Targets) != 1 || snap.Snapshot.Targets[0].Host != "example.com" {
 		t.Errorf("targets = %+v, want example.com", snap.Snapshot.Targets)
 	}
-	if !snap.Meta.Features.MTR {
-		t.Error("meta.features.mtr = false, want true with --mtr")
+	if !snap.Meta.Features.DSCP {
+		t.Error("meta.features.dscp = false, want true with --dscp")
 	}
 	if !containsSubstring(logs, "Web UI: "+started().URL()) {
 		t.Errorf("initial logs %q do not announce %s", logs, started().URL())

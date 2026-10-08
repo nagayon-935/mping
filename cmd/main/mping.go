@@ -14,6 +14,7 @@ import (
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 	ui "github.com/nagayon-935/mping/internal/ui"
+	"github.com/nagayon-935/mping/internal/web"
 )
 
 const (
@@ -262,6 +263,15 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	displaySourceIPv4, displaySourceIPv6 := env.dispV4, env.dispV6
 	portSpecs := env.portSpecs
 
+	// The web UI outlives reload iterations: it is started once here and
+	// each iteration swaps its supervisor into webSrc.
+	webSrc := web.NewSource()
+	webSrv, ok := startWebUI(cfg, webSrc, errOut)
+	if !ok {
+		return 1
+	}
+	defer closeWebUI(webSrv, errOut)
+
 	rc := newReloadCoordinator(fs, cliCfg, cliHosts)
 	currentCfg := cfg
 	currentHosts := hosts
@@ -367,6 +377,11 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			resetPort = sup.resetPort
 		}
 
+		webSrc.Set(newWebProvider(sup, currentCfg, currentHosts, len(portSpecs)))
+		if webSrv != nil {
+			preLogs = append(preLogs, "Web UI: "+webSrv.URL())
+		}
+
 		// Each natural count completion sends a notification, including after
 		// restart. Other monitors and duration/reload handling remain active.
 		doneCh := sup.finished
@@ -400,6 +415,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		runOpts.OnDeleteTarget = sup.deleteTargetID
 		runOpts.OnSaveReport = sup.saveReport
 		uiErr := uiRun(runOpts)
+		webSrc.MarkReloading()
 		if snap := sup.targetSnap.Load(); snap != nil {
 			targets = snap.targets
 			currentHosts = snap.specs
