@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/netip"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/pinger"
@@ -98,14 +96,6 @@ func determineSourceIPs(cfg config, hosts []targetSpec) (string, string, string,
 
 	displaySourceIPv4, displaySourceIPv6 = detectAutoSourceIPs(hosts)
 	return bindIP, displaySourceIPv4, displaySourceIPv6, nil
-}
-
-func initTargets(specs []targetSpec) []*stats.TargetStats {
-	targets := make([]*stats.TargetStats, 0, len(specs))
-	for _, spec := range specs {
-		targets = append(targets, stats.NewTargetStats(spec.display()))
-	}
-	return targets
 }
 
 func setupLogger(path string) (*os.File, error) {
@@ -526,139 +516,6 @@ func printExitSummary(out io.Writer, targets []*stats.TargetStats) {
 		}
 		fmt.Fprintln(out)
 	}
-}
-
-type tracer interface {
-	TraceRoute(ctx context.Context, dest string, maxHops int, timeout time.Duration) ([]string, error)
-}
-
-func runTraceroutes(ctx context.Context, p tracer, targets []*stats.TargetStats) {
-	ticker := time.NewTicker(tracerouteInterval)
-	defer ticker.Stop()
-
-	runOnce := func() {
-		if ctx.Err() != nil {
-			return
-		}
-		for _, t := range targets {
-			if len(t.GetView().TraceHops) == 0 {
-				t.SetTraceHops([]string{"Tracing..."})
-			}
-		}
-
-		var wg sync.WaitGroup
-		for _, t := range targets {
-			wg.Add(1)
-			go func(t *stats.TargetStats) {
-				defer wg.Done()
-				var hops []string
-				var err error
-				hops, err = p.TraceRoute(ctx, t.Host, tracerouteMaxHops, tracerouteHopTimeout)
-				if ctx.Err() != nil {
-					return // a cancelled run must not replace the displayed route
-				}
-				if err != nil {
-					t.SetTraceHops([]string{"error: " + err.Error()})
-					return
-				}
-				if len(hops) == 0 {
-					t.SetTraceHops([]string{"no route found"})
-					return
-				}
-				t.SetTraceHops(hops)
-			}(t)
-		}
-		wg.Wait()
-	}
-
-	runOnce() // Initial run
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			runOnce()
-		}
-	}
-}
-
-func expandTargets(specs []targetSpec, groups []ui.TargetGroup, cfg config) ([]targetSpec, []ui.TargetGroup, error) {
-	if !cfg.resolveAll {
-		return specs, groups, nil
-	}
-
-	resolver := newCustomResolver(cfg.dnsServer, resolverBindConfig(cfg, specs))
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	resolvedIPs := make(map[string][]string)
-	for _, spec := range specs {
-		if spec.PinnedIP != "" {
-			continue
-		}
-		rawHost := spec.Host
-		if _, err := netip.ParseAddr(rawHost); err == nil {
-			resolvedIPs[spec.Host] = []string{rawHost}
-			continue
-		}
-
-		network := resolveNetwork(cfg)
-		ips, err := resolver.LookupIP(ctx, network, rawHost)
-		if err != nil || len(ips) == 0 {
-			resolvedIPs[spec.Host] = []string{rawHost}
-			continue
-		}
-
-		var ipStrs []string
-		for _, ip := range ips {
-			ipStrs = append(ipStrs, ip.String())
-		}
-		resolvedIPs[spec.Host] = ipStrs
-	}
-
-	var expandedSpecs []targetSpec
-	expansionMap := make(map[int][]int)
-
-	for i, spec := range specs {
-		if spec.PinnedIP != "" {
-			expandedSpecs = append(expandedSpecs, spec)
-			expansionMap[i] = []int{len(expandedSpecs) - 1}
-			continue
-		}
-
-		ips := resolvedIPs[spec.Host]
-		startIdx := len(expandedSpecs)
-
-		for _, ip := range ips {
-			if spec.Host != ip {
-				expandedSpecs = append(expandedSpecs, targetSpec{Host: spec.Host, PinnedIP: ip, DSCP: spec.DSCP})
-			} else {
-				expandedSpecs = append(expandedSpecs, targetSpec{Host: ip, DSCP: spec.DSCP})
-			}
-		}
-
-		endIdx := len(expandedSpecs)
-		var indices []int
-		for j := startIdx; j < endIdx; j++ {
-			indices = append(indices, j)
-		}
-		expansionMap[i] = indices
-	}
-
-	var expandedGroups []ui.TargetGroup
-	for _, g := range groups {
-		var newIndices []int
-		for _, oldIdx := range g.Indices {
-			newIndices = append(newIndices, expansionMap[oldIdx]...)
-		}
-		expandedGroups = append(expandedGroups, ui.TargetGroup{
-			Name:    g.Name,
-			Indices: newIndices,
-		})
-	}
-
-	return expandedSpecs, expandedGroups, nil
 }
 
 func main() {

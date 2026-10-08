@@ -1,5 +1,14 @@
 package main
 
+import (
+	"context"
+	"net/netip"
+	"time"
+
+	"github.com/nagayon-935/mping/internal/stats"
+	ui "github.com/nagayon-935/mping/internal/ui"
+)
+
 // targetSpec identifies one monitored target as it flows through cmd/main's
 // host pipeline: CLI/YAML hosts → --resolve-all expansion → per-iteration
 // target construction (TD-24). Host is what the user configured (hostname
@@ -32,4 +41,90 @@ func (t targetSpec) display() string {
 		return t.Host + " (" + t.PinnedIP + ")"
 	}
 	return t.Host
+}
+
+func initTargets(specs []targetSpec) []*stats.TargetStats {
+	targets := make([]*stats.TargetStats, 0, len(specs))
+	for _, spec := range specs {
+		targets = append(targets, stats.NewTargetStats(spec.display()))
+	}
+	return targets
+}
+
+func expandTargets(specs []targetSpec, groups []ui.TargetGroup, cfg config) ([]targetSpec, []ui.TargetGroup, error) {
+	if !cfg.resolveAll {
+		return specs, groups, nil
+	}
+
+	resolver := newCustomResolver(cfg.dnsServer, resolverBindConfig(cfg, specs))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resolvedIPs := make(map[string][]string)
+	for _, spec := range specs {
+		if spec.PinnedIP != "" {
+			continue
+		}
+		rawHost := spec.Host
+		if _, err := netip.ParseAddr(rawHost); err == nil {
+			resolvedIPs[spec.Host] = []string{rawHost}
+			continue
+		}
+
+		network := resolveNetwork(cfg)
+		ips, err := resolver.LookupIP(ctx, network, rawHost)
+		if err != nil || len(ips) == 0 {
+			resolvedIPs[spec.Host] = []string{rawHost}
+			continue
+		}
+
+		var ipStrs []string
+		for _, ip := range ips {
+			ipStrs = append(ipStrs, ip.String())
+		}
+		resolvedIPs[spec.Host] = ipStrs
+	}
+
+	var expandedSpecs []targetSpec
+	expansionMap := make(map[int][]int)
+
+	for i, spec := range specs {
+		if spec.PinnedIP != "" {
+			expandedSpecs = append(expandedSpecs, spec)
+			expansionMap[i] = []int{len(expandedSpecs) - 1}
+			continue
+		}
+
+		ips := resolvedIPs[spec.Host]
+		startIdx := len(expandedSpecs)
+
+		for _, ip := range ips {
+			if spec.Host != ip {
+				expandedSpecs = append(expandedSpecs, targetSpec{Host: spec.Host, PinnedIP: ip, DSCP: spec.DSCP})
+			} else {
+				expandedSpecs = append(expandedSpecs, targetSpec{Host: ip, DSCP: spec.DSCP})
+			}
+		}
+
+		endIdx := len(expandedSpecs)
+		var indices []int
+		for j := startIdx; j < endIdx; j++ {
+			indices = append(indices, j)
+		}
+		expansionMap[i] = indices
+	}
+
+	var expandedGroups []ui.TargetGroup
+	for _, g := range groups {
+		var newIndices []int
+		for _, oldIdx := range g.Indices {
+			newIndices = append(newIndices, expansionMap[oldIdx]...)
+		}
+		expandedGroups = append(expandedGroups, ui.TargetGroup{
+			Name:    g.Name,
+			Indices: newIndices,
+		})
+	}
+
+	return expandedSpecs, expandedGroups, nil
 }
