@@ -1,11 +1,12 @@
 // Browser checks for the dashboard against the simulated server. Not part of
 // CI (it needs a Chromium); run it by hand after UI changes:
 //
-//   MPING_WEB_DEV_PORT=8090 MPING_WEB_DEV_TOKEN=e2e-token \
+//   MPING_WEB_DEV_PORT=8090 MPING_WEB_DEV_TOKEN=e2e-token MPING_WEB_DEV_UNTRUSTED=1 \
 //     go test -run TestDevServer -timeout 0 ./internal/web &
 //   E2E_TOKEN=e2e-token PLAYWRIGHT_CORE=/path/to/node_modules/playwright-core \
 //     [CHROMIUM_PATH=/path/to/chrome] node internal/web/jstest/e2e.mjs http://127.0.0.1:8090/
 //
+// Scope selectors to #targets: the HTTP table reuses col-sent/col-max.
 // The control checks add, delete and reset on the simulator, so restart it
 // before a re-run.
 //
@@ -53,7 +54,8 @@ try {
     await page.close();
   }
 
-  const page = await open({ viewport: { width: 1400, height: 900 } });
+  const WIDE = { width: 2000, height: 1000 };
+  const page = await open({ viewport: WIDE });
 
   await check("live badge and grouped rows", async () => {
     assert.match(await page.textContent("#badge"), /Live/);
@@ -63,11 +65,53 @@ try {
     assert.ok(await page.isVisible("#http-panel"));
   });
 
+  await check("a wide screen shows every column; a narrow one keeps the highest-priority ones", async () => {
+    const headers = () => page.$$eval("#targets th", (h) => h.map((x) => x.textContent));
+    assert.deepEqual(await headers(),
+      ["Status", "Host", "IP", "AS", "Loss %", "Sent", "Recv", "Last", "Avg", "Min", "Peak", "Jitter", "TTL", "RTT trend"]);
+    assert.equal(await page.$$eval("input[type=checkbox]", (n) => n.length), 0, "no column toggle any more");
+    // Spare width is turned into a larger table, not an empty strip: the table
+    // fills its wrapper, and the host column stays a modest share of it.
+    const fit = await page.$eval("#targets", (t) => ({
+      table: t.getBoundingClientRect().width, wrap: t.parentElement.clientWidth, zoom: Number(t.style.zoom || 1),
+      host: t.querySelector("th.col-host").getBoundingClientRect().width,
+    }));
+    assert.ok(fit.zoom > 1, `a 2000px screen should enlarge the table, zoom=${fit.zoom}`);
+    assert.ok(Math.abs(fit.table - fit.wrap) <= 2, `table ${fit.table}px should fill its ${fit.wrap}px wrapper`);
+    assert.ok(fit.host / fit.table <= 0.2, `host column is ${Math.round((fit.host / fit.table) * 100)}% of the table`);
+    assert.match(await page.locator("tr.target-row").nth(0).locator(".col-last").textContent(), / ms$/);
+    assert.equal(await page.locator("tr.target-row").nth(4).locator(".col-last").textContent(), "–");
+    assert.match(await page.locator("tr.target-row").nth(4).textContent(), /No replies received/);
+    assert.equal(await page.locator("td.col-max.lvl-crit, td.col-max.lvl-warn, td.col-avg.lvl-crit, td.col-avg.lvl-warn").count(), 0);
+
+    await page.setViewportSize({ width: 900, height: 1000 });
+    await page.waitForSelector("#targets th.col-sent", { state: "detached" });
+    const narrow = await headers();
+    assert.deepEqual(narrow.slice(0, 2), ["Status", "Host"]);
+    for (const kept of ["Loss %", "Last", "Avg", "Jitter"]) assert.ok(narrow.includes(kept), `${kept} must survive narrowing: ${narrow}`);
+    for (const dropped of ["IP", "AS", "Sent", "Recv", "TTL"]) assert.ok(!narrow.includes(dropped), `${dropped} should drop first: ${narrow}`);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+
+    await page.setViewportSize(WIDE);
+    await page.waitForSelector("#targets th.col-sent");
+  });
+
   await check("untrusted names render as text", async () => {
     const hosts = await page.$$eval(".host", (h) => h.map((x) => x.textContent));
     assert.ok(hosts.includes("<script>alert(1)</script>"));
     assert.equal(await page.$$eval("img", (i) => i.length), 0);
     assert.equal(dialogs, 0);
+  });
+
+  await check("live measurement updates keep column widths and row positions fixed", async () => {
+    const geometry = () => page.evaluate(() => ({
+      widths: [...document.querySelectorAll('#targets th')].map((n) => n.getBoundingClientRect().width),
+      rows: [...document.querySelectorAll('#targets tr.target-row')].map((n) => [n.offsetTop, n.getBoundingClientRect().height]),
+    }));
+    const before = await geometry();
+    const changedAt = await page.textContent("#updated");
+    await page.waitForFunction((text) => document.querySelector('#updated').textContent !== text, changedAt);
+    assert.deepEqual(await geometry(), before);
   });
 
   await check("text selection survives live updates", async () => {
@@ -82,7 +126,7 @@ try {
     await page.waitForTimeout(2500);
     const after = await page.evaluate(() => getSelection().toString());
     assert.equal(after, before);
-    const sent = () => page.$eval("tr.target-row td.col-sent", (td) => Number(td.textContent));
+    const sent = () => page.$eval("tr.target-row td.col-sent", (td) => Number(td.title.replaceAll(",", "")));
     const held = await sent();
     await page.evaluate(() => getSelection().removeAllRanges());
     await page.waitForTimeout(1500);
@@ -92,7 +136,11 @@ try {
   await check("detail drawer: chart, hops, tooltip, deep link", async () => {
     await page.click("tr.target-row >> nth=2");
     await page.waitForTimeout(2500);
-    assert.deepEqual(await page.$$eval(".detail-section h3", (h) => h.map((x) => x.textContent)), ["Summary", "RTT", "MTR", "Events"]);
+    assert.deepEqual(await page.$$eval(".detail-section h3", (h) => h.map((x) => x.textContent)), ["Summary", "RTT", "Statistics since start / reset", "MTR", "Events"]);
+    assert.equal(await page.$eval("#detail-body", (n) => [...n.childNodes].some((c) => c.nodeType === Node.TEXT_NODE && c.textContent.trim() === "null")), false);
+    const listBox = await page.locator(".layout").boundingBox();
+    const detailBox = await page.locator("#detail").boundingBox();
+    assert.ok(listBox.x + listBox.width <= detailBox.x + 1, "detail should sit beside the list on a wide screen");
     assert.match(await page.evaluate(() => location.hash), /^#target-\d+$/);
     assert.equal(await page.getAttribute("#detail", "role"), "dialog");
     assert.equal(await page.$$eval('tr.target-row[aria-current="true"]', (r) => r.length), 1);
@@ -104,7 +152,8 @@ try {
   });
 
   await check("switching targets never shows the previous target's events", async () => {
-    const firstIP = await page.$eval("tr.target-row >> nth=0", (r) => r.querySelector(".col-ip").textContent);
+    // Docked mode hides the IP column, so read it from the API.
+    const firstIP = (await (await fetch(new URL("api/v1/snapshot", base))).json()).snapshot.targets[0].ip;
     await page.route("**/events", async (route) => {
       await new Promise((r) => setTimeout(r, 800));
       await route.continue().catch(() => {});
@@ -141,9 +190,15 @@ try {
   });
 
   await check("filter narrows the table", async () => {
+    const widths = () => page.$$eval("#targets th", (ns) => ns.map((n) => n.getBoundingClientRect().width));
+    // Closing the drawer widens the list and re-renders with more columns;
+    // "Sent" only fits once the drawer is gone, so it marks that re-render.
+    await page.waitForSelector("#targets th.col-sent");
+    const before = await widths();
     await page.fill("#filter", "flaky");
     await page.waitForTimeout(300);
     assert.equal(await page.$$eval("tr.target-row", (r) => r.length), 1);
+    assert.deepEqual(await widths(), before, "removing the scrollbar must not resize the columns");
     await page.fill("#filter", "");
   });
   await page.close();
@@ -157,13 +212,17 @@ try {
     await ro.waitForTimeout(500);
     const sections = await ro.$$eval(".detail-section h3", (h) => h.map((x) => x.textContent));
     assert.ok(!sections.includes("Actions"));
+    await ro.click("#detail-close");
+    await ro.click("#readonly-hint");
+    assert.ok(await ro.isVisible("#readonly-explanation"));
+    assert.match(await ro.textContent("#readonly-explanation"), /Log pane/);
     await ro.close();
   });
 
   const token = process.env.E2E_TOKEN;
   assert.ok(token, "set E2E_TOKEN to the simulator's MPING_WEB_DEV_TOKEN");
   const ctx = await browser.newContext();
-  const ctl = await open({ viewport: { width: 1400, height: 900 } }, ctx, `${base}#token=${token}`);
+  const ctl = await open({ viewport: WIDE }, ctx, `${base}#token=${token}`);
   const rowHosts = () => ctl.$$eval("tr.target-row .host", (h) => h.map((x) => x.textContent));
 
   await check("the token link enables controls and leaves the address bar", async () => {
@@ -216,11 +275,11 @@ try {
   });
 
   await check("reset clears counters after confirmation", async () => {
-    const sent = () => ctl.$eval("tr.target-row td.col-sent", (td) => Number(td.textContent));
+    const sent = () => ctl.$eval("tr.target-row td.col-sent", (td) => Number(td.title.replaceAll(",", "")));
     const before = await sent();
     await ctl.getByRole("button", { name: "Reset stats" }).click();
     await ctl.getByRole("button", { name: "Confirm reset?" }).click();
-    await ctl.waitForFunction((b) => Number(document.querySelector("tr.target-row td.col-sent").textContent) < b, before, { timeout: 5000 });
+    await ctl.waitForFunction((b) => Number(document.querySelector("tr.target-row td.col-sent").title.replaceAll(",", "")) < b, before, { timeout: 5000 });
     assert.match(await ctl.textContent("#notice"), /Statistics reset/);
   });
 
@@ -259,11 +318,14 @@ try {
   });
 
   const mobile = await open({ viewport: { width: 390, height: 844 } }, ctx);
-  await check("narrow screens keep the key columns without page overflow (controls shown)", async () => {
+  await check("phone width keeps status, host and the highest-priority columns without page overflow", async () => {
     assert.ok(await mobile.isVisible("#add-form"));
     assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-    const headers = await mobile.$$eval("#targets th", (h) => h.filter((x) => x.offsetParent).map((x) => x.textContent));
-    assert.deepEqual(headers, ["Status", "Host", "Loss %", "Recv", "Last ms", "Avg ms", "Jitter ms", "RTT trend"]);
+    const headers = await mobile.$$eval("#targets th", (h) => h.map((x) => x.textContent));
+    assert.deepEqual(headers.slice(0, 2), ["Status", "Host"]);
+    for (const kept of ["Loss %", "Last"]) assert.ok(headers.includes(kept), `${kept} must stay on a phone: ${headers}`);
+    for (const dropped of ["IP", "AS", "Sent", "Recv", "TTL"]) assert.ok(!headers.includes(dropped), `${dropped} should be dropped: ${headers}`);
+    assert.ok(await mobile.$eval("#targets", (n) => n.getBoundingClientRect().width <= n.parentElement.clientWidth + 1));
     await shot(mobile, "mobile");
   });
 

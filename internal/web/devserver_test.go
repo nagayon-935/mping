@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -22,6 +23,9 @@ import (
 //
 //	MPING_WEB_DEV_PORT=8090 go test -run TestDevServer -timeout 0 -v ./internal/web
 //
+// Set MPING_WEB_DEV_UNTRUSTED=1 to include HTML-shaped host/PTR fixtures for
+// the browser's text-rendering checks. Normal previews use readable names.
+// MPING_WEB_DEV_LAYOUT=1 exercises long names, full IPv6 and large RTT values.
 // It logs the control URL (MPING_WEB_DEV_TOKEN pins the token, e.g. for
 // jstest/e2e.mjs) and runs until interrupted (Ctrl-C).
 func TestDevServer(t *testing.T) {
@@ -34,7 +38,7 @@ func TestDevServer(t *testing.T) {
 		t.Fatalf("MPING_WEB_DEV_PORT: %v", err)
 	}
 
-	sim := newSimulation()
+	sim := newSimulation(os.Getenv("MPING_WEB_DEV_UNTRUSTED") == "1", os.Getenv("MPING_WEB_DEV_LAYOUT") == "1")
 	src := NewSource()
 	src.Set(sim)
 	token := os.Getenv("MPING_WEB_DEV_TOKEN")
@@ -80,7 +84,7 @@ type simulation struct {
 	http    []*stats.HTTPCheckResult
 }
 
-func newSimulation() *simulation {
+func newSimulation(includeUntrusted, longValues bool) *simulation {
 	mk := func(host, ip, ptr string, base, jitter, loss float64) simTarget {
 		ts := stats.NewTargetStats(host)
 		ts.SetIP(ip)
@@ -90,23 +94,44 @@ func newSimulation() *simulation {
 		ts.SetASNInfo("AS64500", "JP", "Example Networks")
 		return simTarget{ts: ts, baseMs: base, jitterMs: jitter, lossProb: loss}
 	}
+	clientHost, clientPTR := "client.example", "client.lab.example"
+	if includeUntrusted {
+		clientHost, clientPTR = "<script>alert(1)</script>", "\"><img src=x onerror=alert(1)>"
+	}
+	if longValues {
+		clientHost = strings.Join([]string{strings.Repeat("a", 63), strings.Repeat("b", 63), strings.Repeat("c", 63), strings.Repeat("d", 61)}, ".")
+		clientPTR = clientHost
+	}
 	sim := &simulation{targets: []simTarget{
 		mk("core-rtr1.example", "192.0.2.1", "core-rtr1.lab.example", 1.2, 0.3, 0),
 		mk("core-rtr2.example", "192.0.2.2", "", 2.5, 0.6, 0.01),
 		mk("cdn.example", "198.51.100.10", "edge-nrt.cdn.example", 70, 25, 0.02),
 		mk("flaky.example", "198.51.100.20", "", 35, 8, 0.3),
 		mk("down.example", "203.0.113.9", "", 0, 0, 1),
-		mk("<script>alert(1)</script>", "2001:db8::1", "\"><img src=x onerror=alert(1)>", 12, 2, 0),
+		mk(clientHost, "2001:db8::1", clientPTR, 12, 2, 0),
 	}}
+	if longValues {
+		client := &sim.targets[5]
+		client.ts.SetIP("ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255")
+		client.ts.SetASNInfo("AS4294967295", "JP", strings.Repeat("Long organization name ", 20))
+		client.baseMs, client.jitterMs = 1e9, 1e8
+	}
 	hops := []string{"192.0.2.254", "198.51.100.1", "", "198.51.100.10"}
 	sim.targets[2].ts.SetTraceHops(hops)
 	m := sim.targets[2].ts.MTR()
 	m.EnsureLen(len(hops))
 	ports := []*stats.PortCheckResult{{Port: 443, Protocol: "tcp"}, {Port: 53, Protocol: "udp"}}
+	if longValues {
+		ports[0].Port = 65535
+	}
 	ports[0].SetResult("Open", 4*time.Millisecond)
 	ports[1].SetResult("Filtered", 0)
 	sim.targets[0].ts.SetPortResults(ports)
-	hc := stats.NewHTTPCheckResult("https://status.example/health")
+	httpURL := "https://status.example/health"
+	if longValues {
+		httpURL += "?check=" + strings.Repeat("long-path-segment-", 120)
+	}
+	hc := stats.NewHTTPCheckResult(httpURL)
 	hc.SetResult(200, 42*time.Millisecond, nil)
 	sim.http = []*stats.HTTPCheckResult{hc}
 	return sim

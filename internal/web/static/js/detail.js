@@ -2,7 +2,8 @@
 // events. Polls its own history/events endpoints only while open.
 import { el, fetchJSON, statusChip } from "./dom.js";
 import { drawChart, drawCrosshair, indexAt } from "./chart.js";
-import { formatMs, formatPct, hopLossLevel, lossRate } from "./model.js";
+import { setColumns } from "./columns.js";
+import { dscpName, formatCount, formatRTT, formatPct, hopLossLevel, lossRate, rowLevel, statusReasons } from "./model.js";
 
 const HISTORY_POINTS = 300;
 const HISTORY_EVERY_MS = 2000;
@@ -28,15 +29,29 @@ function sectionWith(key, title, ...children) {
 }
 
 function simpleTable(headers, rows) {
-  const head = el("tr");
-  for (const [label, num] of headers) head.append(el("th", { className: num ? "num" : "", text: label, attrs: { scope: "col" } }));
+  const columns = headers.map(([label, num, key]) => ({ label, num, key }));
   const body = el("tbody");
-  for (const cells of rows) body.append(el("tr", {}, ...cells));
-  return el("div", { className: "table-wrap" }, el("table", { className: "grid" }, el("thead", {}, head), body));
+  for (const cells of rows) {
+    cells.forEach((cell, i) => cell.classList.add(`col-${columns[i].key}`));
+    body.append(el("tr", {}, ...cells));
+  }
+  const table = el("table", { className: "grid" }, el("thead"), body);
+  setColumns(table, columns);
+  return el("div", { className: "table-wrap" }, table);
 }
 
-const td = (text, cls = "") => el("td", { className: cls, text });
+const td = (text, cls = "") => el("td", { className: cls, attrs: { title: text } }, el("span", { className: "cell-text", text }));
 const num = (text) => td(text, "num");
+const count = (value) => {
+  const cell = num(formatCount(value));
+  cell.title = value.toLocaleString("en-US");
+  return cell;
+};
+const rtt = (value) => {
+  const cell = num(formatRTT(value));
+  cell.title = formatRTT(value, false);
+  return cell;
+};
 
 function factsFor(t) {
   const asn = [t.asn, t.org, t.country && `(${t.country})`].filter(Boolean).join(" ");
@@ -47,6 +62,8 @@ function factsFor(t) {
     ["AS", asn],
     ["Loss", done === 0 ? "–" : `${formatPct(lossRate(t))}% (${t.loss} of ${done})`],
     ["Sent / Recv", `${t.sent} / ${t.recv}`],
+    ["Latest RTT", formatRTT(t.last_rtt_ms, false)],
+    ["Jitter", formatRTT(t.jitter_ms, false)],
     ["Duplicates", t.duplicates || null],
     ["Late replies", t.late_replies || null],
     ["Path MTU", t.pmtu ? `${t.pmtu}${t.pmtu_bottleneck_ip ? ` (bottleneck ${t.pmtu_bottleneck_ip})` : ""}` : null],
@@ -56,18 +73,29 @@ function factsFor(t) {
   ]);
 }
 
+function statisticsFor(t, meta) {
+  return facts([
+    ["Average RTT", formatRTT(t.avg_rtt_ms, false)],
+    ["Minimum RTT", formatRTT(t.min_rtt_ms, false)],
+    ["Peak RTT", formatRTT(t.max_rtt_ms, false)],
+    ["Latest TTL", t.last_ttl > 0 ? t.last_ttl : "–"],
+    ["DSCP", meta.features.dscp ? dscpName(t.last_dscp) : null],
+  ]);
+}
+
 function hopsFor(t, th) {
   const parts = [];
   if (t.mtr_hops?.length) {
     parts.push(section("MTR", simpleTable(
-      [["Hop", true], ["Address"], ["AS"], ["Loss %", true], ["Sent", true], ["Last ms", true], ["Avg ms", true], ["Best ms", true], ["Worst ms", true], ["Jitter ms", true]],
+      [["Hop", true, "ttl"], ["Address", false, "ip"], ["AS", false, "asn"], ["Loss %", true, "hopLoss"], ["Sent", true, "count"],
+        ["Last", true, "rtt"], ["Avg", true, "rtt"], ["Best", true, "rtt"], ["Worst", true, "rtt"], ["Jitter", true, "rtt"]],
       t.mtr_hops.map((h) => [
         num(String(h.ttl)),
         td(h.ip || "* no reply", "mono"),
         td([h.asn, h.org].filter(Boolean).join(" ") || "–"),
         el("td", { className: "num" }, statusChip(hopLossLevel(h.loss_pct, th), formatPct(h.loss_pct))),
-        num(String(h.sent)), num(formatMs(h.last_rtt_ms)), num(formatMs(h.avg_rtt_ms)),
-        num(formatMs(h.min_rtt_ms)), num(formatMs(h.max_rtt_ms)), num(formatMs(h.jitter_ms)),
+        count(h.sent), rtt(h.last_rtt_ms), rtt(h.avg_rtt_ms),
+        rtt(h.min_rtt_ms), rtt(h.max_rtt_ms), rtt(h.jitter_ms),
       ]),
     )));
   } else if (t.trace_hops?.length) {
@@ -78,11 +106,11 @@ function hopsFor(t, th) {
   if (t.port_results?.length) {
     const levels = { Open: "ok", Closed: "crit", Filtered: "warn" };
     parts.push(section("Ports", simpleTable(
-      [["Port"], ["Status"], ["RTT ms", true], ["Open", true], ["Closed", true]],
+      [["Port", false, "port"], ["Status", false, "statusLabel"], ["RTT", true, "rtt"], ["Open", true, "count"], ["Closed", true, "count"]],
       t.port_results.map((p) => [
         td(`${p.port}/${p.protocol}`, "mono"),
         el("td", {}, statusChip(levels[p.status] ?? "pending", p.status || "Waiting")),
-        num(formatMs(p.rtt_ms)), num(String(p.open_count)), num(String(p.closed_count)),
+        rtt(p.rtt_ms), count(p.open_count), count(p.closed_count),
       ]),
     )));
   }
@@ -122,7 +150,7 @@ function createChart(getContext) {
       drawCrosshair(canvas, geo, series, cursor);
       const v = series[cursor];
       const ago = Math.round(((series.length - 1 - cursor) * intervalMs) / 1000);
-      tip.replaceChildren(el("strong", { text: v == null ? "Lost" : `${formatMs(v)} ms` }), el("span", { text: ago === 0 ? "latest" : `≈ ${ago}s ago` }));
+      tip.replaceChildren(el("strong", { text: v == null ? "Lost" : formatRTT(v) }), el("span", { text: ago === 0 ? "latest" : `≈ ${ago}s ago` }));
       tip.hidden = false;
       const x = geo.xAt(cursor);
       tip.style.left = `${Math.min(x + 10, canvas.clientWidth - tip.offsetWidth - 4)}px`;
@@ -158,7 +186,7 @@ function createChart(getContext) {
       const lost = series.length - vals.length;
       caption.textContent = vals.length === 0
         ? (series.length === 0 ? "No samples yet." : `All ${lost} samples lost.`)
-        : `${series.length} samples · min ${formatMs(Math.min(...vals))} · max ${formatMs(Math.max(...vals))} ms · ${lost} lost (red ticks)`;
+        : `${series.length} samples · min ${formatRTT(Math.min(...vals))} · max ${formatRTT(Math.max(...vals))} · ${lost} lost (red ticks)`;
       paint();
     },
     repaint: paint,
@@ -175,7 +203,7 @@ export function createDetail(dom) {
   let meta = null;
   let timers = [];
   let aborter = null;
-  let factsNode, hopsNode, eventsNode;
+  let factsNode, statisticsNode, hopsNode, eventsNode;
   const chart = createChart(() => ({ th: meta.thresholds, intervalMs: meta.interval_ms }));
 
   // A response can finish after the drawer moved to another target or
@@ -223,7 +251,12 @@ export function createDetail(dom) {
   const render = () => {
     dom.title.textContent = target.host;
     dom.sub.textContent = [target.ip, target.ptr].filter(Boolean).join(" · ");
-    factsNode.replaceChildren(factsFor(target));
+    const level = rowLevel(target, meta.thresholds);
+    factsNode.replaceChildren(
+      el("div", { className: "detail-status" }, statusChip(level),
+        el("span", { text: statusReasons(target, meta.thresholds).join(" · ") })),
+      factsFor(target));
+    statisticsNode.replaceChildren(statisticsFor(target, meta));
     hopsNode.replaceChildren(...hopsFor(target, meta.thresholds));
   };
 
@@ -236,16 +269,21 @@ export function createDetail(dom) {
       meta = m;
       aborter = new AbortController();
       factsNode = el("div");
+      statisticsNode = el("div");
       hopsNode = el("div");
       eventsNode = el("div", {}, el("p", { className: "muted", text: "Loading…" }));
       const actions = dom.actionsFor(t);
-      dom.body.replaceChildren(
+      // replaceChildren converts null into visible text, unlike our el helper.
+      const sections = [
         section("Summary", factsNode),
         section("RTT", chart.node),
+        section("Statistics since start / reset", statisticsNode,
+          el("p", { className: "chart-caption", text: "Historical averages and peaks do not determine the current status." })),
         hopsNode,
         section("Events", eventsNode),
         actions && sectionWith("actions", "Actions", actions),
-      );
+      ];
+      dom.body.replaceChildren(...sections.filter(Boolean));
       dom.root.hidden = false;
       render();
       chart.set([]);
@@ -253,7 +291,7 @@ export function createDetail(dom) {
       loadEvents();
       timers.push(setInterval(() => !document.hidden && loadHistory(), HISTORY_EVERY_MS));
       timers.push(setInterval(() => !document.hidden && loadEvents(), EVENTS_EVERY_MS));
-      dom.closeButton.focus();
+      dom.closeButton.focus({ preventScroll: true });
     },
     /** Refresh from a new snapshot; closes when the target is gone. */
     update(t, m) {

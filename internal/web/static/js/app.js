@@ -56,9 +56,10 @@ const detail = createDetail({
   onClose() {
     const id = view.selectedId;
     view.selectedId = null;
+    document.body.classList.remove("detail-open");
     if (location.hash) history.replaceState(null, "", location.pathname);
     scheduleRender();
-    document.querySelector(`tr[data-target-id="${id}"]`)?.focus();
+    document.querySelector(`tr[data-target-id="${id}"]`)?.focus({ preventScroll: true });
   },
 });
 
@@ -66,6 +67,7 @@ function openTarget(id) {
   const t = view.snapshot?.targets.find((x) => x.id === id);
   if (!t) return;
   view.selectedId = id;
+  document.body.classList.add("detail-open");
   history.replaceState(null, "", `#target-${id}`);
   detail.open(id, t, view.meta);
   scheduleRender();
@@ -77,6 +79,7 @@ function renderHeader() {
   node.className = `badge lvl-${badge.level}`;
   node.querySelector(".badge-icon").textContent = badgeIcon(badge.level);
   node.querySelector(".badge-label").textContent = badge.label;
+  node.title = "Dashboard connection and session state. Target health is shown in the table.";
 
   // Snapshots are only sent when something changed, so this is the time
   // of the last change, not of the last check.
@@ -183,7 +186,7 @@ function renderControls() {
   const on = control.allowed;
   $("add-form").hidden = !on;
   $("reset-slot").hidden = !on;
-  $("readonly-hint").hidden = on;
+  $("readonly-help").hidden = on;
   // A rejected token (e.g. from an earlier mping run) also retracts the
   // drawer's delete button, not just the header controls.
   if (!on) document.querySelector('#detail-body [data-section="actions"]')?.remove();
@@ -191,8 +194,9 @@ function renderControls() {
 
 function initControls() {
   const hint = readOnlyHint(location.hostname);
-  $("readonly-hint").textContent = hint.text;
+  $("readonly-hint").textContent = `${hint.text} · How to enable`;
   $("readonly-hint").title = hint.title;
+  $("readonly-explanation").textContent = `${hint.title} For a headless run, use the control link printed in the terminal, or the token configured with MPING_WEB_TOKEN.`;
   $("reset-slot").replaceChildren(confirmButton("Reset stats", "Confirm reset?", async () => {
     const res = await control.reset();
     notify(res.ok ? "Statistics reset." : `Couldn't reset: ${res.error}`, !res.ok);
@@ -252,7 +256,25 @@ function initFilter() {
   });
 }
 
+// Which columns fit depends on the table's width, which changes with the
+// window, the docked detail panel and the scrollbar, not only on "resize".
+let tableWidth = 0;
+new ResizeObserver(([entry]) => {
+  const width = Math.round(entry.contentRect.width);
+  if (width !== tableWidth) {
+    tableWidth = width;
+    scheduleRender();
+  }
+}).observe($("targets").parentElement);
+
+// Keep a docked detail panel below the header even when its controls wrap.
+const headerObserver = new ResizeObserver(([entry]) => {
+  document.documentElement.style.setProperty("--topbar-height", `${entry.target.getBoundingClientRect().height}px`);
+});
+headerObserver.observe(document.querySelector(".topbar"));
+
 initFilter();
+window.addEventListener("resize", scheduleRender);
 initControls();
 connect();
 scheduleRender();

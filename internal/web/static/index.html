@@ -24,13 +24,27 @@
     <button class="btn" type="submit">Add</button>
   </form>
   <span id="reset-slot" hidden></span>
-  <span id="readonly-hint" class="muted readonly-hint" hidden>Read-only</span>
+  <details id="readonly-help" class="readonly-help" hidden>
+    <summary id="readonly-hint" class="readonly-hint">Read-only · How to enable</summary>
+    <div class="readonly-popover">
+      <strong>Enable browser controls</strong>
+      <p id="readonly-explanation"></p>
+      <p>You can then add hosts, delete targets and reset statistics.</p>
+    </div>
+  </details>
   <p id="notice" class="notice" role="status" aria-live="polite"></p>
 </header>
 
+<div class="workspace">
 <main class="layout">
   <section class="panel" aria-labelledby="targets-title">
-    <h2 id="targets-title" class="visually-hidden">Targets</h2>
+    <div class="panel-toolbar">
+      <div>
+        <h2 id="targets-title" class="panel-title">Targets</h2>
+        <p class="panel-hint">Select a host to view details.</p>
+      </div>
+    </div>
+    <p class="status-guide">Status uses latest RTT, jitter and overall loss. Averages and peaks describe the run since start or reset.</p>
     <div class="table-wrap">
       <table id="targets" class="grid">
         <thead></thead>
@@ -61,5 +75,6 @@
   </div>
   <div id="detail-body" class="detail-body"></div>
 </aside>
+</div>
 </body>
 </html>

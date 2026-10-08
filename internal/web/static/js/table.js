@@ -2,37 +2,68 @@
 // row focus and selection are restored by target ID.
 import { el, statusChip } from "./dom.js";
 import { drawSparkline } from "./chart.js";
+import { columnWidthPx, cssPx, setColumns } from "./columns.js";
 import {
-  buildSections, cellLevels, dscpName, formatMs, formatPct, lossRate, matchesFilter, rowLevel,
+  buildSections, cellLevels, dscpName, formatCount, formatRTT, formatPct, lossRate, matchesFilter, rowLevel,
+  selectColumns, statusReasons, tableScale,
 } from "./model.js";
+
+// Spare width is turned into larger text and columns, up to this factor;
+// beyond it the remainder stays empty (very large monitors).
+const MAX_TABLE_SCALE = 2;
 
 const levelLabels = { ok: "OK", warn: "Warn", crit: "Crit", pending: "Waiting" };
 
-/** Column set, following the TUI: optional columns only when the feature is on. */
+/**
+ * Every column the TUI offers for the enabled features, in display order.
+ * `priority` decides what survives when the table is narrow (lower first):
+ * loss, then latest/average/jitter RTT, then the trend, then the rest.
+ * Status and host identify the row and are always shown.
+ */
 function targetColumns(features) {
   return [
-    { key: "status", label: "Status" },
-    { key: "host", label: "Host" },
-    { key: "ip", label: "IP" },
-    features.asn && { key: "asn", label: "AS" },
-    { key: "loss", label: "Loss %", num: true },
-    { key: "sent", label: "Sent", num: true },
-    { key: "recv", label: "Recv", num: true },
-    { key: "last", label: "Last ms", num: true },
-    { key: "avg", label: "Avg ms", num: true },
-    { key: "min", label: "Min ms", num: true },
-    { key: "max", label: "Max ms", num: true },
-    { key: "jitter", label: "Jitter ms", num: true },
-    { key: "ttl", label: "TTL", num: true },
-    features.dscp && { key: "dscp", label: "DSCP" },
-    { key: "spark", label: "RTT trend" },
+    { key: "status", label: "Status", required: true },
+    { key: "host", label: "Host", required: true },
+    { key: "ip", label: "IP", priority: 6 },
+    features.asn && { key: "asn", label: "AS", priority: 12 },
+    { key: "loss", label: "Loss %", num: true, priority: 1 },
+    { key: "sent", label: "Sent", num: true, priority: 9 },
+    { key: "recv", label: "Recv", num: true, priority: 10 },
+    { key: "last", label: "Last", num: true, priority: 2 },
+    { key: "avg", label: "Avg", num: true, priority: 3, title: "Average RTT since start or last reset; does not determine status" },
+    { key: "min", label: "Min", num: true, priority: 7, title: "Minimum RTT since start or last reset" },
+    { key: "max", label: "Peak", num: true, priority: 8, title: "Peak RTT since start or last reset; does not determine status" },
+    { key: "jitter", label: "Jitter", num: true, priority: 4 },
+    { key: "ttl", label: "TTL", num: true, priority: 11 },
+    features.dscp && { key: "dscp", label: "DSCP", priority: 13 },
+    { key: "spark", label: "RTT trend", priority: 5 },
   ].filter(Boolean);
 }
 
 function hostCell(t) {
-  const td = el("td", { className: "host-cell" }, el("span", { className: "host", text: t.host }));
-  if (t.ptr && t.ptr !== t.host) td.append(el("span", { className: "sub", text: t.ptr }));
+  const td = el("td", { className: "host-cell" },
+    el("button", { className: "host-open", attrs: { type: "button", tabindex: "-1", title: t.host, "aria-label": `View details for ${t.host}` } },
+      el("span", { className: "host", text: t.host }),
+      el("span", { className: "host-arrow", text: "›", attrs: { "aria-hidden": "true" } })));
+  if (t.ptr && t.ptr !== t.host) td.append(el("span", { className: "sub", text: t.ptr, attrs: { title: t.ptr } }));
   return td;
+}
+
+function textCell(text, className = "") {
+  return el("td", { className, attrs: { title: text } },
+    el("span", { className: "cell-text", text }));
+}
+
+function countCell(value) {
+  const cell = numCell(formatCount(value));
+  cell.title = value.toLocaleString("en-US");
+  return cell;
+}
+
+function rttCell(value, level) {
+  const cell = numCell(formatRTT(value), level);
+  cell.title = formatRTT(value, false);
+  return cell;
 }
 
 function numCell(text, level) {
@@ -45,19 +76,22 @@ function targetCell(col, t, th, cells, sparks) {
   switch (col.key) {
     case "status": {
       const level = rowLevel(t, th);
-      return el("td", {}, statusChip(level, levelLabels[level]));
+      return el("td", {}, statusChip(level, levelLabels[level]),
+        el("span", { className: "status-reason", text: statusReasons(t, th).join(" · "),
+          attrs: { title: statusReasons(t, th).join(" · ") } }));
     }
     case "host": return hostCell(t);
-    case "ip": return el("td", { className: "mono", text: t.ip || "–" });
-    case "asn": return el("td", { text: [t.asn, t.org].filter(Boolean).join(" ") || "–" });
+    case "ip": return textCell(t.ip || "–", "mono");
+    case "asn": return textCell([t.asn, t.org].filter(Boolean).join(" ") || "–");
     case "loss": return numCell(t.recv + t.loss === 0 ? "–" : formatPct(lossRate(t)), cells.loss);
-    case "sent": return numCell(String(t.sent));
-    case "recv": return numCell(String(t.recv));
-    case "last": return numCell(formatMs(t.last_rtt_ms), cells.last);
-    case "avg": return numCell(formatMs(t.avg_rtt_ms), cells.avg);
-    case "min": return numCell(formatMs(t.min_rtt_ms), cells.min);
-    case "max": return numCell(formatMs(t.max_rtt_ms), cells.max);
-    case "jitter": return numCell(formatMs(t.jitter_ms), cells.jitter);
+    case "sent": return countCell(t.sent);
+    case "recv": return countCell(t.recv);
+    case "last": return rttCell(t.last_rtt_ms, cells.last);
+    // These describe the whole run, not the measurements that drive status.
+    case "avg": return rttCell(t.avg_rtt_ms);
+    case "min": return rttCell(t.min_rtt_ms);
+    case "max": return rttCell(t.max_rtt_ms);
+    case "jitter": return rttCell(t.jitter_ms, cells.jitter);
     case "ttl": return numCell(t.last_ttl > 0 ? String(t.last_ttl) : "–");
     case "dscp": return el("td", { text: dscpName(t.last_dscp) });
     case "spark": {
@@ -69,18 +103,6 @@ function targetCell(col, t, th, cells, sparks) {
   }
 }
 
-function colClass(c) {
-  return [c.num && "num", c.key && `col-${c.key}`].filter(Boolean).join(" ");
-}
-
-function setHeader(table, columns) {
-  const row = el("tr");
-  for (const c of columns) {
-    row.append(el("th", { className: colClass(c), text: c.label, attrs: { scope: "col" } }));
-  }
-  table.tHead.replaceChildren(row);
-}
-
 /**
  * @param {HTMLTableElement} table
  * @param {object} view {snapshot, meta, filter, selectedId, history: Map<id, series>}
@@ -90,8 +112,16 @@ function setHeader(table, columns) {
 export function renderTargets(table, view, onOpen) {
   const { snapshot, meta, filter, selectedId, history } = view;
   const th = meta.thresholds;
-  const columns = targetColumns(meta.features);
-  setHeader(table, columns);
+  // The table is as wide as its wrapper; widths come from the CSS contract,
+  // which already reflects the current breakpoint and docked layout.
+  const available = table.parentElement.clientWidth;
+  const columns = selectColumns(targetColumns(meta.features), (c) => columnWidthPx(table, c.key), available);
+  setColumns(table, columns, "host");
+  // Fill the width: zoom the whole table (text, columns, row heights) by the
+  // ratio of the width we have to the widest the chosen columns can be.
+  const widest = columns.reduce((sum, c) => sum + columnWidthPx(table, c.key), 0) + cssPx(table, "--host-grow");
+  const scale = tableScale(widest, available, MAX_TABLE_SCALE);
+  table.style.zoom = scale > 1 ? String(scale) : "";
 
   const focusedId = document.activeElement?.dataset?.targetId;
   const visible = snapshot.targets.filter((t) => matchesFilter(t, filter));
@@ -120,7 +150,7 @@ export function renderTargets(table, view, onOpen) {
       }
       tr.addEventListener("click", () => onOpen(t.id));
       tr.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
+        if (e.target === tr && (e.key === "Enter" || e.key === " ")) {
           e.preventDefault();
           onOpen(t.id);
         }
@@ -131,7 +161,7 @@ export function renderTargets(table, view, onOpen) {
   table.tBodies[0].replaceChildren(...rows);
 
   for (const [canvas, id] of sparks) drawSparkline(canvas, history.get(id));
-  if (focusedId) table.querySelector(`tr[data-target-id="${CSS.escape(focusedId)}"]`)?.focus();
+  if (focusedId) table.querySelector(`tr[data-target-id="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
   return visible.length;
 }
 
@@ -140,19 +170,21 @@ const httpLevels = { Up: "ok", Down: "crit", Error: "crit" };
 /** @returns {boolean} whether any HTTP checks exist */
 export function renderHTTP(table, checks) {
   if (!checks || checks.length === 0) return false;
-  setHeader(table, [
-    { label: "Status" }, { label: "URL" }, { label: "Code", num: true },
-    { label: "Last ms", num: true }, { label: "Avg ms", num: true },
-    { label: "Min ms", num: true }, { label: "Max ms", num: true },
-    { label: "Up", num: true }, { label: "Down", num: true },
-  ]);
+  const columns = [
+    { key: "statusLabel", label: "Status" }, { key: "url", label: "URL" }, { key: "code", label: "Code", num: true },
+    { key: "last", label: "Last", num: true }, { key: "avg", label: "Avg", num: true },
+    { key: "min", label: "Min", num: true }, { key: "max", label: "Max", num: true },
+    { key: "sent", label: "Up", num: true }, { key: "recv", label: "Down", num: true },
+  ];
+  setColumns(table, columns, "url");
   const rows = checks.map((c) => el("tr", {},
     el("td", {}, statusChip(httpLevels[c.status] ?? "pending", c.status || "Waiting")),
-    el("td", { className: "mono", text: c.url }),
+    textCell(c.url, "mono"),
     numCell(c.status_code > 0 ? String(c.status_code) : "–", c.status_code >= 500 ? "crit" : c.status_code >= 300 ? "warn" : "none"),
-    numCell(formatMs(c.last_rtt_ms)), numCell(formatMs(c.avg_rtt_ms)),
-    numCell(formatMs(c.min_rtt_ms)), numCell(formatMs(c.max_rtt_ms)),
-    numCell(String(c.up_count)), numCell(String(c.down_count))));
+    rttCell(c.last_rtt_ms), rttCell(c.avg_rtt_ms),
+    rttCell(c.min_rtt_ms), rttCell(c.max_rtt_ms),
+    countCell(c.up_count), countCell(c.down_count)));
+  for (const row of rows) columns.forEach((c, i) => row.children[i].classList.add(`col-${c.key}`));
   table.tBodies[0].replaceChildren(...rows);
   return true;
 }

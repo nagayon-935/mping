@@ -39,6 +39,27 @@ export function rowLevel(t, th) {
   );
 }
 
+/** Explain the same measurements used by rowLevel; historical peaks do not affect status. */
+export function statusReasons(t, th) {
+  const level = rowLevel(t, th);
+  if (level === "pending") return ["Waiting for a completed probe"];
+  if (t.recv === 0) return ["No replies received"];
+  const reasons = [];
+  const checks = [
+    ["Loss", lossRate(t), th.loss_warn_pct, th.loss_crit_pct, formatPct, "%"],
+    ["RTT", t.last_rtt_ms, th.rtt_warn_ms, th.rtt_crit_ms, formatMs, " ms"],
+    ["Jitter", t.jitter_ms, th.jitter_warn_ms, th.jitter_crit_ms, formatMs, " ms"],
+  ];
+  for (const [name, value, warn, crit, format, unit] of checks) {
+    if (value > warn || value > crit) {
+      const limit = value > crit ? crit : warn;
+      // Thresholds can be zero; unlike an RTT sample, zero is a real limit.
+      reasons.push(`${name} ${format(value)}${unit} > ${limit}${unit}`);
+    }
+  }
+  return reasons.length ? reasons : ["Within thresholds"];
+}
+
 /** Per-cell levels for the colour-coded columns. */
 export function cellLevels(t, th) {
   const rtt = (v) => levelAbove(v, th.rtt_warn_ms, th.rtt_crit_ms);
@@ -66,6 +87,32 @@ export function formatMs(ms) {
   if (ms < 10) return ms.toFixed(2);
   if (ms < 100) return ms.toFixed(1);
   return Math.round(ms).toString();
+}
+
+/** RTT with its unit; missing measurements remain a plain dash. */
+export function formatRTT(ms, compact = true) {
+  const value = formatMs(ms);
+  if (value === "–") return value;
+  // Go durations top out at ~9.22e12 ms: 10 characters including " ms".
+  return `${compact && ms >= 1e6 ? ms.toExponential(2).replace("e+", "e") : value} ms`;
+}
+
+/** At most 8 characters over the nonnegative int64 counter range. */
+export function formatCount(n) {
+  if (n < 1e6) return n.toLocaleString("en-US");
+  const units = [[1e6, "M"], [1e9, "B"], [1e12, "T"]];
+  let i = units.findLastIndex(([scale]) => n >= scale);
+  if (i < 0 || n >= 1e15) return n.toExponential(2).replace("e+", "e");
+  for (;;) {
+    // Work in tenths so rounding is decided on integers, then carry to the
+    // next unit when rounding reaches 1000 (999.95M is 1B, not "1000M").
+    const tenths = Math.round(n / (units[i][0] / 10));
+    if (tenths < 10000) {
+      const whole = tenths % 10 === 0 ? String(tenths / 10) : (tenths / 10).toFixed(1);
+      return `${whole}${units[i][1]}`;
+    }
+    if (++i === units.length) return n.toExponential(2).replace("e+", "e");
+  }
 }
 
 export function formatPct(pct) {
@@ -184,4 +231,36 @@ export function readOnlyHint(hostname) {
   return hostname === "127.0.0.1"
     ? { text: "Read-only", title: `${base}.` }
     : { text: "Read-only", title: `${base} (it uses 127.0.0.1; open that address instead of ${hostname}).` };
+}
+
+/**
+ * Chooses the columns that fit in `available` pixels. Required columns are
+ * always kept; the rest are added strictly in priority order (lower number
+ * first) and the first one that does not fit ends the search, so a narrow,
+ * low-priority column never takes the place of a more important one that was
+ * dropped. The result keeps the caller's display order.
+ */
+export function selectColumns(columns, widthOf, available) {
+  const chosen = new Set(columns.filter((c) => c.required));
+  let used = 0;
+  for (const c of chosen) used += widthOf(c);
+  const rest = columns.filter((c) => !c.required).sort((a, b) => a.priority - b.priority);
+  for (const c of rest) {
+    const width = widthOf(c);
+    if (used + width > available) break;
+    chosen.add(c);
+    used += width;
+  }
+  return columns.filter((c) => chosen.has(c));
+}
+
+/**
+ * Zoom that makes a table of `natural` pixels fill `available` pixels:
+ * never below 1, never above `max`. Rounded down to 3 decimals so the scaled
+ * table is never a pixel wider than its wrapper (which would add a scrollbar).
+ */
+export function tableScale(natural, available, max) {
+  if (!(natural > 0) || !(available > 0)) return 1;
+  const scale = Math.floor((available / natural) * 1000) / 1000;
+  return Math.min(max, Math.max(1, scale));
 }
