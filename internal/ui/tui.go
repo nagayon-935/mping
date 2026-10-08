@@ -230,24 +230,17 @@ func Run(opts RunOptions) error {
 	details := newHostDetails(opts)
 	root.AddPage("details", details.pane, true, false)
 	var reportDialog *saveDialog
+	var deleteConfirmation *deleteDialog
 	var reportReturnFocus tview.Primitive = table
 	closeDetails := func() {
 		details.open = false
-		if reportDialog != nil && reportDialog.open {
+		if (reportDialog != nil && reportDialog.open) || (deleteConfirmation != nil && deleteConfirmation.open) {
 			return
 		}
 		root.SwitchToPage("main")
 		app.SetFocus(table)
 	}
-	reportDialog = newSaveDialog(app, root, session, opts.OnSaveReport, func() {
-		if details.open {
-			root.SwitchToPage("details")
-			app.SetFocus(details.text)
-		} else {
-			root.SwitchToPage("main")
-			app.SetFocus(reportReturnFocus)
-		}
-	}, func(message string, failed bool) {
+	notifyResult := func(message string, failed bool) {
 		color := "green"
 		if failed {
 			color = "red"
@@ -258,31 +251,63 @@ func Run(opts RunOptions) error {
 		if details.open {
 			details.footer.SetDynamicColors(true).SetText(text + " | w: Save | Esc: Back")
 		}
-	})
+	}
+	reportDialog = newSaveDialog(app, root, session, opts.OnSaveReport, func() {
+		if details.open {
+			root.SwitchToPage("details")
+			app.SetFocus(details.text)
+		} else {
+			root.SwitchToPage("main")
+			app.SetFocus(reportReturnFocus)
+		}
+	}, notifyResult)
 	tr.afterUpdate = func() {
 		if details.open && !details.refresh(targets) {
 			closeDetails()
 			vs.appendLog("[yellow]Selected target was removed; returned to overview[-]")
 		}
 	}
-	deleteSelected := func() {
-		id := tr.selectedID
-		if details.open {
-			id = details.targetID
-		}
-		if opts.OnDeleteTarget == nil {
-			return
-		}
+	deleteConfirmation = newDeleteDialog(app, root, func(id uint64, host string) {
 		if !session.Submit(func() {
 			err := opts.OnDeleteTarget(id)
 			session.Post(func() {
 				if err != nil {
-					vs.appendLog("[red]Delete target: " + tview.Escape(err.Error()) + "[-]")
+					notifyResult("Delete target: "+err.Error(), true)
+				} else {
+					notifyResult(host+" を削除しました", false)
 				}
 				tr.update()
 			})
 		}) {
 			vs.appendLog("[yellow]Operation queue full; please try again[-]")
+		}
+	}, func(focus tview.Primitive) {
+		if !details.open && (focus == details.text || focus == details.graph) {
+			root.SwitchToPage("main")
+			app.SetFocus(table)
+		} else {
+			app.SetFocus(focus)
+		}
+	})
+	deleteSelected := func() {
+		if opts.OnDeleteTarget == nil {
+			return
+		}
+		id := tr.selectedID
+		if details.open {
+			id = details.targetID
+		}
+		// Refresh membership without substituting a new selection for a
+		// target that disappeared before the keypress was handled.
+		tr.update()
+		if id == 0 {
+			id = tr.selectedID
+		}
+		for _, target := range targets {
+			if target.ID == id {
+				deleteConfirmation.show(target)
+				return
+			}
 		}
 	}
 	input := newInputHandler(inputHandlerDeps{
@@ -335,6 +360,9 @@ func Run(opts RunOptions) error {
 		session:      session,
 	})
 	session.bind(app, func(event *tcell.EventKey) *tcell.EventKey {
+		if deleteConfirmation.open {
+			return deleteConfirmation.handle(event)
+		}
 		if reportDialog.open {
 			return reportDialog.handle(event)
 		}

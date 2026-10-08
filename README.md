@@ -284,7 +284,7 @@ See [examples/hosts-groups.yaml](examples/hosts-groups.yaml) for a runnable exam
 | **S** | Restart measurements with new workers, preserving statistics (after **s**) |
 | **R** | Reset statistics and UI logs; remain stopped if measurements are stopped |
 | **a** | Open "Add host" dialog — type a hostname or IP and press Enter to add it at runtime |
-| **d** | Delete the selected target, or the target currently shown in details |
+| **d** | Confirm deletion of the selected target, or the target currently shown in details |
 | **Tab** | Cycle focus: Ping Monitor → Traceroute Monitor → MTR Monitor → Port Monitor → HTTP Monitor → RTT Graphs → Log |
 | **↑ / ↓ / PgUp / PgDn** | Select hosts in Ping Monitor; scroll other panes and host details |
 | **Enter** | Open selected host details: statistics, routes, MTR, ports, graphs, and target events |
@@ -292,6 +292,8 @@ See [examples/hosts-groups.yaml](examples/hosts-groups.yaml) for a runnable exam
 | **f** | Fold or expand the focused pane |
 | **z** | Maximize the focused pane or restore its previous layout |
 | **w** | Save a session report from the overview, or one target from details |
+
+Deletion opens a confirmation showing the host, target ID, IP, and DSCP. **Cancel** (`キャンセル`) is selected initially; Enter cancels. Use Tab or the left/right arrows to select **Delete** (`削除`), then Enter to confirm. Esc cancels, and repeated `d` does not confirm. Measurements continue while the dialog is open. Cancelling restores the previous focus and scroll position. Re-adding a deleted target starts a new measurement.
 
 Pane folding and maximization are available in the overview. Folded title rows remain reachable with Tab; press `f` to expand them. Measurements continue while panes are hidden. Tab stays within the maximized pane until it is restored.
 

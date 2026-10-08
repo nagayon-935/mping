@@ -79,7 +79,7 @@ func TestDetailsSimulationSelectsDuplicateAndReturnsAfterDeletion(t *testing.T) 
 			var b strings.Builder
 			w, h := screen.Size()
 			for y := 0; y < h; y++ {
-				b.WriteString(screenRowString(screen, y, w))
+				b.WriteString(screenVisibleRow(screen, y, w))
 				b.WriteByte('\n')
 			}
 			select {
@@ -101,7 +101,10 @@ func TestDetailsSimulationSelectsDuplicateAndReturnsAfterDeletion(t *testing.T) 
 		done <- Run(RunOptions{Targets: []*stats.TargetStats{a, b}, Interval: 50 * time.Millisecond, Timeout: time.Second, PacketSize: 56, TargetSource: func() TargetSet { return TargetSet{Targets: source.Load().targets} }, OnDeleteTarget: func(id uint64) error { deleted <- id; source.Store(&set{[]*stats.TargetStats{a}}); return nil }})
 	}()
 	screen := <-screens
-	t.Cleanup(func() { screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone) })
+	t.Cleanup(func() {
+		screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
+		screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
+	})
 	wait := func(marker string) {
 		t.Helper()
 		timeout := time.NewTimer(3 * time.Second)
@@ -124,6 +127,21 @@ func TestDetailsSimulationSelectsDuplicateAndReturnsAfterDeletion(t *testing.T) 
 	screen.InjectKey(tcell.KeyPgDn, 0, tcell.ModNone)
 	wait("Selected B event")
 	screen.InjectKey(tcell.KeyRune, 'd', tcell.ModNone)
+	wait("このホストを削除しますか？")
+	// Repeated d and Enter on the default Cancel must not delete the target.
+	screen.InjectKey(tcell.KeyRune, 'd', tcell.ModNone)
+	screen.InjectKey(tcell.KeyRune, 'd', tcell.ModNone)
+	screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
+	wait("Selected B event")
+	select {
+	case <-deleted:
+		t.Fatal("default cancellation deleted the target")
+	default:
+	}
+	screen.InjectKey(tcell.KeyRune, 'd', tcell.ModNone)
+	wait("このホストを削除しますか？")
+	screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
+	screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
 	select {
 	case id := <-deleted:
 		if id != b.ID {
