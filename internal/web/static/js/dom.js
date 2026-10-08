@@ -30,6 +30,13 @@ export function badgeIcon(level) {
   return icons[level] ?? "○";
 }
 
+/** Whether the user has text selected inside node (e.g. copying an IP). */
+export function selectionWithin(node) {
+  const sel = document.getSelection();
+  if (!node || !sel || sel.isCollapsed || sel.rangeCount === 0) return false;
+  return node.contains(sel.anchorNode) || node.contains(sel.focusNode);
+}
+
 /** Reads a CSS custom property from :root (theme-aware chart colours). */
 export function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();

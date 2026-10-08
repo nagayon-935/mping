@@ -171,11 +171,18 @@ export function createDetail(dom) {
   let factsNode, hopsNode, eventsNode;
   const chart = createChart(() => ({ th: meta.thresholds, intervalMs: meta.interval_ms }));
 
+  // A response can finish after the drawer moved to another target or
+  // closed (abort only cancels requests still in flight), so results are
+  // applied only if they still belong to the target on screen.
   const poll = async (url, apply) => {
+    const { signal } = aborter;
+    const forId = id;
+    const current = () => !signal.aborted && forId === id;
     try {
-      apply(await fetchJSON(url, aborter.signal));
+      const body = await fetchJSON(url, signal);
+      if (current()) apply(body);
     } catch (err) {
-      if (err.name !== "AbortError") apply(null, err);
+      if (current()) apply(null, err);
     }
   };
   const loadHistory = () => poll(`api/v1/targets/${id}/history?n=${HISTORY_POINTS}`, (body) => {

@@ -1,6 +1,6 @@
 // Dashboard entry point: one SSE stream drives every render; sparkline
 // history is polled in bulk alongside it.
-import { el, badgeIcon, fetchJSON } from "./dom.js";
+import { el, badgeIcon, fetchJSON, selectionWithin } from "./dom.js";
 import { renderHTTP, renderTargets } from "./table.js";
 import { createDetail } from "./detail.js";
 import { badgeFor, summarize } from "./model.js";
@@ -68,22 +68,37 @@ function renderHeader() {
   );
 }
 
+// Rebuilding a table or the drawer drops any text the user is selecting, so
+// those parts wait while a selection is open inside them; "selectionchange"
+// re-runs the render once it is cleared.
+let heldBySelection = false;
+
 function renderBody() {
+  heldBySelection = false;
   const empty = $("targets-empty");
   if (!view.snapshot) {
     empty.textContent = view.connected ? "Waiting for the first measurements…" : "Connecting to mping…";
     empty.hidden = false;
     return;
   }
-  const shown = renderTargets($("targets"), view, openTarget);
-  empty.hidden = shown > 0;
-  empty.textContent = view.snapshot.targets.length === 0 ? "No targets." : "No targets match the filter.";
-  $("http-panel").hidden = !renderHTTP($("http"), view.snapshot.http_checks);
+  if (selectionWithin($("targets")) || selectionWithin($("http"))) {
+    heldBySelection = true;
+  } else {
+    const shown = renderTargets($("targets"), view, openTarget);
+    empty.hidden = shown > 0;
+    empty.textContent = view.snapshot.targets.length === 0 ? "No targets." : "No targets match the filter.";
+    $("http-panel").hidden = !renderHTTP($("http"), view.snapshot.http_checks);
+  }
 
   if (detail.id != null) {
-    detail.update(view.snapshot.targets.find((t) => t.id === detail.id), view.meta);
+    if (selectionWithin($("detail"))) heldBySelection = true;
+    else detail.update(view.snapshot.targets.find((t) => t.id === detail.id), view.meta);
   }
 }
+
+document.addEventListener("selectionchange", () => {
+  if (heldBySelection) scheduleRender();
+});
 
 let renderQueued = false;
 function scheduleRender() {
