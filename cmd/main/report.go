@@ -118,11 +118,21 @@ func (s *supervisor) saveReport(path, format string, selectedID uint64) error {
 	if format != "text" && format != "json" {
 		return fmt.Errorf("unsupported report format %q", format)
 	}
+	// Resolve the requested path as the invoking user: resolving symlinks
+	// with root's permissions would reveal whether paths exist in
+	// directories the user can't read.
+	var target string
+	if err := asRealUser(func() error {
+		target = canonicalOutputPath(path)
+		return nil
+	}); err != nil {
+		return err
+	}
 	var snapshot report.Report
 	err := s.editTargets(func(s *supervisor) error {
 		reserved := append([]string{s.cfg.config.outputFile, s.cfg.config.jsonOutputFile}, s.cfg.reservedOutputs...)
 		for _, active := range reserved {
-			if active != "" && canonicalOutputPath(active) == canonicalOutputPath(path) {
+			if active != "" && canonicalOutputPath(active) == target {
 				return fmt.Errorf("report path is reserved for an active CSV or JSON writer")
 			}
 		}
@@ -134,5 +144,5 @@ func (s *supervisor) saveReport(path, format string, selectedID uint64) error {
 		return err
 	}
 	// File I/O happens outside the supervisor and holds no measurement locks.
-	return report.Write(path, format, snapshot)
+	return writeReportFile(path, format, snapshot)
 }

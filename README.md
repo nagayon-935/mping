@@ -36,7 +36,7 @@
 | Linux | amd64, arm64 | Recommended: grant `CAP_NET_RAW` via `setcap` |
 | macOS | amd64, arm64 (Apple Silicon) | Uses `setuid` |
 
-> **Privileges required** — mping uses raw ICMP sockets to obtain accurate TTL values. On Linux the preferred approach is granting `CAP_NET_RAW` with `setcap`; `install.sh` handles this automatically. On macOS a `setuid` bit is set instead.
+> **Privileges required** — mping uses raw ICMP sockets to obtain accurate TTL values. On Linux the preferred approach is granting `CAP_NET_RAW` with `setcap`; `install.sh` handles this automatically. On macOS a `setuid` bit is set instead. With a `setuid` install, mping keeps root only for opening raw sockets: every file it reads or writes (`-f`, `include:`, `-o`, `-j`, saved reports) is accessed with the invoking user's permissions, so it cannot be used to read or modify files that user couldn't access directly.
 
 > **Terminal Compatibility** — Standard terminals on Linux and macOS may not render colors correctly. If you experience issues with color display, consider using a modern terminal emulator (e.g., iTerm2, Alacritty, or kitty).
 
@@ -245,6 +245,38 @@ groups:
 
 See [examples/hosts-groups.yaml](examples/hosts-groups.yaml) for a runnable example (`mping -f examples/hosts-groups.yaml`).
 
+### Adding many hosts: patterns, names, and include files
+
+Host entries (in `hosts:`, `groups[].hosts:`, and include files) may be patterns that expand to several hosts:
+
+| Pattern | Expands to |
+|---|---|
+| `10.0.0.1-20` | `10.0.0.1` … `10.0.0.20` (last octet) |
+| `10.0.0.250-10.0.1.5` | every IPv4 address in the range |
+| `192.0.2.0/28` | `192.0.2.1` … `192.0.2.14` (IPv4 /30 and wider skip the network and broadcast addresses; IPv6 CIDRs keep every address) |
+| `core-sw{01..12}.lab` | `core-sw01.lab` … `core-sw12.lab` (zero padding is kept; several `{N..M}` form a product) |
+
+A single pattern may expand to at most 1024 hosts and a whole hosts file (including include files) to at most 4096 targets. IPv6 ranges are not supported — use CIDR notation.
+
+Give a host a display `name` to show it instead of the address (the IP is still shown next to it). Names must be unique and must not equal another entry's host; a name cannot be used on a pattern that expands to several hosts. The name also replaces the host in CSV/JSON output and reports (the resolved IP is still recorded).
+
+```yaml
+hosts:
+  - {host: 10.0.0.1, name: core-sw01}
+```
+
+`include:` (top level or per group) appends hosts from text/CSV files, resolved relative to the YAML file. Each line is `host[,name[,dscp]]`; `#` starts a comment and a first line whose first column is `host` or `hostname` is treated as a header. Every host must be an IP address or a hostname (letters, digits, `.`, `-`, `_`), and the file must be readable by the user running mping. Include files are watched for changes like the YAML file itself, including ones added to the YAML before they exist.
+
+```yaml
+groups:
+  - name: Core
+    hosts: ["core-sw{01..04}.lab"]
+  - name: Branches
+    include: [branches.csv, more-branches.txt]
+```
+
+See [examples/hosts-patterns.yaml](examples/hosts-patterns.yaml) and [examples/branches.csv](examples/branches.csv).
+
 ### Options
 
 | Flag | Short | Description | Default |
@@ -316,7 +348,7 @@ Reports include the session and collection start times, capture interval, stable
 
 The most recent 128 removed targets, 128 events per target, and 64 destination IP history entries are retained; reports include omitted-entry counts. YAML reload starts a new collection and clears earlier targets and removal history. Manual reset starts a new ping statistics window; when stopped, port/HTTP results retain their previous counters. Measurements and auxiliary checks are captured sequentially within the recorded capture interval. Reports contain aggregate results and retained events; use CSV output for ongoing individual ping records.
 
-Reports are saved with owner-only read/write permissions (`0600`). When launched through sudo, ownership is assigned to the user who invoked sudo; setuid installations use the real user and group IDs. Ownership is set before publication; failure leaves no final report.
+Reports are saved with owner-only read/write permissions (`0600`). When launched through sudo, ownership is assigned to the user who invoked sudo; setuid installations create the report as the invoking user. Ownership is set before publication; failure leaves no final report.
 
 Existing files, including symlink destinations, are preserved. Each save writes a temporary file in the destination directory and atomically publishes the complete new file. Active CSV/JSON output paths are reserved for their existing writers. On a save error, choose a new writable path and retry with **w**.
 

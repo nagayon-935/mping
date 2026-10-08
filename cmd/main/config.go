@@ -192,6 +192,40 @@ func validateHostEntries(hosts []hostEntry, location string) error {
 	return nil
 }
 
+// validateHostNames rejects display names that would make two targets
+// indistinguishable: a name used twice, or a name equal to another entry's
+// host. A name is the target's identity in the UI and the key of the
+// display→address map (buildPingerOptions), so either would make one
+// target resolve to the other's address.
+func validateHostNames(doc hostsFileYAML) error {
+	all := append([]hostEntry(nil), doc.Hosts...)
+	for _, g := range doc.Groups {
+		all = append(all, g.Hosts...)
+	}
+	hostCount := make(map[string]int, len(all))
+	for _, h := range all {
+		hostCount[h.Host]++
+	}
+	seen := make(map[string]bool)
+	for _, h := range all {
+		if h.Name == "" {
+			continue
+		}
+		if seen[h.Name] {
+			return fmt.Errorf("duplicate name %q: names must be unique", h.Name)
+		}
+		seen[h.Name] = true
+		others := hostCount[h.Name]
+		if h.Host == h.Name {
+			others--
+		}
+		if others > 0 {
+			return fmt.Errorf("name %q is also used as a host by another entry", h.Name)
+		}
+	}
+	return nil
+}
+
 // validateHostsDoc checks a hostsFileYAML for semantic errors.
 // Returns a non-nil error if any field is out of range or logically invalid.
 func validateHostsDoc(doc hostsFileYAML) error {
@@ -215,6 +249,9 @@ func validateHostsDoc(doc hostsFileYAML) error {
 		if err := validateHostEntries(g.Hosts, fmt.Sprintf("groups[%q]", g.Name)); err != nil {
 			return err
 		}
+	}
+	if err := validateHostNames(doc); err != nil {
+		return err
 	}
 	if doc.DSCP != nil && *doc.DSCP != "" {
 		if _, err := pinger.ParseDSCP(*doc.DSCP); err != nil {

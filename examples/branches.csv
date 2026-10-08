@@ -1,0 +1,4 @@
+host,name,dscp
+# Lines are host[,name[,dscp]]; '#' starts a comment.
+210.130.0.1,iij
+203.137.20.1,ntt,EF

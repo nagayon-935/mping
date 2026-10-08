@@ -17,6 +17,10 @@ import (
 type targetSpec struct {
 	Host     string
 	PinnedIP string
+	// Name is an optional display name from the hosts file (hostEntry.Name).
+	// When set it replaces Host in display(); the pinger still reaches
+	// Host, via the display→address map built by buildPingerOptions.
+	Name string
 	// DSCP is this target's raw per-target dscp: override (a name like
 	// "EF" or a bare number), sourced from a hosts-file mapping entry
 	// (hostEntry.DSCP). "" means no override — the target falls back to
@@ -35,12 +39,17 @@ func (t targetSpec) resolveAddr() string {
 }
 
 // display returns the string shown to the user and handed to
-// stats.NewTargetStats: "host (ip)" for a pinned entry, otherwise just Host.
+// stats.NewTargetStats: Name (or Host when unnamed), followed by " (ip)" for
+// a pinned entry.
 func (t targetSpec) display() string {
-	if t.PinnedIP != "" {
-		return t.Host + " (" + t.PinnedIP + ")"
+	label := t.Host
+	if t.Name != "" {
+		label = t.Name
 	}
-	return t.Host
+	if t.PinnedIP != "" {
+		return label + " (" + t.PinnedIP + ")"
+	}
+	return label
 }
 
 func initTargets(specs []targetSpec) []*stats.TargetStats {
@@ -100,9 +109,9 @@ func expandTargets(specs []targetSpec, groups []ui.TargetGroup, cfg config) ([]t
 
 		for _, ip := range ips {
 			if spec.Host != ip {
-				expandedSpecs = append(expandedSpecs, targetSpec{Host: spec.Host, PinnedIP: ip, DSCP: spec.DSCP})
+				expandedSpecs = append(expandedSpecs, targetSpec{Host: spec.Host, PinnedIP: ip, Name: spec.Name, DSCP: spec.DSCP})
 			} else {
-				expandedSpecs = append(expandedSpecs, targetSpec{Host: ip, DSCP: spec.DSCP})
+				expandedSpecs = append(expandedSpecs, targetSpec{Host: ip, Name: spec.Name, DSCP: spec.DSCP})
 			}
 		}
 
