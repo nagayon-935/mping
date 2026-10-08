@@ -26,10 +26,19 @@ func TestBoxBorder(t *testing.T) {
 
 func TestBoxHeaderRow(t *testing.T) {
 	// paddedCell adds a leading space then right-pads to colW.
-	got := boxHeaderRow([]string{"A", "BB"}, []int{4, 5})
+	got := boxHeaderRow([]boxColumn{{header: "A", width: 4}, {header: "BB", width: 5}})
 	want := "[white]│[yellow::b]" + paddedCell("A", 4) + "[white]│[yellow::b]" + paddedCell("BB", 5) + "[white]│[-]"
 	if got != want {
 		t.Errorf("boxHeaderRow = %q, want %q", got, want)
+	}
+}
+
+func TestBoxRowColoursOnlyTaggedCells(t *testing.T) {
+	cols := []boxColumn{{width: 4, leftAlign: true}, {width: 6}}
+	got := boxRow(cols, []boxCell{{text: "a"}, {text: "Open", tag: "[green]"}})
+	want := "[white]│[white]" + rightPaddedCell("a", 4) + "[white]│[green]" + paddedCell("Open", 6) + "[-][white]│[-]"
+	if got != want {
+		t.Errorf("boxRow = %q, want %q", got, want)
 	}
 }
 
