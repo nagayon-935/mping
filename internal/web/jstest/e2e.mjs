@@ -212,7 +212,7 @@ try {
     await page.evaluate(() => getSelection().removeAllRanges());
   });
 
-  await check("ports tab; Escape clears the selection; j and k move it", async () => {
+  await check("ports tab; Escape clears the selection", async () => {
     await page.click("tr.target-row >> nth=0");
     await page.click('#inspect-tabs [data-tab="ports"]');
     assert.match(await page.textContent("#inspect-body"), /443\/tcp/);
@@ -220,15 +220,10 @@ try {
     await page.waitForFunction(() => document.querySelector("#inspect-target").textContent === "");
     assert.match(await page.textContent("#inspect-body"), /Select a target/);
     assert.equal(await page.$$eval('tr.target-row[aria-current="true"]', (r) => r.length), 0);
-
-    await page.click("tr.target-row >> nth=0");
-    await page.keyboard.press("j");
-    await page.waitForFunction(() => document.querySelector('tr.target-row[aria-current="true"] .host')?.textContent === "core-rtr2.example");
-    await page.keyboard.press("k");
-    await page.waitForFunction(() => document.querySelector('tr.target-row[aria-current="true"] .host')?.textContent === "core-rtr1.example");
   });
 
   await check("Escape in the filter field keeps the selection", async () => {
+    await page.click("tr.target-row >> nth=0");
     await page.fill("#filter", "core");
     await page.focus("#filter");
     await page.keyboard.press("Escape");

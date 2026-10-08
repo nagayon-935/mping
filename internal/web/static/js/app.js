@@ -257,24 +257,13 @@ function initGraphTools() {
   setShared(view.shared);
 }
 
-/** j/k move the selection through the visible targets; Escape clears it. */
+/** Escape clears the selection. */
 function initKeys() {
   document.addEventListener("keydown", (e) => {
     const t = e.target;
     if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement) return;
     if (e.metaKey || e.ctrlKey || e.altKey || !view.snapshot) return;
-    if (e.key === "Escape") {
-      clearSelection();
-      return;
-    }
-    if (e.key !== "j" && e.key !== "k") return;
-    const ids = visibleTargets().map((x) => x.id);
-    if (ids.length === 0) return;
-    const at = ids.indexOf(view.selectedId);
-    const next = at < 0 ? 0 : Math.min(ids.length - 1, Math.max(0, at + (e.key === "j" ? 1 : -1)));
-    e.preventDefault();
-    selectTarget(ids[next]);
-    requestAnimationFrame(() => document.querySelector(`#targets tr[data-target-id="${ids[next]}"]`)?.scrollIntoView({ block: "nearest" }));
+    if (e.key === "Escape") clearSelection();
   });
 }
 
