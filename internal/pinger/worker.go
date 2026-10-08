@@ -331,84 +331,103 @@ func (p *Pinger) runTargetWorker(t *stats.TargetStats, id int, interval, timeout
 			}
 
 		case reply := <-replyCh:
-			if pend, found := unacked[reply.Seq]; found {
-				delete(unacked, reply.Seq)
-				if reply.Err != "" {
-					pend.stats.OnFailure(reply.Err)
-					p.log(t, pend.logicalSeq, "ICMPError", 0, 0, reply.Err)
-				} else {
-					// Prefer the RTT the receiver goroutine computed from the
-					// payload-embedded send timestamp (see handleEchoReply):
-					// it skips this goroutine hop entirely, so it isn't
-					// inflated by scheduling delay between the receiver and
-					// this select loop. reply.RTT is left at its zero value
-					// whenever that timestamp couldn't be trusted (payload
-					// too small for -s, signature mismatch, or a result
-					// isPlausibleRTT rejected), in which case fall back to
-					// this goroutine's own start-time bookkeeping, exactly
-					// as before this feature existed.
-					rtt := reply.RTT
-					if rtt <= 0 {
-						rtt = time.Since(pend.start)
-					}
-					pend.stats.OnSuccess(rtt, reply.TTL, reply.DSCP)
-					p.log(t, pend.logicalSeq, "OK", rtt, reply.TTL, "")
-				}
-				// Remember how this wire seq was resolved so a further reply
-				// for it (a genuine network-level duplicate) can be
-				// classified as a DUP below instead of silently discarded.
-				hist.record(reply.Seq, pend.logicalSeq, resolvedAcked, pend.start, pend.stats)
+			if p.settleReply(t, reply, unacked, hist) {
 				rearmSweepTimer(sweepTimer, unacked, timeout)
-			} else if entry, foundHist := hist.lookup(reply.Seq); foundHist {
-				// No `unacked` entry, but this wire seq was recently
-				// resolved: classify instead of silently discarding.
-				rtt := reply.RTT
-				if rtt <= 0 {
-					rtt = time.Since(entry.start)
-				}
-				switch entry.kind {
-				case resolvedAcked:
-					// A second reply for an already-resolved seq: a
-					// network-level duplicate (routing loop, L2 duplication,
-					// NAT/load-balancer anomaly). Never counted as Recv --
-					// see TargetStats.Duplicates' doc -- so the loss rate
-					// isn't understated.
-					entry.stats.OnDuplicate()
-					p.log(t, entry.logicalSeq, "DUP", rtt, reply.TTL, "")
-				case resolvedTimeout:
-					// Arrived after its probe was already swept as a loss:
-					// the target is slow but reachable, not truly dropping
-					// this probe. The Loss already recorded stands; see
-					// TargetStats.LateReplies' doc.
-					entry.stats.OnLateReply()
-					p.log(t, entry.logicalSeq, "LateReply", rtt, reply.TTL, "")
-				}
 			}
-			// A reply matching neither `unacked` nor recent history is for a
-			// seq this worker never resolved (or resolved so long ago that
-			// recentSeqHistoryCap already evicted it): discard it silently,
-			// matching the prior waitForReply's behavior for any
-			// non-matching reply.
 
 		case <-sweepTimer.C:
-			now := time.Now()
-			for wireSeq, pend := range unacked {
-				if now.Sub(pend.start) >= timeout {
-					delete(unacked, wireSeq)
-					errMsg := p.applyLastErrSource("Timeout")
-					pend.stats.OnFailure(errMsg)
-					p.log(t, pend.logicalSeq, "Timeout", 0, 0, "Request timed out")
-					// Remember this seq timed out so a reply that shows up
-					// later can be classified as a late arrival below,
-					// instead of silently discarded.
-					hist.record(wireSeq, pend.logicalSeq, resolvedTimeout, pend.start, pend.stats)
-				}
-			}
+			p.sweepTimeouts(t, unacked, hist, timeout)
 			rearmSweepTimer(sweepTimer, unacked, timeout)
 		}
 
 		if doneSending && len(unacked) == 0 {
 			return
+		}
+	}
+}
+
+// settleReply resolves a reply against the worker's outstanding probes. A
+// match records success or ICMP error and returns true (the sweep deadline
+// may have moved); a reply for a recently settled seq is classified as a
+// duplicate or late arrival. Called only from the worker's goroutine, which
+// owns unacked and hist.
+func (p *Pinger) settleReply(t *stats.TargetStats, reply Reply, unacked map[int]pendingProbe, hist *recentSeqHistory) bool {
+	if pend, found := unacked[reply.Seq]; found {
+		delete(unacked, reply.Seq)
+		if reply.Err != "" {
+			pend.stats.OnFailure(reply.Err)
+			p.log(t, pend.logicalSeq, "ICMPError", 0, 0, reply.Err)
+		} else {
+			// Prefer the RTT the receiver goroutine computed from the
+			// payload-embedded send timestamp (see handleEchoReply):
+			// it skips this goroutine hop entirely, so it isn't
+			// inflated by scheduling delay between the receiver and
+			// this select loop. reply.RTT is left at its zero value
+			// whenever that timestamp couldn't be trusted (payload
+			// too small for -s, signature mismatch, or a result
+			// isPlausibleRTT rejected), in which case fall back to
+			// this goroutine's own start-time bookkeeping, exactly
+			// as before this feature existed.
+			rtt := reply.RTT
+			if rtt <= 0 {
+				rtt = time.Since(pend.start)
+			}
+			pend.stats.OnSuccess(rtt, reply.TTL, reply.DSCP)
+			p.log(t, pend.logicalSeq, "OK", rtt, reply.TTL, "")
+		}
+		// Remember how this wire seq was resolved so a further reply
+		// for it (a genuine network-level duplicate) can be
+		// classified as a DUP below instead of silently discarded.
+		hist.record(reply.Seq, pend.logicalSeq, resolvedAcked, pend.start, pend.stats)
+		return true
+	}
+	if entry, foundHist := hist.lookup(reply.Seq); foundHist {
+		// No `unacked` entry, but this wire seq was recently
+		// resolved: classify instead of silently discarding.
+		rtt := reply.RTT
+		if rtt <= 0 {
+			rtt = time.Since(entry.start)
+		}
+		switch entry.kind {
+		case resolvedAcked:
+			// A second reply for an already-resolved seq: a
+			// network-level duplicate (routing loop, L2 duplication,
+			// NAT/load-balancer anomaly). Never counted as Recv --
+			// see TargetStats.Duplicates' doc -- so the loss rate
+			// isn't understated.
+			entry.stats.OnDuplicate()
+			p.log(t, entry.logicalSeq, "DUP", rtt, reply.TTL, "")
+		case resolvedTimeout:
+			// Arrived after its probe was already swept as a loss:
+			// the target is slow but reachable, not truly dropping
+			// this probe. The Loss already recorded stands; see
+			// TargetStats.LateReplies' doc.
+			entry.stats.OnLateReply()
+			p.log(t, entry.logicalSeq, "LateReply", rtt, reply.TTL, "")
+		}
+	}
+	// A reply matching neither `unacked` nor recent history is for a
+	// seq this worker never resolved (or resolved so long ago that
+	// recentSeqHistoryCap already evicted it): discard it silently,
+	// matching the prior waitForReply's behavior for any
+	// non-matching reply.
+	return false
+}
+
+// sweepTimeouts records a loss for every outstanding probe older than
+// timeout, remembering each so a reply arriving later counts as late.
+func (p *Pinger) sweepTimeouts(t *stats.TargetStats, unacked map[int]pendingProbe, hist *recentSeqHistory, timeout time.Duration) {
+	now := time.Now()
+	for wireSeq, pend := range unacked {
+		if now.Sub(pend.start) >= timeout {
+			delete(unacked, wireSeq)
+			errMsg := p.applyLastErrSource("Timeout")
+			pend.stats.OnFailure(errMsg)
+			p.log(t, pend.logicalSeq, "Timeout", 0, 0, "Request timed out")
+			// Remember this seq timed out so a reply that shows up
+			// later is classified as a late arrival by settleReply,
+			// instead of silently discarded.
+			hist.record(wireSeq, pend.logicalSeq, resolvedTimeout, pend.start, pend.stats)
 		}
 	}
 }
