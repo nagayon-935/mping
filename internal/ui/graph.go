@@ -246,6 +246,14 @@ func gridStepsForHeight(plotHeight int) (gy25, gy50, gy75, gy100 int) {
 	return gy25, gy50, gy75, gy100
 }
 
+// preferredHeight is the pane height (borders included) at which every
+// visible graph row gets graphPreferredRowHeight lines for the given inner
+// width.
+func (g *GraphView) preferredHeight(width int) int {
+	_, _, visibleRows, _, _ := g.layout(width, graphMaxVisibleRows*graphPreferredRowHeight)
+	return visibleRows*graphPreferredRowHeight + 2
+}
+
 func (g *GraphView) layout(width, height int) (numCols, numRowsTotal, visibleRows, colWidth, rowHeight int) {
 	// Only the count is needed here (not the fetched history/label data),
 	// and buildSeries maps 1:1 onto g.targets with no filtering, so read

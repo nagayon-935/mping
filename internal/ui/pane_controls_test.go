@@ -18,7 +18,7 @@ func testPaneControls() (*paneControls, *tview.Table, *GraphView) {
 	header := tview.NewTextView()
 	footer := tview.NewPages()
 	monitor := newMonitorPane(true, " MTR Monitor ", func(int) string { return "data" })
-	controls := newPaneControls(app, tview.NewFlex(), header, footer, table, tablePane, []*monitorPane{monitor}, graph, log)
+	controls := newPaneControls(app, tview.NewFlex(), header, footer, table, tablePane, table.GetRowCount, []*monitorPane{monitor}, graph, log)
 	app.SetFocus(table)
 	controls.rebuild()
 	return controls, table, graph

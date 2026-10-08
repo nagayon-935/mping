@@ -135,9 +135,11 @@ func Run(opts RunOptions) error {
 	wireHostInputs(app, table, pages, addHostInput, deleteHostInput, vs, session, opts.OnAddHost, opts.OnDeleteHost)
 
 	// Keys
-	mainLayout := buildLayout(header, tablePane, sidePanes, graphView, errorView, pages)
-	controls := newPaneControls(app, mainLayout, header, pages, table, tablePane, sidePanes, graphView, errorView)
-	root := tview.NewPages().AddPage("main", mainLayout, true, true)
+	mainLayout := tview.NewFlex().SetDirection(tview.FlexRow)
+	mainLayout.SetBackgroundColor(tcell.ColorBlack)
+	controls := newPaneControls(app, mainLayout, header, pages, table, tablePane, func() int { return tr.rowCount }, sidePanes, graphView, errorView)
+	controls.rebuild()
+	root := tview.NewPages().AddPage("main", controls.view(), true, true)
 	details := newHostDetails(opts)
 	root.AddPage("details", details.pane, true, false)
 	var reportDialog *saveDialog

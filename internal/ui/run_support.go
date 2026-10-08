@@ -156,32 +156,3 @@ func startRefreshLoop(
 		}
 	})
 }
-
-// buildLayout assembles the top-level Flex layout: header, Ping Monitor
-// table, enabled side panes (weight 3 alone, 2 when multiple), RTT graph,
-// Log pane, and the footer/input pages row.
-func buildLayout(header *tview.TextView, tablePane *tview.Flex, sidePanes []*monitorPane, graphView *GraphView, errorView *tview.TextView, pages *tview.Pages) *tview.Flex {
-	flex := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(header, 2, 0, false).
-		AddItem(tablePane, 0, 3, true)
-
-	var activePanes []*tview.Flex
-	for _, mp := range sidePanes {
-		if mp.enabled && mp.pane != nil {
-			activePanes = append(activePanes, mp.pane)
-		}
-	}
-	monitorWeight := 3
-	if len(activePanes) > 1 {
-		monitorWeight = 2
-	}
-	for _, pane := range activePanes {
-		flex.AddItem(pane, 0, monitorWeight, false)
-	}
-	flex.AddItem(graphView, 0, 3, false).
-		AddItem(errorView, 0, 2, false).
-		AddItem(pages, 1, 0, false)
-
-	flex.SetBackgroundColor(tcell.ColorBlack)
-	return flex
-}
