@@ -37,8 +37,16 @@ func ownerForCaller(uid, gid, euid int, getenv func(string) string) (fileOwner, 
 	return owner, nil
 }
 
+// Swappable in tests so the root-only paths can run without privileges.
+var (
+	geteuid     = os.Geteuid
+	callerOwner = func() (fileOwner, error) {
+		return ownerForCaller(os.Getuid(), os.Getgid(), os.Geteuid(), os.Getenv)
+	}
+)
+
 func setReportOwner(file *os.File, owner fileOwner) error {
-	if os.Geteuid() != 0 {
+	if geteuid() != 0 {
 		return nil
 	}
 	// Ownership is assigned before publication. If it fails, Write removes

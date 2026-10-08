@@ -117,10 +117,6 @@ func (pc *PortChecker) Wait() {
 // when IP is still empty, leaving the status stuck at "Checking...".
 const maxDNSWait = 5 * time.Second
 
-func (pc *PortChecker) loop(t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
-	pc.loopContext(pc.ctx, t, spec, result)
-}
-
 func (pc *PortChecker) loopContext(ctx context.Context, t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
 
 	// Defer the first check until the target IP is resolved (or we time out),

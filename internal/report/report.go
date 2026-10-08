@@ -182,7 +182,7 @@ func Write(path, format string, r Report) error {
 	if err != nil {
 		return err
 	}
-	owner, err := ownerForCaller(os.Getuid(), os.Getgid(), os.Geteuid(), os.Getenv)
+	owner, err := callerOwner()
 	if err != nil {
 		return err
 	}
