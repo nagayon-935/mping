@@ -418,6 +418,11 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		runOpts.OnDeleteTarget = sup.deleteTargetID
 		runOpts.OnSaveReport = sup.saveReport
 		uiErr := uiRun(runOpts)
+		// Stop accepting browser edits before the host list is captured and
+		// the supervisor torn down: an edit accepted from here on would be
+		// acknowledged and then lost. The final state (stopped, or running
+		// again after a reload) is set below and still reaches open streams.
+		webSrc.MarkReloading()
 		if snap := sup.targetSnap.Load(); snap != nil {
 			targets = snap.targets
 			currentHosts = snap.specs

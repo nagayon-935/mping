@@ -192,8 +192,12 @@ function initControls() {
     notify(res.ok ? "Statistics reset." : `Couldn't reset: ${res.error}`, !res.ok);
     if (!res.ok) renderControls();
   }));
+  let adding = false;
   $("add-form").addEventListener("submit", async (e) => {
     e.preventDefault();
+    // One request at a time: a quick second submit would otherwise come
+    // back "already in the list" right after the first one succeeded.
+    if (adding) return;
     const input = $("add-host");
     const checked = validateHost(input.value);
     if (checked.error) {
@@ -201,7 +205,16 @@ function initControls() {
       input.focus();
       return;
     }
-    const res = await control.addHost(checked.host);
+    adding = true;
+    const button = $("add-form").querySelector("button");
+    button.disabled = true;
+    let res;
+    try {
+      res = await control.addHost(checked.host);
+    } finally {
+      adding = false;
+      button.disabled = false;
+    }
     if (res.ok) {
       notify(`Added ${checked.host}.`);
       input.value = "";
