@@ -499,3 +499,28 @@ func TestRunWebStopsAcceptingEditsOnceTheUIIterationEnds(t *testing.T) {
 		t.Errorf("final state = %q, want %q", got, web.StateStopped)
 	}
 }
+
+func TestWebControllerReportsRejectionsWithoutLogging(t *testing.T) {
+	only := stats.NewTargetStats("only.example")
+	sup := newSupervisor(supervisorConfig{
+		targets: []*stats.TargetStats{only},
+		specs:   []targetSpec{{Host: "only.example"}},
+	})
+	sup.Start()
+	defer sup.Shutdown()
+	logCh := make(chan string, 4)
+	c := webController{sup: sup, logCh: logCh}
+
+	addErr := c.AddHost("only.example")
+	delErr := c.DeleteTarget(only.ID)
+
+	if addErr == nil || !strings.Contains(addErr.Error(), "already in the list") {
+		t.Errorf("AddHost duplicate err = %v, want already-in-the-list", addErr)
+	}
+	if delErr == nil || !strings.Contains(delErr.Error(), "last host") {
+		t.Errorf("DeleteTarget last err = %v, want last-host refusal", delErr)
+	}
+	if len(logCh) != 0 {
+		t.Errorf("rejected edits logged %d line(s) to the TUI", len(logCh))
+	}
+}

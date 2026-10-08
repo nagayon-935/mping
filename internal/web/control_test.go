@@ -223,6 +223,8 @@ func TestAddHostValidatesInput(t *testing.T) {
 		{"inner whitespace", `{"host":"a b"}`, http.StatusBadRequest},
 		{"control character", `{"host":"a\u0000b"}`, http.StatusBadRequest},
 		{"too long", fmt.Sprintf(`{"host":%q}`, strings.Repeat("a", maxHostLen+1)), http.StatusBadRequest},
+		{"trailing data", `{"host":"a.example"} {"host":"b.example"}`, http.StatusBadRequest},
+		{"byte order mark", "{\"host\":\"a\ufeffb\"}", http.StatusBadRequest},
 		{"body too large", fmt.Sprintf(`{"host":"a.example","pad":%q}`, strings.Repeat("x", maxControlBody)), http.StatusRequestEntityTooLarge},
 	}
 	for _, tt := range tests {

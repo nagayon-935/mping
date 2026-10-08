@@ -107,7 +107,7 @@ func TestHeadlessRunnerReturnsWhen(t *testing.T) {
 		trigger func(closeCh, doneCh chan struct{}, sigs chan os.Signal)
 		want    string
 	}{
-		{"a reload or --duration closes the iteration", func(c, _ chan struct{}, _ chan os.Signal) { close(c) }, "Reloading"},
+		{"a reload or --duration closes the iteration", func(c, _ chan struct{}, _ chan os.Signal) { close(c) }, "hosts file changed or --duration reached"},
 		{"--count completes", func(_, d chan struct{}, _ chan os.Signal) { d <- struct{}{} }, "Finished"},
 		{"an interrupt arrives", func(_, _ chan struct{}, s chan os.Signal) { s <- os.Interrupt }, "Received interrupt"},
 	}
@@ -361,5 +361,35 @@ func TestRunNoTUIQuitWinsOverAReloadPendingDuringTeardown(t *testing.T) {
 	}
 	if builtAfterHook != 0 {
 		t.Fatalf("a reload iteration started after SIGTERM (%d pinger(s) built)", builtAfterHook)
+	}
+}
+
+func TestRunNoTUIWarnsWhenNothingWillBeShownUntilExit(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		wantNote bool
+	}{
+		{"no sink", []string{"--no-tui"}, true},
+		{"with --web", []string{"--no-tui", "--web"}, false},
+		{"with --json-output", []string{"--no-tui", "-j", filepath.Join(t.TempDir(), "s.json")}, false},
+		{"with --output", []string{"--no-tui", "-o", filepath.Join(t.TempDir(), "o.csv")}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stubRunSeams(t, nil)
+			sigs := stubHeadlessSignals(t)
+			sigs <- os.Interrupt
+
+			var out, errOut bytes.Buffer
+			code := run(append(append([]string{"-S", "10.0.0.2"}, tt.args...), "example.com"), &out, &errOut)
+
+			if code != 0 {
+				t.Fatalf("run = %d, want 0 (stderr: %s)", code, errOut.String())
+			}
+			if got := strings.Contains(errOut.String(), "--no-tui without"); got != tt.wantNote {
+				t.Fatalf("note shown = %v, want %v (stderr: %q)", got, tt.wantNote, errOut.String())
+			}
+		})
 	}
 }
