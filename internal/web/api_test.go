@@ -32,7 +32,7 @@ func TestSnapshotReturns503BeforeProviderIsSet(t *testing.T) {
 	}
 }
 
-func TestSnapshotReturnsTargetsMetaAndReloadingFlag(t *testing.T) {
+func TestSnapshotReturnsTargetsMetaAndState(t *testing.T) {
 	src := NewSource()
 	p, ts := providerWithTarget("a.example")
 	ts.IncSent()
@@ -53,8 +53,8 @@ func TestSnapshotReturnsTargetsMetaAndReloadingFlag(t *testing.T) {
 	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", cc)
 	}
-	if !body.Reloading {
-		t.Error("reloading = false, want true")
+	if body.State != StateReloading {
+		t.Errorf("state = %q, want %q", body.State, StateReloading)
 	}
 	if len(body.Snapshot.Targets) != 1 || body.Snapshot.Targets[0].Host != "a.example" {
 		t.Fatalf("targets = %+v, want one a.example target", body.Snapshot.Targets)
@@ -275,7 +275,7 @@ func TestSnapshotIsReusedUntilGenerationOrSourceChanges(t *testing.T) {
 	if afterGen != 2 {
 		t.Errorf("Targets calls after a generation bump = %d, want 2", afterGen)
 	}
-	if !reloaded.Reloading {
-		t.Error("snapshot after MarkReloading still says reloading=false")
+	if reloaded.State != StateReloading {
+		t.Errorf("state after MarkReloading = %q, want %q", reloaded.State, StateReloading)
 	}
 }

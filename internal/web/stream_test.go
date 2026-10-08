@@ -157,7 +157,7 @@ func TestStreamSendsNewSnapshotWhenStatsChange(t *testing.T) {
 	}
 }
 
-func TestStreamSendsSnapshotWhenReloadStateChanges(t *testing.T) {
+func TestStreamSendsSnapshotWhenSourceStateChanges(t *testing.T) {
 	src := NewSource()
 	p, _ := providerWithTarget("a.example")
 	src.Set(p)
@@ -166,10 +166,15 @@ func TestStreamSendsSnapshotWhenReloadStateChanges(t *testing.T) {
 	nextEvent(t, frames, time.Second)
 
 	src.MarkReloading()
-	body := decodeSnapshotEvent(t, nextEvent(t, frames, time.Second))
+	reloading := decodeSnapshotEvent(t, nextEvent(t, frames, time.Second))
+	src.MarkStopped()
+	stopped := decodeSnapshotEvent(t, nextEvent(t, frames, time.Second))
 
-	if !body.Reloading {
-		t.Fatal("reloading = false, want true after MarkReloading")
+	if reloading.State != StateReloading {
+		t.Errorf("state = %q, want %q after MarkReloading", reloading.State, StateReloading)
+	}
+	if stopped.State != StateStopped {
+		t.Errorf("state = %q, want %q after MarkStopped", stopped.State, StateStopped)
 	}
 }
 

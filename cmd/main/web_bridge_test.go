@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -64,8 +67,8 @@ func TestRunWithWebServesLiveSnapshotWhileUIRuns(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("snapshot status = %d, want 200", status)
 	}
-	if snap.Reloading {
-		t.Error("reloading = true while the UI iteration is running")
+	if snap.State != web.StateRunning {
+		t.Errorf("state = %q while the UI iteration is running, want %q", snap.State, web.StateRunning)
 	}
 	if len(snap.Snapshot.Targets) != 1 || snap.Snapshot.Targets[0].Host != "example.com" {
 		t.Errorf("targets = %+v, want example.com", snap.Snapshot.Targets)
@@ -224,5 +227,113 @@ func TestParseArgsRejectsOutOfRangeWebPort(t *testing.T) {
 				t.Fatalf("err = %v, want a --web-port range error", err)
 			}
 		})
+	}
+}
+
+func TestCheckWebReloadDrift(t *testing.T) {
+	on := func(port int) config { return config{webEnabled: true, webPort: port} }
+	off := func(port int) config { return config{webEnabled: false, webPort: port} }
+	tests := []struct {
+		name             string
+		active, reloaded config
+		wantWarned       bool
+	}{
+		{"unchanged on", on(8080), on(8080), false},
+		{"unchanged off", off(8080), off(8080), false},
+		{"port changed while off", off(8080), off(9090), false},
+		{"enabled", off(8080), on(8080), true},
+		{"disabled", on(8080), off(8080), true},
+		{"port changed while on", on(8080), on(9090), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := checkWebReloadDrift(tt.active, tt.reloaded)
+
+			if (got != "") != tt.wantWarned {
+				t.Fatalf("checkWebReloadDrift = %q, want warned=%v", got, tt.wantWarned)
+			}
+			if tt.wantWarned && !strings.Contains(got, "restart") {
+				t.Errorf("warning %q does not mention a restart", got)
+			}
+		})
+	}
+}
+
+func TestRunWithWebMarksSourceStoppedOnExit(t *testing.T) {
+	stubRunSeams(t, func(ui.RunOptions) error { return nil })
+	var src *web.Source
+	webStart = func(opts web.Options) (*web.Server, error) {
+		src = opts.Source
+		opts.Port = 0
+		return web.Start(opts)
+	}
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"-S", "10.0.0.2", "--web", "example.com"}, &out, &errOut)
+
+	if code != 0 {
+		t.Fatalf("run = %d, want 0 (stderr: %s)", code, errOut.String())
+	}
+	if got := src.State(); got != web.StateStopped {
+		t.Fatalf("state after exit = %q, want %q", got, web.StateStopped)
+	}
+}
+
+// TestRunReloadWithWeb drives a real YAML reload: between iterations the
+// web source must say "reloading" (observed when the second iteration
+// builds its pinger), and a changed web-port must surface a
+// restart-required warning because the server is not restarted.
+func TestRunReloadWithWeb(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "hosts.yaml")
+	if err := os.WriteFile(yamlPath, []byte("hosts:\n  - example.com\nweb: true\nweb-port: 18080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var src *web.Source
+	var sawWarning bool
+	calls := 0
+	stubRunSeams(t, func(opts ui.RunOptions) error {
+		calls++
+		if calls == 1 {
+			time.Sleep(100 * time.Millisecond)
+			if err := os.WriteFile(yamlPath, []byte("hosts:\n  - example.com\nweb: true\nweb-port: 19090\n"), 0o644); err != nil {
+				t.Errorf("write yaml: %v", err)
+			}
+			time.Sleep(600 * time.Millisecond)
+			return nil
+		}
+		sawWarning = containsSubstring(opts.InitialLogs, "web: change detected")
+		return nil
+	})
+	webStart = func(opts web.Options) (*web.Server, error) {
+		src = opts.Source
+		opts.Port = 0
+		return web.Start(opts)
+	}
+	var statesAtPingerBuild []web.State
+	newPinger = func([]*stats.TargetStats, pinger.Options) pingerController {
+		if src != nil {
+			statesAtPingerBuild = append(statesAtPingerBuild, src.State())
+		}
+		return &fakePinger{}
+	}
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"-f", yamlPath, "-S", "127.0.0.1"}, &out, &errOut)
+
+	if code != 0 {
+		t.Fatalf("run = %d, want 0 (stderr: %s)", code, errOut.String())
+	}
+	if calls < 2 {
+		t.Fatalf("uiRun calls = %d, want a reload (>= 2)", calls)
+	}
+	if !slices.Contains(statesAtPingerBuild, web.StateReloading) {
+		t.Errorf("states seen while building pingers = %v, want %q during the reload", statesAtPingerBuild, web.StateReloading)
+	}
+	if !sawWarning {
+		t.Error("second iteration's InitialLogs lack the web restart-required warning")
+	}
+	if got := src.State(); got != web.StateStopped {
+		t.Errorf("state after exit = %q, want %q", got, web.StateStopped)
 	}
 }
