@@ -168,7 +168,6 @@ body {
 .segmented button { font: inherit; font-size: 12px; padding: 5px 10px; border: 0; background: transparent; color: var(--ink-2); cursor: pointer; }
 .segmented button + button { border-left: 1px solid var(--border); }
 .segmented button[aria-pressed="true"] { background: var(--surface-2); color: var(--ink); font-weight: 600; }
-kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface-2); }
 .status-guide { margin: 0; padding: 0 16px 14px; color: var(--muted); font-size: 12px; }
 .table-wrap { overflow-x: auto; }
 .empty { margin: 0; padding: 24px; text-align: center; color: var(--muted); }

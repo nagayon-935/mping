@@ -257,16 +257,6 @@ function initGraphTools() {
   setShared(view.shared);
 }
 
-/** Escape clears the selection. */
-function initKeys() {
-  document.addEventListener("keydown", (e) => {
-    const t = e.target;
-    if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement) return;
-    if (e.metaKey || e.ctrlKey || e.altKey || !view.snapshot) return;
-    if (e.key === "Escape") clearSelection();
-  });
-}
-
 function renderControls() {
   const on = control.allowed;
   $("add-form").hidden = !on;
@@ -355,7 +345,6 @@ new ResizeObserver(() => graphs.repaint()).observe($("graphs"));
 
 initFilter();
 initGraphTools();
-initKeys();
 window.addEventListener("resize", scheduleRender);
 initControls();
 connect();

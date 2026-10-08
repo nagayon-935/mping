@@ -188,11 +188,8 @@ try {
     await page.getByRole("button", { name: "Selected target only" }).click();
     const hosts = await page.$$eval("#inspect-body table.log .link", (n) => n.map((x) => x.textContent));
     assert.ok(hosts.length > 0 && hosts.every((h) => h === "flaky.example"), `filtered hosts: ${hosts}`);
-    await page.keyboard.press("Escape");
-    await page.waitForFunction(() => document.querySelectorAll('tr.target-row[aria-current="true"]').length === 0);
-    assert.ok((await page.$$eval("#inspect-body table.log tbody tr", (r) => r.length)) > 0,
-      "clearing the selection must lift the selected-target filter");
-    assert.equal(await page.$$eval("#inspect-body button[aria-pressed]", (b) => b.filter((x) => !x.hidden).length), 0);
+    await page.getByRole("button", { name: "Show all targets" }).click();
+    await page.waitForFunction(() => new Set([...document.querySelectorAll("#inspect-body table.log .link")].map((x) => x.textContent)).size >= 2);
   });
 
   await check("live updates keep keyboard focus on a tab and text selected in the log", async () => {
@@ -212,25 +209,10 @@ try {
     await page.evaluate(() => getSelection().removeAllRanges());
   });
 
-  await check("ports tab; Escape clears the selection", async () => {
+  await check("ports tab lists the selected target's port checks", async () => {
     await page.click("tr.target-row >> nth=0");
     await page.click('#inspect-tabs [data-tab="ports"]');
     assert.match(await page.textContent("#inspect-body"), /443\/tcp/);
-    await page.keyboard.press("Escape");
-    await page.waitForFunction(() => document.querySelector("#inspect-target").textContent === "");
-    assert.match(await page.textContent("#inspect-body"), /Select a target/);
-    assert.equal(await page.$$eval('tr.target-row[aria-current="true"]', (r) => r.length), 0);
-  });
-
-  await check("Escape in the filter field keeps the selection", async () => {
-    await page.click("tr.target-row >> nth=0");
-    await page.fill("#filter", "core");
-    await page.focus("#filter");
-    await page.keyboard.press("Escape");
-    await page.waitForTimeout(200);
-    assert.equal(await page.$$eval('tr.target-row[aria-current="true"]', (r) => r.length), 1);
-    await page.fill("#filter", "");
-    await page.keyboard.press("Escape");
   });
 
   await check("filter narrows the table", async () => {
