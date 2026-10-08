@@ -15,6 +15,7 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 	ui "github.com/nagayon-935/mping/internal/ui"
 	"github.com/nagayon-935/mping/internal/web"
+	"github.com/rivo/tview"
 )
 
 const (
@@ -377,9 +378,11 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			resetPort = sup.resetPort
 		}
 
-		webSrc.Set(newWebProvider(sup, currentCfg, currentHosts, len(portSpecs)))
+		webSrc.Set(newWebProvider(sup, currentCfg, currentHosts, len(portSpecs), logCh))
 		if webSrv != nil {
-			preLogs = append(preLogs, "Web UI: "+webSrv.URL())
+			// The control URL carries this launch's token; it is shown only
+			// here, in the terminal of the user who started mping.
+			preLogs = append(preLogs, "Web UI: "+tview.Escape(webSrv.ControlURL()))
 		}
 
 		// Each natural count completion sends a notification, including after

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -335,5 +337,115 @@ func TestRunReloadWithWeb(t *testing.T) {
 	}
 	if got := src.State(); got != web.StateStopped {
 		t.Errorf("state after exit = %q, want %q", got, web.StateStopped)
+	}
+}
+
+// webDo sends an authorised control request the way the dashboard does.
+func webDo(t *testing.T, srv *web.Server, method, path, body string) int {
+	t.Helper()
+	_, token, ok := strings.Cut(srv.ControlURL(), "#token=")
+	if !ok {
+		t.Fatalf("ControlURL %q has no token", srv.ControlURL())
+	}
+	var rd io.Reader
+	if body != "" {
+		rd = strings.NewReader(body)
+	}
+	req, err := http.NewRequest(method, srv.URL()+path, rd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Mping-Token", token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	resp.Body.Close()
+	return resp.StatusCode
+}
+
+func TestRunWebControlEditsTheLiveRunAndLogsToTUI(t *testing.T) {
+	var started func() *web.Server
+	var statuses []int
+	var hostsAfter, logs []string
+	var announced []string
+	var resetSent int
+	started = stubRunSeams(t, func(opts ui.RunOptions) error {
+		srv := started()
+		announced = opts.InitialLogs
+		before := opts.TargetSource().Targets
+		before[0].IncSent()
+		statuses = append(statuses,
+			webDo(t, srv, http.MethodPost, "api/v1/targets", `{"host":"added.example"}`),
+			webDo(t, srv, http.MethodDelete, fmt.Sprintf("api/v1/targets/%d", before[1].ID), ""),
+			webDo(t, srv, http.MethodPost, "api/v1/reset", ""),
+		)
+		resetSent = before[0].GetView().Sent
+		for _, ts := range opts.TargetSource().Targets {
+			hostsAfter = append(hostsAfter, ts.Host)
+		}
+		for {
+			select {
+			case l := <-opts.ExternalLogCh:
+				logs = append(logs, l)
+				continue
+			default:
+			}
+			break
+		}
+		return nil
+	})
+	newPinger = func([]*stats.TargetStats, pinger.Options) pingerController { return newLiveFakePinger() }
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"-S", "10.0.0.2", "--web", "one.example", "two.example"}, &out, &errOut)
+
+	if code != 0 {
+		t.Fatalf("run = %d, want 0 (stderr: %s)", code, errOut.String())
+	}
+	if !slices.Equal(statuses, []int{http.StatusCreated, http.StatusNoContent, http.StatusNoContent}) {
+		t.Fatalf("statuses = %v, want [201 204 204]", statuses)
+	}
+	if !slices.Equal(hostsAfter, []string{"one.example", "added.example"}) {
+		t.Errorf("hosts after edits = %v, want [one.example added.example]", hostsAfter)
+	}
+	if resetSent != 0 {
+		t.Errorf("sent after reset = %d, want 0", resetSent)
+	}
+	for _, want := range []string{"web: added host added.example", "web: deleted two.example", "web: reset statistics"} {
+		if !containsSubstring(logs, want) {
+			t.Errorf("TUI log lines %q lack %q", logs, want)
+		}
+	}
+	if !containsSubstring(announced, started().ControlURL()) {
+		t.Errorf("initial logs %q do not offer the control URL", announced)
+	}
+}
+
+func TestWebLogLinesEscapeTviewTags(t *testing.T) {
+	logCh := make(chan string, 1)
+	c := webController{logCh: logCh}
+
+	c.logf("added host %s", "[red]evil")
+
+	if got := <-logCh; strings.Contains(got, "[red]evil") {
+		t.Fatalf("log line %q passes a host's [tag] through to tview", got)
+	}
+}
+
+func TestWebLogNeverBlocksWhenTUILogIsFull(t *testing.T) {
+	c := webController{logCh: make(chan string)} // unbuffered, nobody reading
+
+	done := make(chan struct{})
+	go func() {
+		c.logf("reset statistics")
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("logf blocked on a full TUI log channel")
 	}
 }

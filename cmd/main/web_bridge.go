@@ -8,6 +8,7 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/nagayon-935/mping/internal/ui"
 	"github.com/nagayon-935/mping/internal/web"
+	"github.com/rivo/tview"
 )
 
 // webStart is a seam for tests, mirroring uiRun.
@@ -51,18 +52,67 @@ func checkWebReloadDrift(active, reloaded config) string {
 		time.Now().Format("15:04:05"))
 }
 
-// webProvider adapts one run-loop iteration's supervisor to web.Provider.
+// webProvider adapts one run-loop iteration's supervisor to web.Provider
+// and, through webController, to web.Controller.
 type webProvider struct {
+	webController
 	targets     func() ui.TargetSet
 	httpResults func() []*stats.HTTPCheckResult
 	base        web.Meta
 }
 
-func newWebProvider(sup *supervisor, cfg config, hosts []targetSpec, portCount int) webProvider {
+func newWebProvider(sup *supervisor, cfg config, hosts []targetSpec, portCount int, logCh chan<- string) webProvider {
 	return webProvider{
-		targets:     sup.liveTargets,
-		httpResults: sup.httpResults,
-		base:        webMeta(cfg, hosts, portCount),
+		webController: webController{sup: sup, logCh: logCh},
+		targets:       sup.liveTargets,
+		httpResults:   sup.httpResults,
+		base:          webMeta(cfg, hosts, portCount),
+	}
+}
+
+// webController applies browser edits through the same supervisor calls the
+// TUI uses (serialised on the supervisor's command loop) and notes each one
+// in the TUI Log pane so the terminal user sees changes made elsewhere.
+type webController struct {
+	sup   *supervisor
+	logCh chan<- string
+}
+
+func (c webController) AddHost(host string) error {
+	if err := c.sup.addHost(host); err != nil {
+		return err
+	}
+	c.logf("added host %s", host)
+	return nil
+}
+
+func (c webController) DeleteTarget(id uint64) error {
+	host := fmt.Sprintf("#%d", id)
+	for _, t := range c.sup.liveTargets().Targets {
+		if t.ID == id {
+			host = t.Host
+		}
+	}
+	if err := c.sup.deleteTargetID(id); err != nil {
+		return err
+	}
+	c.logf("deleted %s", host)
+	return nil
+}
+
+func (c webController) ResetStats() {
+	c.sup.resetStats()
+	c.logf("reset statistics")
+}
+
+// logf posts to the TUI Log pane without ever blocking a web request on a
+// busy terminal; a dropped line only loses the notice, not the edit. Values
+// are escaped so a host like "[red]x" cannot inject tview colour tags.
+func (c webController) logf(format string, args ...any) {
+	line := fmt.Sprintf("[blue][%s] web: %s[-]", time.Now().Format("15:04:05"), tview.Escape(fmt.Sprintf(format, args...)))
+	select {
+	case c.logCh <- line:
+	default:
 	}
 }
 
