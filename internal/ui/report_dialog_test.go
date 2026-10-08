@@ -25,7 +25,7 @@ func TestReportSimulationSavesSessionAndSelectedDuplicate(t *testing.T) {
 			var b strings.Builder
 			w, h := screen.Size()
 			for y := 0; y < h; y++ {
-				b.WriteString(screenRowString(screen, y, w))
+				b.WriteString(screenVisibleRow(screen, y, w))
 				b.WriteByte('\n')
 			}
 			select {
@@ -56,15 +56,16 @@ func TestReportSimulationSavesSessionAndSelectedDuplicate(t *testing.T) {
 		}})
 	}()
 	screen := <-screens
-	wait := func(marker string) {
+	frameHeight := 45
+	wait := func(marker string) string {
 		t.Helper()
 		timer := time.NewTimer(3 * time.Second)
 		defer timer.Stop()
 		for {
 			select {
 			case frame := <-frames:
-				if strings.Contains(frame, marker) {
-					return
+				if strings.Contains(frame, marker) && strings.Count(frame, "\n") == frameHeight {
+					return frame
 				}
 			case <-timer.C:
 				t.Fatalf("frame missing %q", marker)
@@ -78,6 +79,34 @@ func TestReportSimulationSavesSessionAndSelectedDuplicate(t *testing.T) {
 	wait("Ping Monitor")
 	screen.InjectKey(tcell.KeyRune, 'w', tcell.ModNone)
 	wait("Save session report")
+	frame := wait("保存先 (Path) / 入力中")
+	assertPathBox := func(frame string) {
+		t.Helper()
+		rows := strings.Split(frame, "\n")
+		for y, row := range rows {
+			if strings.Contains(row, "保存先 (Path) / 入力中") {
+				if y+2 >= len(rows) || !strings.Contains(row, "╔") || !strings.Contains(row, "╗") ||
+					!strings.Contains(rows[y+1], "mping-") || strings.Count(rows[y+1], "║") < 2 ||
+					!strings.Contains(rows[y+2], "╚") || !strings.Contains(rows[y+2], "╝") {
+					t.Fatalf("save path is not enclosed or is clipped:\n%s", frame)
+				}
+				return
+			}
+		}
+		t.Fatalf("focused path missing:\n%s", frame)
+	}
+	assertPathBox(frame)
+	// A smaller terminal must still show the field and its surrounding border.
+	screen.SetSize(80, 24)
+	frameHeight = 24
+	screen.InjectKey(tcell.KeyCtrlL, 0, tcell.ModNone)
+	assertPathBox(wait("保存先 (Path) / 入力中"))
+	// Tab cycles through both actions and returns to the framed input.
+	screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
+	wait(" 保存先 (Path) ─")
+	screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
+	screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
+	wait("保存先 (Path) / 入力中")
 	screen.InjectKey(tcell.KeyCtrlU, 0, tcell.ModNone)
 	for _, r := range "qfwz.json" {
 		screen.InjectKey(tcell.KeyRune, r, tcell.ModNone)

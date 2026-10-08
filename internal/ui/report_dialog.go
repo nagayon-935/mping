@@ -19,6 +19,7 @@ type saveDialog struct {
 	restore       func()
 	notify        func(string, bool)
 	form          *tview.Form
+	path          *tview.InputField
 	status        *tview.TextView
 	formatPreview *tview.TextView
 	open          bool
@@ -35,7 +36,7 @@ func (d *saveDialog) show(selectedID uint64) {
 	}
 	d.selectedID = selectedID
 	d.open = true
-	d.status = tview.NewTextView().SetText("Tab: Next field | Enter: Save | Esc: Cancel | Existing files are preserved").SetTextColor(tcell.ColorWhite)
+	d.status = tview.NewTextView().SetText("Enter: Save | Tab: Move focus | Esc: Cancel\nExisting files are preserved").SetTextColor(tcell.ColorWhite)
 	d.status.SetBackgroundColor(tcell.ColorBlack)
 	d.formatPreview = tview.NewTextView().SetTextColor(tcell.ColorWhite).SetWrap(false)
 	d.formatPreview.SetBackgroundColor(tcell.ColorBlack)
@@ -45,7 +46,7 @@ func (d *saveDialog) show(selectedID uint64) {
 		SetButtonStyle(tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlack)).
 		SetButtonActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorWhite))
 	d.form.SetBackgroundColor(tcell.ColorBlack)
-	d.form.AddInputField("Path (.txt/.json)", "mping-"+time.Now().Format("20060102-150405.000")+".txt", 0, nil, func(path string) {
+	d.path = tview.NewInputField().SetText("mping-" + time.Now().Format("20060102-150405.000") + ".txt").SetChangedFunc(func(path string) {
 		_, format, err := report.PathFormat(path)
 		if err != nil {
 			d.formatPreview.SetText("Format: Use a .txt or .json file name")
@@ -55,17 +56,35 @@ func (d *saveDialog) show(selectedID uint64) {
 			d.formatPreview.SetText("Format: Text (.txt)")
 		}
 	})
+	d.path.SetBackgroundColor(tcell.ColorBlack)
+	d.path.SetBorder(true).SetTitle(" 保存先 (Path) ").SetTitleColor(tcell.ColorWhite).SetBorderColor(tcell.ColorWhite)
+	d.path.SetFocusFunc(func() {
+		d.path.SetTitle(" 保存先 (Path) / 入力中 ")
+		d.path.SetFieldStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorWhite))
+	})
+	d.path.SetBlurFunc(func() {
+		d.path.SetTitle(" 保存先 (Path) ")
+		d.path.SetFieldStyle(tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlack))
+	})
 	d.formatPreview.SetText("Format: Text (.txt)")
 	d.form.AddButton("Save", d.submit).AddButton("Cancel", d.close)
+	d.form.SetButtonsAlign(tview.AlignCenter)
 	d.form.SetCancelFunc(d.close)
 	title := " Save session report "
 	if selectedID != 0 {
 		title = fmt.Sprintf(" Save target #%d report ", selectedID)
 	}
-	d.form.SetBorder(true).SetTitle(title).SetTitleColor(tcell.ColorWhite).SetBorderColor(tcell.ColorWhite)
-	pane := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(d.form, 0, 1, true).AddItem(d.formatPreview, 1, 0, false).AddItem(d.status, 2, 0, false)
+	content := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(d.path, 3, 0, true).
+		AddItem(d.formatPreview, 2, 0, false).
+		AddItem(d.form, 3, 0, false).
+		AddItem(d.status, 2, 0, false)
+	content.SetBackgroundColor(tcell.ColorBlack)
+	content.SetBorder(true).SetBorderPadding(1, 1, 2, 2).SetTitle(title).SetTitleColor(tcell.ColorWhite).SetBorderColor(tcell.ColorWhite)
+	row := tview.NewFlex().AddItem(nil, 0, 1, false).AddItem(content, 0, 4, true).AddItem(nil, 0, 1, false)
+	pane := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(nil, 0, 1, false).AddItem(row, 14, 0, true).AddItem(nil, 0, 1, false)
 	d.root.AddPage("saveReport", pane, true, true).SwitchToPage("saveReport")
-	d.app.SetFocus(d.form)
+	d.app.SetFocus(d.path)
 }
 
 func (d *saveDialog) close() {
@@ -75,7 +94,7 @@ func (d *saveDialog) close() {
 }
 
 func (d *saveDialog) submit() {
-	path, format, err := report.PathFormat(d.form.GetFormItem(0).(*tview.InputField).GetText())
+	path, format, err := report.PathFormat(d.path.GetText())
 	if err != nil {
 		d.status.SetText(err.Error())
 		return
@@ -104,7 +123,20 @@ func (d *saveDialog) handle(event *tcell.EventKey) *tcell.EventKey {
 		d.close()
 		return nil
 	}
-	if event.Key() == tcell.KeyEnter && d.app.GetFocus() == d.form.GetFormItem(0) {
+	if event.Key() == tcell.KeyTab || event.Key() == tcell.KeyBacktab {
+		fields := []tview.Primitive{d.path, d.form.GetButton(0), d.form.GetButton(1)}
+		for i, field := range fields {
+			if d.app.GetFocus() == field {
+				step := 1
+				if event.Key() == tcell.KeyBacktab {
+					step = len(fields) - 1
+				}
+				d.app.SetFocus(fields[(i+step)%len(fields)])
+				return nil
+			}
+		}
+	}
+	if event.Key() == tcell.KeyEnter && d.app.GetFocus() == d.path {
 		d.submit()
 		return nil
 	}
