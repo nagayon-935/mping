@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"strconv"
@@ -122,6 +123,10 @@ func handleAddHost(w http.ResponseWriter, r *http.Request, c Controller) {
 		writeError(w, http.StatusBadRequest, "body must be {\"host\": \"...\"}")
 		return
 	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "body must contain a single JSON object")
+		return
+	}
 	host, err := validHost(body.Host)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -147,7 +152,9 @@ func validHost(raw string) (string, error) {
 		return "", errors.New("host cannot be empty")
 	case len(host) > maxHostLen:
 		return "", fmt.Errorf("host is longer than %d characters", maxHostLen)
-	case strings.IndexFunc(host, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0:
+	// U+FEFF is included because the browser's \s treats it as space;
+	// both sides must refuse the same hosts.
+	case strings.IndexFunc(host, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) || r == '\uFEFF' }) >= 0:
 		return "", errors.New("host must not contain spaces or control characters")
 	}
 	return host, nil

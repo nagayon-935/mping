@@ -274,6 +274,9 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 
 	runUI := uiRun
 	var headless *headlessRunner
+	if cfg.noTUI && !cfg.webEnabled && cfg.jsonOutputFile == "" && cfg.outputFile == "" {
+		fmt.Fprintln(errOut, "Note: --no-tui without --web, --json-output or --output prints only log lines and the final summary.")
+	}
 	if cfg.noTUI {
 		sigs, stopSignals := headlessSignals()
 		defer stopSignals()

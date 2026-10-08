@@ -62,7 +62,8 @@ func (h *headlessRunner) run(opts ui.RunOptions) error {
 			h.logLine(line)
 		case <-opts.ExternalCloseCh:
 			h.drain(opts.ExternalLogCh)
-			h.note("Reloading configuration...")
+			// The same channel carries reloads and --duration expiry.
+			h.note("Iteration ended: hosts file changed or --duration reached")
 			return nil
 		case <-opts.DoneCh:
 			h.drain(opts.ExternalLogCh)
