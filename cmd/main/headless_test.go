@@ -3,11 +3,15 @@ package main
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/nagayon-935/mping/internal/pinger"
+	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/nagayon-935/mping/internal/ui"
 	"github.com/nagayon-935/mping/internal/web"
 	"github.com/rivo/tview"
@@ -32,10 +36,16 @@ func (l *lockedBuffer) String() string {
 }
 
 func runHeadlessAsync(opts ui.RunOptions, sigs <-chan os.Signal) (*lockedBuffer, <-chan error) {
-	out := &lockedBuffer{}
-	errc := make(chan error, 1)
-	go func() { errc <- newHeadlessRunner(out, sigs)(opts) }()
+	out, _, errc := runHeadlessWith(opts, sigs, func() {})
 	return out, errc
+}
+
+func runHeadlessWith(opts ui.RunOptions, sigs <-chan os.Signal, stopSignals func()) (*lockedBuffer, *headlessRunner, <-chan error) {
+	out := &lockedBuffer{}
+	h := newHeadlessRunner(out, sigs, stopSignals)
+	errc := make(chan error, 1)
+	go func() { errc <- h.run(opts) }()
+	return out, h, errc
 }
 
 func waitReturn(t *testing.T, errc <-chan error) {
@@ -228,5 +238,128 @@ func TestRunRejectsAWeakMPINGWEBTOKENWithoutEchoingIt(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "MPING_WEB_TOKEN") || strings.Contains(errOut.String(), "short") {
 		t.Fatalf("stderr = %q, want an MPING_WEB_TOKEN error that does not echo the value", errOut.String())
+	}
+}
+
+func TestHeadlessRunnerHandsTheSecondSignalBackToTheOS(t *testing.T) {
+	sigs := make(chan os.Signal, 1)
+	var stops int
+	_, h, errc := runHeadlessWith(ui.RunOptions{}, sigs, func() { stops++ })
+
+	sigs <- os.Interrupt
+	waitReturn(t, errc)
+
+	if stops != 1 {
+		t.Fatalf("stopSignals calls = %d, want 1 so a second Ctrl-C terminates", stops)
+	}
+	if !h.quitRequested() {
+		t.Fatal("quitRequested = false after a signal")
+	}
+}
+
+func TestHeadlessRunnerOnlyRequestsQuitOnSignals(t *testing.T) {
+	closeCh := make(chan struct{})
+	close(closeCh)
+	var stops int
+	_, h, errc := runHeadlessWith(ui.RunOptions{ExternalCloseCh: closeCh}, nil, func() { stops++ })
+
+	waitReturn(t, errc)
+
+	if h.quitRequested() || stops != 0 {
+		t.Fatalf("quitRequested=%v stops=%d after a reload, want false/0", h.quitRequested(), stops)
+	}
+}
+
+// TestHeadlessRunnerFlushesQueuedLogLinesBeforeReturning repeats the race
+// so that, without draining, at least one run would almost surely return
+// with lines still queued (select picks ready cases at random).
+func TestHeadlessRunnerFlushesQueuedLogLinesBeforeReturning(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		logCh := make(chan string, 3)
+		for _, l := range []string{"one", "two", "three"} {
+			logCh <- l
+		}
+		closeCh := make(chan struct{})
+		close(closeCh)
+
+		out, errc := runHeadlessAsync(ui.RunOptions{ExternalLogCh: logCh, ExternalCloseCh: closeCh}, nil)
+		waitReturn(t, errc)
+
+		for _, want := range []string{"one\n", "two\n", "three\n"} {
+			if !strings.Contains(out.String(), want) {
+				t.Fatalf("run %d: output %q lost queued line %q", i, out.String(), want)
+			}
+		}
+	}
+}
+
+// TestRunNoTUIQuitWinsOverAReloadPendingDuringTeardown: SIGTERM arrives,
+// and while the iteration is being torn down the hosts file changes. The
+// pending reload must not start another iteration after mping was told to
+// stop (observed as a pinger built after the teardown hook ran).
+func TestRunNoTUIQuitWinsOverAReloadPendingDuringTeardown(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "hosts.yaml")
+	if err := os.WriteFile(yamlPath, []byte("hosts:\n  - a.example\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stubRunSeams(t, nil)
+	sigs := stubHeadlessSignals(t)
+	var once sync.Once
+	var mu sync.Mutex
+	hookDone, builtAfterHook := false, 0
+	newPinger = func([]*stats.TargetStats, pinger.Options) pingerController {
+		mu.Lock()
+		if hookDone {
+			builtAfterHook++
+		}
+		mu.Unlock()
+		return &stopProbePinger{liveFakePinger: newLiveFakePinger(), onStop: func() {
+			// Startup (PMTU probing) also stops pingers; only act once the
+			// runner has consumed the signal, i.e. during real teardown.
+			if len(sigs) != 0 {
+				return
+			}
+			once.Do(func() {
+				// Several writes with pauses so the 200ms-debounced watcher
+				// reliably arms the reload before teardown continues.
+				for i, host := range []string{"b.example", "c.example", "d.example"} {
+					if err := os.WriteFile(yamlPath, []byte("hosts:\n  - "+host+"\n"), 0o644); err != nil {
+						t.Errorf("write yaml %d: %v", i, err)
+					}
+					time.Sleep(400 * time.Millisecond)
+				}
+				mu.Lock()
+				hookDone = true
+				mu.Unlock()
+			})
+		}}
+	}
+	sigs <- syscall.SIGTERM
+
+	done := make(chan int, 1)
+	var out, errOut bytes.Buffer
+	go func() { done <- run([]string{"-f", yamlPath, "-S", "127.0.0.1", "--no-tui"}, &out, &errOut) }()
+	go func() {
+		// If a second iteration does start, end it so the test can report.
+		time.Sleep(4 * time.Second)
+		sigs <- os.Interrupt
+	}()
+
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("run = %d, want 0 (stderr: %s)", code, errOut.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("run did not return")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !hookDone {
+		t.Fatal("teardown hook never ran")
+	}
+	if builtAfterHook != 0 {
+		t.Fatalf("a reload iteration started after SIGTERM (%d pinger(s) built)", builtAfterHook)
 	}
 }

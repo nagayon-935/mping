@@ -276,7 +276,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	if cfg.noTUI {
 		sigs, stopSignals := headlessSignals()
 		defer stopSignals()
-		runUI = newHeadlessRunner(out, sigs)
+		runUI = newHeadlessRunner(out, sigs, stopSignals).run
 	}
 	showToken := !cfg.noTUI || isTerminal(out)
 

@@ -29,34 +29,40 @@ var isTerminal = func(w io.Writer) bool {
 	return ok && term.IsTerminal(int(f.Fd()))
 }
 
-// newHeadlessRunner stands in for ui.Run under --no-tui. It prints the log
-// lines the TUI would show in its Log pane and returns, like the TUI's 'q',
-// when the iteration should end: a reload or --duration (ExternalCloseCh),
-// --count completion (DoneCh) or SIGINT/SIGTERM. run()'s loop then reloads
-// or exits exactly as it does after the TUI returns.
-func newHeadlessRunner(out io.Writer, sigs <-chan os.Signal) func(ui.RunOptions) error {
-	return func(opts ui.RunOptions) error {
-		logLine := func(line string) { fmt.Fprintln(out, plainLogLine(line)) }
-		note := func(format string, args ...any) {
-			fmt.Fprintf(out, "[%s] %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
-		}
-		for _, line := range opts.InitialLogs {
+// headlessRunner stands in for ui.Run under --no-tui (old behaviour, API only).
+type headlessRunner struct {
+	out  io.Writer
+	sigs <-chan os.Signal
+}
+
+func newHeadlessRunner(out io.Writer, sigs <-chan os.Signal, stopSignals func()) *headlessRunner {
+	return &headlessRunner{out: out, sigs: sigs}
+}
+
+func (h *headlessRunner) quitRequested() bool { return false }
+
+func (h *headlessRunner) run(opts ui.RunOptions) error {
+	out := h.out
+	logLine := func(line string) { fmt.Fprintln(out, plainLogLine(line)) }
+	note := func(format string, args ...any) {
+		fmt.Fprintf(out, "[%s] %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
+	}
+	for _, line := range opts.InitialLogs {
+		logLine(line)
+	}
+	for {
+		select {
+		case line := <-opts.ExternalLogCh:
 			logLine(line)
-		}
-		for {
-			select {
-			case line := <-opts.ExternalLogCh:
-				logLine(line)
-			case <-opts.ExternalCloseCh:
-				note("Reloading configuration...")
-				return nil
-			case <-opts.DoneCh:
-				note("Finished: --count reached for every target")
-				return nil
-			case s := <-sigs:
-				note("Received %s, exiting", s)
-				return nil
-			}
+		case <-opts.ExternalCloseCh:
+			note("Reloading configuration...")
+			return nil
+		case <-opts.DoneCh:
+			note("Finished: --count reached for every target")
+			return nil
+		case s := <-h.sigs:
+			note("Received %s, exiting", s)
+			return nil
 		}
 	}
 }
