@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/stats"
@@ -93,85 +92,30 @@ func Run(opts RunOptions) error {
 	if opts.Thresholds != nil {
 		setActiveThresholds(*opts.Thresholds)
 	}
-	targets := opts.Targets
-	interval := opts.Interval
-	doneCh := opts.DoneCh
-	sourceIPv4 := opts.SourceIPv4
-	sourceIPv6 := opts.SourceIPv6
-	packetSize := opts.PacketSize
-	initialLogs := opts.InitialLogs
-	traceEnabled := opts.TraceEnabled
-	mtrEnabled := opts.MTREnabled
-	portEnabled := opts.PortEnabled
-	httpEnabled := opts.HTTPEnabled
-	httpResultsFunc := opts.HTTPResults
-	asnEnabled := opts.ASNEnabled
-	ptrEnabled := opts.PTREnabled
-	dscpEnabled := opts.DSCPEnabled
-	onStop := opts.OnStop
-	onRestart := opts.OnRestart
-	onResetTrace := opts.OnResetTrace
-	onResetMTR := opts.OnResetMTR
-	onResetPort := opts.OnResetPort
-	onResetHTTP := opts.OnResetHTTP
-	onAddHost := opts.OnAddHost
-	onDeleteHost := opts.OnDeleteHost
-	groups := opts.Groups
-
-	externalCloseCh := opts.ExternalCloseCh
-	externalLogCh := opts.ExternalLogCh
+	targets := opts.Targets // replaced by TargetSource before each update
+	currentTargets := func() []*stats.TargetStats { return targets }
 
 	app := newApplication()
-	table := tview.NewTable().
-		SetBorders(true).
-		SetSelectable(false, false).
-		SetFixed(1, 1)
-
-	// Use custom GraphView
-	graphView := NewGraphView(targets, interval)
-	graphView.SetBorder(true).SetTitle(" RTT Graphs ").SetTitleColor(vividCyan).SetBorderColor(vividCyan)
-	graphView.SetBackgroundColor(tcell.ColorBlack)
-
-	errorView := tview.NewTextView().
-		SetDynamicColors(true).
-		SetScrollable(true).
-		SetWordWrap(true) // Ensure long messages wrap
-	errorView.SetBorder(true).SetTitle(" Log ").SetTitleColor(vividRed).SetBorderColor(vividRed)
-	errorView.SetBackgroundColor(tcell.ColorBlack)
-
-	// Set black background and darkgray borders
-	table.SetBackgroundColor(tcell.ColorBlack)
-	table.SetBorderColor(tcell.ColorWhite)
-	table.SetBordersColor(tcell.ColorWhite)
-
-	tablePane := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(table, 0, 1, true)
-	tablePane.SetBorder(true).SetTitle(" Ping Monitor ").SetBorderColor(tcell.ColorWhite)
+	table := newPingTable()
+	tablePane := newTablePane(table)
+	graphView := newGraphPane(targets, opts.Interval)
+	header := newHeader(opts.Interval)
+	footer := newFooter()
+	addHostInput := newHostInput(" Add host: ", tcell.ColorYellow)
+	deleteHostInput := newHostInput(" Delete host: ", tcell.ColorRed)
+	pages := tview.NewPages().
+		AddPage("footer", footer, true, true).
+		AddPage("addHost", addHostInput, true, false).
+		AddPage("deleteHost", deleteHostInput, true, false)
 
 	// Render state shared between tableRenderer, the key handler, and the
-	// monitor pane render closures below (TD-51).
-	vs := newViewState(errorView)
+	// monitor pane render closures (TD-51).
+	vs := newViewState(newLogView())
+	errorView := vs.errorView
+	sidePanes := newSidePanes(opts, currentTargets, vs)
 
-	tracePaneObj := newMonitorPane(traceEnabled, " Traceroute Monitor ", func(availW int) string {
-		return renderTracerouteTable(targets, availW)
-	})
-	mtrPaneObj := newMonitorPane(mtrEnabled, " MTR Monitor ", func(availW int) string {
-		return renderMTRTable(targets, availW, sourceIPv4, sourceIPv6)
-	})
-	portPaneObj := newMonitorPane(portEnabled, " Port Monitor ", func(availW int) string {
-		return renderPortMonitorTable(targets, availW, vs.lastPortStatuses, &vs.errorLogs, vs.errorView)
-	})
-	httpPaneObj := newMonitorPane(httpEnabled, " HTTP Monitor ", func(availW int) string {
-		var httpResults []*stats.HTTPCheckResult
-		if httpResultsFunc != nil {
-			httpResults = httpResultsFunc()
-		}
-		return renderHTTPMonitorTable(httpResults, availW, vs.lastHTTPStatuses, &vs.errorLogs, vs.errorView)
-	})
-	sidePanes := []*monitorPane{tracePaneObj, mtrPaneObj, portPaneObj, httpPaneObj}
-
-	tr := newTableRenderer(targets, sourceIPv4, sourceIPv6, packetSize, asnEnabled, ptrEnabled, dscpEnabled, groups,
-		table, tablePane, initialLogs, vs)
+	tr := newTableRenderer(targets, opts.SourceIPv4, opts.SourceIPv6, opts.PacketSize, opts.ASNEnabled, opts.PTREnabled, opts.DSCPEnabled, opts.Groups,
+		table, tablePane, opts.InitialLogs, vs)
 	tr.sidePanes = sidePanes
 	tr.selectionEnabled = true
 	if opts.TargetSource != nil {
@@ -184,44 +128,11 @@ func Run(opts RunOptions) error {
 		}
 	}
 
-	header := tview.NewTextView().
-		SetText(fmt.Sprintf("MPING - Multi Ping Tool | Interval: %dms", interval.Milliseconds())).
-		SetTextAlign(tview.AlignCenter).
-		SetTextColor(tcell.ColorGreen).
-		SetWrap(false)
-	header.SetBackgroundColor(tcell.ColorBlack)
-
-	footer := tview.NewTextView().
-		SetText("Enter Detail | Tab Pane | f Fold | z Max | w Save | a Add | d Del | s Stop | q Quit").
-		SetTextAlign(tview.AlignCenter).
-		SetTextColor(tcell.ColorYellow).
-		SetWrap(false)
-	footer.SetBackgroundColor(tcell.ColorBlack)
-
-	// Add host input (shown in footer row)
-	addHostInput := tview.NewInputField().
-		SetLabel(" Add host: ").
-		SetFieldBackgroundColor(tcell.ColorBlack).
-		SetFieldTextColor(tcell.ColorWhite).
-		SetLabelColor(tcell.ColorYellow)
-
-	// Delete host input (shown in footer row, same pattern as addHostInput)
-	deleteHostInput := tview.NewInputField().
-		SetLabel(" Delete host: ").
-		SetFieldBackgroundColor(tcell.ColorBlack).
-		SetFieldTextColor(tcell.ColorWhite).
-		SetLabelColor(tcell.ColorRed)
-
-	pages := tview.NewPages().
-		AddPage("footer", footer, true, true).
-		AddPage("addHost", addHostInput, true, false).
-		AddPage("deleteHost", deleteHostInput, true, false)
-
 	updateTickerCh := make(chan time.Duration, 1)
 
 	session := newUISession()
 	defer func() { session.Stop(); session.Wait() }()
-	wireHostInputs(app, table, pages, addHostInput, deleteHostInput, vs, session, onAddHost, onDeleteHost)
+	wireHostInputs(app, table, pages, addHostInput, deleteHostInput, vs, session, opts.OnAddHost, opts.OnDeleteHost)
 
 	// Keys
 	mainLayout := buildLayout(header, tablePane, sidePanes, graphView, errorView, pages)
@@ -348,19 +259,19 @@ func Run(opts RunOptions) error {
 				app.SetFocus(deleteHostInput)
 			}
 		},
-		traceEnabled: traceEnabled,
-		mtrEnabled:   mtrEnabled,
-		portEnabled:  portEnabled,
-		httpEnabled:  httpEnabled,
-		onStop:       onStop,
-		onRestart:    onRestart,
+		traceEnabled: opts.TraceEnabled,
+		mtrEnabled:   opts.MTREnabled,
+		portEnabled:  opts.PortEnabled,
+		httpEnabled:  opts.HTTPEnabled,
+		onStop:       opts.OnStop,
+		onRestart:    opts.OnRestart,
 		onReset:      opts.OnReset,
-		onResetTrace: onResetTrace,
-		onResetMTR:   onResetMTR,
-		onResetPort:  onResetPort,
-		onResetHTTP:  onResetHTTP,
-		onAddHost:    onAddHost,
-		onDeleteHost: onDeleteHost,
+		onResetTrace: opts.OnResetTrace,
+		onResetMTR:   opts.OnResetMTR,
+		onResetPort:  opts.OnResetPort,
+		onResetHTTP:  opts.OnResetHTTP,
+		onAddHost:    opts.OnAddHost,
+		onDeleteHost: opts.OnDeleteHost,
 		session:      session,
 	})
 	session.bind(app, func(event *tcell.EventKey) *tcell.EventKey {
@@ -407,7 +318,7 @@ func Run(opts RunOptions) error {
 		}
 		return input(event)
 	})
-	startRefreshLoop(app, tr, footer, interval, updateTickerCh, externalLogCh, externalCloseCh, doneCh,
+	startRefreshLoop(app, tr, footer, opts.Interval, updateTickerCh, opts.ExternalLogCh, opts.ExternalCloseCh, opts.DoneCh,
 		vs, session)
 
 	err := app.SetRoot(root, true).Run()
