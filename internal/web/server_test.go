@@ -299,3 +299,41 @@ func TestURLUsesPortChosenByKernel(t *testing.T) {
 		t.Fatalf("URL = %q, want %q", s.URL(), want)
 	}
 }
+
+func TestDashboardAssetsAreServedWithBrowserTypes(t *testing.T) {
+	srv := newTestServer(t, NewSource(), defaultTestConfig())
+
+	tests := []struct {
+		path, wantType string
+	}{
+		{"/style.css", "text/css"},
+		{"/js/app.js", "text/javascript"},
+		{"/js/model.js", "text/javascript"},
+		{"/js/table.js", "text/javascript"},
+		{"/js/detail.js", "text/javascript"},
+		{"/js/chart.js", "text/javascript"},
+		{"/js/dom.js", "text/javascript"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			resp := get(t, srv.URL+tt.path)
+
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, tt.wantType) {
+				t.Fatalf("Content-Type = %q, want %s", ct, tt.wantType)
+			}
+		})
+	}
+}
+
+func TestJSTestsAreNotEmbedded(t *testing.T) {
+	srv := newTestServer(t, NewSource(), defaultTestConfig())
+
+	resp := get(t, srv.URL+"/jstest/model.test.mjs")
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (test files must stay out of the binary)", resp.StatusCode)
+	}
+}

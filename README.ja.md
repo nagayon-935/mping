@@ -458,11 +458,13 @@ mping --web google.com 1.1.1.1      # http://127.0.0.1:8080/ を開く
 
 - 待ち受けは loopback のみ (`127.0.0.1`、利用可能なら `[::1]` も) で、他のマシンからは接続できません。`Host` / `Origin` ヘッダがこのサーバー以外のリクエストは拒否します (DNS rebinding・クロスサイト対策)。
 - `--web` / `--web-port` は起動時にのみ読み込まれます。hosts ファイルのリロードではサーバーは再起動しません (hosts ファイルで変更すると「再起動が必要」という警告を Log ペインに表示します)。
-- ブラウザ用のダッシュボード画面は開発中です。JSON API は現在利用できます:
+- ダッシュボードにはターゲット一覧 (グループ表示・TUI と同じ閾値による色分け・行ごとの RTT 推移) と HTTP チェックを表示します。行をクリックすると、warn/crit 線と応答なしマーカー付きの RTT グラフ、traceroute/MTR のホップ、ポートチェック、直近のイベントを確認できます。
+- 同じデータを JSON でも取得できます:
 
 | エンドポイント | 内容 |
 |---|---|
 | `GET /api/v1/snapshot` | 現在の統計 (`snapshot` 配下は `--json-output` と同じスキーマ)、`meta` (有効な機能・閾値・グループ)、`state` (`starting` / `running` / `reloading` / `stopped`) |
+| `GET /api/v1/history?n=60` | 全ターゲットの直近 RTT を 1 回のレスポンスで返す (`n` は 1–3000) |
 | `GET /api/v1/stream` | Server-Sent Events。接続時と、統計が変化している間は最大 1 秒に 1 回 `snapshot` イベントを送信 |
 | `GET /api/v1/targets/{id}/history?n=300` | 直近の RTT (ミリ秒、古い順)。`null` は応答なし (`n` は 1–3000) |
 | `GET /api/v1/targets/{id}/events` | ターゲットの記録済みイベント (DNS 変化・経路フラップ・ロス) |
