@@ -184,7 +184,28 @@ try {
     await page.getByRole("button", { name: "Selected target only" }).click();
     const hosts = await page.$$eval("#inspect-body table.log .link", (n) => n.map((x) => x.textContent));
     assert.ok(hosts.length > 0 && hosts.every((h) => h === "flaky.example"), `filtered hosts: ${hosts}`);
-    await page.getByRole("button", { name: "Show all targets" }).click();
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => document.querySelectorAll('tr.target-row[aria-current="true"]').length === 0);
+    assert.ok((await page.$$eval("#inspect-body table.log tbody tr", (r) => r.length)) > 0,
+      "clearing the selection must lift the selected-target filter");
+    assert.equal(await page.$$eval("#inspect-body button[aria-pressed]", (b) => b.filter((x) => !x.hidden).length), 0);
+  });
+
+  await check("live updates keep keyboard focus on a tab and text selected in the log", async () => {
+    await page.focus('#inspect-tabs [data-tab="log"]');
+    await page.waitForTimeout(2500);
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset?.tab), "log", "tab focus lost on update");
+    const picked = await page.evaluate(() => {
+      const cell = document.querySelector("#inspect-body .log-message");
+      const range = document.createRange();
+      range.selectNodeContents(cell);
+      getSelection().removeAllRanges();
+      getSelection().addRange(range);
+      return getSelection().toString();
+    });
+    await page.waitForTimeout(6000); // longer than the 5s events refresh
+    assert.equal(await page.evaluate(() => getSelection().toString()), picked, "log selection lost on refresh");
+    await page.evaluate(() => getSelection().removeAllRanges());
   });
 
   await check("ports tab; Escape clears the selection; j and k move it", async () => {
@@ -280,6 +301,15 @@ try {
     await ctl.click("#add-form button");
     await ctl.waitForFunction(() => document.querySelector("#notice").classList.contains("is-error"));
     assert.match(await ctl.textContent("#notice"), /already in the list/);
+  });
+
+  await check("an armed delete stays armed across live updates", async () => {
+    await ctl.locator("tr.target-row", { hasText: "added.e2e.example" }).click();
+    await ctl.click('#inspect-tabs [data-tab="summary"]');
+    await ctl.getByRole("button", { name: "Delete added.e2e.example" }).click();
+    await ctl.waitForTimeout(2500); // at least two snapshots
+    assert.equal(await ctl.getByRole("button", { name: "Confirm delete added.e2e.example?" }).count(), 1, "confirmation reset by an update");
+    await ctl.getByRole("button", { name: "Cancel" }).click();
   });
 
   await check("deleting needs a confirming second press", async () => {

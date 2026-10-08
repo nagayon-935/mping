@@ -10,6 +10,8 @@ import {
   agoLabel,
   padTo,
   tail,
+  downsample,
+  reconcileWindow,
 } from "../static/js/timeline.js";
 
 const labels = (opts) => opts.map((o) => o.label);
@@ -73,4 +75,45 @@ test("tail returns the newest n samples without copying more than needed", () =>
   assert.deepEqual(tail([1, 2, 3, 4], 2), [3, 4]);
   assert.deepEqual(tail([1, 2], 5), [1, 2]);
   assert.deepEqual(tail(undefined, 3), []);
+});
+
+test("downsample keeps short series as they are", () => {
+  const got = downsample([1, null, 3], 10);
+  assert.deepEqual(got.values, [1, null, 3]);
+  assert.deepEqual(got.lost, [false, true, false]);
+  assert.equal(got.size, 1);
+});
+
+test("downsample buckets from the newest sample, keeping each bucket's peak", () => {
+  // 7 samples into at most 3 buckets of 3: the oldest bucket is the partial one.
+  const got = downsample([1, 2, 9, 3, 4, 5, 6], 3);
+  assert.equal(got.size, 3);
+  assert.deepEqual(got.values, [1, 9, 6]);
+  assert.deepEqual(got.lost, [false, false, false]);
+});
+
+test("downsample keeps a lost probe visible even when the bucket also has replies", () => {
+  const got = downsample([5, null, 7, 8], 2);
+  assert.deepEqual(got.values, [7, 8]);
+  assert.deepEqual(got.lost, [true, false]);
+});
+
+test("downsample marks an all-lost bucket as null and an empty one as undefined", () => {
+  const got = downsample([undefined, undefined, null, null], 2);
+  assert.deepEqual(got.values, [undefined, null]);
+  assert.deepEqual(got.lost, [false, true]);
+});
+
+test("reconcileWindow keeps the chosen window when the new interval still offers it", () => {
+  const got = reconcileWindow("5m", 2000, 3000);
+  assert.equal(got.window.label, "5m");
+  assert.equal(got.window.points, 150);
+  assert.deepEqual(got.options.map((o) => o.label), ["1m", "5m", "15m", "30m", "1h"]);
+});
+
+test("reconcileWindow falls back to the default when the window no longer fits", () => {
+  // 100ms interval: only 1m and 5m fit; 30m must fall back to 5m.
+  const got = reconcileWindow("30m", 100, 3000);
+  assert.equal(got.window.label, "5m");
+  assert.equal(got.window.points, 3000);
 });
