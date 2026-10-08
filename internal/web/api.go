@@ -20,9 +20,9 @@ const defaultHistoryPoints = 300
 // SnapshotResponse is the body of /api/v1/snapshot and of each SSE
 // "snapshot" event.
 type SnapshotResponse struct {
-	Reloading bool                 `json:"reloading"`
-	Meta      Meta                 `json:"meta"`
-	Snapshot  stats.ExportSnapshot `json:"snapshot"`
+	State    State                `json:"state"`
+	Meta     Meta                 `json:"meta"`
+	Snapshot stats.ExportSnapshot `json:"snapshot"`
 }
 
 // HistoryResponse is the body of /api/v1/targets/{id}/history. RTTMs is
@@ -67,7 +67,7 @@ func newSnapshotCache(src *Source, generation func() uint64) *snapshotCache {
 
 // get returns the encoded SnapshotResponse and the key it was built for.
 func (c *snapshotCache) get() ([]byte, snapshotKey, error) {
-	p, reloading, version := c.src.load()
+	p, state, version := c.src.load()
 	if p == nil {
 		return nil, snapshotKey{}, errNoProvider
 	}
@@ -81,9 +81,9 @@ func (c *snapshotCache) get() ([]byte, snapshotKey, error) {
 		return c.body, key, nil
 	}
 	body, err := json.Marshal(SnapshotResponse{
-		Reloading: reloading,
-		Meta:      p.Meta(),
-		Snapshot:  buildExportSnapshot(p),
+		State:    state,
+		Meta:     p.Meta(),
+		Snapshot: buildExportSnapshot(p),
 	})
 	if err != nil {
 		return nil, snapshotKey{}, fmt.Errorf("encode snapshot: %w", err)

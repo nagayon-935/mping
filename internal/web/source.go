@@ -54,10 +54,25 @@ type Group struct {
 	TargetIDs []uint64 `json:"target_ids"`
 }
 
+// State is the run-loop phase reported to the browser.
+type State string
+
+const (
+	// StateStarting: no iteration has published a provider yet.
+	StateStarting State = "starting"
+	// StateRunning: the current provider's iteration is live.
+	StateRunning State = "running"
+	// StateReloading: the iteration ended and the run loop is re-entering
+	// for a YAML reload or host add/delete; numbers are frozen meanwhile.
+	StateReloading State = "reloading"
+	// StateStopped: mping is exiting; the numbers are final.
+	StateStopped State = "stopped"
+)
+
 type sourceState struct {
-	provider  Provider
-	reloading bool
-	version   uint64
+	provider Provider
+	state    State
+	version  uint64
 }
 
 // Source is the swap point between the long-lived HTTP server and the
@@ -71,18 +86,30 @@ type Source struct {
 // Set is called.
 func NewSource() *Source { return &Source{} }
 
-// Set installs p as the live provider and clears the reloading flag.
+// Set installs p as the live provider and marks the source running.
 func (s *Source) Set(p Provider) {
 	s.update(func(sourceState) sourceState {
-		return sourceState{provider: p}
+		return sourceState{provider: p, state: StateRunning}
 	})
 }
 
-// MarkReloading flags that the current iteration has ended. The last
-// provider stays readable so the browser keeps showing its final numbers.
-func (s *Source) MarkReloading() {
+// MarkReloading flags that the current iteration ended and another one is
+// about to start. The last provider stays readable so the browser keeps
+// showing its final numbers.
+func (s *Source) MarkReloading() { s.mark(StateReloading) }
+
+// MarkStopped flags that mping is exiting. The last provider stays readable.
+func (s *Source) MarkStopped() { s.mark(StateStopped) }
+
+// State reports the current phase.
+func (s *Source) State() State {
+	_, st, _ := s.load()
+	return st
+}
+
+func (s *Source) mark(state State) {
 	s.update(func(st sourceState) sourceState {
-		st.reloading = true
+		st.state = state
 		return st
 	})
 }
@@ -102,12 +129,16 @@ func (s *Source) update(f func(sourceState) sourceState) {
 	}
 }
 
-// load returns the current provider (nil before the first Set), whether a
-// reload is in progress, and a version that changes on every transition.
-func (s *Source) load() (Provider, bool, uint64) {
+// load returns the current provider (nil before the first Set), the phase,
+// and a version that changes on every transition.
+func (s *Source) load() (Provider, State, uint64) {
 	st := s.cur.Load()
-	if st == nil {
-		return nil, false, 0
+	if st == nil || st.state == "" {
+		var version uint64
+		if st != nil {
+			version = st.version
+		}
+		return nil, StateStarting, version
 	}
-	return st.provider, st.reloading, st.version
+	return st.provider, st.state, st.version
 }

@@ -415,7 +415,6 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		runOpts.OnDeleteTarget = sup.deleteTargetID
 		runOpts.OnSaveReport = sup.saveReport
 		uiErr := uiRun(runOpts)
-		webSrc.MarkReloading()
 		if snap := sup.targetSnap.Load(); snap != nil {
 			targets = snap.targets
 			currentHosts = snap.specs
@@ -423,6 +422,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		}
 		stopDurationWatch()
 		if uiErr != nil {
+			webSrc.MarkStopped()
 			fmt.Fprintf(errOut, "Error running application: %v\n", uiErr)
 			finishIteration(currentCfg, targets, sup, errOut, jsonCancel, jsonDone, watchCancel, watchDone)
 			return 1
@@ -434,7 +434,12 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		var expandWarning string
 		currentHosts, currentGroups, currentCfg, reload, expandWarning = rc.apply(currentCfg, currentHosts, currentGroups)
 		if !reload {
+			webSrc.MarkStopped()
 			break
+		}
+		webSrc.MarkReloading()
+		if webWarning := checkWebReloadDrift(cfg, currentCfg); webWarning != "" {
+			pendingWarnings = append(pendingWarnings, webWarning)
 		}
 		if portWarning := checkPortReloadDrift(activePortSpecsRaw, currentCfg.portSpecs); portWarning != "" {
 			pendingWarnings = append(pendingWarnings, portWarning)

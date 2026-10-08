@@ -39,6 +39,18 @@ func closeWebUI(srv *web.Server, errOut io.Writer) {
 	}
 }
 
+// checkWebReloadDrift warns when a reload changes web:/web-port:. The web
+// server is started once from the startup config (active) and never moved,
+// so like checkPortReloadDrift this is a "restart required" nudge.
+func checkWebReloadDrift(active, reloaded config) string {
+	if active.webEnabled == reloaded.webEnabled &&
+		(!active.webEnabled || active.webPort == reloaded.webPort) {
+		return ""
+	}
+	return fmt.Sprintf("[yellow][%s] web: change detected in the reloaded config — the web UI requires a full restart of mping to take effect[-]",
+		time.Now().Format("15:04:05"))
+}
+
 // webProvider adapts one run-loop iteration's supervisor to web.Provider.
 type webProvider struct {
 	targets     func() ui.TargetSet

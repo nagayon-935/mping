@@ -466,12 +466,12 @@ mping --web google.com 1.1.1.1      # then open http://127.0.0.1:8080/
 ```
 
 - It listens on loopback only (`127.0.0.1`, plus `[::1]` when available) and is not reachable from other machines. Requests whose `Host` or `Origin` header is not this server are rejected (DNS-rebinding / cross-site protection).
-- `--web` / `--web-port` are read at startup; a hosts-file reload does not restart the server.
+- `--web` / `--web-port` are read at startup; a hosts-file reload does not restart the server (changing them in the hosts file logs a restart-required warning).
 - The browser dashboard page is still in development. The JSON API is available now:
 
 | Endpoint | Description |
 |---|---|
-| `GET /api/v1/snapshot` | Current statistics (same schema as `--json-output`, under `snapshot`) plus `meta` (enabled features, thresholds, groups) and a `reloading` flag |
+| `GET /api/v1/snapshot` | Current statistics (same schema as `--json-output`, under `snapshot`) plus `meta` (enabled features, thresholds, groups) and `state` (`starting`, `running`, `reloading` or `stopped`) |
 | `GET /api/v1/stream` | Server-sent events: a `snapshot` event on connect and at most once per second while statistics change |
 | `GET /api/v1/targets/{id}/history?n=300` | Trailing RTT samples in ms, oldest first; `null` marks a lost probe (`n` 1–3000) |
 | `GET /api/v1/targets/{id}/events` | Recorded events for the target (DNS changes, route flaps, losses) |
