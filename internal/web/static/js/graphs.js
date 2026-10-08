@@ -2,10 +2,15 @@
 // browser's counterpart to the TUI's RTT Graphs pane). Hovering any chart
 // moves one cursor across all of them, so a slowdown can be compared across
 // targets at the same moment.
+//
+// Charts are drawn from series reduced to about one point per pixel and only
+// when what they show changes (new history, window, scale, target set, size or
+// cursor), not on every snapshot: with dozens of targets and long windows a
+// full redraw per second would cost far more than it shows.
 import { el, statusChip } from "./dom.js";
 import { drawChart, drawCrosshair, indexAt } from "./chart.js";
 import { formatRTT, rowLevel } from "./model.js";
-import { agoLabel, padTo, sharedMax } from "./timeline.js";
+import { agoLabel, downsample, padTo, sharedMax } from "./timeline.js";
 
 const levelLabels = { ok: "OK", warn: "Warn", crit: "Crit", pending: "Waiting" };
 
@@ -15,28 +20,34 @@ const levelLabels = { ok: "OK", warn: "Warn", crit: "Crit", pending: "Waiting" }
 export function createGraphs(dom) {
   const cards = new Map(); // target id -> {root, title, value, canvas, geo}
   let state = { targets: [], history: new Map(), meta: null, points: 0, shared: false, selectedId: null };
-  let cursor = -1; // shared sample index into every padded series
+  let cursor = -1; // shared point index into every reduced series
+  let reduced = { points: 0, size: 1 }; // shape of the last drawn series
+  let lastKey = null;
   let paintQueued = false;
-
-  const seriesFor = (id) => padTo(state.history.get(id), state.points);
 
   const paint = () => {
     paintQueued = false;
-    if (!state.meta) return;
-    const all = state.targets.map((t) => seriesFor(t.id));
-    const yMax = state.shared ? sharedMax(all) : undefined;
+    if (!state.meta || state.targets.length === 0) return;
+    const full = state.targets.map((t) => padTo(state.history.get(t.id), state.points));
+    const yMax = state.shared ? sharedMax(full) : undefined;
+    // Every card has the same width, so one bucket count serves them all and
+    // the shared cursor index means the same moment in each chart.
+    const width = cards.get(state.targets[0].id).canvas.clientWidth;
     state.targets.forEach((t, i) => {
       const card = cards.get(t.id);
-      const series = all[i];
-      card.geo = drawChart(card.canvas, series, state.meta.thresholds, state.meta.interval_ms, { yMax });
-      if (cursor >= 0) drawCrosshair(card.canvas, card.geo, series, cursor);
-      const at = cursor >= 0 ? cursor : series.length - 1;
-      const v = series[at];
+      const { values, lost, size } = downsample(full[i], Math.max(1, Math.floor(width)));
+      reduced = { points: values.length, size };
+      if (cursor >= values.length) cursor = -1;
+      card.geo = drawChart(card.canvas, values, state.meta.thresholds, state.meta.interval_ms,
+        { yMax, lost, samplesPerPoint: size });
+      if (cursor >= 0) drawCrosshair(card.canvas, card.geo, values, cursor);
+      const at = cursor >= 0 ? cursor : values.length - 1;
+      const v = values[at];
       card.value.textContent = v === null ? "Lost" : v === undefined ? "–" : formatRTT(v);
       card.value.classList.toggle("is-lost", v === null);
     });
-    dom.cursorNote.textContent = cursor >= 0 && state.points > 0
-      ? `Cursor: ${agoLabel(state.points - 1 - cursor, state.meta.interval_ms)} — hover any chart to compare targets at the same moment`
+    dom.cursorNote.textContent = cursor >= 0
+      ? `Cursor: ${agoLabel((reduced.points - 1 - cursor) * reduced.size, state.meta.interval_ms)} — hover any chart to compare targets at the same moment`
       : "Hover any chart to compare targets at the same moment.";
   };
   const schedulePaint = () => {
@@ -63,9 +74,12 @@ export function createGraphs(dom) {
       }
     });
     canvas.addEventListener("pointermove", (e) => {
-      if (!card.geo || state.points === 0) return;
-      cursor = indexAt(card.geo, state.points, e.offsetX);
-      schedulePaint();
+      if (!card.geo || reduced.points === 0) return;
+      const next = indexAt(card.geo, reduced.points, e.offsetX);
+      if (next !== cursor) {
+        cursor = next;
+        schedulePaint();
+      }
     });
     canvas.addEventListener("pointerleave", () => {
       cursor = -1;
@@ -103,7 +117,15 @@ export function createGraphs(dom) {
       ordered.forEach((node, i) => {
         if (dom.grid.children[i] !== node) dom.grid.insertBefore(node, dom.grid.children[i] ?? null);
       });
-      schedulePaint();
+      // Status chips and selection are DOM; only what the canvases show
+      // needs a repaint. A new history fetch replaces the Map, so identity
+      // is enough to notice it.
+      const key = [state.history, state.points, state.shared, state.targets.map((t) => t.id).join(),
+        state.meta && JSON.stringify(state.meta.thresholds), state.meta?.interval_ms];
+      if (!lastKey || key.some((v, i) => v !== lastKey[i])) {
+        lastKey = key;
+        schedulePaint();
+      }
     },
     repaint: schedulePaint,
   };

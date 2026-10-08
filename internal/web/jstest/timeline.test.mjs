@@ -93,8 +93,9 @@ test("downsample buckets from the newest sample, keeping each bucket's peak", ()
 });
 
 test("downsample keeps a lost probe visible even when the bucket also has replies", () => {
+  // Buckets (newest first): [7, 8] and [5, null].
   const got = downsample([5, null, 7, 8], 2);
-  assert.deepEqual(got.values, [7, 8]);
+  assert.deepEqual(got.values, [5, 8]);
   assert.deepEqual(got.lost, [true, false]);
 });
 

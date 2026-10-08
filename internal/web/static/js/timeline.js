@@ -65,3 +65,38 @@ export function tail(series, n) {
   if (!series) return [];
   return series.length <= n ? series : series.slice(series.length - n);
 }
+
+/**
+ * Reduces a series to at most `buckets` points for drawing, bucketing from
+ * the newest sample so the right edge stays exact (the oldest bucket may be
+ * partial). Each bucket shows its peak RTT, `lost` flags buckets holding any
+ * lost probe (so a loss stays visible after reduction), a bucket of only lost
+ * probes is null and one with no data at all stays undefined.
+ * @returns {{values: (number|null|undefined)[], lost: boolean[], size: number}}
+ */
+export function downsample(series, buckets) {
+  const size = Math.max(1, Math.ceil(series.length / Math.max(1, buckets)));
+  const values = [];
+  const lost = [];
+  for (let end = series.length; end > 0; end -= size) {
+    let peak;
+    let anyLost = false;
+    for (let i = Math.max(0, end - size); i < end; i++) {
+      const v = series[i];
+      if (v === null) anyLost = true;
+      else if (v !== undefined && (peak === undefined || v > peak)) peak = v;
+    }
+    values.push(peak === undefined && anyLost ? null : peak);
+    lost.push(anyLost);
+  }
+  return { values: values.reverse(), lost: lost.reverse(), size };
+}
+
+/**
+ * Window options for an interval, keeping `label` when it is still offered
+ * (e.g. "5m" across a reload that changed the probe interval).
+ */
+export function reconcileWindow(label, intervalMs, maxPoints) {
+  const options = windowOptions(intervalMs, maxPoints);
+  return { options, window: options.find((o) => o.label === label) ?? defaultWindow(options) };
+}

@@ -70,10 +70,11 @@ function plotLine(ctx, series, xAt, yAt, baseY, colour) {
   flush();
 }
 
-function plotLosses(ctx, series, xAt, baseY, tickH) {
+/** Critical ticks for lost probes; `lost` (when given) flags them per point. */
+function plotLosses(ctx, series, xAt, baseY, tickH, lost) {
   ctx.fillStyle = cssVar("--critical");
   series.forEach((v, i) => {
-    if (v === null) ctx.fillRect(xAt(i) - 1, baseY - tickH, 2, tickH);
+    if (lost ? lost[i] : v === null) ctx.fillRect(xAt(i) - 1, baseY - tickH, 2, tickH);
   });
 }
 
@@ -114,7 +115,8 @@ export function drawChart(canvas, series, th, intervalMs, opts = {}) {
   const left = 44, right = 12, top = 10, bottom = 24;
   const plotW = w - left - right;
   const plotH = h - top - bottom;
-  // opts.yMax shares one scale across several charts (e.g. all targets).
+  // opts.yMax shares one scale across several charts (e.g. all targets);
+  // opts.lost flags lost probes when `series` was downsampled.
   const max = niceCeil(Math.max((opts.yMax ?? seriesMax(series)) * 1.15, 1));
   const n = Math.max(series.length - 1, 1);
   const xAt = (i) => left + (i / n) * plotW;
@@ -159,13 +161,13 @@ export function drawChart(canvas, series, th, intervalMs, opts = {}) {
     ctx.fillStyle = cssVar("--muted");
     ctx.textBaseline = "top";
     ctx.textAlign = "left";
-    ctx.fillText(agoLabel(series.length - 1, intervalMs), left, baseY + 6);
+    ctx.fillText(agoLabel((series.length - 1) * (opts.samplesPerPoint ?? 1), intervalMs), left, baseY + 6);
     ctx.textAlign = "right";
     ctx.fillText("now", left + plotW, baseY + 6);
 
     const colour = cssVar("--series");
     plotLine(ctx, series, xAt, yAt, baseY, colour);
-    plotLosses(ctx, series, xAt, baseY, 6);
+    plotLosses(ctx, series, xAt, baseY, 6, opts.lost);
   }
   return { left, plotW, top, plotH, xAt, yAt, n, max };
 }

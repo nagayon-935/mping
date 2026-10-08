@@ -56,14 +56,14 @@ const rtt = (value) => {
   return cell;
 };
 
-function summaryFor(t, meta, actions) {
+/** The parts of the Summary tab that change with each snapshot. */
+function summaryParts(t, meta) {
   const asn = [t.asn, t.org, t.country && `(${t.country})`].filter(Boolean).join(" ");
   const done = t.recv + t.loss;
   const level = rowLevel(t, meta.thresholds);
-  return [
-    el("div", { className: "detail-status" }, statusChip(level),
-      el("span", { text: statusReasons(t, meta.thresholds).join(" · ") })),
-    el("div", { className: "summary-columns" },
+  return {
+    status: [statusChip(level), el("span", { text: statusReasons(t, meta.thresholds).join(" · ") })],
+    columns: [
       section("Current", facts([
         ["IP", t.ip || "–"],
         ["PTR", t.ptr],
@@ -85,9 +85,9 @@ function summaryFor(t, meta, actions) {
         ["Latest TTL", t.last_ttl > 0 ? t.last_ttl : "–"],
         ["DSCP", meta.features.dscp ? dscpName(t.last_dscp) : null],
         ["Started", new Date(t.started_at).toLocaleString()],
-      ]), el("p", { className: "chart-caption", text: "Historical averages and peaks do not determine the current status." }))),
-    actions && el("section", { className: "detail-section", attrs: { "data-section": "actions" } }, el("h3", { text: "Actions" }), actions),
-  ].filter(Boolean);
+      ]), el("p", { className: "chart-caption", text: "Historical averages and peaks do not determine the current status." })),
+    ],
+  };
 }
 
 function pathFor(t, th) {
@@ -128,7 +128,14 @@ function portsFor(t) {
 
 /**
  * @param {{tabs: HTMLElement, target: HTMLElement, body: HTMLElement,
- *          onSelect: (id: number) => void, actionsFor: (t: object) => Node | null}} dom
+ *          onSelect: (id: number) => void, actionsFor: (t: object) => Node | null,
+ *          canControl: () => boolean, requestRender: () => void}} dom
+ *
+ * Snapshots arrive every second, so the pane avoids rebuilding what the user
+ * may be interacting with: tab buttons are rebuilt only when the tab set or
+ * the active tab changes, the Summary's action buttons only when the target
+ * or the control permission changes (an armed delete survives updates), and
+ * the Log only when new events arrive or its filter changes.
  */
 export function createInspect(dom) {
   let active = null;
@@ -139,7 +146,10 @@ export function createInspect(dom) {
   }
   let view = null;
   let events = null; // last /api/v1/events body, or an Error
+  let eventsVersion = 0;
   let onlySelected = false;
+  let tabsKey = null;
+  let mounted = { key: null, status: null, columns: null };
 
   const available = () => TABS.filter((t) => view?.meta && t.enabled(view.meta.features));
   const choose = (key) => {
@@ -168,7 +178,9 @@ export function createInspect(dom) {
     if (events instanceof Error) return [el("p", { className: "empty", text: `Couldn't load events: ${events.message}` })];
     if (!events) return [el("p", { className: "empty", text: "Loading…" })];
     const selected = view.selectedId;
-    const rows = events.events.filter((e) => !onlySelected || e.target_id === selected);
+    // The filter only means something while a target is selected.
+    const filtering = onlySelected && selected != null;
+    const rows = events.events.filter((e) => !filtering || e.target_id === selected);
     const toggle = el("button", {
       className: "btn",
       text: onlySelected ? "Show all targets" : "Selected target only",
@@ -200,17 +212,36 @@ export function createInspect(dom) {
     if (!view?.meta) return;
     const tabs = available();
     if (!tabs.some((t) => t.key === active)) active = "summary";
-    renderTabs(tabs);
+    if (view.selectedId == null) onlySelected = false;
+    const nextTabsKey = `${tabs.map((t) => t.key).join()}|${active}`;
+    if (nextTabsKey !== tabsKey) {
+      tabsKey = nextTabsKey;
+      renderTabs(tabs);
+    }
     const tab = tabs.find((t) => t.key === active);
     const target = view.snapshot.targets.find((t) => t.id === view.selectedId);
     dom.target.textContent = tab.perTarget ? (target ? `for ${target.host}` : "") : (tab.key === "log" ? "all targets" : "");
     if (tab.perTarget && !target) {
+      mounted = { key: null };
       dom.body.replaceChildren(el("p", { className: "empty", text: "Select a target in the ping monitor or the RTT graphs." }));
       return;
     }
     const th = view.meta.thresholds;
     switch (tab.key) {
-      case "summary": dom.body.replaceChildren(...summaryFor(target, view.meta, dom.actionsFor(target))); break;
+      case "summary": {
+        const key = `summary:${target.id}:${dom.canControl()}`;
+        if (mounted.key !== key) {
+          const actions = dom.actionsFor(target);
+          mounted = { key, status: el("div", { className: "detail-status" }), columns: el("div", { className: "summary-columns" }) };
+          dom.body.replaceChildren(mounted.status, mounted.columns, ...(actions
+            ? [el("section", { className: "detail-section", attrs: { "data-section": "actions" } }, el("h3", { text: "Actions" }), actions)]
+            : []));
+        }
+        const parts = summaryParts(target, view.meta);
+        mounted.status.replaceChildren(...parts.status);
+        mounted.columns.replaceChildren(...parts.columns);
+        return;
+      }
       case "path": dom.body.replaceChildren(...pathFor(target, th)); break;
       case "ports": dom.body.replaceChildren(...portsFor(target)); break;
       case "http": {
@@ -219,8 +250,14 @@ export function createInspect(dom) {
         dom.body.replaceChildren(any ? el("div", { className: "table-wrap" }, table) : el("p", { className: "empty", text: "No HTTP checks." }));
         break;
       }
-      case "log": dom.body.replaceChildren(...logTable()); break;
+      case "log": {
+        const key = `log:${eventsVersion}:${onlySelected}:${view.selectedId}`;
+        if (mounted.key !== key) dom.body.replaceChildren(...logTable());
+        mounted = { key };
+        return;
+      }
     }
+    mounted = { key: null }; // path, ports and HTTP hold nothing interactive
   };
 
   const loadEvents = async () => {
@@ -230,7 +267,9 @@ export function createInspect(dom) {
     } catch (err) {
       events = err;
     }
-    if (active === "log" && view) render(view);
+    eventsVersion++;
+    // Through the app's render queue, which holds while text is selected.
+    if (active === "log") dom.requestRender();
   };
   setInterval(loadEvents, EVENTS_EVERY_MS);
   loadEvents();

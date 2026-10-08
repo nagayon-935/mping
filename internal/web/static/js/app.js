@@ -7,7 +7,7 @@ import { renderTargets } from "./table.js";
 import { createGraphs } from "./graphs.js";
 import { createInspect } from "./inspect.js";
 import { badgeFor, buildSections, matchesFilter, readOnlyHint, summarize, summaryItems, validateHost } from "./model.js";
-import { defaultWindow, tail, windowOptions } from "./timeline.js";
+import { reconcileWindow, tail } from "./timeline.js";
 import { confirmButton, createControl } from "./control.js";
 
 const SPARK_POINTS = 60;
@@ -82,6 +82,8 @@ const inspect = createInspect({
   target: $("inspect-target"),
   body: $("inspect-body"),
   onSelect: selectTarget,
+  canControl: () => control.allowed,
+  requestRender: () => scheduleRender(),
   actionsFor(t) {
     if (!control.allowed) return null;
     return confirmButton(`Delete ${t.host}`, `Confirm delete ${t.host}?`, async () => {
@@ -178,11 +180,13 @@ function scheduleRender() {
 }
 
 function applySnapshot(body) {
-  const first = view.meta == null;
+  // The window choices depend on the probe interval, which a hosts-file
+  // reload can change.
+  const intervalChanged = view.meta?.interval_ms !== body.meta.interval_ms;
   view.snapshot = body.snapshot;
   view.meta = body.meta;
   view.state = body.state;
-  if (first) {
+  if (intervalChanged) {
     initWindows();
     refreshHistory();
   }
@@ -227,9 +231,9 @@ async function refreshHistory() {
 }
 
 function initWindows() {
-  view.windows = windowOptions(view.meta.interval_ms, MAX_HISTORY_POINTS);
-  const saved = view.windows.find((w) => w.label === readSession(WINDOW_KEY));
-  view.window = saved ?? defaultWindow(view.windows);
+  const { options, window } = reconcileWindow(view.window?.label ?? readSession(WINDOW_KEY), view.meta.interval_ms, MAX_HISTORY_POINTS);
+  view.windows = options;
+  view.window = window;
   const select = $("graph-window");
   select.replaceChildren(...view.windows.map((w) =>
     el("option", { text: w.label, attrs: { value: w.label, ...(w === view.window ? { selected: "" } : {}) } })));
