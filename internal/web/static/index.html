@@ -18,6 +18,15 @@
   <span class="spacer"></span>
   <ul id="summary" class="summary" aria-label="Target summary"></ul>
   <input id="filter" class="filter" type="search" placeholder="Filter host, IP, PTR, AS" aria-label="Filter targets">
+  <form id="add-form" class="add-form" hidden>
+    <label class="visually-hidden" for="add-host">Host to add</label>
+    <input id="add-host" class="filter" placeholder="Add host or IP" autocomplete="off" spellcheck="false" maxlength="253">
+    <button class="btn" type="submit">Add</button>
+  </form>
+  <span id="reset-slot" hidden></span>
+  <span id="readonly-hint" class="muted readonly-hint" hidden
+        title="To add or delete hosts here, open the Web UI link shown in mping's Log pane.">Read-only</span>
+  <p id="notice" class="notice" role="status" aria-live="polite"></p>
 </header>
 
 <main class="layout">

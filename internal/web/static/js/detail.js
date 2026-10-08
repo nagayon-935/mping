@@ -160,7 +160,8 @@ function createChart(getContext) {
 }
 
 /**
- * @param {{root: HTMLElement, title: HTMLElement, sub: HTMLElement, body: HTMLElement, closeButton: HTMLElement, onClose: () => void}} dom
+ * @param {{root: HTMLElement, title: HTMLElement, sub: HTMLElement, body: HTMLElement, closeButton: HTMLElement,
+ *          onClose: () => void, actionsFor: (target: object) => Node | null}} dom
  */
 export function createDetail(dom) {
   let id = null;
@@ -229,11 +230,13 @@ export function createDetail(dom) {
       factsNode = el("div");
       hopsNode = el("div");
       eventsNode = el("div", {}, el("p", { className: "muted", text: "Loading…" }));
+      const actions = dom.actionsFor(t);
       dom.body.replaceChildren(
         section("Summary", factsNode),
         section("RTT", chart.node),
         hopsNode,
         section("Events", eventsNode),
+        actions && section("Actions", actions),
       );
       dom.root.hidden = false;
       render();

@@ -3,13 +3,26 @@
 import { el, badgeIcon, fetchJSON, selectionWithin } from "./dom.js";
 import { renderHTTP, renderTargets } from "./table.js";
 import { createDetail } from "./detail.js";
-import { badgeFor, summarize } from "./model.js";
+import { badgeFor, summarize, validateHost } from "./model.js";
+import { confirmButton, createControl } from "./control.js";
 
 const SPARK_POINTS = 60;
 const SPARK_EVERY_MS = 2000;
 const FILTER_KEY = "mping.filter";
 
 const $ = (id) => document.getElementById(id);
+
+// Must run before anything reads location.hash: it consumes "#token=".
+const control = createControl();
+
+let noticeTimer = null;
+function notify(message, isError = false) {
+  const node = $("notice");
+  clearTimeout(noticeTimer);
+  node.textContent = message;
+  node.classList.toggle("is-error", isError);
+  noticeTimer = setTimeout(() => { node.textContent = ""; }, isError ? 10000 : 4000);
+}
 
 const view = {
   snapshot: null,
@@ -27,6 +40,19 @@ const detail = createDetail({
   sub: $("detail-sub"),
   body: $("detail-body"),
   closeButton: $("detail-close"),
+  actionsFor(t) {
+    if (!control.allowed) return null;
+    return confirmButton(`Delete ${t.host}`, `Confirm delete ${t.host}?`, async () => {
+      const res = await control.deleteTarget(t.id);
+      if (res.ok) {
+        notify(`Deleted ${t.host}.`);
+        detail.close();
+      } else {
+        notify(`Couldn't delete ${t.host}: ${res.error}`, true);
+        renderControls();
+      }
+    });
+  },
   onClose() {
     const id = view.selectedId;
     view.selectedId = null;
@@ -153,6 +179,41 @@ async function refreshSparklines() {
   }
 }
 
+function renderControls() {
+  const on = control.allowed;
+  $("add-form").hidden = !on;
+  $("reset-slot").hidden = !on;
+  $("readonly-hint").hidden = on;
+}
+
+function initControls() {
+  $("reset-slot").replaceChildren(confirmButton("Reset stats", "Confirm reset?", async () => {
+    const res = await control.reset();
+    notify(res.ok ? "Statistics reset." : `Couldn't reset: ${res.error}`, !res.ok);
+    if (!res.ok) renderControls();
+  }));
+  $("add-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = $("add-host");
+    const checked = validateHost(input.value);
+    if (checked.error) {
+      notify(checked.error, true);
+      input.focus();
+      return;
+    }
+    const res = await control.addHost(checked.host);
+    if (res.ok) {
+      notify(`Added ${checked.host}.`);
+      input.value = "";
+    } else {
+      notify(`Couldn't add ${checked.host}: ${res.error}`, true);
+      renderControls();
+    }
+  });
+  renderControls();
+  control.refresh().then(renderControls);
+}
+
 function initFilter() {
   const input = $("filter");
   try {
@@ -173,6 +234,7 @@ function initFilter() {
 }
 
 initFilter();
+initControls();
 connect();
 scheduleRender();
 setInterval(refreshSparklines, SPARK_EVERY_MS);

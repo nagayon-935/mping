@@ -16,6 +16,8 @@ import {
   matchesFilter,
   badgeFor,
   dscpName,
+  tokenFromHash,
+  validateHost,
 } from "../static/js/model.js";
 
 const th = {
@@ -141,4 +143,21 @@ test("dscpName mirrors pinger.DSCPName: top 6 bits, ECN ignored, decimal fallbac
   assert.equal(dscpName(185), "EF");
   assert.equal(dscpName(32), "CS1");
   assert.equal(dscpName(4), "1");
+});
+
+test("tokenFromHash reads only a #token= fragment", () => {
+  assert.equal(tokenFromHash("#token=abc123"), "abc123");
+  assert.equal(tokenFromHash("#target-4"), null);
+  assert.equal(tokenFromHash(""), null);
+  assert.equal(tokenFromHash("#token="), null);
+});
+
+test("validateHost mirrors the server's shape checks", () => {
+  assert.deepEqual(validateHost("  a.example "), { host: "a.example" });
+  assert.deepEqual(validateHost("2001:db8::1"), { host: "2001:db8::1" });
+  assert.ok(validateHost("   ").error);
+  assert.ok(validateHost("a b").error);
+  assert.ok(validateHost("a\u0007b").error);
+  assert.ok(validateHost("a".repeat(254)).error);
+  assert.equal(validateHost("a".repeat(253)).host.length, 253);
 });

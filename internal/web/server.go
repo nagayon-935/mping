@@ -59,15 +59,21 @@ type Server struct {
 // same port is added when available so a browser that resolves "localhost"
 // to IPv6 first still connects directly.
 func Start(opts Options) (*Server, error) {
+	token, err := newToken()
+	if err != nil {
+		return nil, fmt.Errorf("web: %w", err)
+	}
+	return start(opts, token)
+}
+
+// start is Start with a caller-chosen token (TestDevServer pins one so
+// browser checks can authenticate).
+func start(opts Options, token string) (*Server, error) {
 	if opts.Port < 0 || opts.Port > 65535 {
 		return nil, fmt.Errorf("web: port %d out of range 0-65535", opts.Port)
 	}
 	if opts.Source == nil {
 		return nil, errors.New("web: nil Source")
-	}
-	token, err := newToken()
-	if err != nil {
-		return nil, fmt.Errorf("web: %w", err)
 	}
 	ln4, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(opts.Port)))
 	if err != nil {

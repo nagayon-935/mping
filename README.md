@@ -468,6 +468,7 @@ mping --web google.com 1.1.1.1      # then open http://127.0.0.1:8080/
 - It listens on loopback only (`127.0.0.1`, plus `[::1]` when available) and is not reachable from other machines. Requests whose `Host` or `Origin` header is not this server are rejected (DNS-rebinding / cross-site protection).
 - `--web` / `--web-port` are read at startup; a hosts-file reload does not restart the server (changing them in the hosts file logs a restart-required warning).
 - The dashboard shows the target table (grouped, colour-coded with the same thresholds as the TUI, with a per-row RTT trend) and HTTP checks. Click a row for details: an RTT chart with warn/crit lines and lost-probe markers, traceroute/MTR hops, port checks and recent events.
+- **Making changes from the browser.** The Log pane shows the link to open, e.g. `Web UI: http://127.0.0.1:8080/#token=…`. The token is generated for each launch and lets that page add hosts, delete targets (after a confirming second click) and reset statistics; each change is noted in the TUI Log pane. Opened without the token (or with one from an earlier run) the page is read-only. Stopping and restarting measurements stays in the TUI.
 - The same data is available as JSON:
 
 | Endpoint | Description |
@@ -477,6 +478,10 @@ mping --web google.com 1.1.1.1      # then open http://127.0.0.1:8080/
 | `GET /api/v1/stream` | Server-sent events: a `snapshot` event on connect and at most once per second while statistics change |
 | `GET /api/v1/targets/{id}/history?n=300` | Trailing RTT samples in ms, oldest first; `null` marks a lost probe (`n` 1–3000) |
 | `GET /api/v1/targets/{id}/events` | Recorded events for the target (DNS changes, route flaps, losses) |
+| `GET /api/v1/session` | `{"control": true}` when the request carries a valid `X-Mping-Token` |
+| `POST /api/v1/targets` | Add a host: JSON body `{"host": "example.com"}`; needs `X-Mping-Token` |
+| `DELETE /api/v1/targets/{id}` | Delete a target; needs `X-Mping-Token` |
+| `POST /api/v1/reset` | Reset statistics; needs `X-Mping-Token` |
 
 ## License
 

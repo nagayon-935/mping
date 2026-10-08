@@ -1,9 +1,13 @@
 // Browser checks for the dashboard against the simulated server. Not part of
 // CI (it needs a Chromium); run it by hand after UI changes:
 //
-//   MPING_WEB_DEV_PORT=8090 go test -run TestDevServer -timeout 0 ./internal/web &
-//   PLAYWRIGHT_CORE=/path/to/node_modules/playwright-core \
+//   MPING_WEB_DEV_PORT=8090 MPING_WEB_DEV_TOKEN=e2e-token \
+//     go test -run TestDevServer -timeout 0 ./internal/web &
+//   E2E_TOKEN=e2e-token PLAYWRIGHT_CORE=/path/to/node_modules/playwright-core \
 //     [CHROMIUM_PATH=/path/to/chrome] node internal/web/jstest/e2e.mjs http://127.0.0.1:8090/
+//
+// The control checks add, delete and reset on the simulator, so restart it
+// before a re-run.
 //
 // Exits non-zero on the first failed check. Screenshots go to $E2E_OUT when set.
 import assert from "node:assert/strict";
@@ -19,12 +23,19 @@ const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePa
 const problems = [];
 let dialogs = 0;
 
-async function open(opts) {
-  const page = await browser.newPage(opts);
-  page.on("console", (m) => ["error", "warning"].includes(m.type()) && problems.push(m.text()));
+async function open(opts, context = browser, url = base) {
+  // BrowserContext.newPage takes no options, so size those pages afterwards.
+  const page = context === browser ? await browser.newPage(opts) : await context.newPage();
+  if (context !== browser && opts.viewport) await page.setViewportSize(opts.viewport);
+  page.on("console", (m) => {
+    // The duplicate-host check provokes a 409 on purpose; the browser logs
+    // every non-2xx fetch as a console error.
+    if (/status of 409/.test(m.text())) return;
+    if (["error", "warning"].includes(m.type())) problems.push(m.text());
+  });
   page.on("pageerror", (e) => problems.push(e.message));
   page.on("dialog", async (d) => { dialogs++; await d.dismiss(); });
-  await page.goto(base);
+  await page.goto(url);
   await page.waitForSelector("tr.target-row");
   await page.waitForTimeout(2500); // first sparkline refresh
   return page;
@@ -122,8 +133,81 @@ try {
   });
   await page.close();
 
-  const mobile = await open({ viewport: { width: 390, height: 844 } });
-  await check("narrow screens keep the key columns without page overflow", async () => {
+  await check("without a token the dashboard is read-only", async () => {
+    const ro = await open({ viewport: { width: 1400, height: 900 } });
+    assert.ok(await ro.isVisible("#readonly-hint"));
+    assert.ok(await ro.isHidden("#add-form"));
+    assert.ok(await ro.isHidden("#reset-slot"));
+    await ro.click("tr.target-row >> nth=0");
+    await ro.waitForTimeout(500);
+    const sections = await ro.$$eval(".detail-section h3", (h) => h.map((x) => x.textContent));
+    assert.ok(!sections.includes("Actions"));
+    await ro.close();
+  });
+
+  const token = process.env.E2E_TOKEN;
+  assert.ok(token, "set E2E_TOKEN to the simulator's MPING_WEB_DEV_TOKEN");
+  const ctx = await browser.newContext();
+  const ctl = await open({ viewport: { width: 1400, height: 900 } }, ctx, `${base}#token=${token}`);
+  const rowHosts = () => ctl.$$eval("tr.target-row .host", (h) => h.map((x) => x.textContent));
+
+  await check("the token link enables controls and leaves the address bar", async () => {
+    await ctl.waitForSelector("#add-form:not([hidden])");
+    assert.equal(await ctl.evaluate(() => location.hash), "");
+    assert.ok(await ctl.isHidden("#readonly-hint"));
+    await shot(ctl, "control");
+  });
+
+  await check("adding a host: client-side validation, then a live row", async () => {
+    await ctl.fill("#add-host", "bad host");
+    await ctl.click("#add-form button");
+    assert.match(await ctl.textContent("#notice"), /spaces/);
+    await ctl.fill("#add-host", "added.e2e.example");
+    await ctl.click("#add-form button");
+    await ctl.waitForFunction(() => [...document.querySelectorAll(".host")].some((h) => h.textContent === "added.e2e.example"), null, { timeout: 5000 });
+    assert.match(await ctl.textContent("#notice"), /Added added\.e2e\.example/);
+    assert.equal(await ctl.inputValue("#add-host"), "");
+  });
+
+  await check("server-side rejections are shown", async () => {
+    await ctl.fill("#add-host", "added.e2e.example");
+    await ctl.click("#add-form button");
+    await ctl.waitForFunction(() => document.querySelector("#notice").classList.contains("is-error"));
+    assert.match(await ctl.textContent("#notice"), /already in the list/);
+  });
+
+  await check("deleting needs a confirming second press", async () => {
+    const row = ctl.locator("tr.target-row", { hasText: "added.e2e.example" });
+    await row.click();
+    const del = ctl.getByRole("button", { name: "Delete added.e2e.example" });
+    await del.click();
+    assert.ok((await rowHosts()).includes("added.e2e.example"), "first press must not delete");
+    await ctl.getByRole("button", { name: "Confirm delete added.e2e.example?" }).click();
+    await ctl.waitForFunction(() => ![...document.querySelectorAll(".host")].some((h) => h.textContent === "added.e2e.example"), null, { timeout: 5000 });
+    assert.ok(await ctl.isHidden("#detail"));
+  });
+
+  await check("reset clears counters after confirmation", async () => {
+    const sent = () => ctl.$eval("tr.target-row td.col-sent", (td) => Number(td.textContent));
+    const before = await sent();
+    await ctl.getByRole("button", { name: "Reset stats" }).click();
+    await ctl.getByRole("button", { name: "Confirm reset?" }).click();
+    await ctl.waitForFunction((b) => Number(document.querySelector("tr.target-row td.col-sent").textContent) < b, before, { timeout: 5000 });
+    assert.match(await ctl.textContent("#notice"), /Statistics reset/);
+  });
+
+  await check("a stale token falls back to read-only", async () => {
+    const stale = await browser.newContext();
+    const page = await open({ viewport: { width: 1400, height: 900 } }, stale, `${base}#token=not-the-token`);
+    await page.waitForTimeout(500);
+    assert.ok(await page.isVisible("#readonly-hint"));
+    assert.ok(await page.isHidden("#add-form"));
+    await stale.close();
+  });
+
+  const mobile = await open({ viewport: { width: 390, height: 844 } }, ctx);
+  await check("narrow screens keep the key columns without page overflow (controls shown)", async () => {
+    assert.ok(await mobile.isVisible("#add-form"));
     assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     const headers = await mobile.$$eval("#targets th", (h) => h.filter((x) => x.offsetParent).map((x) => x.textContent));
     assert.deepEqual(headers, ["Status", "Host", "Loss %", "Recv", "Last ms", "Avg ms", "Jitter ms", "RTT trend"]);

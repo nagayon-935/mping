@@ -459,6 +459,7 @@ mping --web google.com 1.1.1.1      # http://127.0.0.1:8080/ を開く
 - 待ち受けは loopback のみ (`127.0.0.1`、利用可能なら `[::1]` も) で、他のマシンからは接続できません。`Host` / `Origin` ヘッダがこのサーバー以外のリクエストは拒否します (DNS rebinding・クロスサイト対策)。
 - `--web` / `--web-port` は起動時にのみ読み込まれます。hosts ファイルのリロードではサーバーは再起動しません (hosts ファイルで変更すると「再起動が必要」という警告を Log ペインに表示します)。
 - ダッシュボードにはターゲット一覧 (グループ表示・TUI と同じ閾値による色分け・行ごとの RTT 推移) と HTTP チェックを表示します。行をクリックすると、warn/crit 線と応答なしマーカー付きの RTT グラフ、traceroute/MTR のホップ、ポートチェック、直近のイベントを確認できます。
+- **ブラウザからの操作**: Log ペインに表示されるリンク (例: `Web UI: http://127.0.0.1:8080/#token=…`) を開くと、ホストの追加・ターゲットの削除 (確認のため 2 回押し)・統計のリセットができます。token は起動ごとに生成され、操作内容は TUI の Log ペインにも記録されます。token なし (または以前の起動時の token) で開いた場合は閲覧のみです。計測の停止・再開は TUI から行います。
 - 同じデータを JSON でも取得できます:
 
 | エンドポイント | 内容 |
@@ -468,6 +469,10 @@ mping --web google.com 1.1.1.1      # http://127.0.0.1:8080/ を開く
 | `GET /api/v1/stream` | Server-Sent Events。接続時と、統計が変化している間は最大 1 秒に 1 回 `snapshot` イベントを送信 |
 | `GET /api/v1/targets/{id}/history?n=300` | 直近の RTT (ミリ秒、古い順)。`null` は応答なし (`n` は 1–3000) |
 | `GET /api/v1/targets/{id}/events` | ターゲットの記録済みイベント (DNS 変化・経路フラップ・ロス) |
+| `GET /api/v1/session` | 有効な `X-Mping-Token` ヘッダ付きなら `{"control": true}` |
+| `POST /api/v1/targets` | ホスト追加。JSON `{"host": "example.com"}`、`X-Mping-Token` が必要 |
+| `DELETE /api/v1/targets/{id}` | ターゲット削除。`X-Mping-Token` が必要 |
+| `POST /api/v1/reset` | 統計リセット。`X-Mping-Token` が必要 |
 
 ## ライセンス
 

@@ -145,3 +145,24 @@ export function dscpName(tos) {
   const dscp = (tos >> 2) & 0x3f;
   return dscpNames.get(dscp) ?? String(dscp);
 }
+
+/** The control token from a "#token=<hex>" fragment, or null. */
+export function tokenFromHash(hash) {
+  const m = /^#token=([^&]+)$/.exec(hash ?? "");
+  return m ? m[1] : null;
+}
+
+const MAX_HOST_LEN = 253;
+
+/**
+ * Shape checks matching the server's validHost, so most mistakes are caught
+ * before a request. Duplicates and resolvability are left to mping.
+ * @returns {{host: string} | {error: string}}
+ */
+export function validateHost(raw) {
+  const host = (raw ?? "").trim();
+  if (host === "") return { error: "Enter a host name or IP address." };
+  if (host.length > MAX_HOST_LEN) return { error: `Host is longer than ${MAX_HOST_LEN} characters.` };
+  if (/[\s\p{Cc}]/u.test(host)) return { error: "Host must not contain spaces or control characters." };
+  return { host };
+}
