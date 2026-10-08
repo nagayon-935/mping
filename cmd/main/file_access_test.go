@@ -104,6 +104,17 @@ func TestFileOperationsDoAllIOInsideAsRealUser(t *testing.T) {
 			t.Fatalf("hosts file was read outside asRealUser: %v", doc.Hosts)
 		}
 	})
+	t.Run("missing files are not even looked up", func(t *testing.T) {
+		missing := filepath.Join(t.TempDir(), "missing")
+		skipAsRealUser(t)
+
+		if _, err := parseHostsFile(missing + ".yaml"); err != nil {
+			t.Fatalf("hosts file was looked up outside asRealUser: %v", err)
+		}
+		if _, err := readIncludeFile(missing + ".txt"); err != nil {
+			t.Fatalf("include file was looked up outside asRealUser: %v", err)
+		}
+	})
 	t.Run("include file is not read", func(t *testing.T) {
 		path := writeTestFile(t, t.TempDir(), "list.txt", "192.0.2.1\n")
 		skipAsRealUser(t)
@@ -128,12 +139,10 @@ func TestFileOperationsDoAllIOInsideAsRealUser(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "log.csv")
 		skipAsRealUser(t)
 
-		f, err := setupLogger(path)
-
-		if err == nil {
+		if f, _ := setupLogger(path); f != nil {
 			f.Close()
-			t.Fatal("expected an error when the log file was never opened")
 		}
+
 		assertNotExist(t, path)
 	})
 	t.Run("JSON snapshot is not written", func(t *testing.T) {
@@ -175,6 +184,31 @@ func TestSupervisorSaveReportWritesAsRealUser(t *testing.T) {
 	assertNotExist(t, path)
 }
 
+func TestSupervisorSaveReportResolvesPathAsRealUser(t *testing.T) {
+	dir := t.TempDir()
+	reserved := filepath.Join(dir, "live.json")
+	s := newSupervisor(supervisorConfig{
+		targets:         []*stats.TargetStats{stats.NewTargetStats("base")},
+		specs:           []targetSpec{{Host: "base"}},
+		reservedOutputs: []string{reserved},
+	})
+	s.Start()
+	t.Cleanup(s.Shutdown)
+	calls := recordAsRealUser(t)
+
+	err := s.saveReport(reserved, "json", 0)
+
+	if err == nil {
+		t.Fatal("reserved path accepted")
+	}
+	// Rejected before any write: the only asRealUser call is the symlink
+	// resolution of the requested path, which would otherwise probe the
+	// filesystem with root's permissions.
+	if *calls == 0 {
+		t.Fatal("report path was resolved outside asRealUser")
+	}
+}
+
 func TestFileOperationsFailWhenPrivilegesCannotBeDropped(t *testing.T) {
 	swapAsRealUser(t, func(func() error) error { return errors.New("drop privileges: operation not permitted") })
 	dir := t.TempDir()
@@ -203,9 +237,12 @@ func TestFileOperationsFailWhenPrivilegesCannotBeDropped(t *testing.T) {
 		})
 	}
 	t.Run("watch path discovery falls back to the hosts file", func(t *testing.T) {
-		got := hostsFileWatchPaths(hostsPath)
+		// The include would be listed if the read had succeeded.
+		withInclude := writeTestFile(t, dir, "with-include.yaml", "include: a.csv\n")
 
-		if want := []string{hostsPath}; !reflect.DeepEqual(got, want) {
+		got := hostsFileWatchPaths(withInclude)
+
+		if want := []string{withInclude}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("got %v, want %v", got, want)
 		}
 	})
