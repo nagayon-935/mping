@@ -8,7 +8,7 @@ import {
   defaultWindow,
   sharedMax,
   agoLabel,
-  indexForAgo,
+  padTo,
   tail,
 } from "../static/js/timeline.js";
 
@@ -60,12 +60,13 @@ test("agoLabel reads samples-from-the-end as elapsed time", () => {
   assert.equal(agoLabel(1, 100), "<1s ago");
 });
 
-test("indexForAgo aligns series of different lengths at their newest sample", () => {
-  assert.equal(indexForAgo(0, 10), 9);
-  assert.equal(indexForAgo(4, 10), 5);
-  // A host added later has a shorter series: older cursors fall before it.
-  assert.equal(indexForAgo(12, 10), -1);
-  assert.equal(indexForAgo(-1, 10), -1);
+test("padTo right-aligns every series to the window length", () => {
+  // A host added later is padded with undefined ("no data"), never null
+  // (null means a lost probe and is drawn as a red tick).
+  assert.deepEqual(padTo([5, null, 7], 5), [undefined, undefined, 5, null, 7]);
+  assert.deepEqual(padTo([1, 2, 3, 4], 2), [3, 4]);
+  assert.deepEqual(padTo([1, 2], 2), [1, 2]);
+  assert.deepEqual(padTo(undefined, 2), [undefined, undefined]);
 });
 
 test("tail returns the newest n samples without copying more than needed", () => {

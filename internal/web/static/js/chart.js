@@ -1,8 +1,10 @@
 // Canvas RTT charts. One series (RTT) so no legend: the surrounding title
 // names it. Lost probes (null samples) are drawn as critical ticks on the
-// baseline and break the line.
+// baseline and break the line; undefined samples mean "no data yet" (a
+// target added after the window began) and are left blank.
 import { cssVar } from "./dom.js";
 import { formatMs } from "./model.js";
+import { agoLabel } from "./timeline.js";
 
 function setupCanvas(canvas) {
   const dpr = window.devicePixelRatio || 1;
@@ -71,7 +73,7 @@ function plotLine(ctx, series, xAt, yAt, baseY, colour) {
 function plotLosses(ctx, series, xAt, baseY, tickH) {
   ctx.fillStyle = cssVar("--critical");
   series.forEach((v, i) => {
-    if (v == null) ctx.fillRect(xAt(i) - 1, baseY - tickH, 2, tickH);
+    if (v === null) ctx.fillRect(xAt(i) - 1, baseY - tickH, 2, tickH);
   });
 }
 
@@ -103,16 +105,17 @@ export function drawSparkline(canvas, series) {
 }
 
 /**
- * Detail chart with a y axis in ms, warn/crit reference lines, and an
+ * RTT chart with a y axis in ms, warn/crit reference lines, and an
  * "s ago" x axis derived from the probe interval. Returns the geometry the
  * hover layer needs.
  */
-export function drawChart(canvas, series, th, intervalMs) {
+export function drawChart(canvas, series, th, intervalMs, opts = {}) {
   const { ctx, w, h } = setupCanvas(canvas);
   const left = 44, right = 12, top = 10, bottom = 24;
   const plotW = w - left - right;
   const plotH = h - top - bottom;
-  const max = niceCeil(Math.max(seriesMax(series) * 1.15, 1));
+  // opts.yMax shares one scale across several charts (e.g. all targets).
+  const max = niceCeil(Math.max((opts.yMax ?? seriesMax(series)) * 1.15, 1));
   const n = Math.max(series.length - 1, 1);
   const xAt = (i) => left + (i / n) * plotW;
   const yAt = (v) => top + plotH - (Math.min(v, max) / max) * plotH;
@@ -153,11 +156,10 @@ export function drawChart(canvas, series, th, intervalMs) {
   }
 
   if (series.length > 0) {
-    const secs = ((series.length - 1) * intervalMs) / 1000;
     ctx.fillStyle = cssVar("--muted");
     ctx.textBaseline = "top";
     ctx.textAlign = "left";
-    ctx.fillText(`${Math.round(secs)}s ago`, left, baseY + 6);
+    ctx.fillText(agoLabel(series.length - 1, intervalMs), left, baseY + 6);
     ctx.textAlign = "right";
     ctx.fillText("now", left + plotW, baseY + 6);
 

@@ -36,45 +36,51 @@
 </header>
 
 <div class="workspace">
-<main class="layout">
-  <section class="panel" aria-labelledby="targets-title">
-    <div class="panel-toolbar">
+  <section id="pane-monitor" class="pane" aria-labelledby="targets-title">
+    <div class="pane-head">
       <div>
-        <h2 id="targets-title" class="panel-title">Targets</h2>
-        <p class="panel-hint">Select a host to view details.</p>
+        <h2 id="targets-title" class="pane-title">Ping monitor</h2>
+        <p class="pane-hint">Select a target to inspect it below. <kbd>j</kbd>/<kbd>k</kbd> move, <kbd>Esc</kbd> clears.</p>
       </div>
     </div>
     <p class="status-guide">Status uses latest RTT, jitter and overall loss. Averages and peaks describe the run since start or reset.</p>
-    <div class="table-wrap">
-      <table id="targets" class="grid">
-        <thead></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-    <p id="targets-empty" class="empty" hidden></p>
-  </section>
-
-  <section id="http-panel" class="panel" aria-labelledby="http-title" hidden>
-    <h2 id="http-title" class="panel-title">HTTP checks</h2>
-    <div class="table-wrap">
-      <table id="http" class="grid">
-        <thead></thead>
-        <tbody></tbody>
-      </table>
+    <div class="pane-scroll">
+      <div class="table-wrap">
+        <table id="targets" class="grid">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p id="targets-empty" class="empty" hidden></p>
     </div>
   </section>
-</main>
 
-<aside id="detail" class="detail" role="dialog" aria-modal="false" aria-labelledby="detail-title" hidden>
-  <div class="detail-head">
-    <div>
-      <h2 id="detail-title" class="detail-title"></h2>
-      <p id="detail-sub" class="muted"></p>
+  <section id="pane-graphs" class="pane" aria-labelledby="graphs-title">
+    <div class="pane-head">
+      <div>
+        <h2 id="graphs-title" class="pane-title">RTT graphs</h2>
+        <p id="graphs-cursor" class="pane-hint"></p>
+      </div>
+      <div class="pane-tools">
+        <label class="tool">Window <select id="graph-window" aria-label="Time window"></select></label>
+        <div class="segmented" role="group" aria-label="Y-axis scale">
+          <button id="scale-each" type="button" aria-pressed="true">Per target</button>
+          <button id="scale-shared" type="button" aria-pressed="false">Shared</button>
+        </div>
+      </div>
     </div>
-    <button id="detail-close" class="icon-button" type="button" aria-label="Close details">✕</button>
-  </div>
-  <div id="detail-body" class="detail-body"></div>
-</aside>
+    <div class="pane-scroll">
+      <div id="graphs" class="graph-grid"></div>
+    </div>
+  </section>
+
+  <section id="pane-inspect" class="pane" aria-label="Inspect">
+    <div class="pane-head">
+      <div id="inspect-tabs" class="tabs" role="tablist" aria-label="Inspect"></div>
+      <span id="inspect-target" class="pane-hint"></span>
+    </div>
+    <div id="inspect-body" class="inspect-body" role="tabpanel"></div>
+  </section>
 </div>
 </body>
 </html>

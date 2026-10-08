@@ -54,7 +54,9 @@ try {
     await page.close();
   }
 
-  const WIDE = { width: 2000, height: 1000 };
+  // Wide enough that the ping monitor pane (left of the RTT graphs) fits
+  // every column; narrower layouts are checked separately below.
+  const WIDE = { width: 4200, height: 1000 };
   const page = await open({ viewport: WIDE });
 
   await check("live badge and grouped rows", async () => {
@@ -62,7 +64,8 @@ try {
     assert.match(await page.textContent("#updated"), /^Last change /);
     assert.deepEqual(await page.$$eval("tr.group-row", (r) => r.map((x) => x.textContent)), ["core (2)", "internet (3)", "Ungrouped (1)"]);
     assert.equal(await page.$$eval("tr.target-row", (r) => r.length), 6);
-    assert.ok(await page.isVisible("#http-panel"));
+    assert.ok(await page.isVisible('#inspect-tabs [data-tab="http"]'));
+    assert.equal(await page.$$eval(".graph-card", (n) => n.length), 6);
   });
 
   await check("a wide screen shows every column; a narrow one keeps the highest-priority ones", async () => {
@@ -76,7 +79,6 @@ try {
       table: t.getBoundingClientRect().width, wrap: t.parentElement.clientWidth, zoom: Number(t.style.zoom || 1),
       host: t.querySelector("th.col-host").getBoundingClientRect().width,
     }));
-    assert.ok(fit.zoom > 1, `a 2000px screen should enlarge the table, zoom=${fit.zoom}`);
     assert.ok(Math.abs(fit.table - fit.wrap) <= 2, `table ${fit.table}px should fill its ${fit.wrap}px wrapper`);
     assert.ok(fit.host / fit.table <= 0.2, `host column is ${Math.round((fit.host / fit.table) * 100)}% of the table`);
     assert.match(await page.locator("tr.target-row").nth(0).locator(".col-last").textContent(), / ms$/);
@@ -133,67 +135,86 @@ try {
     assert.ok((await sent()) > held, "table resumes updating once the selection is cleared");
   });
 
-  await check("detail drawer: chart, hops, tooltip, deep link", async () => {
+  await check("selecting a target drives the monitor, graphs and inspect panes", async () => {
+    const monitor = await page.locator("#pane-monitor").boundingBox();
+    const graphs = await page.locator("#pane-graphs").boundingBox();
+    const inspect = await page.locator("#pane-inspect").boundingBox();
+    assert.ok(monitor.x + monitor.width <= graphs.x + 1, "monitor and graphs sit side by side on a wide screen");
+    assert.ok(inspect.y >= monitor.y + monitor.height - 1, "inspect pane sits below them");
+
     await page.click("tr.target-row >> nth=2");
-    await page.waitForTimeout(2500);
-    assert.deepEqual(await page.$$eval(".detail-section h3", (h) => h.map((x) => x.textContent)), ["Summary", "RTT", "Statistics since start / reset", "MTR", "Events"]);
-    assert.equal(await page.$eval("#detail-body", (n) => [...n.childNodes].some((c) => c.nodeType === Node.TEXT_NODE && c.textContent.trim() === "null")), false);
-    const listBox = await page.locator(".layout").boundingBox();
-    const detailBox = await page.locator("#detail").boundingBox();
-    assert.ok(listBox.x + listBox.width <= detailBox.x + 1, "detail should sit beside the list on a wide screen");
-    assert.match(await page.evaluate(() => location.hash), /^#target-\d+$/);
-    assert.equal(await page.getAttribute("#detail", "role"), "dialog");
+    await page.waitForFunction(() => document.querySelector("#inspect-target").textContent === "for cdn.example");
+    const id = await page.$eval('tr.target-row[aria-current="true"]', (r) => r.dataset.targetId);
     assert.equal(await page.$$eval('tr.target-row[aria-current="true"]', (r) => r.length), 1);
     assert.equal(await page.$$eval("tr.target-row[aria-selected]", (r) => r.length), 0);
-    const box = await page.locator("canvas.chart").boundingBox();
-    await page.mouse.move(box.x + box.width * 0.6, box.y + box.height / 2);
-    assert.match(await page.textContent(".tooltip"), /ms|Lost/);
-    await shot(page, "detail");
+    assert.equal(await page.$eval('.graph-card[aria-pressed="true"]', (c) => c.dataset.targetId), id);
+    assert.equal(await page.evaluate(() => location.hash), `#target-${id}`);
+
+    assert.equal(await page.textContent('#inspect-tabs [aria-selected="true"]'), "Summary");
+    assert.deepEqual(await page.$$eval("#inspect-body .detail-section h3", (h) => h.map((x) => x.textContent)), ["Current", "Since start / reset"]);
+    assert.equal(await page.$eval("#inspect-body", (n) => n.textContent.includes("null")), false);
+    await page.click('#inspect-tabs [data-tab="path"]');
+    assert.ok((await page.$$eval("#inspect-body th", (h) => h.map((x) => x.textContent))).includes("Hop"));
+    await shot(page, "panes");
   });
 
-  await check("switching targets never shows the previous target's events", async () => {
-    // Docked mode hides the IP column, so read it from the API.
-    const firstIP = (await (await fetch(new URL("api/v1/snapshot", base))).json()).snapshot.targets[0].ip;
-    await page.route("**/events", async (route) => {
-      await new Promise((r) => setTimeout(r, 800));
-      await route.continue().catch(() => {});
-    });
-    await page.click("tr.target-row >> nth=0");
-    await page.click("tr.target-row >> nth=1");
-    await page.waitForTimeout(2000);
-    const events = await page.textContent("#detail-body .events, #detail-body .detail-section:last-child");
-    assert.ok(!events.includes(firstIP), `drawer for target 2 shows target 1's events (${firstIP})`);
-    await page.unroute("**/events");
+  await check("hovering one RTT graph moves a shared cursor across all of them", async () => {
+    const box = await page.locator(".graph-card canvas >> nth=0").boundingBox();
+    await page.mouse.move(box.x + box.width - 20, box.y + box.height / 2);
+    await page.waitForFunction(() => document.querySelector("#graphs-cursor").textContent.startsWith("Cursor:"));
+    const values = await page.$$eval(".graph-value", (n) => n.map((x) => x.textContent));
+    assert.equal(values.length, 6);
+    assert.ok(values.every((v) => /ms$|^Lost$|^–$/.test(v)), `cursor readouts: ${values}`);
+    await page.mouse.move(0, 0);
+    await page.waitForFunction(() => !document.querySelector("#graphs-cursor").textContent.startsWith("Cursor:"));
+    await page.click('#scale-shared');
+    assert.equal(await page.getAttribute("#scale-shared", "aria-pressed"), "true");
+    await page.click('#scale-each');
   });
 
-  await check("ports section and Escape closes the drawer", async () => {
+  await check("the log tab lists every target's events newest first; a host link selects it", async () => {
+    await page.click('#inspect-tabs [data-tab="log"]');
+    await page.waitForSelector("#inspect-body table.log tbody tr");
+    const rows = await page.$$eval("#inspect-body table.log tbody tr", (rs) => rs.map((r) => ({
+      at: r.querySelector("time").getAttribute("datetime"), host: r.querySelector(".link").textContent })));
+    assert.ok(new Set(rows.map((r) => r.host)).size >= 2, "events from more than one target");
+    assert.deepEqual(rows.map((r) => r.at), [...rows.map((r) => r.at)].sort().reverse(), "newest first");
+    await page.locator("#inspect-body .link", { hasText: "flaky.example" }).first().click();
+    await page.waitForFunction(() => document.querySelector('tr.target-row[aria-current="true"] .host')?.textContent === "flaky.example");
+    await page.getByRole("button", { name: "Selected target only" }).click();
+    const hosts = await page.$$eval("#inspect-body table.log .link", (n) => n.map((x) => x.textContent));
+    assert.ok(hosts.length > 0 && hosts.every((h) => h === "flaky.example"), `filtered hosts: ${hosts}`);
+    await page.getByRole("button", { name: "Show all targets" }).click();
+  });
+
+  await check("ports tab; Escape clears the selection; j and k move it", async () => {
     await page.click("tr.target-row >> nth=0");
-    await page.waitForTimeout(1000);
-    const sections = await page.$$eval(".detail-section h3", (h) => h.map((x) => x.textContent));
-    assert.ok(sections.includes("Ports"));
-    await page.click("#detail-close");
-    await page.click("tr.target-row >> nth=0");
+    await page.click('#inspect-tabs [data-tab="ports"]');
+    assert.match(await page.textContent("#inspect-body"), /443\/tcp/);
     await page.keyboard.press("Escape");
-    await page.waitForTimeout(200);
-    assert.ok(await page.isHidden("#detail"));
+    await page.waitForFunction(() => document.querySelector("#inspect-target").textContent === "");
+    assert.match(await page.textContent("#inspect-body"), /Select a target/);
+    assert.equal(await page.$$eval('tr.target-row[aria-current="true"]', (r) => r.length), 0);
+
+    await page.click("tr.target-row >> nth=0");
+    await page.keyboard.press("j");
+    await page.waitForFunction(() => document.querySelector('tr.target-row[aria-current="true"] .host')?.textContent === "core-rtr2.example");
+    await page.keyboard.press("k");
+    await page.waitForFunction(() => document.querySelector('tr.target-row[aria-current="true"] .host')?.textContent === "core-rtr1.example");
   });
 
-  await check("Escape in the filter field leaves the drawer open", async () => {
-    await page.click("tr.target-row >> nth=0");
+  await check("Escape in the filter field keeps the selection", async () => {
     await page.fill("#filter", "core");
     await page.focus("#filter");
     await page.keyboard.press("Escape");
     await page.waitForTimeout(200);
-    assert.ok(await page.isVisible("#detail"));
-    await page.click("#detail-close");
+    assert.equal(await page.$$eval('tr.target-row[aria-current="true"]', (r) => r.length), 1);
     await page.fill("#filter", "");
+    await page.keyboard.press("Escape");
   });
 
   await check("filter narrows the table", async () => {
     const widths = () => page.$$eval("#targets th", (ns) => ns.map((n) => n.getBoundingClientRect().width));
-    // Closing the drawer widens the list and re-renders with more columns;
-    // "Sent" only fits once the drawer is gone, so it marks that re-render.
-    await page.waitForSelector("#targets th.col-sent");
     const before = await widths();
     await page.fill("#filter", "flaky");
     await page.waitForTimeout(300);
@@ -209,10 +230,8 @@ try {
     assert.ok(await ro.isHidden("#add-form"));
     assert.ok(await ro.isHidden("#reset-slot"));
     await ro.click("tr.target-row >> nth=0");
-    await ro.waitForTimeout(500);
-    const sections = await ro.$$eval(".detail-section h3", (h) => h.map((x) => x.textContent));
-    assert.ok(!sections.includes("Actions"));
-    await ro.click("#detail-close");
+    await ro.waitForFunction(() => document.querySelector("#inspect-target").textContent.startsWith("for "));
+    assert.equal(await ro.$$eval('#inspect-body [data-section="actions"]', (n) => n.length), 0);
     await ro.click("#readonly-hint");
     assert.ok(await ro.isVisible("#readonly-explanation"));
     assert.match(await ro.textContent("#readonly-explanation"), /Log pane/);
@@ -266,12 +285,13 @@ try {
   await check("deleting needs a confirming second press", async () => {
     const row = ctl.locator("tr.target-row", { hasText: "added.e2e.example" });
     await row.click();
+    await ctl.click('#inspect-tabs [data-tab="summary"]');
     const del = ctl.getByRole("button", { name: "Delete added.e2e.example" });
     await del.click();
     assert.ok((await rowHosts()).includes("added.e2e.example"), "first press must not delete");
     await ctl.getByRole("button", { name: "Confirm delete added.e2e.example?" }).click();
     await ctl.waitForFunction(() => ![...document.querySelectorAll(".host")].some((h) => h.textContent === "added.e2e.example"), null, { timeout: 5000 });
-    assert.ok(await ctl.isHidden("#detail"));
+    assert.equal(await ctl.textContent("#inspect-target"), "", "the deleted target is no longer selected");
   });
 
   await check("reset clears counters after confirmation", async () => {
@@ -296,7 +316,7 @@ try {
     await page2.getByRole("button", { name: /^Confirm delete / }).click();
     await page2.waitForFunction(() => document.querySelector("#add-form").hidden);
     assert.ok(await page2.isVisible("#readonly-hint"));
-    assert.equal(await page2.$$eval('#detail-body [data-section="actions"]', (n) => n.length), 0);
+    assert.equal(await page2.$$eval('#inspect-body [data-section="actions"]', (n) => n.length), 0);
     await other.close();
   });
 

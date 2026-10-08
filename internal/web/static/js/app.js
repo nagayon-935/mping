@@ -1,14 +1,21 @@
-// Dashboard entry point: one SSE stream drives every render; sparkline
-// history is polled in bulk alongside it.
+// Dashboard entry point: one SSE stream drives every render. The layout
+// follows the TUI's panes: ping monitor and RTT graphs side by side, and an
+// inspect pane (summary, path, ports, HTTP, log) below. Selecting a target
+// anywhere points the per-target panes at it.
 import { el, badgeIcon, fetchJSON, selectionWithin } from "./dom.js";
-import { renderHTTP, renderTargets } from "./table.js";
-import { createDetail } from "./detail.js";
-import { badgeFor, readOnlyHint, summarize, summaryItems, validateHost } from "./model.js";
+import { renderTargets } from "./table.js";
+import { createGraphs } from "./graphs.js";
+import { createInspect } from "./inspect.js";
+import { badgeFor, buildSections, matchesFilter, readOnlyHint, summarize, summaryItems, validateHost } from "./model.js";
+import { defaultWindow, tail, windowOptions } from "./timeline.js";
 import { confirmButton, createControl } from "./control.js";
 
 const SPARK_POINTS = 60;
-const SPARK_EVERY_MS = 2000;
+const HISTORY_EVERY_MS = 2000;
+const MAX_HISTORY_POINTS = 3000; // the server's per-target RTT ring
 const FILTER_KEY = "mping.filter";
+const WINDOW_KEY = "mping.window";
+const SCALE_KEY = "mping.sharedScale";
 
 const $ = (id) => document.getElementById(id);
 
@@ -24,6 +31,22 @@ function notify(message, isError = false) {
   noticeTimer = setTimeout(() => { node.textContent = ""; }, isError ? 10000 : 4000);
 }
 
+function readSession(key) {
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null; // storage blocked: fall back to defaults
+  }
+}
+
+function writeSession(key, value) {
+  try {
+    sessionStorage.setItem(key, value);
+  } catch {
+    // See readSession.
+  }
+}
+
 const view = {
   snapshot: null,
   meta: null,
@@ -31,46 +54,53 @@ const view = {
   connected: false,
   filter: "",
   selectedId: null,
-  history: new Map(),
+  history: new Map(), // id -> newest SPARK_POINTS samples (table sparklines)
+  series: new Map(), // id -> samples for the graphs window
+  windows: [],
+  window: null,
+  shared: readSession(SCALE_KEY) === "true",
 };
 
-const detail = createDetail({
-  root: $("detail"),
-  title: $("detail-title"),
-  sub: $("detail-sub"),
-  body: $("detail-body"),
-  closeButton: $("detail-close"),
+function selectTarget(id) {
+  if (!view.snapshot?.targets.some((t) => t.id === id)) return;
+  view.selectedId = id;
+  history.replaceState(null, "", `#target-${id}`);
+  scheduleRender();
+}
+
+function clearSelection() {
+  if (view.selectedId == null) return;
+  view.selectedId = null;
+  if (location.hash) history.replaceState(null, "", location.pathname);
+  scheduleRender();
+}
+
+const graphs = createGraphs({ grid: $("graphs"), cursorNote: $("graphs-cursor"), onSelect: selectTarget });
+
+const inspect = createInspect({
+  tabs: $("inspect-tabs"),
+  target: $("inspect-target"),
+  body: $("inspect-body"),
+  onSelect: selectTarget,
   actionsFor(t) {
     if (!control.allowed) return null;
     return confirmButton(`Delete ${t.host}`, `Confirm delete ${t.host}?`, async () => {
       const res = await control.deleteTarget(t.id);
       if (res.ok) {
         notify(`Deleted ${t.host}.`);
-        detail.close();
+        clearSelection();
       } else {
         notify(`Couldn't delete ${t.host}: ${res.error}`, true);
         renderControls();
       }
     });
   },
-  onClose() {
-    const id = view.selectedId;
-    view.selectedId = null;
-    document.body.classList.remove("detail-open");
-    if (location.hash) history.replaceState(null, "", location.pathname);
-    scheduleRender();
-    document.querySelector(`tr[data-target-id="${id}"]`)?.focus({ preventScroll: true });
-  },
 });
 
-function openTarget(id) {
-  const t = view.snapshot?.targets.find((x) => x.id === id);
-  if (!t) return;
-  view.selectedId = id;
-  document.body.classList.add("detail-open");
-  history.replaceState(null, "", `#target-${id}`);
-  detail.open(id, t, view.meta);
-  scheduleRender();
+/** Targets in display order (groups, then filter), shared by table and graphs. */
+function visibleTargets() {
+  const filtered = view.snapshot.targets.filter((t) => matchesFilter(t, view.filter));
+  return buildSections(filtered, view.meta.groups).flatMap((s) => s.targets);
 }
 
 function renderHeader() {
@@ -97,9 +127,9 @@ function renderHeader() {
     el("li", {}, el("strong", { text: String(n) }), el("span", { text: label }))));
 }
 
-// Rebuilding a table or the drawer drops any text the user is selecting, so
-// those parts wait while a selection is open inside them; "selectionchange"
-// re-runs the render once it is cleared.
+// Rebuilding a table or the inspect pane drops any text the user is
+// selecting, so those parts wait while a selection is open inside them;
+// "selectionchange" re-runs the render once it is cleared.
 let heldBySelection = false;
 
 function renderBody() {
@@ -110,19 +140,26 @@ function renderBody() {
     empty.hidden = false;
     return;
   }
-  if (selectionWithin($("targets")) || selectionWithin($("http"))) {
+  if (view.selectedId != null && !view.snapshot.targets.some((t) => t.id === view.selectedId)) {
+    clearSelection(); // deleted, or gone after a reload
+  }
+  if (selectionWithin($("targets"))) {
     heldBySelection = true;
   } else {
-    const shown = renderTargets($("targets"), view, openTarget);
+    const shown = renderTargets($("targets"), view, selectTarget);
     empty.hidden = shown > 0;
     empty.textContent = view.snapshot.targets.length === 0 ? "No targets." : "No targets match the filter.";
-    $("http-panel").hidden = !renderHTTP($("http"), view.snapshot.http_checks);
   }
-
-  if (detail.id != null) {
-    if (selectionWithin($("detail"))) heldBySelection = true;
-    else detail.update(view.snapshot.targets.find((t) => t.id === detail.id), view.meta);
-  }
+  graphs.render({
+    targets: visibleTargets(),
+    history: view.series,
+    meta: view.meta,
+    points: view.window?.points ?? 0,
+    shared: view.shared,
+    selectedId: view.selectedId,
+  });
+  if (selectionWithin($("inspect-body"))) heldBySelection = true;
+  else inspect.render(view);
 }
 
 document.addEventListener("selectionchange", () => {
@@ -141,12 +178,17 @@ function scheduleRender() {
 }
 
 function applySnapshot(body) {
+  const first = view.meta == null;
   view.snapshot = body.snapshot;
   view.meta = body.meta;
   view.state = body.state;
+  if (first) {
+    initWindows();
+    refreshHistory();
+  }
   scheduleRender();
   const wanted = /^#target-(\d+)$/.exec(location.hash);
-  if (wanted && detail.id == null) openTarget(Number(wanted[1]));
+  if (wanted && view.selectedId == null) selectTarget(Number(wanted[1]));
 }
 
 function connect() {
@@ -171,15 +213,65 @@ function connect() {
   });
 }
 
-async function refreshSparklines() {
-  if (document.hidden || !view.snapshot || view.state === "stopped") return;
+async function refreshHistory() {
+  if (document.hidden || !view.snapshot || !view.window || view.state === "stopped") return;
   try {
-    const body = await fetchJSON(`api/v1/history?n=${SPARK_POINTS}`);
-    view.history = new Map(body.targets.map((s) => [s.id, s.rtt_ms]));
+    const n = Math.max(SPARK_POINTS, view.window.points);
+    const body = await fetchJSON(`api/v1/history?n=${n}`);
+    view.series = new Map(body.targets.map((s) => [s.id, s.rtt_ms]));
+    view.history = new Map(body.targets.map((s) => [s.id, tail(s.rtt_ms, SPARK_POINTS)]));
     scheduleRender();
   } catch {
     // Transient (e.g. mping between reloads); the next tick retries.
   }
+}
+
+function initWindows() {
+  view.windows = windowOptions(view.meta.interval_ms, MAX_HISTORY_POINTS);
+  const saved = view.windows.find((w) => w.label === readSession(WINDOW_KEY));
+  view.window = saved ?? defaultWindow(view.windows);
+  const select = $("graph-window");
+  select.replaceChildren(...view.windows.map((w) =>
+    el("option", { text: w.label, attrs: { value: w.label, ...(w === view.window ? { selected: "" } : {}) } })));
+}
+
+function initGraphTools() {
+  $("graph-window").addEventListener("change", (e) => {
+    view.window = view.windows.find((w) => w.label === e.target.value) ?? view.window;
+    writeSession(WINDOW_KEY, view.window.label);
+    refreshHistory();
+  });
+  const setShared = (shared) => {
+    view.shared = shared;
+    writeSession(SCALE_KEY, String(shared));
+    $("scale-each").setAttribute("aria-pressed", String(!shared));
+    $("scale-shared").setAttribute("aria-pressed", String(shared));
+    scheduleRender();
+  };
+  $("scale-each").addEventListener("click", () => setShared(false));
+  $("scale-shared").addEventListener("click", () => setShared(true));
+  setShared(view.shared);
+}
+
+/** j/k move the selection through the visible targets; Escape clears it. */
+function initKeys() {
+  document.addEventListener("keydown", (e) => {
+    const t = e.target;
+    if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement) return;
+    if (e.metaKey || e.ctrlKey || e.altKey || !view.snapshot) return;
+    if (e.key === "Escape") {
+      clearSelection();
+      return;
+    }
+    if (e.key !== "j" && e.key !== "k") return;
+    const ids = visibleTargets().map((x) => x.id);
+    if (ids.length === 0) return;
+    const at = ids.indexOf(view.selectedId);
+    const next = at < 0 ? 0 : Math.min(ids.length - 1, Math.max(0, at + (e.key === "j" ? 1 : -1)));
+    e.preventDefault();
+    selectTarget(ids[next]);
+    requestAnimationFrame(() => document.querySelector(`#targets tr[data-target-id="${ids[next]}"]`)?.scrollIntoView({ block: "nearest" }));
+  });
 }
 
 function renderControls() {
@@ -188,8 +280,8 @@ function renderControls() {
   $("reset-slot").hidden = !on;
   $("readonly-help").hidden = on;
   // A rejected token (e.g. from an earlier mping run) also retracts the
-  // drawer's delete button, not just the header controls.
-  if (!on) document.querySelector('#detail-body [data-section="actions"]')?.remove();
+  // inspect pane's delete button, not just the header controls.
+  if (!on) document.querySelector('#inspect-body [data-section="actions"]')?.remove();
 }
 
 function initControls() {
@@ -257,7 +349,7 @@ function initFilter() {
 }
 
 // Which columns fit depends on the table's width, which changes with the
-// window, the docked detail panel and the scrollbar, not only on "resize".
+// window, the pane layout and the scrollbar, not only on "resize".
 let tableWidth = 0;
 new ResizeObserver(([entry]) => {
   const width = Math.round(entry.contentRect.width);
@@ -266,17 +358,13 @@ new ResizeObserver(([entry]) => {
     scheduleRender();
   }
 }).observe($("targets").parentElement);
-
-// Keep a docked detail panel below the header even when its controls wrap.
-const headerObserver = new ResizeObserver(([entry]) => {
-  document.documentElement.style.setProperty("--topbar-height", `${entry.target.getBoundingClientRect().height}px`);
-});
-headerObserver.observe(document.querySelector(".topbar"));
+new ResizeObserver(() => graphs.repaint()).observe($("graphs"));
 
 initFilter();
+initGraphTools();
+initKeys();
 window.addEventListener("resize", scheduleRender);
 initControls();
 connect();
 scheduleRender();
-setInterval(refreshSparklines, SPARK_EVERY_MS);
-refreshSparklines();
+setInterval(refreshHistory, HISTORY_EVERY_MS);

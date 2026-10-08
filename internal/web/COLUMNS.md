@@ -44,10 +44,10 @@ never takes the place of a dropped one):
 9. Sent  10. Recv  11. TTL  12. AS (when enabled)  13. DSCP (when enabled)
 
 Columns keep their normal display order, whatever their priority. The set is
-recomputed when the window, the docked detail panel or the scrollbar changes
+recomputed when the window, the pane layout or the scrollbar changes
 the table's width, using the widths in the table above (as overridden below).
 Only if status and host alone do not fit does the table scroll horizontally.
-The HTTP and detail tables always show all their columns.
+The HTTP and inspect-pane tables always show all their columns.
 
 Whatever width is left after choosing columns is turned into a larger table:
 the whole target table (text, columns and row heights) is zoomed by the ratio of
@@ -55,8 +55,9 @@ the wrapper width to the widest the chosen columns can be, never below 1 and at
 most 2. Beyond that (very large monitors) the remainder stays empty. A column
 appearing as the screen widens resets the zoom to about 1.
 
-Docked next to the detail panel (screens of 1100px and up) the host minimum is
-180px and the trend is 112px. On screens up to 640px every column uses the
+The ping monitor shares the width with the RTT graphs pane on screens of
+1100px and up (about 5/11 of it), so it shows fewer columns there than when
+the panes stack on narrower screens. On screens up to 640px every column uses the
 compact widths: status 72, host 94, loss 46, RTT 80 and trend 60 (4px cell
 padding, 12px text); up to 360px the status and host shrink to 68 and 90.
 Status, host, loss and latest RTT need 292px (72 + 94 + 46 + 80), so a phone

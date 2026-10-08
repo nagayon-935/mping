@@ -49,10 +49,15 @@ export function agoLabel(samplesAgo, intervalMs) {
   return s === 0 ? `${m}m ago` : `${m}m ${s}s ago`;
 }
 
-/** Index in a series of `length` for a cursor `ago` samples back; -1 if outside. */
-export function indexForAgo(ago, length) {
-  if (ago < 0 || ago >= length) return -1;
-  return length - 1 - ago;
+/**
+ * The newest `points` samples, left-padded with undefined ("no data yet")
+ * so every target's series spans the same window and shares cursor indexes.
+ * Lost probes stay null.
+ */
+export function padTo(series, points) {
+  const recent = tail(series, points);
+  if (recent.length === points) return recent;
+  return [...new Array(points - recent.length).fill(undefined), ...recent];
 }
 
 /** The newest `n` samples of a series. */

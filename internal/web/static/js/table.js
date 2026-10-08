@@ -42,7 +42,7 @@ function targetColumns(features) {
 
 function hostCell(t) {
   const td = el("td", { className: "host-cell" },
-    el("button", { className: "host-open", attrs: { type: "button", tabindex: "-1", title: t.host, "aria-label": `View details for ${t.host}` } },
+    el("button", { className: "host-open", attrs: { type: "button", tabindex: "-1", title: t.host, "aria-label": `Inspect ${t.host}` } },
       el("span", { className: "host", text: t.host }),
       el("span", { className: "host-arrow", text: "›", attrs: { "aria-hidden": "true" } })));
   if (t.ptr && t.ptr !== t.host) td.append(el("span", { className: "sub", text: t.ptr, attrs: { title: t.ptr } }));
@@ -113,7 +113,7 @@ export function renderTargets(table, view, onOpen) {
   const { snapshot, meta, filter, selectedId, history } = view;
   const th = meta.thresholds;
   // The table is as wide as its wrapper; widths come from the CSS contract,
-  // which already reflects the current breakpoint and docked layout.
+  // which already reflects the current breakpoint and pane layout.
   const available = table.parentElement.clientWidth;
   const columns = selectColumns(targetColumns(meta.features), (c) => columnWidthPx(table, c.key), available);
   setColumns(table, columns, "host");
@@ -139,7 +139,7 @@ export function renderTargets(table, view, onOpen) {
         attrs: {
           tabindex: "0",
           ...(t.id === selectedId ? { "aria-current": "true" } : {}),
-          "aria-label": `${t.host}, details`,
+          "aria-label": `${t.host}, select to inspect`,
           "data-target-id": String(t.id),
         },
       });
