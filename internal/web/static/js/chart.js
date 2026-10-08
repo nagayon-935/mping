@@ -32,7 +32,7 @@ function tickLabel(v) {
 }
 
 /** Rounds up to 1/2/5 × 10^k so axis ticks land on clean numbers. */
-export function niceCeil(v) {
+function niceCeil(v) {
   if (!(v > 0)) return 1;
   const p = 10 ** Math.floor(Math.log10(v));
   for (const m of [1, 2, 5, 10]) if (v <= m * p) return m * p;

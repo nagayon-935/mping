@@ -1,8 +1,8 @@
 // Dashboard entry point: one SSE stream drives every render. The layout
-// follows the TUI's panes: ping monitor and RTT graphs side by side, and an
-// inspect pane (summary, path, ports, HTTP, log) below. Selecting a target
-// anywhere points the per-target panes at it.
-import { el, badgeIcon, fetchJSON, selectionWithin } from "./dom.js";
+// follows the TUI's panes: the ping monitor with the inspect pane (summary,
+// traceroute/MTR, ports, HTTP, log) beside it, and the RTT graphs below.
+// Selecting a target anywhere points the per-target panes at it.
+import { el, badgeIcon, fetchJSON, readSession, selectionWithin, writeSession } from "./dom.js";
 import { renderTargets } from "./table.js";
 import { createGraphs } from "./graphs.js";
 import { createInspect } from "./inspect.js";
@@ -29,22 +29,6 @@ function notify(message, isError = false) {
   node.textContent = message;
   node.classList.toggle("is-error", isError);
   noticeTimer = setTimeout(() => { node.textContent = ""; }, isError ? 10000 : 4000);
-}
-
-function readSession(key) {
-  try {
-    return sessionStorage.getItem(key);
-  } catch {
-    return null; // storage blocked: fall back to defaults
-  }
-}
-
-function writeSession(key, value) {
-  try {
-    sessionStorage.setItem(key, value);
-  } catch {
-    // See readSession.
-  }
 }
 
 const view = {
@@ -314,19 +298,11 @@ function initControls() {
 
 function initFilter() {
   const input = $("filter");
-  try {
-    input.value = sessionStorage.getItem(FILTER_KEY) ?? "";
-  } catch {
-    // Storage can be unavailable (privacy mode); filtering still works.
-  }
+  input.value = readSession(FILTER_KEY) ?? "";
   view.filter = input.value;
   input.addEventListener("input", () => {
     view.filter = input.value;
-    try {
-      sessionStorage.setItem(FILTER_KEY, input.value);
-    } catch {
-      // See above.
-    }
+    writeSession(FILTER_KEY, input.value);
     scheduleRender();
   });
 }

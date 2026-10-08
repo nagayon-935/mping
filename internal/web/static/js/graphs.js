@@ -12,8 +12,6 @@ import { drawChart, drawCrosshair, indexAt } from "./chart.js";
 import { formatRTT, rowLevel } from "./model.js";
 import { agoLabel, downsample, padTo, sharedMax } from "./timeline.js";
 
-const levelLabels = { ok: "OK", warn: "Warn", crit: "Crit", pending: "Waiting" };
-
 /**
  * @param {{grid: HTMLElement, cursorNote: HTMLElement, onSelect: (id: number) => void}} dom
  */
@@ -106,8 +104,7 @@ export function createGraphs(dom) {
       const ordered = state.targets.map((t) => {
         const card = cards.get(t.id) ?? makeCard(t);
         cards.set(t.id, card);
-        const level = state.meta ? rowLevel(t, state.meta.thresholds) : "pending";
-        card.status.replaceChildren(statusChip(level, levelLabels[level]));
+        card.status.replaceChildren(statusChip(state.meta ? rowLevel(t, state.meta.thresholds) : "pending"));
         card.title.textContent = t.host;
         card.title.title = t.host;
         card.root.setAttribute("aria-label", `${t.host} RTT graph, select to inspect`);

@@ -153,7 +153,7 @@ try {
     assert.equal(await page.evaluate(() => location.hash), `#target-${id}`);
 
     assert.equal(await page.textContent('#inspect-tabs [aria-selected="true"]'), "Summary");
-    assert.deepEqual(await page.$$eval("#inspect-body .detail-section h3", (h) => h.map((x) => x.textContent)), ["Current", "Since start / reset"]);
+    assert.deepEqual(await page.$$eval("#inspect-body .inspect-section h3", (h) => h.map((x) => x.textContent)), ["Current", "Since start / reset"]);
     assert.equal(await page.$eval("#inspect-body", (n) => n.textContent.includes("null")), false);
     // Named after the TUI pane it stands in for; the simulator enables MTR only.
     assert.equal(await page.textContent('#inspect-tabs [data-tab="route"]'), "MTR");
@@ -213,6 +213,13 @@ try {
     await page.click("tr.target-row >> nth=0");
     await page.click('#inspect-tabs [data-tab="ports"]');
     assert.match(await page.textContent("#inspect-body"), /443\/tcp/);
+  });
+
+  await check("HTTP tab lists every HTTP check", async () => {
+    await page.click('#inspect-tabs [data-tab="http"]');
+    assert.deepEqual(await page.$$eval("#inspect-body th", (h) => h.map((x) => x.textContent)),
+      ["Status", "URL", "Code", "Last", "Avg", "Min", "Max", "Up", "Down"]);
+    assert.match(await page.textContent("#inspect-body tbody"), /status\.example\/health/);
   });
 
   await check("filter narrows the table", async () => {

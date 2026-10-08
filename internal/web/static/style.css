@@ -200,7 +200,6 @@ body {
 .grid .num { text-align: right; font: 13px/1.4 var(--mono); font-variant-numeric: tabular-nums; }
 .grid th.num { font: 600 11px/1.4 var(--font); }
 .grid .cell-text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.grid td.num .cell-text { overflow: visible; }
 .grid .mono { font-family: var(--mono); font-size: 12px; }
 .grid tr.group-row td {
   height: 36px; padding-top: 8px; overflow: hidden; text-overflow: ellipsis;
@@ -245,9 +244,9 @@ td.lvl-crit { background: var(--crit-tint); font-weight: 600; }
 
 canvas.spark { display: block; width: 100%; height: 28px; }
 
-.detail-status { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; font-size: 13px; color: var(--ink-2); }
-.detail-section { margin-top: 16px; }
-.detail-section h3 { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.04em; }
+.inspect-status { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; font-size: 13px; color: var(--ink-2); }
+.inspect-section { margin-top: 16px; }
+.inspect-section h3 { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.04em; }
 
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; font-size: 13px; }
 .facts dt { color: var(--muted); }

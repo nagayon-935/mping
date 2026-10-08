@@ -1,10 +1,10 @@
-// Inspect pane: tabs below the monitor and graphs, the browser's counterpart
-// to the TUI's Traceroute/MTR, Port, HTTP and Log panes. Summary, Path and
-// Ports follow the selected target; HTTP and Log cover every target.
-import { el, fetchJSON, statusChip } from "./dom.js";
+// Inspect pane: tabs beside the ping monitor, the browser's counterpart to
+// the TUI's Traceroute/MTR, Port, HTTP and Log panes. Summary, Traceroute/MTR
+// and Ports follow the selected target; HTTP and Log cover every target.
+import { el, fetchJSON, readSession, statusChip, writeSession } from "./dom.js";
+import { countCell, numCell, rttCell, textCell } from "./cells.js";
 import { setColumns } from "./columns.js";
-import { renderHTTP } from "./table.js";
-import { dscpName, formatCount, formatPct, formatRTT, hopLossLevel, lossRate, rowLevel, statusReasons } from "./model.js";
+import { dscpName, formatPct, formatRTT, hopLossLevel, lossRate, rowLevel, statusReasons } from "./model.js";
 
 const TAB_KEY = "mping.inspectTab";
 const EVENTS_EVERY_MS = 5000;
@@ -28,10 +28,11 @@ function facts(pairs) {
 }
 
 function section(title, ...children) {
-  return el("section", { className: "detail-section" }, el("h3", { text: title }), ...children);
+  return el("section", { className: "inspect-section" }, el("h3", { text: title }), ...children);
 }
 
-function simpleTable(headers, rows) {
+/** headers: [label, numeric, column key]; flexibleKey: the column that takes spare width. */
+function simpleTable(headers, rows, flexibleKey) {
   const columns = headers.map(([label, num, key]) => ({ label, num, key }));
   const body = el("tbody");
   for (const cells of rows) {
@@ -39,22 +40,9 @@ function simpleTable(headers, rows) {
     body.append(el("tr", {}, ...cells));
   }
   const table = el("table", { className: "grid" }, el("thead"), body);
-  setColumns(table, columns);
+  setColumns(table, columns, flexibleKey);
   return el("div", { className: "table-wrap" }, table);
 }
-
-const td = (text, cls = "") => el("td", { className: cls, attrs: { title: text } }, el("span", { className: "cell-text", text }));
-const num = (text) => td(text, "num");
-const count = (value) => {
-  const cell = num(formatCount(value));
-  cell.title = value.toLocaleString("en-US");
-  return cell;
-};
-const rtt = (value) => {
-  const cell = num(formatRTT(value));
-  cell.title = formatRTT(value, false);
-  return cell;
-};
 
 /** The parts of the Summary tab that change with each snapshot. */
 function summaryParts(t, meta) {
@@ -105,12 +93,12 @@ function mtrTable(t, th) {
     [["Hop", true, "ttl"], ["Address", false, "ip"], ["AS", false, "asn"], ["Loss %", true, "hopLoss"], ["Sent", true, "count"],
       ["Last", true, "rtt"], ["Avg", true, "rtt"], ["Best", true, "rtt"], ["Worst", true, "rtt"], ["Jitter", true, "rtt"]],
     t.mtr_hops.map((h) => [
-      num(String(h.ttl)),
-      td(h.ip || "* no reply", "mono"),
-      td([h.asn, h.org].filter(Boolean).join(" ") || "–"),
+      numCell(String(h.ttl)),
+      textCell(h.ip || "* no reply", "mono"),
+      textCell([h.asn, h.org].filter(Boolean).join(" ") || "–"),
       el("td", { className: "num" }, statusChip(hopLossLevel(h.loss_pct, th), formatPct(h.loss_pct))),
-      count(h.sent), rtt(h.last_rtt_ms), rtt(h.avg_rtt_ms),
-      rtt(h.min_rtt_ms), rtt(h.max_rtt_ms), rtt(h.jitter_ms),
+      countCell(h.sent), rttCell(h.last_rtt_ms), rttCell(h.avg_rtt_ms),
+      rttCell(h.min_rtt_ms), rttCell(h.max_rtt_ms), rttCell(h.jitter_ms),
     ]),
   );
 }
@@ -133,10 +121,28 @@ function portsFor(t) {
   return [simpleTable(
     [["Port", false, "port"], ["Status", false, "statusLabel"], ["RTT", true, "rtt"], ["Open", true, "count"], ["Closed", true, "count"]],
     t.port_results.map((p) => [
-      td(`${p.port}/${p.protocol}`, "mono"),
+      textCell(`${p.port}/${p.protocol}`, "mono"),
       el("td", {}, statusChip(levels[p.status] ?? "pending", p.status || "Waiting")),
-      rtt(p.rtt_ms), count(p.open_count), count(p.closed_count),
+      rttCell(p.rtt_ms), countCell(p.open_count), countCell(p.closed_count),
     ]),
+  )];
+}
+
+const httpLevels = { Up: "ok", Down: "crit", Error: "crit" };
+
+function httpFor(checks) {
+  if (!checks?.length) return [el("p", { className: "empty", text: "No HTTP checks." })];
+  return [simpleTable(
+    [["Status", false, "statusLabel"], ["URL", false, "url"], ["Code", true, "code"], ["Last", true, "last"], ["Avg", true, "avg"],
+      ["Min", true, "min"], ["Max", true, "max"], ["Up", true, "sent"], ["Down", true, "recv"]],
+    checks.map((c) => [
+      el("td", {}, statusChip(httpLevels[c.status] ?? "pending", c.status || "Waiting")),
+      textCell(c.url, "mono"),
+      numCell(c.status_code > 0 ? String(c.status_code) : "–", c.status_code >= 500 ? "crit" : c.status_code >= 300 ? "warn" : "none"),
+      rttCell(c.last_rtt_ms), rttCell(c.avg_rtt_ms), rttCell(c.min_rtt_ms), rttCell(c.max_rtt_ms),
+      countCell(c.up_count), countCell(c.down_count),
+    ]),
+    "url",
   )];
 }
 
@@ -152,27 +158,20 @@ function portsFor(t) {
  * the Log only when new events arrive or its filter changes.
  */
 export function createInspect(dom) {
-  let active = null;
-  try {
-    active = sessionStorage.getItem(TAB_KEY);
-  } catch {
-    // Storage blocked: start on the default tab.
-  }
+  let active = readSession(TAB_KEY);
   let view = null;
   let events = null; // last /api/v1/events body, or an Error
   let eventsVersion = 0;
   let onlySelected = false;
   let tabsKey = null;
-  let mounted = { key: null, status: null, columns: null };
+  // What the body currently shows. Summary keeps its status and column
+  // containers here so later snapshots update them in place.
+  let mounted = { key: null };
 
   const available = () => TABS.filter((t) => view?.meta && t.enabled(view.meta.features));
   const choose = (key) => {
     active = key;
-    try {
-      sessionStorage.setItem(TAB_KEY, key);
-    } catch {
-      // See above.
-    }
+    writeSession(TAB_KEY, key);
     render(view);
   };
 
@@ -221,6 +220,29 @@ export function createInspect(dom) {
     return [toggle, el("div", { className: "table-wrap" }, el("table", { className: "grid log" }, el("thead", {}, head), body))];
   };
 
+  /** Rebuilds the body only when `key` changed since the last call. */
+  const mount = (key, build) => {
+    if (mounted.key === key) return false;
+    mounted = { key };
+    dom.body.replaceChildren(...build().filter(Boolean));
+    return true;
+  };
+
+  const showSummary = (target) => {
+    // The actions (an armed delete button) survive until the target or the
+    // control permission changes.
+    mount(`summary:${target.id}:${dom.canControl()}`, () => {
+      const actions = dom.actionsFor(target);
+      mounted.status = el("div", { className: "inspect-status" });
+      mounted.columns = el("div", { className: "summary-columns" });
+      return [mounted.status, mounted.columns, actions && el("section",
+        { className: "inspect-section", attrs: { "data-section": "actions" } }, el("h3", { text: "Actions" }), actions)];
+    });
+    const parts = summaryParts(target, view.meta);
+    mounted.status.replaceChildren(...parts.status);
+    mounted.columns.replaceChildren(...parts.columns);
+  };
+
   const render = (next) => {
     view = next;
     if (!view?.meta) return;
@@ -236,42 +258,17 @@ export function createInspect(dom) {
     const target = view.snapshot.targets.find((t) => t.id === view.selectedId);
     dom.target.textContent = tab.perTarget ? (target ? `for ${target.host}` : "") : (tab.key === "log" ? "all targets" : "");
     if (tab.perTarget && !target) {
-      mounted = { key: null };
-      dom.body.replaceChildren(el("p", { className: "empty", text: "Select a target in the ping monitor or the RTT graphs." }));
+      mount("none", () => [el("p", { className: "empty", text: "Select a target in the ping monitor or the RTT graphs." })]);
       return;
     }
-    const th = view.meta.thresholds;
     switch (tab.key) {
-      case "summary": {
-        const key = `summary:${target.id}:${dom.canControl()}`;
-        if (mounted.key !== key) {
-          const actions = dom.actionsFor(target);
-          mounted = { key, status: el("div", { className: "detail-status" }), columns: el("div", { className: "summary-columns" }) };
-          dom.body.replaceChildren(mounted.status, mounted.columns, ...(actions
-            ? [el("section", { className: "detail-section", attrs: { "data-section": "actions" } }, el("h3", { text: "Actions" }), actions)]
-            : []));
-        }
-        const parts = summaryParts(target, view.meta);
-        mounted.status.replaceChildren(...parts.status);
-        mounted.columns.replaceChildren(...parts.columns);
-        return;
-      }
-      case "route": dom.body.replaceChildren(...routeFor(target, th, view.meta.features)); break;
-      case "ports": dom.body.replaceChildren(...portsFor(target)); break;
-      case "http": {
-        const table = el("table", { className: "grid", attrs: { id: "http" } }, el("thead"), el("tbody"));
-        const any = renderHTTP(table, view.snapshot.http_checks);
-        dom.body.replaceChildren(any ? el("div", { className: "table-wrap" }, table) : el("p", { className: "empty", text: "No HTTP checks." }));
-        break;
-      }
-      case "log": {
-        const key = `log:${eventsVersion}:${onlySelected}:${view.selectedId}`;
-        if (mounted.key !== key) dom.body.replaceChildren(...logTable());
-        mounted = { key };
-        return;
-      }
+      case "summary": return showSummary(target);
+      case "log": return void mount(`log:${eventsVersion}:${onlySelected}:${view.selectedId}`, logTable);
+      // Nothing interactive in these: rebuild them from each snapshot.
+      case "route": return void mount(Symbol(), () => routeFor(target, view.meta.thresholds, view.meta.features));
+      case "ports": return void mount(Symbol(), () => portsFor(target));
+      case "http": return void mount(Symbol(), () => httpFor(view.snapshot.http_checks));
     }
-    mounted = { key: null }; // path, ports and HTTP hold nothing interactive
   };
 
   const loadEvents = async () => {
@@ -288,12 +285,5 @@ export function createInspect(dom) {
   setInterval(loadEvents, EVENTS_EVERY_MS);
   loadEvents();
 
-  return {
-    render,
-    /** Opens a tab by key when it exists (e.g. after selecting a target). */
-    show(key) {
-      if (available().some((t) => t.key === key)) choose(key);
-    },
-    get active() { return active; },
-  };
+  return { render };
 }

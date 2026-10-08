@@ -1,6 +1,6 @@
-// Tiny DOM helpers. Every piece of data goes in through textContent: host
-// names, PTR records, AS org names and event messages can come from DNS or
-// remote systems and must never be parsed as HTML.
+// Tiny browser helpers. Every piece of data goes in through textContent:
+// host names, PTR records, AS org names and event messages can come from DNS
+// or remote systems and must never be parsed as HTML.
 
 /**
  * @param {string} tag
@@ -46,4 +46,24 @@ export async function fetchJSON(url, signal) {
   const resp = await fetch(url, { headers: { Accept: "application/json" }, signal });
   if (!resp.ok) throw new Error(`${url}: HTTP ${resp.status}`);
   return resp.json();
+}
+
+/**
+ * Per-tab UI preferences (filter, window, tab). Storage can be blocked
+ * (privacy mode); the dashboard then falls back to its defaults.
+ */
+export function readSession(key) {
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+export function writeSession(key, value) {
+  try {
+    sessionStorage.setItem(key, value);
+  } catch {
+    // See readSession.
+  }
 }

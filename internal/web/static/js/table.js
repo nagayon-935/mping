@@ -1,18 +1,17 @@
-// Target and HTTP-check tables. Rebuilt from the snapshot on every update;
-// row focus and selection are restored by target ID.
+// Ping monitor table. Rebuilt from the snapshot on every update; row focus
+// and selection are restored by target ID.
 import { el, statusChip } from "./dom.js";
 import { drawSparkline } from "./chart.js";
+import { countCell, numCell, rttCell, textCell } from "./cells.js";
 import { columnWidthPx, cssPx, setColumns } from "./columns.js";
 import {
-  buildSections, cellLevels, dscpName, formatCount, formatRTT, formatPct, lossRate, matchesFilter, rowLevel,
+  buildSections, cellLevels, dscpName, formatPct, lossRate, matchesFilter, rowLevel,
   selectColumns, statusReasons, tableScale,
 } from "./model.js";
 
 // Spare width is turned into larger text and columns, up to this factor;
 // beyond it the remainder stays empty (very large monitors).
 const MAX_TABLE_SCALE = 2;
-
-const levelLabels = { ok: "OK", warn: "Warn", crit: "Crit", pending: "Waiting" };
 
 /**
  * Every column the TUI offers for the enabled features, in display order.
@@ -49,36 +48,12 @@ function hostCell(t) {
   return td;
 }
 
-function textCell(text, className = "") {
-  return el("td", { className, attrs: { title: text } },
-    el("span", { className: "cell-text", text }));
-}
-
-function countCell(value) {
-  const cell = numCell(formatCount(value));
-  cell.title = value.toLocaleString("en-US");
-  return cell;
-}
-
-function rttCell(value, level) {
-  const cell = numCell(formatRTT(value), level);
-  cell.title = formatRTT(value, false);
-  return cell;
-}
-
-function numCell(text, level) {
-  const td = el("td", { className: "num", text });
-  if (level === "warn" || level === "crit") td.classList.add(`lvl-${level}`);
-  return td;
-}
-
 function targetCell(col, t, th, cells, sparks) {
   switch (col.key) {
     case "status": {
-      const level = rowLevel(t, th);
-      return el("td", {}, statusChip(level, levelLabels[level]),
-        el("span", { className: "status-reason", text: statusReasons(t, th).join(" · "),
-          attrs: { title: statusReasons(t, th).join(" · ") } }));
+      const reasons = statusReasons(t, th).join(" · ");
+      return el("td", {}, statusChip(rowLevel(t, th)),
+        el("span", { className: "status-reason", text: reasons, attrs: { title: reasons } }));
     }
     case "host": return hostCell(t);
     case "ip": return textCell(t.ip || "–", "mono");
@@ -163,28 +138,4 @@ export function renderTargets(table, view, onOpen) {
   for (const [canvas, id] of sparks) drawSparkline(canvas, history.get(id));
   if (focusedId) table.querySelector(`tr[data-target-id="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
   return visible.length;
-}
-
-const httpLevels = { Up: "ok", Down: "crit", Error: "crit" };
-
-/** @returns {boolean} whether any HTTP checks exist */
-export function renderHTTP(table, checks) {
-  if (!checks || checks.length === 0) return false;
-  const columns = [
-    { key: "statusLabel", label: "Status" }, { key: "url", label: "URL" }, { key: "code", label: "Code", num: true },
-    { key: "last", label: "Last", num: true }, { key: "avg", label: "Avg", num: true },
-    { key: "min", label: "Min", num: true }, { key: "max", label: "Max", num: true },
-    { key: "sent", label: "Up", num: true }, { key: "recv", label: "Down", num: true },
-  ];
-  setColumns(table, columns, "url");
-  const rows = checks.map((c) => el("tr", {},
-    el("td", {}, statusChip(httpLevels[c.status] ?? "pending", c.status || "Waiting")),
-    textCell(c.url, "mono"),
-    numCell(c.status_code > 0 ? String(c.status_code) : "–", c.status_code >= 500 ? "crit" : c.status_code >= 300 ? "warn" : "none"),
-    rttCell(c.last_rtt_ms), rttCell(c.avg_rtt_ms),
-    rttCell(c.min_rtt_ms), rttCell(c.max_rtt_ms),
-    countCell(c.up_count), countCell(c.down_count)));
-  for (const row of rows) columns.forEach((c, i) => row.children[i].classList.add(`col-${c.key}`));
-  table.tBodies[0].replaceChildren(...rows);
-  return true;
 }
