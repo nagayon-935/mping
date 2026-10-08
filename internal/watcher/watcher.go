@@ -12,6 +12,11 @@ import (
 
 const debounceDelay = 200 * time.Millisecond
 
+// refreshedHook, when non-nil, is called after each post-change path
+// refresh in WatchPaths. Tests use it to wait for the refresh instead of
+// sleeping; it is always nil in production.
+var refreshedHook func()
+
 // Watch monitors the file at path for content changes (Write or Create events).
 // It is WatchFiles with a single path.
 func Watch(ctx context.Context, path string, onChange func()) error {
@@ -142,6 +147,9 @@ func WatchPaths(ctx context.Context, paths func() []string, onChange func()) err
 			timer = nil
 			onChange()
 			_ = refresh(false) // non-strict: never returns an error
+			if refreshedHook != nil {
+				refreshedHook()
+			}
 		}
 	}
 }
