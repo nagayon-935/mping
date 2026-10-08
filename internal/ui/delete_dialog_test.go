@@ -46,7 +46,7 @@ func TestDeleteDialogDefaultsToCancelAndRestoresFocus(t *testing.T) {
 		}
 	}
 	for _, cancel := range []tcell.Key{tcell.KeyEnter, tcell.KeyEscape} {
-		dialog.show(target)
+		dialog.show(target, false)
 		button, ok := app.GetFocus().(*tview.Button)
 		if !ok || button.GetLabel() != "キャンセル" {
 			t.Fatal("cancel is not selected initially")
@@ -75,9 +75,9 @@ func TestDeleteDialogShowsAndConfirmsFrozenTarget(t *testing.T) {
 	b.DSCP = "EF"
 	var confirmed uint64
 	dialog := newDeleteDialog(app, root, func(id uint64, host string) { confirmed = id }, setFocus)
-	dialog.show(b)
+	dialog.show(b, false)
 	// A second show attempt must not replace the target or reset the dialog.
-	dialog.show(a)
+	dialog.show(a, false)
 	screen := tcell.NewSimulationScreen("UTF-8")
 	if err := screen.Init(); err != nil {
 		t.Fatal(err)

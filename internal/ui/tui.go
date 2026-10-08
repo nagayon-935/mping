@@ -277,6 +277,9 @@ func Run(opts RunOptions) error {
 					notifyResult(host+" を削除しました", false)
 				}
 				tr.update()
+				if err != nil && len(targets) == 1 && targets[0].ID == id {
+					deleteConfirmation.show(targets[0], true)
+				}
 			})
 		}) {
 			vs.appendLog("[yellow]Operation queue full; please try again[-]")
@@ -289,6 +292,7 @@ func Run(opts RunOptions) error {
 			app.SetFocus(focus)
 		}
 	})
+	deleteConfirmation.quit = func() { session.Stop(); app.Stop() }
 	deleteSelected := func() {
 		if opts.OnDeleteTarget == nil {
 			return
@@ -305,7 +309,7 @@ func Run(opts RunOptions) error {
 		}
 		for _, target := range targets {
 			if target.ID == id {
-				deleteConfirmation.show(target)
+				deleteConfirmation.show(target, len(targets) == 1)
 				return
 			}
 		}
