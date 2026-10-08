@@ -13,26 +13,44 @@ import (
 const debounceDelay = 200 * time.Millisecond
 
 // Watch monitors the file at path for content changes (Write or Create events).
+// It is WatchFiles with a single path.
+func Watch(ctx context.Context, path string, onChange func()) error {
+	return WatchFiles(ctx, []string{path}, onChange)
+}
+
+// WatchFiles monitors every file in paths for content changes (Write or
+// Create events) and calls onChange once per debounced burst of changes to
+// any of them. A listed file need not exist yet: creating it counts as a
+// change. Duplicate paths are watched once.
 //
-// The parent directory is watched rather than the file itself so that
-// editor save patterns that atomically replace the file via rename are
+// The parent directories are watched rather than the files themselves so
+// that editor save patterns that atomically replace a file via rename are
 // correctly detected (e.g. vim :w, nano, many CLI tools).
 //
 // A 200 ms debounce timer coalesces rapid successive events into a single
 // onChange call.
 //
-// Watch blocks until ctx is cancelled, then returns nil.
+// WatchFiles blocks until ctx is cancelled, then returns nil.
 // A non-nil error is returned for setup failures (e.g. fsnotify init,
 // unreadable directory) or for runtime fsnotify errors (e.g. ENOSPC, EBADF)
 // that would leave auto-reload silently broken if ignored.
-func Watch(ctx context.Context, path string, onChange func()) error {
-	// Resolve to an absolute path so we can compare event paths correctly
-	// regardless of how the caller expressed path (relative vs absolute).
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return fmt.Errorf("resolve path %q: %w", path, err)
+func WatchFiles(ctx context.Context, paths []string, onChange func()) error {
+	// Resolve to absolute paths so we can compare event paths correctly
+	// regardless of how the caller expressed them (relative vs absolute).
+	watched := make(map[string]bool, len(paths))
+	var dirs []string
+	seenDir := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("resolve path %q: %w", path, err)
+		}
+		watched[absPath] = true
+		if dir := filepath.Dir(absPath); !seenDir[dir] {
+			seenDir[dir] = true
+			dirs = append(dirs, dir)
+		}
 	}
-	dir := filepath.Dir(absPath)
 
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -40,12 +58,14 @@ func Watch(ctx context.Context, path string, onChange func()) error {
 	}
 	defer w.Close()
 
-	// Watch the parent directory.  This catches:
+	// Watch each parent directory.  This catches:
 	//   • direct writes      → Write event on the file
 	//   • atomic rename-over → Create event on the file path
 	//   • delete + recreate  → Create event on the file path
-	if err := w.Add(dir); err != nil {
-		return fmt.Errorf("watch directory %q: %w", dir, err)
+	for _, dir := range dirs {
+		if err := w.Add(dir); err != nil {
+			return fmt.Errorf("watch directory %q: %w", dir, err)
+		}
 	}
 
 	var timer *time.Timer
@@ -69,8 +89,8 @@ func Watch(ctx context.Context, path string, onChange func()) error {
 			if !ok {
 				return nil
 			}
-			// Ignore events for other files in the same directory.
-			if filepath.Clean(event.Name) != absPath {
+			// Ignore events for other files in the same directories.
+			if !watched[filepath.Clean(event.Name)] {
 				continue
 			}
 			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {

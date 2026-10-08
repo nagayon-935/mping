@@ -181,9 +181,10 @@ func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetSta
 }
 
 // buildPingerOptions constructs the pinger.Options for one loop iteration,
-// including the address resolver. specs supplies a pinned-IP lookup (keyed
+// including the address resolver. specs supplies an address lookup (keyed
 // by targetSpec.display(), the same string used for stats.TargetStats.Host)
-// so --resolve-all entries resolve straight to their pinned IP.
+// so --resolve-all entries resolve straight to their pinned IP and named
+// entries resolve to their configured host rather than their name.
 //
 // errors are collected rather than returned as a second value: cfg.dscp and
 // every spec's DSCP were already validated (parseArgs / validateHostsDoc), so
@@ -194,8 +195,8 @@ func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetSta
 func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resolver, specs []targetSpec) pinger.Options {
 	pinned := make(map[string]string, len(specs))
 	for _, s := range specs {
-		if s.PinnedIP != "" {
-			pinned[s.display()] = s.PinnedIP
+		if label, addr := s.display(), s.resolveAddr(); label != addr {
+			pinned[label] = addr
 		}
 	}
 
@@ -257,7 +258,7 @@ func checkPortReloadDrift(activeRaw, reloadedRaw []string) string {
 }
 
 // startWatcher launches the YAML file watcher goroutine when hostsFile is
-// set. When it isn't, it returns a no-op cancel and a pre-closed done
+// set, watching the hosts file and every include file it names. When it isn't, it returns a no-op cancel and a pre-closed done
 // channel so callers can treat both cases uniformly.
 func startWatcher(hostsFile string, onFileChange func(), logCh chan<- string) (cancel func(), done chan struct{}) {
 	if hostsFile == "" {
@@ -269,7 +270,7 @@ func startWatcher(hostsFile string, onFileChange func(), logCh chan<- string) (c
 	watchCtx, cancelFn := context.WithCancel(context.Background())
 	go func() {
 		defer close(innerDone)
-		if err := watcher.Watch(watchCtx, hostsFile, onFileChange); err != nil {
+		if err := watcher.WatchFiles(watchCtx, hostsFileWatchPaths(hostsFile), onFileChange); err != nil {
 			select {
 			case logCh <- fmt.Sprintf("[red][%s] Watcher error: %v — auto-reload disabled, restart mping to re-enable[-]",
 				time.Now().Format("15:04:05"), err):
