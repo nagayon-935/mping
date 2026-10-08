@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"sync"
 
@@ -43,6 +44,25 @@ type EventsResponse struct {
 	ID      uint64        `json:"id"`
 	Events  []stats.Event `json:"events"`
 	Dropped int           `json:"dropped"`
+}
+
+// maxEvents caps ?limit= on /api/v1/events; defaultEvents is used without it.
+const (
+	maxEvents     = 1000
+	defaultEvents = 200
+)
+
+// TargetEvent is one stats.Event labelled with its target's host, as listed
+// by /api/v1/events.
+type TargetEvent struct {
+	stats.Event
+	Host string `json:"host"`
+}
+
+// BulkEventsResponse is the body of /api/v1/events: every live target's
+// recorded events, newest first.
+type BulkEventsResponse struct {
+	Events []TargetEvent `json:"events"`
 }
 
 var errNoProvider = errors.New("statistics are not available yet")
@@ -190,6 +210,39 @@ func historyOf(t *stats.TargetStats, n int) HistoryResponse {
 		}
 	}
 	return HistoryResponse{ID: t.ID, RTTMs: rtt}
+}
+
+// handleBulkEvents merges every live target's events into one newest-first
+// list, the browser's counterpart to the TUI's Log pane.
+func handleBulkEvents(src *Source) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		limit := defaultEvents
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n < 1 || n > maxEvents {
+				writeError(w, http.StatusBadRequest, "limit must be an integer between 1 and "+strconv.Itoa(maxEvents))
+				return
+			}
+			limit = n
+		}
+		p, _, _ := src.load()
+		if p == nil {
+			writeError(w, http.StatusServiceUnavailable, errNoProvider.Error())
+			return
+		}
+		all := []TargetEvent{}
+		for _, t := range p.Targets() {
+			events, _ := t.Events()
+			for _, e := range events {
+				all = append(all, TargetEvent{Event: e, Host: t.Host})
+			}
+		}
+		sort.SliceStable(all, func(i, j int) bool { return all[i].At.After(all[j].At) })
+		if len(all) > limit {
+			all = all[:limit]
+		}
+		writeJSON(w, BulkEventsResponse{Events: all})
+	}
 }
 
 func handleEvents(src *Source) http.HandlerFunc {
