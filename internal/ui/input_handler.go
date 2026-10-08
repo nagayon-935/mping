@@ -74,233 +74,248 @@ const (
 	monitorRestarting
 )
 
-// newInputHandler owns UI state transitions on the event loop. Callback
+// inputHandler owns UI state transitions on the event loop. Callback
 // operations execute FIFO on the session worker, and results return through
 // its cancellable UI mailbox. Stop, restart, and reset can never overtake.
+type inputHandler struct {
+	inputHandlerDeps
+	state monitorState
+}
+
+// newInputHandler returns the main key handler for Run's input capture.
 func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.EventKey {
-	state := monitorRunning
-	showState := func() {
-		if d.footer == nil {
-			return
-		}
-		switch state {
-		case monitorRunning:
-			d.footer.SetText("Enter Detail | Tab Pane | f Fold | z Max | w Save | a Add | d Del | s Stop | q Quit")
-		case monitorStopping:
-			d.footer.SetText("Stopping... Press 'S' to restart after stop, 'q' to quit")
-		case monitorStopped:
-			d.footer.SetText("Stopped. Press 'S' to restart, 'q' to quit, 'R' to reset stats")
-		case monitorRestarting:
-			d.footer.SetText("Restarting... Press 'q' to quit")
-		}
-		d.footer.SetTextColor(tcell.ColorYellow)
-	}
-	submit := func(f func()) bool {
-		if d.session.Submit(f) {
-			return true
-		}
-		d.vs.appendLog("[yellow]Operation queue full; please try again[-]")
-		return false
-	}
+	h := &inputHandler{inputHandlerDeps: d, state: monitorRunning}
+	return h.handle
+}
 
-	return func(event *tcell.EventKey) *tcell.EventKey {
-		// Pass all events through when a text input or modal list is focused.
-		switch d.app.GetFocus() {
-		case d.addHostInput, d.deleteHostInput:
-			return event
-		}
-		if d.app.GetFocus() == d.table {
-			switch event.Key() {
-			case tcell.KeyEnter:
-				if d.openDetails != nil {
-					d.openDetails()
-					return nil
-				}
-			case tcell.KeyUp, tcell.KeyDown, tcell.KeyPgUp, tcell.KeyPgDn:
-				if d.navigate != nil {
-					d.navigate(event.Key())
-					return nil
-				}
-				rowOffset, colOffset := d.table.GetOffset()
-				totalRows := *d.rowCount
-				visibleRows := tableMaxRows + 1
-				maxOffset := totalRows - visibleRows
-				if maxOffset < 0 {
-					maxOffset = 0
-				}
-
-				delta := 0
-				switch event.Key() {
-				case tcell.KeyUp:
-					delta = -1
-				case tcell.KeyDown:
-					delta = 1
-				case tcell.KeyPgUp:
-					delta = -tableMaxRows
-				case tcell.KeyPgDn:
-					delta = tableMaxRows
-				}
-
-				rowOffset += delta
-				if rowOffset < 0 {
-					rowOffset = 0
-				} else if rowOffset > maxOffset {
-					rowOffset = maxOffset
-				}
-
-				d.table.SetOffset(rowOffset, colOffset)
-				if d.forceUpdate != nil {
-					d.forceUpdate()
-				}
-				return nil
-			}
-		}
-		switch event.Key() {
-		case tcell.KeyTab:
-			resetAll := func() {
-				d.table.SetBorderColor(tcell.ColorWhite)
-				d.vs.errorView.SetBorderColor(tcell.ColorRed)
-				d.graphView.SetBorderColor(vividCyan)
-				for _, mp := range d.sidePanes {
-					mp.setBorderColor(tcell.ColorWhite)
-				}
-			}
-			// Build ordered focus cycle: table → [trace] → [mtr] → [port] → [http] → graph → error → table
-			type focusEntry struct {
-				enabled  bool
-				view     tview.Primitive
-				setColor func(tcell.Color)
-			}
-			focusCycle := []focusEntry{
-				{true, d.table, func(c tcell.Color) { d.table.SetBorderColor(c) }},
-			}
-			for _, mp := range d.sidePanes {
-				focusCycle = append(focusCycle, focusEntry{mp.enabled, mp.view, mp.setBorderColor})
-			}
-			focusCycle = append(focusCycle,
-				focusEntry{true, d.graphView, func(c tcell.Color) { d.graphView.SetBorderColor(c) }},
-				focusEntry{true, d.vs.errorView, func(c tcell.Color) { d.vs.errorView.SetBorderColor(c) }},
-			)
-			focused := d.app.GetFocus()
-			for i, entry := range focusCycle {
-				if entry.enabled && entry.view == focused {
-					resetAll()
-					for j := 1; j <= len(focusCycle); j++ {
-						next := focusCycle[(i+j)%len(focusCycle)]
-						if next.enabled {
-							d.app.SetFocus(next.view)
-							next.setColor(tcell.ColorGreen)
-							break
-						}
-					}
-					return nil
-				}
-			}
-			// Fallback: focus table
-			resetAll()
-			d.app.SetFocus(d.table)
-			d.table.SetBorderColor(tcell.ColorGreen)
-			return nil
-		}
-
-		switch event.Rune() {
-		case 'a':
-			if d.onAddHost != nil {
-				d.pages.SwitchToPage("addHost")
-				d.app.SetFocus(d.addHostInput)
-				return nil
-			}
-		case 'd':
-			if d.deleteSelected != nil {
-				d.deleteSelected()
-				return nil
-			}
-			if d.onDeleteHost != nil {
-				d.pages.SwitchToPage("deleteHost")
-				d.app.SetFocus(d.deleteHostInput)
-				return nil
-			}
-		case 'q':
-			d.session.Stop()
-			d.app.Stop()
-		case 's':
-			if state == monitorRunning {
-				state = monitorStopping
-				d.vs.appendLog(fmt.Sprintf("[yellow][%s] Stop requested by user[-]", time.Now().Format("15:04:05")))
-				if !submit(func() {
-					if d.onStop != nil {
-						d.onStop()
-					}
-					d.session.Post(func() {
-						if state == monitorStopping {
-							state = monitorStopped
-							showState()
-						}
-					})
-				}) {
-					state = monitorRunning
-					break
-				}
-				showState()
-			}
-		case 'S':
-			if (state == monitorStopping || state == monitorStopped) && d.onRestart != nil {
-				previous := state
-				state = monitorRestarting
-				d.vs.appendLog(fmt.Sprintf("[yellow][%s] Restart requested by user[-]", time.Now().Format("15:04:05")))
-				if !submit(func() {
-					err := d.onRestart()
-					d.session.Post(func() {
-						if err != nil {
-							state = monitorStopped
-							showState()
-							d.vs.appendLog(fmt.Sprintf("[red][%s] Restart failed: %v[-]", time.Now().Format("15:04:05"), err))
-							return
-						}
-						state = monitorRunning
-						showState()
-					})
-				}) {
-					state = previous
-				}
-				showState()
-			}
-		case 'R':
-			d.vs.reset()
-			if d.onReset != nil {
-				submit(d.onReset)
-				break
-			}
-			// Compatibility path for standalone callers. Keep even the
-			// counter reset on the same FIFO worker as stop and restart.
-			running := state == monitorRunning || state == monitorRestarting
-			submit(func() {
-				for _, t := range d.targets {
-					t.Reset()
-				}
-				if !running {
-					return
-				}
-				if d.traceEnabled {
-					for _, t := range d.targets {
-						t.SetTraceHops(nil)
-					}
-					if d.onResetTrace != nil {
-						d.onResetTrace()
-					}
-				}
-				if d.mtrEnabled && d.onResetMTR != nil {
-					d.onResetMTR()
-				}
-				if d.portEnabled && d.onResetPort != nil {
-					d.onResetPort()
-				}
-				if d.httpEnabled && d.onResetHTTP != nil {
-					d.onResetHTTP()
-				}
-			})
-		}
-
+func (h *inputHandler) handle(event *tcell.EventKey) *tcell.EventKey {
+	// Pass all events through when a text input is focused.
+	switch h.app.GetFocus() {
+	case h.addHostInput, h.deleteHostInput:
 		return event
 	}
+	if h.app.GetFocus() == h.table {
+		switch event.Key() {
+		case tcell.KeyEnter:
+			if h.openDetails != nil {
+				h.openDetails()
+				return nil
+			}
+		case tcell.KeyUp, tcell.KeyDown, tcell.KeyPgUp, tcell.KeyPgDn:
+			if h.navigate != nil {
+				h.navigate(event.Key())
+			} else {
+				h.scrollTable(event.Key())
+			}
+			return nil
+		}
+	}
+	if event.Key() == tcell.KeyTab {
+		h.cycleFocus()
+		return nil
+	}
+
+	switch event.Rune() {
+	case 'a':
+		if h.onAddHost != nil {
+			h.pages.SwitchToPage("addHost")
+			h.app.SetFocus(h.addHostInput)
+			return nil
+		}
+	case 'd':
+		if h.deleteSelected != nil {
+			h.deleteSelected()
+			return nil
+		}
+		if h.onDeleteHost != nil {
+			h.pages.SwitchToPage("deleteHost")
+			h.app.SetFocus(h.deleteHostInput)
+			return nil
+		}
+	case 'q':
+		h.session.Stop()
+		h.app.Stop()
+	case 's':
+		h.stop()
+	case 'S':
+		h.restart()
+	case 'R':
+		h.reset()
+	}
+	return event
+}
+
+// scrollTable moves the table's row offset when no selection-based
+// navigation is wired (standalone callers).
+func (h *inputHandler) scrollTable(key tcell.Key) {
+	rowOffset, colOffset := h.table.GetOffset()
+	maxOffset := max(*h.rowCount-(tableMaxRows+1), 0)
+	switch key {
+	case tcell.KeyUp:
+		rowOffset--
+	case tcell.KeyDown:
+		rowOffset++
+	case tcell.KeyPgUp:
+		rowOffset -= tableMaxRows
+	case tcell.KeyPgDn:
+		rowOffset += tableMaxRows
+	}
+	h.table.SetOffset(min(max(rowOffset, 0), maxOffset), colOffset)
+	if h.forceUpdate != nil {
+		h.forceUpdate()
+	}
+}
+
+// cycleFocus moves focus to the next enabled pane:
+// table → [trace] → [mtr] → [port] → [http] → graph → log → table.
+func (h *inputHandler) cycleFocus() {
+	type focusEntry struct {
+		enabled  bool
+		view     tview.Primitive
+		setColor func(tcell.Color)
+	}
+	cycle := []focusEntry{{true, h.table, func(c tcell.Color) { h.table.SetBorderColor(c) }}}
+	for _, mp := range h.sidePanes {
+		cycle = append(cycle, focusEntry{mp.enabled, mp.view, mp.setBorderColor})
+	}
+	cycle = append(cycle,
+		focusEntry{true, h.graphView, func(c tcell.Color) { h.graphView.SetBorderColor(c) }},
+		focusEntry{true, h.vs.errorView, func(c tcell.Color) { h.vs.errorView.SetBorderColor(c) }},
+	)
+	h.table.SetBorderColor(tcell.ColorWhite)
+	h.vs.errorView.SetBorderColor(tcell.ColorRed)
+	h.graphView.SetBorderColor(vividCyan)
+	for _, mp := range h.sidePanes {
+		mp.setBorderColor(tcell.ColorWhite)
+	}
+	focused := h.app.GetFocus()
+	for i, entry := range cycle {
+		if !entry.enabled || entry.view != focused {
+			continue
+		}
+		for j := 1; j <= len(cycle); j++ {
+			if next := cycle[(i+j)%len(cycle)]; next.enabled {
+				h.app.SetFocus(next.view)
+				next.setColor(tcell.ColorGreen)
+				return
+			}
+		}
+		return
+	}
+	// Focus is somewhere outside the cycle: start over at the table.
+	h.app.SetFocus(h.table)
+	h.table.SetBorderColor(tcell.ColorGreen)
+}
+
+func (h *inputHandler) showState() {
+	if h.footer == nil {
+		return
+	}
+	switch h.state {
+	case monitorRunning:
+		h.footer.SetText("Enter Detail | Tab Pane | f Fold | z Max | w Save | a Add | d Del | s Stop | q Quit")
+	case monitorStopping:
+		h.footer.SetText("Stopping... Press 'S' to restart after stop, 'q' to quit")
+	case monitorStopped:
+		h.footer.SetText("Stopped. Press 'S' to restart, 'q' to quit, 'R' to reset stats")
+	case monitorRestarting:
+		h.footer.SetText("Restarting... Press 'q' to quit")
+	}
+	h.footer.SetTextColor(tcell.ColorYellow)
+}
+
+func (h *inputHandler) submit(f func()) bool {
+	if h.session.Submit(f) {
+		return true
+	}
+	h.vs.appendLog("[yellow]Operation queue full; please try again[-]")
+	return false
+}
+
+// stop ('s') stops measuring; only from running.
+func (h *inputHandler) stop() {
+	if h.state != monitorRunning {
+		return
+	}
+	h.state = monitorStopping
+	h.vs.appendLog(fmt.Sprintf("[yellow][%s] Stop requested by user[-]", time.Now().Format("15:04:05")))
+	if !h.submit(func() {
+		if h.onStop != nil {
+			h.onStop()
+		}
+		h.session.Post(func() {
+			if h.state == monitorStopping {
+				h.state = monitorStopped
+				h.showState()
+			}
+		})
+	}) {
+		h.state = monitorRunning
+		return
+	}
+	h.showState()
+}
+
+// restart ('S') resumes measuring after a stop, queued behind it if the stop
+// is still in progress.
+func (h *inputHandler) restart() {
+	if (h.state != monitorStopping && h.state != monitorStopped) || h.onRestart == nil {
+		return
+	}
+	previous := h.state
+	h.state = monitorRestarting
+	h.vs.appendLog(fmt.Sprintf("[yellow][%s] Restart requested by user[-]", time.Now().Format("15:04:05")))
+	if !h.submit(func() {
+		err := h.onRestart()
+		h.session.Post(func() {
+			if err != nil {
+				h.state = monitorStopped
+				h.showState()
+				h.vs.appendLog(fmt.Sprintf("[red][%s] Restart failed: %v[-]", time.Now().Format("15:04:05"), err))
+				return
+			}
+			h.state = monitorRunning
+			h.showState()
+		})
+	}) {
+		h.state = previous
+	}
+	h.showState()
+}
+
+// reset ('R') clears statistics and restarts the running monitors.
+func (h *inputHandler) reset() {
+	h.vs.reset()
+	if h.onReset != nil {
+		h.submit(h.onReset)
+		return
+	}
+	// Compatibility path for standalone callers. Keep even the counter
+	// reset on the same FIFO worker as stop and restart.
+	running := h.state == monitorRunning || h.state == monitorRestarting
+	h.submit(func() {
+		for _, t := range h.targets {
+			t.Reset()
+		}
+		if !running {
+			return
+		}
+		if h.traceEnabled {
+			for _, t := range h.targets {
+				t.SetTraceHops(nil)
+			}
+			if h.onResetTrace != nil {
+				h.onResetTrace()
+			}
+		}
+		if h.mtrEnabled && h.onResetMTR != nil {
+			h.onResetMTR()
+		}
+		if h.portEnabled && h.onResetPort != nil {
+			h.onResetPort()
+		}
+		if h.httpEnabled && h.onResetHTTP != nil {
+			h.onResetHTTP()
+		}
+	})
 }
