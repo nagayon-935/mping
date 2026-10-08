@@ -275,17 +275,8 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	}
 	defer closeWebUI(webSrv, errOut)
 
-	runUI := uiRun
-	var headless *headlessRunner
-	if cfg.noTUI && !cfg.webEnabled && cfg.jsonOutputFile == "" && cfg.outputFile == "" {
-		fmt.Fprintln(errOut, "Note: --no-tui without --web, --json-output or --output prints only log lines and the final summary.")
-	}
-	if cfg.noTUI {
-		sigs, stopSignals := headlessSignals()
-		defer stopSignals()
-		headless = newHeadlessRunner(out, sigs, stopSignals)
-		runUI = headless.run
-	}
+	runUI, headless, stopHeadless := chooseUIRunner(cfg, out, errOut)
+	defer stopHeadless()
 	showToken := !cfg.noTUI || isTerminal(out)
 
 	rc := newReloadCoordinator(fs, cliCfg, cliHosts)
@@ -449,15 +440,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			break
 		}
 		webSrc.MarkReloading()
-		if webWarning := checkWebReloadDrift(cfg, currentCfg); webWarning != "" {
-			pendingWarnings = append(pendingWarnings, webWarning)
-		}
-		if portWarning := checkPortReloadDrift(activePortSpecsRaw, currentCfg.portSpecs); portWarning != "" {
-			pendingWarnings = append(pendingWarnings, portWarning)
-		}
-		if expandWarning != "" {
-			pendingWarnings = append(pendingWarnings, expandWarning)
-		}
+		pendingWarnings = reloadWarnings(cfg, currentCfg, activePortSpecsRaw, expandWarning)
 		// Loop continues: targets are re-initialised with the new currentHosts.
 	}
 
@@ -466,6 +449,38 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		return exitCodeNoResponse
 	}
 	return 0
+}
+
+// chooseUIRunner returns the TUI, or with --no-tui a headless runner that
+// prints the Log to out and stops on SIGINT/SIGTERM. stop releases the
+// signal handlers; headless is nil for the TUI.
+func chooseUIRunner(cfg config, out, errOut io.Writer) (runUI func(ui.RunOptions) error, headless *headlessRunner, stop func()) {
+	if !cfg.noTUI {
+		return uiRun, nil, func() {}
+	}
+	if !cfg.webEnabled && cfg.jsonOutputFile == "" && cfg.outputFile == "" {
+		fmt.Fprintln(errOut, "Note: --no-tui without --web, --json-output or --output prints only log lines and the final summary.")
+	}
+	sigs, stopSignals := headlessSignals()
+	headless = newHeadlessRunner(out, sigs, stopSignals)
+	return headless.run, headless, stopSignals
+}
+
+// reloadWarnings collects the Log notices for a reload: settings that only
+// take effect after a restart (web, ports) and a failed --resolve-all
+// re-expansion. startup is the config mping was started with.
+func reloadWarnings(startup, reloaded config, activePortSpecs []string, expandWarning string) []string {
+	var warnings []string
+	for _, w := range []string{
+		checkWebReloadDrift(startup, reloaded),
+		checkPortReloadDrift(activePortSpecs, reloaded.portSpecs),
+		expandWarning,
+	} {
+		if w != "" {
+			warnings = append(warnings, w)
+		}
+	}
+	return warnings
 }
 
 // allTargetsUnresponsive reports whether every target finished with zero
