@@ -140,6 +140,7 @@ func newHandler(ctx context.Context, src *Source, cfg handlerConfig) http.Handle
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/snapshot", handleSnapshot(cache))
 	mux.HandleFunc("GET /api/v1/stream", handleStream(ctx, cache, cfg))
+	mux.HandleFunc("GET /api/v1/history", handleBulkHistory(src))
 	mux.HandleFunc("GET /api/v1/targets/{id}/history", handleHistory(src))
 	mux.HandleFunc("GET /api/v1/targets/{id}/events", handleEvents(src))
 	mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) {

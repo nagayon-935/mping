@@ -32,6 +32,12 @@ type HistoryResponse struct {
 	RTTMs []*float64 `json:"rtt_ms"`
 }
 
+// BulkHistoryResponse is the body of /api/v1/history: one HistoryResponse
+// per live target, in display order.
+type BulkHistoryResponse struct {
+	Targets []HistoryResponse `json:"targets"`
+}
+
 // EventsResponse is the body of /api/v1/targets/{id}/events.
 type EventsResponse struct {
 	ID      uint64        `json:"id"`
@@ -125,30 +131,65 @@ func handleSnapshot(cache *snapshotCache) http.HandlerFunc {
 
 func handleHistory(src *Source) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		n := defaultHistoryPoints
-		if raw := r.URL.Query().Get("n"); raw != "" {
-			v, err := strconv.Atoi(raw)
-			if err != nil || v < 1 || v > maxHistoryPoints {
-				writeError(w, http.StatusBadRequest, "n must be an integer between 1 and "+strconv.Itoa(maxHistoryPoints))
-				return
-			}
-			n = v
+		n, ok := historyPoints(w, r)
+		if !ok {
+			return
 		}
 		t, ok := lookupTarget(w, r, src)
 		if !ok {
 			return
 		}
-		view := t.GetViewWindow(n)
-		rtt := make([]*float64, len(view.History))
-		for i, d := range view.History {
-			// The stats package records a lost probe as a zero RTT.
-			if d > 0 {
-				ms := float64(d.Microseconds()) / 1000
-				rtt[i] = &ms
-			}
-		}
-		writeJSON(w, HistoryResponse{ID: t.ID, RTTMs: rtt})
+		writeJSON(w, historyOf(t, n))
 	}
+}
+
+// handleBulkHistory serves every target's trailing series in one response,
+// so a dashboard of N sparklines costs one request instead of N.
+func handleBulkHistory(src *Source) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		n, ok := historyPoints(w, r)
+		if !ok {
+			return
+		}
+		p, _, _ := src.load()
+		if p == nil {
+			writeError(w, http.StatusServiceUnavailable, errNoProvider.Error())
+			return
+		}
+		targets := p.Targets()
+		out := BulkHistoryResponse{Targets: make([]HistoryResponse, len(targets))}
+		for i, t := range targets {
+			out.Targets[i] = historyOf(t, n)
+		}
+		writeJSON(w, out)
+	}
+}
+
+// historyPoints parses ?n=, writing a 400 itself when it returns ok=false.
+func historyPoints(w http.ResponseWriter, r *http.Request) (int, bool) {
+	raw := r.URL.Query().Get("n")
+	if raw == "" {
+		return defaultHistoryPoints, true
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > maxHistoryPoints {
+		writeError(w, http.StatusBadRequest, "n must be an integer between 1 and "+strconv.Itoa(maxHistoryPoints))
+		return 0, false
+	}
+	return n, true
+}
+
+func historyOf(t *stats.TargetStats, n int) HistoryResponse {
+	view := t.GetViewWindow(n)
+	rtt := make([]*float64, len(view.History))
+	for i, d := range view.History {
+		// The stats package records a lost probe as a zero RTT.
+		if d > 0 {
+			ms := float64(d.Microseconds()) / 1000
+			rtt[i] = &ms
+		}
+	}
+	return HistoryResponse{ID: t.ID, RTTMs: rtt}
 }
 
 func handleEvents(src *Source) http.HandlerFunc {
