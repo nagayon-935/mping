@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -127,11 +128,16 @@ func TestStreamSendsNothingWhileStatsAreUnchanged(t *testing.T) {
 	src := NewSource()
 	p, _ := providerWithTarget("a.example")
 	src.Set(p)
-	srv := newTestServer(t, src, defaultTestConfig())
+	var gen atomic.Uint64
+	cfg := defaultTestConfig()
+	cfg.generation = gen.Load
+	srv := newTestServer(t, src, cfg)
 	_, frames := openStream(t, srv.URL)
 	nextEvent(t, frames, time.Second)
 
 	expectNoEvent(t, frames, 60*time.Millisecond)
+	gen.Add(1)
+	nextEvent(t, frames, time.Second)
 }
 
 func TestStreamSendsNewSnapshotWhenStatsChange(t *testing.T) {
@@ -169,7 +175,10 @@ func TestStreamSendsSnapshotWhenReloadStateChanges(t *testing.T) {
 
 func TestStreamWaitsForProviderThenSendsSnapshot(t *testing.T) {
 	src := NewSource()
-	srv := newTestServer(t, src, defaultTestConfig())
+	var gen atomic.Uint64
+	cfg := defaultTestConfig()
+	cfg.generation = gen.Load
+	srv := newTestServer(t, src, cfg)
 	_, frames := openStream(t, srv.URL)
 	expectNoEvent(t, frames, 30*time.Millisecond)
 

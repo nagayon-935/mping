@@ -63,3 +63,19 @@ func TestSourceVersionAdvancesOnEveryTransition(t *testing.T) {
 		t.Fatalf("versions = %d, %d, %d; want strictly increasing", v0, v1, v2)
 	}
 }
+
+func TestSourceZeroValueIsUsable(t *testing.T) {
+	var src Source
+	p, _ := providerWithTarget("a.example")
+
+	got, reloading, _ := src.load()
+	src.Set(p)
+	after, _, _ := src.load()
+
+	if got != nil || reloading {
+		t.Fatalf("zero Source load = (%v, %v), want (nil, false)", got, reloading)
+	}
+	if after != p {
+		t.Fatalf("provider after Set = %v, want p", after)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -234,5 +235,47 @@ func TestUnknownPathReturns404(t *testing.T) {
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+// countingProvider counts Targets calls so tests can tell whether a
+// snapshot was rebuilt or served from cache.
+type countingProvider struct {
+	*fakeProvider
+	calls atomic.Int64
+}
+
+func (c *countingProvider) Targets() []*stats.TargetStats {
+	c.calls.Add(1)
+	return c.fakeProvider.Targets()
+}
+
+func TestSnapshotIsReusedUntilGenerationOrSourceChanges(t *testing.T) {
+	src := NewSource()
+	base, _ := providerWithTarget("a.example")
+	p := &countingProvider{fakeProvider: base}
+	src.Set(p)
+	var gen atomic.Uint64
+	cfg := defaultTestConfig()
+	cfg.generation = gen.Load
+	srv := newTestServer(t, src, cfg)
+
+	get(t, srv.URL+"/api/v1/snapshot")
+	get(t, srv.URL+"/api/v1/snapshot")
+	unchanged := p.calls.Load()
+	gen.Add(1)
+	get(t, srv.URL+"/api/v1/snapshot")
+	afterGen := p.calls.Load()
+	src.MarkReloading()
+	reloaded := decode[SnapshotResponse](t, get(t, srv.URL+"/api/v1/snapshot"))
+
+	if unchanged != 1 {
+		t.Errorf("Targets calls after two unchanged requests = %d, want 1", unchanged)
+	}
+	if afterGen != 2 {
+		t.Errorf("Targets calls after a generation bump = %d, want 2", afterGen)
+	}
+	if !reloaded.Reloading {
+		t.Error("snapshot after MarkReloading still says reloading=false")
 	}
 }

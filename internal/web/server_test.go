@@ -3,8 +3,11 @@ package web
 import (
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 )
 
@@ -57,23 +60,28 @@ func TestHostHeaderMustBeLoopback(t *testing.T) {
 	}
 }
 
-func TestCrossOriginRequestsAreRejected(t *testing.T) {
+func TestOriginMustMatchRequestedHostExactly(t *testing.T) {
 	srv := newTestServer(t, NewSource(), defaultTestConfig())
+	host := strings.TrimPrefix(srv.URL, "http://")
+	_, port, _ := net.SplitHostPort(host)
 
 	tests := []struct {
+		name   string
 		origin string
 		want   int
 	}{
-		{"", http.StatusOK},
-		{"http://127.0.0.1:8080", http.StatusOK},
-		{"http://localhost:8080", http.StatusOK},
-		{"https://evil.example", http.StatusForbidden},
-		{"http://localhost.evil.example", http.StatusForbidden},
-		{"null", http.StatusForbidden},
-		{"://bad", http.StatusForbidden},
+		{"no origin", "", http.StatusOK},
+		{"same origin", "http://" + host, http.StatusOK},
+		{"other loopback port", "http://127.0.0.1:1", http.StatusForbidden},
+		{"localhost alias of same port", "http://localhost:" + port, http.StatusForbidden},
+		{"https scheme", "https://" + host, http.StatusForbidden},
+		{"foreign site", "https://evil.example", http.StatusForbidden},
+		{"lookalike host", "http://localhost.evil.example", http.StatusForbidden},
+		{"opaque origin", "null", http.StatusForbidden},
+		{"malformed", "://bad", http.StatusForbidden},
 	}
 	for _, tt := range tests {
-		t.Run(tt.origin, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			headers := map[string]string{}
 			if tt.origin != "" {
 				headers["Origin"] = tt.origin
@@ -85,6 +93,69 @@ func TestCrossOriginRequestsAreRejected(t *testing.T) {
 				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.want)
 			}
 		})
+	}
+}
+
+func TestOriginMatchUsesHostHeaderTheBrowserSent(t *testing.T) {
+	srv := newTestServer(t, NewSource(), defaultTestConfig())
+	_, port, _ := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+
+	resp := doWithHeaders(t, srv.URL+"/", map[string]string{
+		"Host":   "localhost:" + port,
+		"Origin": "http://localhost:" + port,
+	})
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for a page opened via http://localhost", resp.StatusCode)
+	}
+}
+
+func TestStaticHandlerHidesDirectoryListings(t *testing.T) {
+	fsys := fstest.MapFS{
+		"index.html":    {Data: []byte("<title>x</title>")},
+		"assets/app.js": {Data: []byte("console.log(1)")},
+	}
+	srv := httptest.NewServer(staticHandler(fsys))
+	t.Cleanup(srv.Close)
+
+	tests := []struct {
+		path string
+		want int
+	}{
+		{"/", http.StatusOK},
+		{"/assets/app.js", http.StatusOK},
+		{"/assets/", http.StatusNotFound},
+		{"/assets", http.StatusNotFound},
+		{"/missing.js", http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			resp := get(t, srv.URL+tt.path)
+
+			if resp.StatusCode != tt.want {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.want)
+			}
+		})
+	}
+}
+
+func TestStartAlsoListensOnIPv6Loopback(t *testing.T) {
+	probe, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback unavailable: %v", err)
+	}
+	probe.Close()
+	s, err := Start(Options{Port: 0, Source: NewSource()})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	_, port, _ := net.SplitHostPort(s.Addr())
+
+	resp := get(t, "http://[::1]:"+port+"/")
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 over [::1]", resp.StatusCode)
 	}
 }
 

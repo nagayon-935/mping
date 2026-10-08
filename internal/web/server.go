@@ -34,6 +34,7 @@ type Options struct {
 type handlerConfig struct {
 	streamInterval    time.Duration
 	heartbeatInterval time.Duration
+	generation        func() uint64
 }
 
 // Server is a running web UI listener.
@@ -124,8 +125,12 @@ func newHandler(ctx context.Context, src *Source, cfg handlerConfig) http.Handle
 	if err != nil {
 		panic(fmt.Sprintf("web: embedded static dir missing: %v", err))
 	}
-	mux.Handle("GET /", http.FileServerFS(static))
+	mux.Handle("GET /", staticHandler(static))
 	return guard(mux)
+}
+
+func staticHandler(fsys fs.FS) http.Handler {
+	return http.FileServerFS(fsys)
 }
 
 // guard rejects requests that did not come from a same-machine page:
