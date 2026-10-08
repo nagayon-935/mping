@@ -233,3 +233,23 @@ func TestStreamEndsWhenHandlerContextIsCancelled(t *testing.T) {
 		}
 	}
 }
+
+func TestStreamDeliversFinalStateWhenServerStops(t *testing.T) {
+	src := NewSource()
+	p, _ := providerWithTarget("a.example")
+	src.Set(p)
+	ctx, cancel := context.WithCancel(context.Background())
+	cfg := defaultTestConfig()
+	cfg.streamInterval = time.Hour // only the shutdown path can deliver it
+	srv := newTestServerWithContext(t, ctx, src, cfg)
+	_, frames := openStream(t, srv.URL)
+	nextEvent(t, frames, time.Second)
+
+	src.MarkStopped()
+	cancel()
+	body := decodeSnapshotEvent(t, nextEvent(t, frames, time.Second))
+
+	if body.State != StateStopped {
+		t.Fatalf("final state = %q, want %q", body.State, StateStopped)
+	}
+}

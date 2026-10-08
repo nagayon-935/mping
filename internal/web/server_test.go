@@ -337,3 +337,28 @@ func TestJSTestsAreNotEmbedded(t *testing.T) {
 		t.Fatalf("status = %d, want 404 (test files must stay out of the binary)", resp.StatusCode)
 	}
 }
+
+// TestCloseDeliversStoppedStateToOpenStreams mirrors mping's exit path:
+// MarkStopped is followed immediately by Close, well inside one stream poll
+// interval, and the browser must still learn the run is over.
+func TestCloseDeliversStoppedStateToOpenStreams(t *testing.T) {
+	src := NewSource()
+	p, _ := providerWithTarget("a.example")
+	src.Set(p)
+	s, err := Start(Options{Port: 0, Source: src})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	_, frames := openStream(t, "http://"+s.Addr())
+	nextEvent(t, frames, 2*time.Second)
+
+	src.MarkStopped()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	body := decodeSnapshotEvent(t, nextEvent(t, frames, time.Second))
+
+	if body.State != StateStopped {
+		t.Fatalf("final state = %q, want %q", body.State, StateStopped)
+	}
+}
