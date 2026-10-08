@@ -279,3 +279,59 @@ func TestSnapshotIsReusedUntilGenerationOrSourceChanges(t *testing.T) {
 		t.Errorf("state after MarkReloading = %q, want %q", reloaded.State, StateReloading)
 	}
 }
+
+func TestBulkHistoryReturnsEveryTargetsTrailingSeries(t *testing.T) {
+	src := NewSource()
+	p, a := providerWithTarget("a.example")
+	b := stats.NewTargetStats("b.example")
+	p.targets = append(p.targets, b)
+	for i := 1; i <= 3; i++ {
+		a.OnSuccess(time.Duration(i)*time.Millisecond, 64)
+	}
+	b.OnFailure("timeout")
+	src.Set(p)
+	srv := newTestServer(t, src, defaultTestConfig())
+
+	resp := get(t, srv.URL+"/api/v1/history?n=2")
+	body := decode[BulkHistoryResponse](t, resp)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if len(body.Targets) != 2 {
+		t.Fatalf("targets = %+v, want 2 series", body.Targets)
+	}
+	if got := body.Targets[0]; got.ID != a.ID || len(got.RTTMs) != 2 || *got.RTTMs[0] != 2 || *got.RTTMs[1] != 3 {
+		t.Errorf("a series = %+v, want id %d with [2 3]", got, a.ID)
+	}
+	if got := body.Targets[1]; got.ID != b.ID || len(got.RTTMs) != 1 || got.RTTMs[0] != nil {
+		t.Errorf("b series = %+v, want id %d with [null]", got, b.ID)
+	}
+}
+
+func TestBulkHistoryValidatesInputAndProvider(t *testing.T) {
+	empty := newTestServer(t, NewSource(), defaultTestConfig())
+	src := NewSource()
+	p, _ := providerWithTarget("a.example")
+	src.Set(p)
+	srv := newTestServer(t, src, defaultTestConfig())
+
+	tests := []struct {
+		name, url string
+		want      int
+	}{
+		{"no provider", empty.URL + "/api/v1/history", http.StatusServiceUnavailable},
+		{"default n", srv.URL + "/api/v1/history", http.StatusOK},
+		{"bad n", srv.URL + "/api/v1/history?n=abc", http.StatusBadRequest},
+		{"n above cap", srv.URL + fmt.Sprintf("/api/v1/history?n=%d", maxHistoryPoints+1), http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := get(t, tt.url)
+
+			if resp.StatusCode != tt.want {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.want)
+			}
+		})
+	}
+}
