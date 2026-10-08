@@ -449,3 +449,53 @@ func TestWebLogNeverBlocksWhenTUILogIsFull(t *testing.T) {
 		t.Fatal("logf blocked on a full TUI log channel")
 	}
 }
+
+// stopProbePinger runs onStop when the supervisor tears measurements down,
+// which only happens after uiRun has returned (finishIteration).
+type stopProbePinger struct {
+	*liveFakePinger
+	onStop func()
+}
+
+func (p *stopProbePinger) Stop() {
+	p.onStop()
+	p.liveFakePinger.Stop()
+}
+
+// TestRunWebStopsAcceptingEditsOnceTheUIIterationEnds covers the window
+// between uiRun returning and the run loop deciding reload-or-exit: the
+// host list has already been captured and the supervisor is being torn
+// down, so a browser edit accepted there would be acknowledged and lost.
+func TestRunWebStopsAcceptingEditsOnceTheUIIterationEnds(t *testing.T) {
+	var src *web.Source
+	var atTeardown []web.State
+	stubRunSeams(t, func(ui.RunOptions) error { return nil })
+	webStart = func(opts web.Options) (*web.Server, error) {
+		src = opts.Source
+		opts.Port = 0
+		return web.Start(opts)
+	}
+	newPinger = func([]*stats.TargetStats, pinger.Options) pingerController {
+		return &stopProbePinger{liveFakePinger: newLiveFakePinger(), onStop: func() {
+			if src != nil {
+				atTeardown = append(atTeardown, src.State())
+			}
+		}}
+	}
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"-S", "10.0.0.2", "--web", "example.com"}, &out, &errOut)
+
+	if code != 0 {
+		t.Fatalf("run = %d, want 0 (stderr: %s)", code, errOut.String())
+	}
+	if len(atTeardown) == 0 {
+		t.Fatal("pinger Stop never ran during teardown")
+	}
+	if got := atTeardown[len(atTeardown)-1]; got == web.StateRunning {
+		t.Fatalf("web state during teardown = %q; edits would still be accepted", got)
+	}
+	if got := src.State(); got != web.StateStopped {
+		t.Errorf("final state = %q, want %q", got, web.StateStopped)
+	}
+}

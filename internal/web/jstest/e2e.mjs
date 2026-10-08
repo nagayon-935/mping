@@ -169,6 +169,19 @@ try {
     assert.equal(await ctl.inputValue("#add-host"), "");
   });
 
+  await check("a double submit adds once without a spurious error", async () => {
+    await ctl.fill("#add-host", "double.e2e.example");
+    await ctl.evaluate(() => {
+      const form = document.getElementById("add-form");
+      form.requestSubmit();
+      form.requestSubmit();
+    });
+    await ctl.waitForFunction(() => [...document.querySelectorAll(".host")].some((h) => h.textContent === "double.e2e.example"), null, { timeout: 5000 });
+    await ctl.waitForTimeout(800);
+    const isError = await ctl.$eval("#notice", (n) => n.classList.contains("is-error"));
+    assert.ok(!isError, `unexpected error notice: ${await ctl.textContent("#notice")}`);
+  });
+
   await check("server-side rejections are shown", async () => {
     await ctl.fill("#add-host", "added.e2e.example");
     await ctl.click("#add-form button");
