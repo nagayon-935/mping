@@ -388,100 +388,95 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 			if idx >= len(series) {
 				break
 			}
+			g.drawCell(screen, series[idx], graphCell{
+				x: x + c*colWidth, y: baseY, width: colWidth, rowHeight: rowHeight,
+				graphHeight: graphHeight, bottom: y + height,
+			}, timeBasedWidth, yMaxDur)
+		}
+	}
+}
 
-			baseX := x + (c * colWidth)
-			s := series[idx]
-			hist, lastRTT := s.seriesSnapshot()
+// graphCell is one series' slot in the grid: a header line, the plot, and a
+// separator on the slot's last line (when it fits above bottom).
+type graphCell struct {
+	x, y, width, rowHeight int
+	graphHeight            int // plot rows available, already clipped to bottom
+	bottom                 int // first screen row below the pane
+}
 
-			// Header: label + last RTT
-			headerStr := fmt.Sprintf("% -20s %s", s.seriesLabel(), formatRTT(lastRTT))
-			headerStr = truncateToDisplayWidth(headerStr, colWidth-2)
-			tview.Print(screen, headerStr, baseX, baseY, colWidth-2, tview.AlignLeft, tcell.ColorYellow)
+func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell, windowPoints int, yMax time.Duration) {
+	hist, lastRTT := s.seriesSnapshot()
 
-			graphX := baseX
-			graphY := baseY + 1
-			labelWidth := graphLabelWidth
-			graphWidth := colWidth - labelWidth - 2
-			if graphWidth < graphMinWidth {
-				graphWidth = graphMinWidth
+	// Header: label + last RTT
+	headerStr := fmt.Sprintf("% -20s %s", s.seriesLabel(), formatRTT(lastRTT))
+	headerStr = truncateToDisplayWidth(headerStr, cell.width-2)
+	tview.Print(screen, headerStr, cell.x, cell.y, cell.width-2, tview.AlignLeft, tcell.ColorYellow)
+
+	graphX := cell.x
+	graphY := cell.y + 1
+	labelWidth := graphLabelWidth
+	graphWidth := max(cell.width-labelWidth-2, graphMinWidth)
+
+	data, hasData := projectDurationsToGraph(hist, windowPoints, graphWidth)
+	plotY, plotHeight := adjustPlotArea(graphY, cell.graphHeight)
+
+	gy25, gy50, gy75, gy100 := gridStepsForHeight(plotHeight)
+	gridSteps := [4]int{gy25, gy50, gy75, gy100}
+	gridYPos := make(map[int]bool)
+	for i, val := range g.currentScale.grid {
+		gy := gridSteps[i]
+		py := plotY + (plotHeight - 1 - gy)
+		if py >= plotY && py < plotY+plotHeight {
+			gridYPos[gy] = true
+			for gx := 0; gx < graphWidth; gx++ {
+				screen.SetContent(graphX+gx, py, '·', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
 			}
+			tview.Print(screen, fmt.Sprintf("%dms", val), graphX+graphWidth+1, py, labelWidth, tview.AlignLeft, tcell.ColorGray)
+		}
+	}
+	// 0ms label at bottom
+	tview.Print(screen, "0ms", graphX+graphWidth+1, plotY+plotHeight-1, labelWidth, tview.AlignLeft, tcell.ColorGray)
 
-			data, hasData := projectDurationsToGraph(hist, timeBasedWidth, graphWidth)
+	for i, val := range data {
+		if hasData[i] {
+			g.drawBar(screen, graphX+i, plotY, plotHeight, min(val, yMax), gridYPos)
+		}
+	}
 
-			plotY, plotHeight := adjustPlotArea(graphY, graphHeight)
-			rangeVal := g.currentScale.maxMs // ms
+	// Separator line between graph cells
+	sepY := cell.y + cell.rowHeight - 1
+	if sepY > graphY && sepY < cell.bottom {
+		for sx := 0; sx < cell.width; sx++ {
+			screen.SetContent(cell.x+sx, sepY, '─', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
+		}
+	}
+}
 
-			gy25, gy50, gy75, gy100 := gridStepsForHeight(plotHeight)
-			gridSteps := [4]int{gy25, gy50, gy75, gy100}
+// barRunes are the eighth-height blocks a bar's top cell is drawn with.
+var barRunes = []rune{' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 
-			gridYPos := make(map[int]bool)
-			for i, val := range g.currentScale.grid {
-				gy := gridSteps[i]
-				py := plotY + (plotHeight - 1 - gy)
-				if py >= plotY && py < plotY+plotHeight {
-					gridYPos[gy] = true
-					for gx := 0; gx < graphWidth; gx++ {
-						screen.SetContent(graphX+gx, py, '·', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
-					}
-					tview.Print(screen, fmt.Sprintf("%dms", val), graphX+graphWidth+1, py, labelWidth, tview.AlignLeft, tcell.ColorGray)
-				}
-			}
-
-			// 0ms label at bottom
-			tview.Print(screen, "0ms", graphX+graphWidth+1, plotY+plotHeight-1, labelWidth, tview.AlignLeft, tcell.ColorGray)
-
-			if len(data) > 0 {
-				chars := []rune{' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
-				for i, val := range data {
-					if !hasData[i] {
-						continue
-					}
-					px := graphX + i
-					v := val
-					if v > yMaxDur {
-						v = yMaxDur
-					}
-					ratio := float64(v.Milliseconds()) / rangeVal
-					if v > 0 && ratio < 0.05 {
-						ratio = 0.05
-					}
-					totalLevels := int(ratio * float64(plotHeight*8))
-					if v > 0 && totalLevels == 0 {
-						totalLevels = 1
-					}
-					for gy := 0; gy < plotHeight; gy++ {
-						py := plotY + (plotHeight - 1 - gy)
-						level := totalLevels - (gy * 8)
-						var ch rune
-						if level <= 0 {
-							if gridYPos[gy] {
-								ch = '·'
-							} else {
-								ch = ' '
-							}
-						} else if level >= 8 {
-							ch = '█'
-						} else {
-							ch = chars[level]
-						}
-						if ch != ' ' {
-							color := g.vividCyan
-							if ch == '·' {
-								color = tcell.ColorGray
-							}
-							screen.SetContent(px, py, ch, nil, tcell.StyleDefault.Foreground(color))
-						}
-					}
-				}
-			}
-
-			// Separator line between graph cells
-			sepY := baseY + rowHeight - 1
-			if sepY > graphY && sepY < y+height {
-				for sx := 0; sx < colWidth; sx++ {
-					screen.SetContent(baseX+sx, sepY, '─', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
-				}
-			}
+// drawBar draws one RTT sample (already capped at the scale maximum) as a
+// column of block characters at screen column px, keeping grid dots visible
+// above the bar.
+func (g *GraphView) drawBar(screen tcell.Screen, px, plotY, plotHeight int, v time.Duration, gridYPos map[int]bool) {
+	ratio := float64(v.Milliseconds()) / g.currentScale.maxMs
+	if v > 0 && ratio < 0.05 {
+		ratio = 0.05
+	}
+	totalLevels := int(ratio * float64(plotHeight*8))
+	if v > 0 && totalLevels == 0 {
+		totalLevels = 1
+	}
+	for gy := 0; gy < plotHeight; gy++ {
+		py := plotY + (plotHeight - 1 - gy)
+		level := totalLevels - (gy * 8)
+		switch {
+		case level >= 8:
+			screen.SetContent(px, py, '█', nil, tcell.StyleDefault.Foreground(g.vividCyan))
+		case level > 0:
+			screen.SetContent(px, py, barRunes[level], nil, tcell.StyleDefault.Foreground(g.vividCyan))
+		case gridYPos[gy]:
+			screen.SetContent(px, py, '·', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
 		}
 	}
 }
