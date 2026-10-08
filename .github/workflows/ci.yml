@@ -83,3 +83,7 @@ jobs:
         uses: golang/govulncheck-action@v1
         with:
           go-version-input: '1.26'
+          # Go is already set up (with module cache) above; a second cache
+          # restore into ~/go/pkg/mod makes tar fail with "File exists".
+          cache: false
+          repo-checkout: false
