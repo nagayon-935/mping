@@ -175,8 +175,14 @@ function applySnapshot(body) {
     refreshHistory();
   }
   scheduleRender();
+  // Restore a selection from the address (reload or a shared link); a link
+  // to a target that no longer exists is dropped rather than kept forever.
   const wanted = /^#target-(\d+)$/.exec(location.hash);
-  if (wanted && view.selectedId == null) selectTarget(Number(wanted[1]));
+  if (wanted && view.selectedId == null) {
+    const id = Number(wanted[1]);
+    if (view.snapshot.targets.some((t) => t.id === id)) selectTarget(id);
+    else history.replaceState(null, "", location.pathname);
+  }
 }
 
 function connect() {

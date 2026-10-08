@@ -233,6 +233,21 @@ try {
   });
   await page.close();
 
+  await check("a link to a target that no longer exists is dropped from the address", async () => {
+    const linked = await open({ viewport: { width: 1400, height: 900 } }, browser, `${base}#target-999999`);
+    await linked.waitForFunction(() => location.hash === "");
+    assert.equal(await linked.$$eval('tr.target-row[aria-current="true"]', (r) => r.length), 0);
+    await linked.close();
+  });
+
+  await check("a link to an existing target selects it", async () => {
+    const id = await (await fetch(`${base}api/v1/snapshot`)).json().then((b) => b.snapshot.targets[0].id);
+    const linked = await open({ viewport: { width: 1400, height: 900 } }, browser, `${base}#target-${id}`);
+    await linked.waitForSelector(`tr.target-row[aria-current="true"][data-target-id="${id}"]`);
+    assert.equal(await linked.evaluate(() => location.hash), `#target-${id}`);
+    await linked.close();
+  });
+
   await check("without a token the dashboard is read-only", async () => {
     const ro = await open({ viewport: { width: 1400, height: 900 } });
     assert.ok(await ro.isVisible("#readonly-hint"));
@@ -310,6 +325,24 @@ try {
     await ctl.getByRole("button", { name: "Confirm delete added.e2e.example?" }).click();
     await ctl.waitForFunction(() => ![...document.querySelectorAll(".host")].some((h) => h.textContent === "added.e2e.example"), null, { timeout: 5000 });
     assert.equal(await ctl.textContent("#inspect-target"), "", "the deleted target is no longer selected");
+    assert.equal(await ctl.evaluate(() => location.hash), "", "the deleted target's address is dropped");
+  });
+
+  await check("deleting the selected target lifts the log's selected-target filter", async () => {
+    await ctl.locator("tr.target-row", { hasText: "double.e2e.example" }).click();
+    await ctl.click('#inspect-tabs [data-tab="log"]');
+    await ctl.getByRole("button", { name: "Selected target only" }).click();
+    await ctl.getByRole("button", { name: "Show all targets" }).waitFor();
+    await ctl.click('#inspect-tabs [data-tab="summary"]');
+    await ctl.getByRole("button", { name: "Delete double.e2e.example" }).click();
+    await ctl.getByRole("button", { name: "Confirm delete double.e2e.example?" }).click();
+    await ctl.waitForFunction(() => ![...document.querySelectorAll(".host")].some((h) => h.textContent === "double.e2e.example"), null, { timeout: 5000 });
+    // Selecting another target must not bring the old filter back.
+    await ctl.click("tr.target-row >> nth=0");
+    await ctl.click('#inspect-tabs [data-tab="log"]');
+    await ctl.getByRole("button", { name: "Selected target only" }).waitFor();
+    assert.equal(await ctl.getAttribute("#inspect-body button[aria-pressed]", "aria-pressed"), "false");
+    await ctl.waitForFunction(() => new Set([...document.querySelectorAll("#inspect-body table.log .link")].map((x) => x.textContent)).size >= 2);
   });
 
   await check("reset clears counters after confirmation", async () => {
