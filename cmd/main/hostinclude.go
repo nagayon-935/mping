@@ -58,20 +58,27 @@ func resolveIncludePath(baseDir, path string) string {
 // skipped. Hosts may use the same range/CIDR/brace patterns as the YAML
 // file, and every expanded host must be an IP address or a hostname.
 //
-// mping may run setuid root (macOS install.sh), so the file must be
-// readable by the invoking user (not just by root), errors report the file
-// and line number but never the line's text, and the hostname check keeps
-// arbitrary text lines from being displayed as targets.
+// mping may run setuid root (macOS install.sh), so the file is read as the
+// invoking user (asRealUser), errors report the file and line number but
+// never the line's text, and the hostname check keeps arbitrary text lines
+// from being displayed as targets.
 func readIncludeFile(path string) ([]hostEntry, error) {
+	var out []hostEntry
+	err := asRealUser(func() error {
+		var err error
+		out, err = readIncludeFileUnprivileged(path)
+		return err
+	})
+	return out, err
+}
+
+func readIncludeFileUnprivileged(path string) ([]hostEntry, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("include %q: %w", path, err)
 	}
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("include %q: not a regular file", path)
-	}
-	if err := realUserCanRead(path); err != nil {
-		return nil, fmt.Errorf("include %q: not readable by the invoking user: %w", path, err)
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -219,8 +226,12 @@ func collectHosts(entries []hostEntry, includes includeList, location, baseDir s
 // re-derives the include set.
 func hostsFileWatchPaths(path string) []string {
 	paths := []string{path}
-	data, err := os.ReadFile(path)
-	if err != nil {
+	var data []byte
+	if err := asRealUser(func() error {
+		var err error
+		data, err = os.ReadFile(path)
+		return err
+	}); err != nil {
 		return paths
 	}
 	var doc struct {

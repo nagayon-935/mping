@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestRealUserCanRead_UnreadableFile(t *testing.T) {
+func TestReadIncludeFile_UnreadableFile(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root can read any file")
 	}
@@ -20,7 +20,7 @@ func TestRealUserCanRead_UnreadableFile(t *testing.T) {
 
 	_, err := readIncludeFile(path)
 
-	if err == nil || !strings.Contains(err.Error(), "not readable by the invoking user") {
-		t.Fatalf("error = %v, want a real-user access error", err)
+	if err == nil || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("error = %v, want a permission error", err)
 	}
 }

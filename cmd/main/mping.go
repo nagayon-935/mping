@@ -56,14 +56,16 @@ func writeJSONSnapshot(path string, targets []*stats.TargetStats, httpResults []
 		return fmt.Errorf("marshal snapshot: %w", err)
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
-		return fmt.Errorf("write snapshot: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("rename snapshot: %w", err)
-	}
-	return nil
+	return asRealUser(func() error {
+		if err := os.WriteFile(tmp, data, 0600); err != nil {
+			return fmt.Errorf("write snapshot: %w", err)
+		}
+		if err := os.Rename(tmp, path); err != nil {
+			_ = os.Remove(tmp)
+			return fmt.Errorf("rename snapshot: %w", err)
+		}
+		return nil
+	})
 }
 
 func determineSourceIPs(cfg config, hosts []targetSpec) (string, string, string, error) {
@@ -110,7 +112,12 @@ func setupLogger(path string) (*os.File, error) {
 	if path == "" {
 		return nil, nil
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	var f *os.File
+	err := asRealUser(func() error {
+		var err error
+		f, err = os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+		return err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("open log file %q: %w", path, err)
 	}
