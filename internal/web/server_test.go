@@ -318,6 +318,8 @@ func TestDashboardAssetsAreServedWithBrowserTypes(t *testing.T) {
 		{"/js/control.js", "text/javascript"},
 		{"/js/chart.js", "text/javascript"},
 		{"/js/dom.js", "text/javascript"},
+		{"/favicon.png", "image/png"},
+		{"/apple-touch-icon.png", "image/png"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
