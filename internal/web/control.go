@@ -37,6 +37,25 @@ type SessionResponse struct {
 	Control bool `json:"control"`
 }
 
+// minTokenLen bounds a configured token from below; generated ones are 64
+// hex characters.
+const minTokenLen = 16
+
+// checkToken accepts tokens that are long enough and URL-fragment safe
+// (unreserved characters only). Errors never repeat the token.
+func checkToken(token string) error {
+	if len(token) < minTokenLen {
+		return fmt.Errorf("control token must be at least %d characters", minTokenLen)
+	}
+	for _, r := range token {
+		ok := r < unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("-._~", r))
+		if !ok {
+			return errors.New("control token may only contain letters, digits and -._~")
+		}
+	}
+	return nil
+}
+
 func newToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {

@@ -32,6 +32,9 @@ type Options struct {
 	// Port is the TCP port on 127.0.0.1; 0 lets the kernel pick one.
 	Port   int
 	Source *Source
+	// Token fixes the control token (e.g. from MPING_WEB_TOKEN for an
+	// unattended run). Empty generates a random one per launch.
+	Token string
 }
 
 type handlerConfig struct {
@@ -59,8 +62,13 @@ type Server struct {
 // same port is added when available so a browser that resolves "localhost"
 // to IPv6 first still connects directly.
 func Start(opts Options) (*Server, error) {
-	token, err := newToken()
-	if err != nil {
+	token := opts.Token
+	if token == "" {
+		var err error
+		if token, err = newToken(); err != nil {
+			return nil, fmt.Errorf("web: %w", err)
+		}
+	} else if err := checkToken(token); err != nil {
 		return nil, fmt.Errorf("web: %w", err)
 	}
 	return start(opts, token)
