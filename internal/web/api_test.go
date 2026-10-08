@@ -335,3 +335,94 @@ func TestBulkHistoryValidatesInputAndProvider(t *testing.T) {
 		})
 	}
 }
+
+func TestBulkEventsMergesTargetsNewestFirstWithHosts(t *testing.T) {
+	src := NewSource()
+	p, a := providerWithTarget("a.example") // SetIP records a "dns" event on a
+	b := stats.NewTargetStats("b.example")
+	p.targets = append(p.targets, b)
+	a.RecordEvent("route", "a first")
+	time.Sleep(2 * time.Millisecond)
+	b.RecordEvent("port", "b second")
+	time.Sleep(2 * time.Millisecond)
+	a.RecordEvent("ping", "a third")
+	src.Set(p)
+	srv := newTestServer(t, src, defaultTestConfig())
+
+	resp := get(t, srv.URL+"/api/v1/events")
+	body := decode[BulkEventsResponse](t, resp)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if len(body.Events) != 4 {
+		t.Fatalf("events = %+v, want 4", body.Events)
+	}
+	want := []struct{ host, msg string }{{"a.example", "a third"}, {"b.example", "b second"}, {"a.example", "a first"}}
+	for i, w := range want {
+		if got := body.Events[i]; got.Host != w.host || got.Message != w.msg {
+			t.Errorf("events[%d] = %s %q, want %s %q", i, got.Host, got.Message, w.host, w.msg)
+		}
+	}
+	if got := body.Events[1].TargetID; got != b.ID {
+		t.Errorf("events[1].target_id = %d, want %d", got, b.ID)
+	}
+}
+
+func TestBulkEventsLimitKeepsTheNewest(t *testing.T) {
+	src := NewSource()
+	p, a := providerWithTarget("a.example")
+	for i := 0; i < 5; i++ {
+		time.Sleep(time.Millisecond)
+		a.RecordEvent("ping", fmt.Sprintf("event %d", i))
+	}
+	src.Set(p)
+	srv := newTestServer(t, src, defaultTestConfig())
+
+	body := decode[BulkEventsResponse](t, get(t, srv.URL+"/api/v1/events?limit=2"))
+
+	if len(body.Events) != 2 || body.Events[0].Message != "event 4" || body.Events[1].Message != "event 3" {
+		t.Fatalf("events = %+v, want [event 4, event 3]", body.Events)
+	}
+}
+
+func TestBulkEventsValidatesInputAndProvider(t *testing.T) {
+	empty := newTestServer(t, NewSource(), defaultTestConfig())
+	src := NewSource()
+	p, _ := providerWithTarget("a.example")
+	src.Set(p)
+	srv := newTestServer(t, src, defaultTestConfig())
+
+	tests := []struct {
+		name, url string
+		want      int
+	}{
+		{"no provider", empty.URL + "/api/v1/events", http.StatusServiceUnavailable},
+		{"default limit", srv.URL + "/api/v1/events", http.StatusOK},
+		{"bad limit", srv.URL + "/api/v1/events?limit=x", http.StatusBadRequest},
+		{"zero limit", srv.URL + "/api/v1/events?limit=0", http.StatusBadRequest},
+		{"limit above cap", srv.URL + fmt.Sprintf("/api/v1/events?limit=%d", maxEvents+1), http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := get(t, tt.url)
+
+			if resp.StatusCode != tt.want {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.want)
+			}
+		})
+	}
+}
+
+func TestBulkEventsIsAnEmptyListWithoutEvents(t *testing.T) {
+	src := NewSource()
+	src.Set(&fakeProvider{targets: []*stats.TargetStats{stats.NewTargetStats("quiet.example")}})
+	srv := newTestServer(t, src, defaultTestConfig())
+
+	resp := get(t, srv.URL+"/api/v1/events")
+	raw, _ := io.ReadAll(resp.Body)
+
+	if !strings.Contains(string(raw), `"events":[]`) {
+		t.Fatalf("body = %s, want an empty events array (not null)", raw)
+	}
+}
