@@ -182,6 +182,10 @@ func Write(path, format string, r Report) error {
 	if err != nil {
 		return err
 	}
+	owner, err := ownerForCaller(os.Getuid(), os.Getgid(), os.Geteuid(), os.Getenv)
+	if err != nil {
+		return err
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".mping-report-*")
 	if err != nil {
 		return fmt.Errorf("create report: %w", err)
@@ -190,6 +194,10 @@ func Write(path, format string, r Report) error {
 	if _, err = tmp.Write(data); err != nil {
 		tmp.Close()
 		return fmt.Errorf("write report: %w", err)
+	}
+	if err = setReportOwner(tmp, owner); err != nil {
+		tmp.Close()
+		return err
 	}
 	if err = tmp.Sync(); err != nil {
 		tmp.Close()

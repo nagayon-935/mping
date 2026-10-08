@@ -305,11 +305,13 @@ Stop, restart and reset operations execute in keypress order. A running reset di
 
 ### Saving investigation results
 
-Press **w**, enter a new file path, choose **Text** or **JSON**, and activate **Save**. **Tab** moves between fields and buttons; **Esc** cancels. Saving from the overview includes all active targets, retained final results of removed targets, and independent HTTP checks. Saving from host details includes only that target. Measurements continue during capture and writing; completion or errors appear in the footer and Log.
+Press **w**, enter a new file path ending in **.txt** or **.json**, and press **Enter** or activate **Save**. The format is inferred from the extension and displayed below the input; no format selector is needed. A missing extension defaults to `.txt`; other extensions are rejected. **Tab** moves between fields and buttons; **Esc** cancels. Saving from the overview includes all active targets, retained final results of removed targets, and independent HTTP checks. Saving from host details includes only that target. Measurements continue during capture and writing; completion or errors appear in the footer and Log.
 
 Reports include the session and collection start times, capture interval, stable target IDs, ping statistics window, effective settings, DNS IP changes, Ping, traceroute, MTR, port results, and retained target events. JSON reports use `schema_version: 1`; fields ending in `_ms` are milliseconds. `statistics` reuses the existing JSON target summary, including its `loss_rate_pct` denominator (sent probes) and separate cancelled probes.
 
 The most recent 128 removed targets, 128 events per target, and 64 destination IP history entries are retained; reports include omitted-entry counts. YAML reload starts a new collection and clears earlier targets and removal history. Manual reset starts a new ping statistics window; when stopped, port/HTTP results retain their previous counters. Measurements and auxiliary checks are captured sequentially within the recorded capture interval. Reports contain aggregate results and retained events; use CSV output for ongoing individual ping records.
+
+Reports are saved with owner-only read/write permissions (`0600`). When launched through sudo, ownership is assigned to the user who invoked sudo; setuid installations use the real user and group IDs. Ownership is set before publication; failure leaves no final report.
 
 Existing files, including symlink destinations, are preserved. Each save writes a temporary file in the destination directory and atomically publishes the complete new file. Active CSV/JSON output paths are reserved for their existing writers. On a save error, choose a new writable path and retry with **w**.
 

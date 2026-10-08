@@ -79,14 +79,10 @@ func TestReportSimulationSavesSessionAndSelectedDuplicate(t *testing.T) {
 	screen.InjectKey(tcell.KeyRune, 'w', tcell.ModNone)
 	wait("Save session report")
 	screen.InjectKey(tcell.KeyCtrlU, 0, tcell.ModNone)
-	for _, r := range "qfwz.txt" {
+	for _, r := range "qfwz.json" {
 		screen.InjectKey(tcell.KeyRune, r, tcell.ModNone)
 	}
-	screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
-	screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
-	screen.InjectKey(tcell.KeyDown, 0, tcell.ModNone)
-	screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
-	screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
+	wait("Format: JSON (.json)")
 	screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
 	select {
 	case r := <-requests:
@@ -102,7 +98,6 @@ func TestReportSimulationSavesSessionAndSelectedDuplicate(t *testing.T) {
 	wait(fmt.Sprintf("Target #%d", b.ID))
 	screen.InjectKey(tcell.KeyRune, 'w', tcell.ModNone)
 	wait(fmt.Sprintf("Save target #%d report", b.ID))
-	screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
 	screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
 	screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
 	select {
