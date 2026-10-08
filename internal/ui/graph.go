@@ -46,11 +46,12 @@ func (s icmpSeries) seriesSnapshot() ([]time.Duration, time.Duration) {
 // GraphView is a custom primitive for rendering RTT graphs
 type GraphView struct {
 	*tview.Box
-	targets   []*stats.TargetStats
-	interval  time.Duration
-	vividCyan tcell.Color
-	vividRed  tcell.Color
-	scrollRow int
+	targets      []*stats.TargetStats
+	interval     time.Duration
+	vividCyan    tcell.Color
+	vividRed     tcell.Color
+	scrollRow    int
+	includePorts bool
 
 	// Auto-scale state. Accessed from Draw only, which — like the rest of
 	// the ui package's mutable render state (see viewState, tableRenderer)
@@ -84,6 +85,11 @@ func (g *GraphView) buildSeries(historyWindow int) []graphSeries {
 	for _, t := range g.targets {
 		v := t.GetViewWindow(historyWindow)
 		out = append(out, icmpSeries{label: v.Host, history: v.History, lastRTT: v.LastRTT})
+		if g.includePorts {
+			for _, port := range v.PortResults {
+				out = append(out, icmpSeries{label: fmt.Sprintf("%s %d/%s", v.Host, port.Port, port.Protocol), history: port.History, lastRTT: port.RTT})
+			}
+		}
 	}
 	return out
 }

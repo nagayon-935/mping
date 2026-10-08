@@ -11,15 +11,18 @@ type ExportSnapshot struct {
 
 // TargetSummary is a JSON-serialisable summary for a single ping target.
 type TargetSummary struct {
-	Host    string `json:"host"`
-	IP      string `json:"ip"`
-	ASN     string `json:"asn,omitempty"`
-	Country string `json:"country,omitempty"`
-	Org     string `json:"org,omitempty"`
-	PTR     string `json:"ptr,omitempty"`
-	Sent    int    `json:"sent"`
-	Recv    int    `json:"recv"`
-	Loss    int    `json:"loss"`
+	ID        uint64    `json:"id"`
+	StartedAt time.Time `json:"started_at"`
+	Cancelled int       `json:"cancelled,omitempty"`
+	Host      string    `json:"host"`
+	IP        string    `json:"ip"`
+	ASN       string    `json:"asn,omitempty"`
+	Country   string    `json:"country,omitempty"`
+	Org       string    `json:"org,omitempty"`
+	PTR       string    `json:"ptr,omitempty"`
+	Sent      int       `json:"sent"`
+	Recv      int       `json:"recv"`
+	Loss      int       `json:"loss"`
 	// Duplicates and LateReplies are omitempty since the overwhelming
 	// majority of runs never see either; see stats.TargetStats' fields of
 	// the same name for what each counts and why neither is folded into
@@ -97,12 +100,24 @@ func durationMs(d time.Duration) float64 {
 // If targets is nil or empty, Targets in the returned snapshot is a non-nil,
 // empty slice (JSON encodes as [] rather than null).
 func BuildSnapshot(targets []*TargetStats, httpResults []*HTTPCheckResult) ExportSnapshot {
+	views := make([]TargetView, len(targets))
+	for i, t := range targets {
+		views[i] = t.GetView()
+	}
+	httpViews := make([]HTTPCheckView, len(httpResults))
+	for i, r := range httpResults {
+		httpViews[i] = r.GetView()
+	}
+	return BuildSnapshotFromViews(views, httpViews)
+}
+
+// BuildSnapshotFromViews converts immutable measurements without reading live state again.
+func BuildSnapshotFromViews(targets []TargetView, httpResults []HTTPCheckView) ExportSnapshot {
 	snap := ExportSnapshot{
 		Timestamp: time.Now().UTC(),
 		Targets:   make([]TargetSummary, 0, len(targets)),
 	}
-	for _, t := range targets {
-		v := t.GetView()
+	for _, v := range targets {
 
 		var lossRatePct float64
 		if v.Sent > 0 {
@@ -152,6 +167,7 @@ func BuildSnapshot(targets []*TargetStats, httpResults []*HTTPCheckResult) Expor
 		}
 
 		snap.Targets = append(snap.Targets, TargetSummary{
+			ID: v.ID, StartedAt: v.StartedAt, Cancelled: v.Cancelled,
 			Host:             v.Host,
 			IP:               v.IP,
 			ASN:              v.ASN,
@@ -181,8 +197,7 @@ func BuildSnapshot(targets []*TargetStats, httpResults []*HTTPCheckResult) Expor
 		})
 	}
 
-	for _, r := range httpResults {
-		v := r.GetView()
+	for _, v := range httpResults {
 		snap.HTTPChecks = append(snap.HTTPChecks, HTTPCheckSummary{
 			URL:        v.URL,
 			Status:     v.Status,

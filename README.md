@@ -284,13 +284,36 @@ See [examples/hosts-groups.yaml](examples/hosts-groups.yaml) for a runnable exam
 | **S** | Restart measurements with new workers, preserving statistics (after **s**) |
 | **R** | Reset statistics and UI logs; remain stopped if measurements are stopped |
 | **a** | Open "Add host" dialog — type a hostname or IP and press Enter to add it at runtime |
-| **d** | Open "Delete host" input — type the hostname or IP shown in the Ping Monitor table and press Enter to remove it at runtime |
+| **d** | Confirm deletion of the selected target, or the target currently shown in details |
 | **Tab** | Cycle focus: Ping Monitor → Traceroute Monitor → MTR Monitor → Port Monitor → HTTP Monitor → RTT Graphs → Log |
-| **↑ / ↓ / PgUp / PgDn** | Scroll focused pane (Table / Traceroute / RTT Graphs) |
+| **↑ / ↓ / PgUp / PgDn** | Select hosts in Ping Monitor; scroll other panes and host details |
+| **Enter** | Open selected host details: statistics, routes, MTR, ports, graphs, and target events |
+| **Esc** | Return from details, or restore the layout after maximizing a pane |
+| **f** | Fold or expand the focused pane |
+| **z** | Maximize the focused pane or restore its previous layout |
+| **w** | Save a session report from the overview, or one target from details |
 
-> **Note:** Adding or deleting a host resets all statistics for all targets, equivalent to a YAML configuration reload.
+Deletion opens a confirmation showing the host, target ID, IP, and DSCP. **Cancel** (`キャンセル`) is selected initially; Enter cancels. Use Tab or the left/right arrows to select **Delete** (`削除`), then Enter to confirm. Esc cancels, and repeated `d` does not confirm. Measurements continue while the dialog is open. Cancelling restores the previous focus and scroll position. Re-adding a deleted target starts a new measurement. For the last remaining target, the dialog explains that **q** exits mping; **Enter** or **Esc** returns to monitoring.
+
+Pane folding and maximization are available in the overview. Folded title rows remain reachable with Tab; press `f` to expand them. Measurements continue while panes are hidden. Tab stays within the maximized pane until it is restored.
+
+> Live host edits preserve surviving targets' statistics, graphs, routes, port results, and independent HTTP checks. Editing a stopped session does not resume it. Re-adding a deleted host starts a new measurement. Existing `--count` budgets and the session's `--duration` deadline are preserved. Outstanding probes cancelled by deletion or stopping are exported as `cancelled`, not packet loss. YAML configuration reloads still reinitialize measurements and statistics.
+>
+> Selection and deletion use stable target IDs, including duplicate host names and DSCP variants. Echo IDs are never recycled within a session; after 32,768 worker allocations across initial starts, additions, and restarts, restart mping to obtain a fresh session.
 
 Stop, restart and reset operations execute in keypress order. A running reset discards results from probes sent before the reset and recreates enabled route/port/HTTP monitors. It keeps the remaining `--count` budget; restarting starts a fresh budget. When stopped, reset clears ping and MTR counters while preserving the last route and port/HTTP results. Quitting waits for measurement workers before writing the final JSON snapshot.
+
+### Saving investigation results
+
+Press **w**, enter a new file path ending in **.txt** or **.json**, and press **Enter** or activate **Save**. The format is inferred from the extension and displayed below the input; no format selector is needed. A missing extension defaults to `.txt`; other extensions are rejected. **Tab** moves between fields and buttons; **Esc** cancels. Saving from the overview includes all active targets, retained final results of removed targets, and independent HTTP checks. Saving from host details includes only that target. Measurements continue during capture and writing; completion or errors appear in the footer and Log.
+
+Reports include the session and collection start times, capture interval, stable target IDs, ping statistics window, effective settings, DNS IP changes, Ping, traceroute, MTR, port results, and retained target events. JSON reports use `schema_version: 1`; fields ending in `_ms` are milliseconds. `statistics` reuses the existing JSON target summary, including its `loss_rate_pct` denominator (sent probes) and separate cancelled probes.
+
+The most recent 128 removed targets, 128 events per target, and 64 destination IP history entries are retained; reports include omitted-entry counts. YAML reload starts a new collection and clears earlier targets and removal history. Manual reset starts a new ping statistics window; when stopped, port/HTTP results retain their previous counters. Measurements and auxiliary checks are captured sequentially within the recorded capture interval. Reports contain aggregate results and retained events; use CSV output for ongoing individual ping records.
+
+Reports are saved with owner-only read/write permissions (`0600`). When launched through sudo, ownership is assigned to the user who invoked sudo; setuid installations use the real user and group IDs. Ownership is set before publication; failure leaves no final report.
+
+Existing files, including symlink destinations, are preserved. Each save writes a temporary file in the destination directory and atomically publishes the complete new file. Active CSV/JSON output paths are reserved for their existing writers. On a save error, choose a new writable path and retry with **w**.
 
 ## Shell completion
 

@@ -2,6 +2,7 @@ package stats
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -74,7 +75,22 @@ func (r *PortCheckResult) GetView() PortCheckView {
 }
 
 // TargetStats holds the statistics for a single ping target.
+var targetIDs atomic.Uint64
+
+type IPChange struct {
+	At time.Time `json:"at"`
+	IP string    `json:"ip"`
+}
+
 type TargetStats struct {
+	ID              uint64 // Immutable identity; never reused within this process.
+	StartedAt       time.Time
+	WindowStartedAt time.Time
+	DSCP            string
+	IPHistory       []IPChange
+	IPChanges       int
+	Cancelled       int
+
 	Host             string
 	IP               string
 	ASN              string
@@ -121,8 +137,10 @@ type TargetStats struct {
 	rtt rttAccumulator
 
 	// Jitter (RFC 1889)
-	jitter     int64  // Stored as nanoseconds for smooth calculation
-	probeEpoch uint64 // Reset invalidates every probe from the previous window.
+	jitter        int64 // Stored as nanoseconds for smooth calculation
+	events        []Event
+	eventsDropped int
+	probeEpoch    uint64 // Reset invalidates every probe from the previous window.
 
 	mu sync.RWMutex
 }
@@ -200,6 +218,14 @@ func reconstructHistoryWindow(buf []time.Duration, idx, length, n int) []time.Du
 
 // TargetView represents a read-only snapshot of the stats for UI rendering.
 type TargetView struct {
+	ID              uint64
+	StartedAt       time.Time
+	WindowStartedAt time.Time
+	DSCP            string
+	IPHistory       []IPChange
+	IPChanges       int
+	Cancelled       int
+
 	Host             string
 	IP               string
 	ASN              string
@@ -235,8 +261,12 @@ type TargetView struct {
 }
 
 func NewTargetStats(host string) *TargetStats {
+	now := time.Now()
 	return &TargetStats{
-		Host: host,
+		Host:            host,
+		ID:              targetIDs.Add(1),
+		StartedAt:       now,
+		WindowStartedAt: now,
 	}
 }
 
@@ -270,6 +300,11 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 	}
 
 	return TargetView{
+		DSCP: t.DSCP, IPHistory: append([]IPChange(nil), t.IPHistory...), IPChanges: t.IPChanges,
+		ID:               t.ID,
+		StartedAt:        t.StartedAt,
+		WindowStartedAt:  t.WindowStartedAt,
+		Cancelled:        t.Cancelled,
 		Host:             t.Host,
 		IP:               t.IP,
 		ASN:              t.ASN,
@@ -340,6 +375,16 @@ func (t *TargetStats) SetIP(ip string) {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.IP != ip {
+		t.recordEventLocked("dns", "IP: "+t.IP+" → "+ip)
+		if t.IP != "" {
+			t.IPChanges++
+		}
+		t.IPHistory = append(t.IPHistory, IPChange{At: time.Now(), IP: ip})
+		if len(t.IPHistory) > 64 {
+			t.IPHistory = append([]IPChange(nil), t.IPHistory[len(t.IPHistory)-64:]...)
+		}
+	}
 	t.IP = ip
 }
 
@@ -419,6 +464,9 @@ func (t *TargetStats) OnSuccess(rtt time.Duration, ttl int) {
 }
 
 func (t *TargetStats) onSuccessLocked(rtt time.Duration, ttl int) {
+	if t.LastError != "" {
+		t.recordEventLocked("recovery", "Ping replies resumed")
+	}
 	// RFC 1889 Jitter Calculation: J = J + (|D| - J) / 16
 	if t.Recv > 0 {
 		t.jitter = updateJitter(t.jitter, rtt, t.LastRTT)
@@ -474,6 +522,7 @@ func (t *TargetStats) onFailureLocked(reason string) {
 	t.Loss++
 	t.LastLossTime = time.Now()
 	t.LastError = reason
+	t.recordEventLocked("ping", reason)
 	t.rtt.appendHistory(0, historySize)
 }
 
@@ -482,7 +531,10 @@ func (t *TargetStats) Reset() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.probeEpoch++
+	t.WindowStartedAt = time.Now()
+	t.recordEventLocked("reset", "Statistics reset")
 	t.Sent = 0
+	t.Cancelled = 0
 	t.Recv = 0
 	t.Loss = 0
 	t.Duplicates = 0

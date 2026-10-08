@@ -276,12 +276,20 @@ type Pinger struct {
 	// entries for the same host can use different IPv6 traffic classes.
 	TargetDSCP map[*stats.TargetStats]int
 
-	connV4      PacketConnV4
-	connV6      PacketConnV6
-	targetMap   map[int]*stats.TargetStats
-	targetChans map[int]chan Reply
-	mapMu       sync.RWMutex
-	baseID      int
+	connV4           PacketConnV4
+	connV6           PacketConnV6
+	targetMap        map[int]*stats.TargetStats
+	targetChans      map[int]chan Reply
+	mapMu            sync.RWMutex
+	baseID           int
+	ids              *IDAllocator
+	dynamicMu        sync.Mutex // Serializes AddTarget/RemoveTarget with Start.
+	workerStates     map[*stats.TargetStats]*targetWorker
+	workerEvents     chan struct{}
+	activeWorkers    int
+	nextWorkerID     int
+	interval         time.Duration
+	resolveAddresses map[*stats.TargetStats]string
 
 	// probeTimeout mirrors the timeout passed to Start, kept so
 	// handleEchoReply's isPlausibleRTT sanity check has a timeout to
@@ -341,6 +349,7 @@ type listenPacketFunc func(network, address string) (net.PacketConn, error)
 var bindToInterfaceFn = bindToInterface
 
 type Options struct {
+	IDs *IDAllocator // Shared for the session, including explicit restarts.
 	// Context-aware hooks must honor cancellation. Default DNS uses these
 	// hooks synchronously on the owning worker/trace. Context-free hooks are
 	// retained for compatibility: their bounded adapters may outlive Stop,
@@ -429,6 +438,10 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Pinger{
 		Targets:            targets,
+		ids:                opts.IDs,
+		workerStates:       make(map[*stats.TargetStats]*targetWorker),
+		workerEvents:       make(chan struct{}, 1),
+		resolveAddresses:   make(map[*stats.TargetStats]string),
 		targetMap:          make(map[int]*stats.TargetStats),
 		targetChans:        make(map[int]chan Reply),
 		asnCache:           make(map[string]ASNInfo),
@@ -504,6 +517,7 @@ func (p *Pinger) Stop() {
 
 func (p *Pinger) Start(interval, timeout time.Duration) error {
 	p.probeTimeout = timeout
+	p.interval = interval
 
 	var errV4, errV6 error
 
@@ -557,22 +571,17 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 
 	p.armDSCP()
 
-	// Register targets and start workers
-	p.workers.Add(len(p.Targets))
+	// Allocate the entire initial set before starting any workers.
+	ids := make([]int, len(p.Targets))
+	for i := range p.Targets {
+		id, err := p.allocateWorkerID()
+		if err != nil {
+			return err
+		}
+		ids[i] = id
+	}
 	for i, t := range p.Targets {
-		id := (p.baseID + i) & 0xffff
-
-		p.mapMu.Lock()
-		p.targetMap[id] = t
-		p.targetChans[id] = make(chan Reply, replyChanBuffer)
-		p.mapMu.Unlock()
-
-		p.wg.Add(1)
-		go func(t *stats.TargetStats, id int) {
-			defer p.wg.Done()
-			defer p.workers.Done()
-			p.runWorker(t, id, interval, timeout)
-		}(t, id)
+		p.launchTarget(t, ids[i])
 	}
 
 	// Start Receivers
@@ -948,8 +957,21 @@ func (p *Pinger) resolveIPAddrContext(ctx context.Context, network, address stri
 // Returns the resolved address, or nil if resolution failed or the pinger
 // was stopped mid-resolution.
 func (p *Pinger) resolveTarget(t *stats.TargetStats) *net.IPAddr {
+	return p.resolveTargetContext(context.Background(), t)
+}
+
+func (p *Pinger) resolveTargetContext(ctx context.Context, t *stats.TargetStats) *net.IPAddr {
 	probe := t.NewProbe()
-	addr, err := p.resolveIPAddrBounded("ip", t.Host)
+	p.mapMu.RLock()
+	address := p.resolveAddresses[t]
+	p.mapMu.RUnlock()
+	if address == "" {
+		address = t.Host
+	}
+	addr, err := p.resolveIPAddrContext(ctx, "ip", address)
+	if ctx.Err() != nil {
+		return nil
+	}
 	if err != nil {
 		// A stop is not a ping failure: recording one here would inflate
 		// the loss count printed by printExitSummary on the way out.
@@ -1153,6 +1175,8 @@ func (p *Pinger) lookupOrg(asnNumber string) (string, error) {
 // dscpFor returns the override belonging to this target instance. Without an
 // override, the write uses the socket-wide default armed by Start.
 func (p *Pinger) dscpFor(t *stats.TargetStats) (int, bool) {
+	p.mapMu.RLock()
+	defer p.mapMu.RUnlock()
 	if p.TargetDSCP == nil {
 		return 0, false
 	}
@@ -1402,7 +1426,11 @@ func rearmSweepTimer(sweepTimer *time.Timer, unacked map[int]pendingProbe, timeo
 // been resolved, then returns. This is the same "wait out the stragglers
 // before reporting the final tally" idea as ping.c's almost_done.
 func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.Duration) {
-	dstAddr := p.resolveTarget(t)
+	p.runTargetWorker(t, id, interval, timeout, context.Background())
+}
+
+func (p *Pinger) runTargetWorker(t *stats.TargetStats, id int, interval, timeout time.Duration, ctx context.Context) {
+	dstAddr := p.resolveTargetContext(ctx, t)
 
 	seq := p.initialSeq
 	// sendTimer fires once immediately (duration 0) for the first probe,
@@ -1435,6 +1463,11 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 	payload := buildPayload(p.Size)
 
 	unacked := make(map[int]pendingProbe)
+	defer func() {
+		for _, probe := range unacked {
+			probe.stats.OnCancelled()
+		}
+	}()
 	// hist remembers how recently-resolved wire seqs were resolved, so a
 	// reply that no longer matches `unacked` can be classified as a
 	// duplicate or a late arrival instead of just discarded (see
@@ -1460,9 +1493,11 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 		select {
 		case <-p.done:
 			return
+		case <-ctx.Done():
+			return
 
 		case <-dnsTicker.C:
-			if newAddr := p.resolveTarget(t); newAddr != nil {
+			if newAddr := p.resolveTargetContext(ctx, t); newAddr != nil {
 				dstAddr = newAddr
 			}
 
@@ -1471,7 +1506,7 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 				continue
 			}
 			if dstAddr == nil {
-				if addr := p.resolveTarget(t); addr != nil {
+				if addr := p.resolveTargetContext(ctx, t); addr != nil {
 					dstAddr = addr
 				} else {
 					sendTimer.Reset(interval) // retry resolution on the next tick, as before

@@ -38,7 +38,10 @@ type inputHandlerDeps struct {
 	// rows are now rendered only within the visible scroll window, so
 	// without this a scroll could momentarily show blank rows until the
 	// next tick populates them.
-	forceUpdate func()
+	forceUpdate    func()
+	navigate       func(tcell.Key)
+	openDetails    func()
+	deleteSelected func()
 
 	traceEnabled bool
 	mtrEnabled   bool
@@ -82,7 +85,7 @@ func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.Even
 		}
 		switch state {
 		case monitorRunning:
-			d.footer.SetText("Tab: Focus | a: Add host | d: Del host | q: Quit | s: Stop | R: Reset")
+			d.footer.SetText("Enter Detail | Tab Pane | f Fold | z Max | w Save | a Add | d Del | s Stop | q Quit")
 		case monitorStopping:
 			d.footer.SetText("Stopping... Press 'S' to restart after stop, 'q' to quit")
 		case monitorStopped:
@@ -108,7 +111,16 @@ func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.Even
 		}
 		if d.app.GetFocus() == d.table {
 			switch event.Key() {
+			case tcell.KeyEnter:
+				if d.openDetails != nil {
+					d.openDetails()
+					return nil
+				}
 			case tcell.KeyUp, tcell.KeyDown, tcell.KeyPgUp, tcell.KeyPgDn:
+				if d.navigate != nil {
+					d.navigate(event.Key())
+					return nil
+				}
 				rowOffset, colOffset := d.table.GetOffset()
 				totalRows := *d.rowCount
 				visibleRows := tableMaxRows + 1
@@ -199,6 +211,10 @@ func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.Even
 				return nil
 			}
 		case 'd':
+			if d.deleteSelected != nil {
+				d.deleteSelected()
+				return nil
+			}
 			if d.onDeleteHost != nil {
 				d.pages.SwitchToPage("deleteHost")
 				d.app.SetFocus(d.deleteHostInput)

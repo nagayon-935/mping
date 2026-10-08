@@ -75,6 +75,7 @@ func (s *supervisor) do(k cmdKind) error {
 // publish republishes the values read outside the command loop. httpResults()
 // is called by the render loop every tick, so it cannot go through the queue.
 func (s *supervisor) publish() {
+	s.publishTargets()
 	if s.httpChecker != nil {
 		r := s.httpChecker.Results()
 		s.httpSnap.Store(&r)

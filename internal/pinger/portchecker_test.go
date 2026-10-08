@@ -398,3 +398,21 @@ func TestPortChecker_LoopStopsWhileWaitingForIP(t *testing.T) {
 		t.Fatal("Wait() did not return after Stop() while waiting for IP")
 	}
 }
+
+func TestPortTargetEditsKeepSurvivingResult(t *testing.T) {
+	a, b := stats.NewTargetStats("a"), stats.NewTargetStats("b")
+	a.SetIP("127.0.0.1")
+	b.SetIP("127.0.0.1")
+	pc := NewPortChecker([]*stats.TargetStats{a}, []PortSpec{{Port: 1, Protocol: "tcp"}}, time.Hour, 10*time.Millisecond, BindConfig{})
+	pc.Start()
+	defer func() { pc.Stop(); pc.Wait() }()
+	awaitTarget(t, a, func(v stats.TargetView) bool { return v.PortResults[0].ClosedCount > 0 })
+	result := a.PortResults[0]
+	before := result.GetView()
+	pc.AddTarget(b)
+	awaitTarget(t, b, func(v stats.TargetView) bool { return v.PortResults[0].ClosedCount > 0 })
+	pc.RemoveTarget(b)
+	if a.PortResults[0] != result || a.GetView().PortResults[0].ClosedCount != before.ClosedCount {
+		t.Fatal("surviving port statistics were reset")
+	}
+}

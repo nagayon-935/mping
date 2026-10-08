@@ -932,7 +932,7 @@ func TestRenderPortMonitorTable(t *testing.T) {
 		target.PortResults = []*stats.PortCheckResult{result}
 
 		lastStatuses := map[string]string{
-			"example.com|443/tcp": "Closed",
+			targetViewKey(target.GetView()) + "|443/tcp": "Closed",
 		}
 		errorLogs := []string{}
 		errorView := tview.NewTextView()

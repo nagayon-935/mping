@@ -470,3 +470,25 @@ func TestEngine_OnFlap_NotCalledOnSameRoute(t *testing.T) {
 		t.Error("OnFlap should not be called when route is unchanged")
 	}
 }
+
+func TestEngineTargetEditsKeepSurvivingRunAndSharedLimit(t *testing.T) {
+	a, b := stats.NewTargetStats("a"), stats.NewTargetStats("b")
+	prober := newFakeProber(map[int]pinger.HopReply{1: {SrcIP: "127.0.0.1", Responded: true, ReachedDest: true}})
+	e := NewEngine(prober, []*stats.TargetStats{a}, Config{MaxHops: 1, ProbeInterval: 10 * time.Millisecond, MaxConcurrentProbes: 2})
+	e.Start()
+	defer e.Stop()
+	waitForSent(t, a, 2, time.Second)
+	e.mu.Lock()
+	original := e.targetRuns[a]
+	e.mu.Unlock()
+	before := a.MTR().View()[0].Sent
+	e.AddTarget(b)
+	waitForSent(t, b, 2, time.Second)
+	e.RemoveTarget(b)
+	e.mu.Lock()
+	current := e.targetRuns[a]
+	e.mu.Unlock()
+	if current != original || cap(e.sem) != 2 || a.MTR().View()[0].Sent < before {
+		t.Fatal("surviving run or shared limit changed")
+	}
+}

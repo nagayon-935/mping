@@ -18,9 +18,15 @@ const (
 
 var newApplication = tview.NewApplication
 
+type TargetSet struct {
+	Targets []*stats.TargetStats
+	Groups  []TargetGroup
+}
+
 // RunOptions contains all parameters for the Run function.
 type RunOptions struct {
 	Targets      []*stats.TargetStats
+	TargetSource func() TargetSet
 	Interval     time.Duration
 	Timeout      time.Duration
 	DoneCh       chan struct{} // receives count-completion notifications; nil means unlimited
@@ -70,11 +76,13 @@ type RunOptions struct {
 	OnResetPort  func()
 	OnResetHTTP  func()
 	// OnAddHost is called when the user adds a host via the 'a' key dialog.
-	// A non-nil error is displayed in the Log pane; nil triggers a reload.
+	// A non-nil error is displayed in the Log pane; nil updates the live target list.
 	OnAddHost func(host string) error
 	// OnDeleteHost is called when the user deletes a host via the 'd' key dialog.
-	// A non-nil error is displayed in the Log pane; nil triggers a reload.
-	OnDeleteHost func(host string) error
+	// A non-nil error is displayed in the Log pane; nil updates the live target list.
+	OnDeleteHost   func(host string) error
+	OnDeleteTarget func(id uint64) error
+	OnSaveReport   func(path, format string, selectedID uint64) error
 	// Groups defines named groups of targets for grouped display.
 	// Nil means flat (ungrouped) layout — existing behaviour.
 	Groups []TargetGroup
@@ -165,6 +173,16 @@ func Run(opts RunOptions) error {
 	tr := newTableRenderer(targets, sourceIPv4, sourceIPv6, packetSize, asnEnabled, ptrEnabled, dscpEnabled, groups,
 		table, tablePane, initialLogs, vs)
 	tr.sidePanes = sidePanes
+	tr.selectionEnabled = true
+	if opts.TargetSource != nil {
+		tr.beforeUpdate = func() {
+			set := opts.TargetSource()
+			targets = set.Targets
+			tr.targets = targets
+			tr.groups = set.Groups
+			graphView.targets = targets
+		}
+	}
 
 	header := tview.NewTextView().
 		SetText(fmt.Sprintf("MPING - Multi Ping Tool | Interval: %dms", interval.Milliseconds())).
@@ -174,7 +192,7 @@ func Run(opts RunOptions) error {
 	header.SetBackgroundColor(tcell.ColorBlack)
 
 	footer := tview.NewTextView().
-		SetText("Tab: Focus | a: Add host | d: Del host | q: Quit | s: Stop | R: Reset").
+		SetText("Enter Detail | Tab Pane | f Fold | z Max | w Save | a Add | d Del | s Stop | q Quit").
 		SetTextAlign(tview.AlignCenter).
 		SetTextColor(tcell.ColorYellow).
 		SetWrap(false)
@@ -206,7 +224,97 @@ func Run(opts RunOptions) error {
 	wireHostInputs(app, table, pages, addHostInput, deleteHostInput, vs, session, onAddHost, onDeleteHost)
 
 	// Keys
-	session.bind(app, newInputHandler(inputHandlerDeps{
+	mainLayout := buildLayout(header, tablePane, sidePanes, graphView, errorView, pages)
+	controls := newPaneControls(app, mainLayout, header, pages, table, tablePane, sidePanes, graphView, errorView)
+	root := tview.NewPages().AddPage("main", mainLayout, true, true)
+	details := newHostDetails(opts)
+	root.AddPage("details", details.pane, true, false)
+	var reportDialog *saveDialog
+	var deleteConfirmation *deleteDialog
+	var reportReturnFocus tview.Primitive = table
+	closeDetails := func() {
+		details.open = false
+		if (reportDialog != nil && reportDialog.open) || (deleteConfirmation != nil && deleteConfirmation.open) {
+			return
+		}
+		root.SwitchToPage("main")
+		app.SetFocus(table)
+	}
+	notifyResult := func(message string, failed bool) {
+		color := "green"
+		if failed {
+			color = "red"
+		}
+		text := "[" + color + "]" + tview.Escape(message) + "[-]"
+		vs.appendLog(text)
+		footer.SetDynamicColors(true).SetText(text)
+		if details.open {
+			details.footer.SetDynamicColors(true).SetText(text + " | w: Save | Esc: Back")
+		}
+	}
+	reportDialog = newSaveDialog(app, root, session, opts.OnSaveReport, func() {
+		if details.open {
+			root.SwitchToPage("details")
+			app.SetFocus(details.text)
+		} else {
+			root.SwitchToPage("main")
+			app.SetFocus(reportReturnFocus)
+		}
+	}, notifyResult)
+	tr.afterUpdate = func() {
+		if details.open && !details.refresh(targets) {
+			closeDetails()
+			vs.appendLog("[yellow]Selected target was removed; returned to overview[-]")
+		}
+	}
+	deleteConfirmation = newDeleteDialog(app, root, func(id uint64, host string) {
+		if !session.Submit(func() {
+			err := opts.OnDeleteTarget(id)
+			session.Post(func() {
+				if err != nil {
+					notifyResult("Delete target: "+err.Error(), true)
+				} else {
+					notifyResult(host+" を削除しました", false)
+				}
+				tr.update()
+				if err != nil && len(targets) == 1 && targets[0].ID == id {
+					deleteConfirmation.show(targets[0], true)
+				}
+			})
+		}) {
+			vs.appendLog("[yellow]Operation queue full; please try again[-]")
+		}
+	}, func(focus tview.Primitive) {
+		if !details.open && (focus == details.text || focus == details.graph) {
+			root.SwitchToPage("main")
+			app.SetFocus(table)
+		} else {
+			app.SetFocus(focus)
+		}
+	})
+	deleteConfirmation.quit = func() { session.Stop(); app.Stop() }
+	deleteSelected := func() {
+		if opts.OnDeleteTarget == nil {
+			return
+		}
+		id := tr.selectedID
+		if details.open {
+			id = details.targetID
+		}
+		// Refresh membership without substituting a new selection for a
+		// target that disappeared before the keypress was handled.
+		tr.update()
+		if id == 0 {
+			id = tr.selectedID
+		}
+		for _, target := range targets {
+			if target.ID == id {
+				deleteConfirmation.show(target, len(targets) == 1)
+				return
+			}
+		}
+	}
+	input := newInputHandler(inputHandlerDeps{
 		app:             app,
 		table:           table,
 		addHostInput:    addHostInput,
@@ -219,27 +327,90 @@ func Run(opts RunOptions) error {
 		rowCount:        &tr.rowCount,
 		vs:              vs,
 		forceUpdate:     tr.update,
-		traceEnabled:    traceEnabled,
-		mtrEnabled:      mtrEnabled,
-		portEnabled:     portEnabled,
-		httpEnabled:     httpEnabled,
-		onStop:          onStop,
-		onRestart:       onRestart,
-		onReset:         opts.OnReset,
-		onResetTrace:    onResetTrace,
-		onResetMTR:      onResetMTR,
-		onResetPort:     onResetPort,
-		onResetHTTP:     onResetHTTP,
-		onAddHost:       onAddHost,
-		onDeleteHost:    onDeleteHost,
-		session:         session,
-	}))
+		navigate:        tr.moveSelection,
+		openDetails: func() {
+			tr.update()
+			if target := tr.selectedTarget(); target != nil {
+				details.targetID = target.ID
+				details.open = true
+				details.refresh(targets)
+				details.text.ScrollToBeginning()
+				details.graph.scrollRow = 0
+				root.SwitchToPage("details")
+				app.SetFocus(details.text)
+			}
+		},
+		deleteSelected: func() {
+			if opts.OnDeleteTarget != nil {
+				deleteSelected()
+			} else {
+				pages.SwitchToPage("deleteHost")
+				app.SetFocus(deleteHostInput)
+			}
+		},
+		traceEnabled: traceEnabled,
+		mtrEnabled:   mtrEnabled,
+		portEnabled:  portEnabled,
+		httpEnabled:  httpEnabled,
+		onStop:       onStop,
+		onRestart:    onRestart,
+		onReset:      opts.OnReset,
+		onResetTrace: onResetTrace,
+		onResetMTR:   onResetMTR,
+		onResetPort:  onResetPort,
+		onResetHTTP:  onResetHTTP,
+		onAddHost:    onAddHost,
+		onDeleteHost: onDeleteHost,
+		session:      session,
+	})
+	session.bind(app, func(event *tcell.EventKey) *tcell.EventKey {
+		if deleteConfirmation.open {
+			return deleteConfirmation.handle(event)
+		}
+		if reportDialog.open {
+			return reportDialog.handle(event)
+		}
+		if event.Rune() == 'w' && app.GetFocus() != addHostInput && app.GetFocus() != deleteHostInput && opts.OnSaveReport != nil {
+			id := uint64(0)
+			if details.open {
+				id = details.targetID
+			}
+			if !details.open {
+				reportReturnFocus = app.GetFocus()
+			}
+			reportDialog.show(id)
+			return nil
+		}
+		if details.open {
+			switch event.Key() {
+			case tcell.KeyEscape:
+				closeDetails()
+				return nil
+			case tcell.KeyTab:
+				if app.GetFocus() == details.text {
+					app.SetFocus(details.graph)
+				} else {
+					app.SetFocus(details.text)
+				}
+				return nil
+			}
+			if event.Rune() == 'd' {
+				deleteSelected()
+				return nil
+			}
+			if event.Rune() != 'q' && event.Rune() != 's' && event.Rune() != 'S' && event.Rune() != 'R' {
+				return event
+			}
+		}
+		if !details.open && controls.handle(event) {
+			return nil
+		}
+		return input(event)
+	})
 	startRefreshLoop(app, tr, footer, interval, updateTickerCh, externalLogCh, externalCloseCh, doneCh,
 		vs, session)
 
-	flex := buildLayout(header, tablePane, sidePanes, graphView, errorView, pages)
-
-	err := app.SetRoot(flex, true).Run()
+	err := app.SetRoot(root, true).Run()
 	session.Stop() // also covers Ctrl-C, terminal failure, and external app.Stop
 	return err
 }

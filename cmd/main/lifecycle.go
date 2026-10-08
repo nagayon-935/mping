@@ -162,6 +162,10 @@ func resolverBindConfig(cfg config, specs []targetSpec) pinger.BindConfig {
 func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetStats {
 	targets := initTargets(specs)
 	for i, t := range targets {
+		t.DSCP = cfg.dscp
+		if specs[i].DSCP != "" {
+			t.DSCP = specs[i].DSCP
+		}
 		hostName := specs[i].Host
 		if net.ParseIP(hostName) == nil {
 			if cfg.dnsServer != "" {
@@ -276,10 +280,10 @@ func startWatcher(hostsFile string, onFileChange func(), logCh chan<- string) (c
 	return cancelFn, innerDone
 }
 
-// startJSONWriter launches the periodic JSON snapshot writer goroutine when
+// startLiveJSONWriter launches the periodic JSON snapshot writer goroutine when
 // path is set. When it isn't, it still returns a valid cancel func (safe to
 // call unconditionally) and a pre-closed done channel.
-func startJSONWriter(path string, targets []*stats.TargetStats, httpResults func() []*stats.HTTPCheckResult, errOut io.Writer) (cancel func(), done chan struct{}) {
+func startLiveJSONWriter(path string, targets func() []*stats.TargetStats, httpResults func() []*stats.HTTPCheckResult, errOut io.Writer) (cancel func(), done chan struct{}) {
 	ctx, cancelFn := context.WithCancel(context.Background())
 	doneCh := make(chan struct{})
 	if path == "" {
@@ -293,7 +297,7 @@ func startJSONWriter(path string, targets []*stats.TargetStats, httpResults func
 		for {
 			select {
 			case <-ticker.C:
-				if err := writeJSONSnapshot(path, targets, httpResults()); err != nil {
+				if err := writeJSONSnapshot(path, targets(), httpResults()); err != nil {
 					fmt.Fprintf(errOut, "Warning: JSON snapshot write failed: %v\n", err)
 				}
 			case <-ctx.Done():
