@@ -329,3 +329,40 @@ func TestStartGeneratesAControlToken(t *testing.T) {
 		t.Fatal("two servers share a token")
 	}
 }
+
+func TestStartUsesAConfiguredToken(t *testing.T) {
+	token := strings.Repeat("k", 32)
+	s, err := Start(Options{Port: 0, Source: NewSource(), Token: token})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	got := s.ControlURL()
+
+	if want := s.URL() + "#token=" + token; got != want {
+		t.Fatalf("ControlURL = %q, want %q", got, want)
+	}
+}
+
+func TestStartRejectsWeakOrMalformedTokens(t *testing.T) {
+	for name, token := range map[string]string{
+		"too short":     strings.Repeat("k", minTokenLen-1),
+		"has a space":   strings.Repeat("k", minTokenLen) + " x",
+		"has a newline": strings.Repeat("k", minTokenLen) + "\n",
+		"has a hash":    strings.Repeat("k", minTokenLen) + "#x",
+		"has an amp":    strings.Repeat("k", minTokenLen) + "&x",
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, err := Start(Options{Port: 0, Source: NewSource(), Token: token})
+
+			if err == nil {
+				s.Close()
+				t.Fatal("Start accepted the token, want an error")
+			}
+			if strings.Contains(err.Error(), token) {
+				t.Fatalf("error %q echoes the token", err)
+			}
+		})
+	}
+}
