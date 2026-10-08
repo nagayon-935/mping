@@ -2,25 +2,27 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
-
-	"github.com/nagayon-935/mping/internal/stats"
 )
 
-// handleStream pushes a "snapshot" event on connect and again whenever the
-// stats generation or the source state changes, polling at cfg.streamInterval
-// so a busy pinger never produces more than one event per interval. Idle
-// connections get a comment line every cfg.heartbeatInterval.
-func handleStream(ctx context.Context, src *Source, cfg handlerConfig) http.HandlerFunc {
+// handleStream pushes a "snapshot" event on connect and then whenever the
+// cached snapshot's key moves, polling at cfg.streamInterval so a busy
+// pinger never produces more than one event per interval.
+//
+// The key includes stats.Generation(), which is process-wide and bumped by
+// every probe result, so while pings are running in practice an event goes
+// out on every poll; "nothing changed" only holds when all probing is idle
+// (stopped, finished --count, or between reloads).
+//
+// Idle connections get a comment line every cfg.heartbeatInterval.
+func handleStream(ctx context.Context, cache *snapshotCache, cfg handlerConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rc := http.NewResponseController(w)
 		h := w.Header()
 		h.Set("Content-Type", "text/event-stream")
 		h.Set("Cache-Control", "no-store")
-		h.Set("X-Accel-Buffering", "no")
 		w.WriteHeader(http.StatusOK)
 		if err := rc.Flush(); err != nil {
 			return
@@ -32,25 +34,18 @@ func handleStream(ctx context.Context, src *Source, cfg handlerConfig) http.Hand
 		defer heartbeat.Stop()
 
 		var sent bool
-		var lastGen, lastVersion uint64
+		var last snapshotKey
 		send := func() error {
-			p, _, version := src.load()
-			gen := stats.Generation()
-			if p == nil || (sent && gen == lastGen && version == lastVersion) {
+			body, key, err := cache.get()
+			if err != nil || (sent && key == last) {
+				// No provider yet, or nothing new. An encode failure is
+				// retried on the next poll rather than ending the stream.
 				return nil
 			}
-			snap, err := buildSnapshot(src)
-			if err != nil {
-				return nil
-			}
-			data, err := json.Marshal(snap)
-			if err != nil {
-				return fmt.Errorf("encode snapshot: %w", err)
-			}
-			if _, err := fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", data); err != nil {
+			if _, err := fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", body); err != nil {
 				return err
 			}
-			sent, lastGen, lastVersion = true, gen, version
+			sent, last = true, key
 			return rc.Flush()
 		}
 

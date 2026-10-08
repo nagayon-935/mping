@@ -61,22 +61,19 @@ type sourceState struct {
 }
 
 // Source is the swap point between the long-lived HTTP server and the
-// per-iteration Provider. It is safe for concurrent use.
+// per-iteration Provider. The zero value has no provider and is ready to
+// use; it is safe for concurrent use.
 type Source struct {
 	cur atomic.Pointer[sourceState]
 }
 
 // NewSource returns a Source with no provider; API calls answer 503 until
 // Set is called.
-func NewSource() *Source {
-	s := &Source{}
-	s.cur.Store(&sourceState{})
-	return s
-}
+func NewSource() *Source { return &Source{} }
 
 // Set installs p as the live provider and clears the reloading flag.
 func (s *Source) Set(p Provider) {
-	s.update(func(st sourceState) sourceState {
+	s.update(func(sourceState) sourceState {
 		return sourceState{provider: p}
 	})
 }
@@ -93,8 +90,12 @@ func (s *Source) MarkReloading() {
 func (s *Source) update(f func(sourceState) sourceState) {
 	for {
 		old := s.cur.Load()
-		next := f(*old)
-		next.version = old.version + 1
+		var prev sourceState
+		if old != nil {
+			prev = *old
+		}
+		next := f(prev)
+		next.version = prev.version + 1
 		if s.cur.CompareAndSwap(old, &next) {
 			return
 		}
@@ -105,5 +106,8 @@ func (s *Source) update(f func(sourceState) sourceState) {
 // reload is in progress, and a version that changes on every transition.
 func (s *Source) load() (Provider, bool, uint64) {
 	st := s.cur.Load()
+	if st == nil {
+		return nil, false, 0
+	}
 	return st.provider, st.reloading, st.version
 }
