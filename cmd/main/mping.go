@@ -273,10 +273,12 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	defer closeWebUI(webSrv, errOut)
 
 	runUI := uiRun
+	var headless *headlessRunner
 	if cfg.noTUI {
 		sigs, stopSignals := headlessSignals()
 		defer stopSignals()
-		runUI = newHeadlessRunner(out, sigs, stopSignals).run
+		headless = newHeadlessRunner(out, sigs, stopSignals)
+		runUI = headless.run
 	}
 	showToken := !cfg.noTUI || isTerminal(out)
 
@@ -442,6 +444,13 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		}
 
 		finishIteration(currentCfg, targets, sup, errOut, jsonCancel, jsonDone, watchCancel, watchDone)
+
+		// A signal means exit, even if a hosts-file change armed a reload
+		// while the iteration was ending.
+		if headless != nil && headless.quitRequested() {
+			webSrc.MarkStopped()
+			break
+		}
 
 		var reload bool
 		var expandWarning string

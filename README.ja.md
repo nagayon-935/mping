@@ -484,7 +484,7 @@ mping --no-tui --web -f hosts.yaml
 ```
 
 - TUI の Log ペインに出るログ (経路フラップ、リロード通知、Web からの操作など) をプレーンテキストで stdout に出力し、終了時には通常どおり統計サマリーを表示します。TUI 自身が出すロス率・RTT のアラート行は出力されません。
-- Ctrl-C / SIGTERM、`--count` の完了、`--duration` の経過で終了します。hosts ファイルのリロードでは終了しません。
+- Ctrl-C / SIGTERM、`--count` の完了、`--duration` の経過で終了します。hosts ファイルのリロードでは終了しません (保留中のリロードが Ctrl-C / SIGTERM より優先されることはありません)。終了処理が止まった場合は、もう一度 Ctrl-C を押すと即座に終了します。
 - Web UI の操作用リンクには秘密の token が含まれるため、stdout が端末のときだけ表示します。無人運用では環境変数 `MPING_WEB_TOKEN` で token を指定し (英数字と `-._~` で 16 文字以上。コマンドラインやシェル履歴に残さず、systemd の `EnvironmentFile=` などで渡してください)、`http://127.0.0.1:8080/#token=<指定した token>` を開いてください。`MPING_WEB_TOKEN` は TUI 使用時にも有効です。
 
 ## ライセンス

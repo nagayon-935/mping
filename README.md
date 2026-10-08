@@ -493,7 +493,7 @@ mping --no-tui --web -f hosts.yaml
 ```
 
 - Log lines the TUI would show in its Log pane (route flaps, reload notices, web edits, …) are printed to stdout as plain text, and the usual statistics summary is printed on exit. The TUI's own loss/RTT alert lines are not produced.
-- It exits on Ctrl-C or SIGTERM, when `--count` completes, or when `--duration` elapses; hosts-file reloads keep it running.
+- It exits on Ctrl-C or SIGTERM, when `--count` completes, or when `--duration` elapses; hosts-file reloads keep it running (a pending reload never overrides Ctrl-C/SIGTERM). A second Ctrl-C forces an immediate exit if shutdown stalls.
 - The web control link contains a secret token, so it is printed only when stdout is a terminal. For unattended runs, choose the token yourself with the `MPING_WEB_TOKEN` environment variable (at least 16 characters of letters, digits and `-._~`; keep it out of command lines and shell history, e.g. in a systemd `EnvironmentFile=`) and open `http://127.0.0.1:8080/#token=<your token>`. `MPING_WEB_TOKEN` also applies when the TUI is used.
 
 ## License

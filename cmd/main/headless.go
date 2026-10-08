@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -29,42 +30,71 @@ var isTerminal = func(w io.Writer) bool {
 	return ok && term.IsTerminal(int(f.Fd()))
 }
 
-// headlessRunner stands in for ui.Run under --no-tui (old behaviour, API only).
+// headlessRunner stands in for ui.Run under --no-tui. Each run prints the
+// log lines the TUI would show in its Log pane and returns, like the TUI's
+// 'q', when the iteration should end: a reload or --duration
+// (ExternalCloseCh), --count completion (DoneCh) or SIGINT/SIGTERM.
+//
+// A signal is a request to exit, not just to end the iteration: run()
+// checks quitRequested before honouring any reload that became pending
+// meanwhile. The first signal also hands signal handling back to the OS, so
+// a second Ctrl-C terminates a shutdown that has stalled.
 type headlessRunner struct {
-	out  io.Writer
-	sigs <-chan os.Signal
+	out         io.Writer
+	sigs        <-chan os.Signal
+	stopSignals func()
+	quit        atomic.Bool
 }
 
 func newHeadlessRunner(out io.Writer, sigs <-chan os.Signal, stopSignals func()) *headlessRunner {
-	return &headlessRunner{out: out, sigs: sigs}
+	return &headlessRunner{out: out, sigs: sigs, stopSignals: stopSignals}
 }
 
-func (h *headlessRunner) quitRequested() bool { return false }
+func (h *headlessRunner) quitRequested() bool { return h.quit.Load() }
 
 func (h *headlessRunner) run(opts ui.RunOptions) error {
-	out := h.out
-	logLine := func(line string) { fmt.Fprintln(out, plainLogLine(line)) }
-	note := func(format string, args ...any) {
-		fmt.Fprintf(out, "[%s] %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
-	}
 	for _, line := range opts.InitialLogs {
-		logLine(line)
+		h.logLine(line)
 	}
 	for {
 		select {
 		case line := <-opts.ExternalLogCh:
-			logLine(line)
+			h.logLine(line)
 		case <-opts.ExternalCloseCh:
-			note("Reloading configuration...")
+			h.drain(opts.ExternalLogCh)
+			h.note("Reloading configuration...")
 			return nil
 		case <-opts.DoneCh:
-			note("Finished: --count reached for every target")
+			h.drain(opts.ExternalLogCh)
+			h.note("Finished: --count reached for every target")
 			return nil
 		case s := <-h.sigs:
-			note("Received %s, exiting", s)
+			h.quit.Store(true)
+			h.stopSignals()
+			h.drain(opts.ExternalLogCh)
+			h.note("Received %s, exiting (press Ctrl-C again to force)", s)
 			return nil
 		}
 	}
+}
+
+// drain prints log lines already queued when the iteration ends, so the
+// last route flap or web edit before exiting is not lost.
+func (h *headlessRunner) drain(logCh <-chan string) {
+	for {
+		select {
+		case line := <-logCh:
+			h.logLine(line)
+		default:
+			return
+		}
+	}
+}
+
+func (h *headlessRunner) logLine(line string) { fmt.Fprintln(h.out, plainLogLine(line)) }
+
+func (h *headlessRunner) note(format string, args ...any) {
+	fmt.Fprintf(h.out, "[%s] %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
 }
 
 // plainLogLine renders a Log-pane line without tview colour tags, using
