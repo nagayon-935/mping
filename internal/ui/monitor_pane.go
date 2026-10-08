@@ -29,6 +29,8 @@ type monitorPane struct {
 	// which is why several panes (those that embed a live "N ago" timestamp)
 	// won't hit this cache on most ticks.
 	lastText string
+	// lines is the line count of lastText; the layout sizes the pane to it.
+	lines int
 }
 
 // newMonitorPane constructs a monitor pane. When enabled is false, view and
@@ -74,5 +76,6 @@ func (mp *monitorPane) refresh() {
 		return
 	}
 	mp.lastText = text
+	mp.lines = textLineCount(text)
 	mp.view.SetText(text)
 }
