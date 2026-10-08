@@ -25,7 +25,11 @@ func TestStartupAndReloadValidateEffectiveConfig(t *testing.T) {
 		{name: "invalid host DSCP", yaml: "groups: [{name: qos, hosts: [{host: '::1', dscp: bad}]}]"},
 		{name: "invalid group", yaml: "groups: [{name: empty, hosts: []}]"},
 		{name: "invalid thresholds", yaml: "thresholds: {rtt-warn: 300}"},
+		{name: "zero web port", yaml: "web-port: 0"},
+		{name: "large web port", yaml: "web-port: 65536"},
+		{name: "web enabled from YAML", yaml: "web: true\nweb-port: 18080", valid: true},
 		{name: "CLI interval wins", yaml: "interval: 0", args: []string{"-i", "200"}, valid: true},
+		{name: "CLI web port wins", yaml: "web-port: 0", args: []string{"--web-port", "18080"}, valid: true},
 		{name: "CLI DSCP wins", yaml: "dscp: bad", args: []string{"--dscp", "EF"}, valid: true},
 		{name: "CLI thresholds win", yaml: "thresholds: {rtt-warn: 300}", args: []string{"--rtt-crit", "500"}, valid: true},
 	}
