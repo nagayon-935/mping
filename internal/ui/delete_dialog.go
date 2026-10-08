@@ -39,6 +39,10 @@ func (d *deleteDialog) show(target *stats.TargetStats) {
 	}
 	d.open = true
 	d.modal = tview.NewModal().
+		SetBackgroundColor(tcell.ColorBlack).
+		SetTextColor(tcell.ColorWhite).
+		SetButtonStyle(tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorDarkSlateGray)).
+		SetButtonActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorYellow).Bold(true)).
 		SetText(fmt.Sprintf("このホストを削除しますか？\n\nホスト: %s\n対象: #%d\nIP: %s\nDSCP: %s\n\n再追加すると、新しい測定として開始します。\n\nTab / ←→: 選択  Enter: 確定  Esc: キャンセル", tview.Escape(host), id, tview.Escape(ip), tview.Escape(dscp))).
 		AddButtons([]string{"キャンセル", "削除"}).
 		SetFocus(0).
@@ -53,7 +57,8 @@ func (d *deleteDialog) show(target *stats.TargetStats) {
 				d.confirm(id, host)
 			}
 		})
-	d.modal.SetTitle(" ホスト削除 ").SetBorderColor(tcell.ColorYellow)
+	d.modal.Box.SetBackgroundColor(tcell.ColorBlack)
+	d.modal.SetTitle(" ホスト削除 ").SetTitleColor(tcell.ColorWhite).SetBorderColor(tcell.ColorAqua)
 	// Keep the underlying page visible and refreshing while the dialog is open.
 	d.root.AddPage("deleteConfirm", d.modal, true, true)
 	d.app.SetFocus(d.modal)
