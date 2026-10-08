@@ -243,6 +243,38 @@ groups:
 
 See [examples/hosts-groups.yaml](examples/hosts-groups.yaml) for a runnable example (`mping -f examples/hosts-groups.yaml`).
 
+### Adding many hosts: patterns, names, and include files
+
+Host entries (in `hosts:`, `groups[].hosts:`, and include files) may be patterns that expand to several hosts:
+
+| Pattern | Expands to |
+|---|---|
+| `10.0.0.1-20` | `10.0.0.1` … `10.0.0.20` (last octet) |
+| `10.0.0.250-10.0.1.5` | every IPv4 address in the range |
+| `192.0.2.0/28` | `192.0.2.1` … `192.0.2.14` (IPv4 /30 and wider skip the network and broadcast addresses; IPv6 CIDRs keep every address) |
+| `core-sw{01..12}.lab` | `core-sw01.lab` … `core-sw12.lab` (zero padding is kept; several `{N..M}` form a product) |
+
+A single pattern may expand to at most 1024 hosts and a whole hosts file (including include files) to at most 4096 targets. IPv6 ranges are not supported — use CIDR notation.
+
+Give a host a display `name` to show it instead of the address (the IP is still shown next to it). Names must be unique and must not equal another entry's host; a name cannot be used on a pattern that expands to several hosts.
+
+```yaml
+hosts:
+  - {host: 10.0.0.1, name: core-sw01}
+```
+
+`include:` (top level or per group) appends hosts from text/CSV files, resolved relative to the YAML file. Each line is `host[,name[,dscp]]`; `#` starts a comment and a first line starting with `host` is treated as a header. Include files are watched for changes like the YAML file itself.
+
+```yaml
+groups:
+  - name: Core
+    hosts: ["core-sw{01..04}.lab"]
+  - name: Branches
+    include: [branches.csv, more-branches.txt]
+```
+
+See [examples/hosts-patterns.yaml](examples/hosts-patterns.yaml) and [examples/branches.csv](examples/branches.csv).
+
 ### Options
 
 | Flag | Short | Description | Default |

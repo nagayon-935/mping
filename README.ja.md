@@ -237,6 +237,38 @@ groups:
 
 実行可能なサンプルは [examples/hosts-groups.yaml](examples/hosts-groups.yaml) を参照（`mping -f examples/hosts-groups.yaml`）。
 
+### 大量のホストを追加する: パターン・表示名・include
+
+ホストの指定（`hosts:`・`groups[].hosts:`・include ファイル）には、複数ホストに展開されるパターンを書けます。
+
+| パターン | 展開結果 |
+|---|---|
+| `10.0.0.1-20` | `10.0.0.1` 〜 `10.0.0.20`（最終オクテットの範囲） |
+| `10.0.0.250-10.0.1.5` | 範囲内のすべての IPv4 アドレス |
+| `192.0.2.0/28` | `192.0.2.1` 〜 `192.0.2.14`（IPv4 の /30 以上はネットワーク・ブロードキャストアドレスを除外。IPv6 の CIDR は全アドレス） |
+| `core-sw{01..12}.lab` | `core-sw01.lab` 〜 `core-sw12.lab`（ゼロ埋めを維持。`{N..M}` を複数書くと全組み合わせ） |
+
+1パターンの展開は最大 1024 ホスト、hosts ファイル全体（include を含む）は最大 4096 ターゲットです。IPv6 の範囲指定は非対応のため、CIDR で指定してください。
+
+`name` を付けると、アドレスの代わりにその名前を表示します（IP は名前の横に表示されます）。名前は重複不可で、他のエントリのホストと同じ文字列にもできません。複数ホストに展開されるパターンには名前を付けられません。
+
+```yaml
+hosts:
+  - {host: 10.0.0.1, name: core-sw01}
+```
+
+`include:`（トップレベルまたはグループごと）で、テキスト / CSV ファイルからホストを追加できます。パスは YAML ファイルからの相対パスです。各行は `host[,name[,dscp]]` 形式で、`#` 以降はコメント、`host` で始まる先頭行はヘッダとして読み飛ばします。include ファイルも YAML と同様に変更が監視され、自動で反映されます。
+
+```yaml
+groups:
+  - name: Core
+    hosts: ["core-sw{01..04}.lab"]
+  - name: Branches
+    include: [branches.csv, more-branches.txt]
+```
+
+サンプルは [examples/hosts-patterns.yaml](examples/hosts-patterns.yaml) と [examples/branches.csv](examples/branches.csv) を参照。
+
 
 ### オプション
 
