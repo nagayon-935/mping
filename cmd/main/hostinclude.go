@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,11 +54,14 @@ func resolveIncludePath(baseDir, path string) string {
 
 // readIncludeFile reads a host list file and returns its expanded entries.
 // Each non-blank line is "host[,name[,dscp]]"; '#' starts a comment; a first
-// line whose host column is "host" (any case) is a header and skipped.
-// Hosts may use the same range/CIDR/brace patterns as the YAML file.
+// line whose host column is "host" or "hostname" (any case) is a header and
+// skipped. Hosts may use the same range/CIDR/brace patterns as the YAML
+// file, and every expanded host must be an IP address or a hostname.
 //
-// mping may run setuid root (macOS install.sh), so errors report the file
-// and line number but never the line's text.
+// mping may run setuid root (macOS install.sh), so the file must be
+// readable by the invoking user (not just by root), errors report the file
+// and line number but never the line's text, and the hostname check keeps
+// arbitrary text lines from being displayed as targets.
 func readIncludeFile(path string) ([]hostEntry, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -65,6 +69,9 @@ func readIncludeFile(path string) ([]hostEntry, error) {
 	}
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("include %q: not a regular file", path)
+	}
+	if err := realUserCanRead(path); err != nil {
+		return nil, fmt.Errorf("include %q: not readable by the invoking user: %w", path, err)
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -84,7 +91,7 @@ func readIncludeFile(path string) ([]hostEntry, error) {
 		}
 		if !sawData {
 			sawData = true
-			if strings.EqualFold(entry.Host, "host") {
+			if strings.EqualFold(entry.Host, "host") || strings.EqualFold(entry.Host, "hostname") {
 				continue
 			}
 		}
@@ -96,6 +103,11 @@ func readIncludeFile(path string) ([]hostEntry, error) {
 		expanded, err := expandHostEntry(entry)
 		if err != nil {
 			return nil, fmt.Errorf("include %q line %d: %w", path, lineNo, err)
+		}
+		for _, e := range expanded {
+			if !isHostSyntax(e.Host) {
+				return nil, fmt.Errorf("include %q line %d: host is not a valid IP address or hostname", path, lineNo)
+			}
 		}
 		if len(out)+len(expanded) > maxHostsFileTargets {
 			return nil, fmt.Errorf("include %q: expands to more than %d targets", path, maxHostsFileTargets)
@@ -137,6 +149,26 @@ func parseIncludeLine(line string) (entry hostEntry, ok bool, err error) {
 		entry.DSCP = cols[2]
 	}
 	return entry, true, nil
+}
+
+// isHostSyntax reports whether s is an IP address (optionally with an IPv6
+// zone) or a plausible hostname: 1-253 characters of letters, digits, '.',
+// '-' and '_' (the last for SRV-style labels).
+func isHostSyntax(s string) bool {
+	if _, err := netip.ParseAddr(s); err == nil {
+		return true
+	}
+	if len(s) == 0 || len(s) > 253 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // expandHostsDoc expands every host pattern in doc and appends each list's

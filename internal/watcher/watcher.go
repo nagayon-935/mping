@@ -21,7 +21,16 @@ func Watch(ctx context.Context, path string, onChange func()) error {
 // WatchFiles monitors every file in paths for content changes (Write or
 // Create events) and calls onChange once per debounced burst of changes to
 // any of them. A listed file need not exist yet: creating it counts as a
-// change. Duplicate paths are watched once.
+// change. Duplicate paths are watched once. It is WatchPaths with a fixed
+// path set.
+func WatchFiles(ctx context.Context, paths []string, onChange func()) error {
+	return WatchPaths(ctx, func() []string { return paths }, onChange)
+}
+
+// WatchPaths is WatchFiles with a path set that may change: paths is called
+// at startup and again after every onChange, so a change that names new
+// files (e.g. a hosts file gaining an include) widens the watch without a
+// restart. Paths dropped from the set stop triggering onChange.
 //
 // The parent directories are watched rather than the files themselves so
 // that editor save patterns that atomically replace a file via rename are
@@ -30,28 +39,14 @@ func Watch(ctx context.Context, path string, onChange func()) error {
 // A 200 ms debounce timer coalesces rapid successive events into a single
 // onChange call.
 //
-// WatchFiles blocks until ctx is cancelled, then returns nil.
-// A non-nil error is returned for setup failures (e.g. fsnotify init,
-// unreadable directory) or for runtime fsnotify errors (e.g. ENOSPC, EBADF)
-// that would leave auto-reload silently broken if ignored.
-func WatchFiles(ctx context.Context, paths []string, onChange func()) error {
-	// Resolve to absolute paths so we can compare event paths correctly
-	// regardless of how the caller expressed them (relative vs absolute).
-	watched := make(map[string]bool, len(paths))
-	var dirs []string
-	seenDir := make(map[string]bool, len(paths))
-	for _, path := range paths {
-		absPath, err := filepath.Abs(path)
-		if err != nil {
-			return fmt.Errorf("resolve path %q: %w", path, err)
-		}
-		watched[absPath] = true
-		if dir := filepath.Dir(absPath); !seenDir[dir] {
-			seenDir[dir] = true
-			dirs = append(dirs, dir)
-		}
-	}
-
+// WatchPaths blocks until ctx is cancelled, then returns nil.
+// A non-nil error is returned for setup failures (e.g. fsnotify init, an
+// unreadable directory at startup) or for runtime fsnotify errors (e.g.
+// ENOSPC, EBADF) that would leave auto-reload silently broken if ignored.
+// A directory that can't be watched during a later refresh (e.g. a newly
+// named one that doesn't exist yet) is skipped and retried on the next
+// refresh instead, so a bad edit can't disable reloading altogether.
+func WatchPaths(ctx context.Context, paths func() []string, onChange func()) error {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return fmt.Errorf("create watcher: %w", err)
@@ -62,10 +57,37 @@ func WatchFiles(ctx context.Context, paths []string, onChange func()) error {
 	//   • direct writes      → Write event on the file
 	//   • atomic rename-over → Create event on the file path
 	//   • delete + recreate  → Create event on the file path
-	for _, dir := range dirs {
-		if err := w.Add(dir); err != nil {
-			return fmt.Errorf("watch directory %q: %w", dir, err)
+	addedDirs := make(map[string]bool)
+	var watched map[string]bool
+	refresh := func(strict bool) error {
+		next := make(map[string]bool)
+		for _, path := range paths() {
+			// Resolve to absolute paths so we can compare event paths
+			// regardless of how the caller expressed them.
+			absPath, err := filepath.Abs(path)
+			if err != nil {
+				if strict {
+					return fmt.Errorf("resolve path %q: %w", path, err)
+				}
+				continue
+			}
+			dir := filepath.Dir(absPath)
+			if !addedDirs[dir] {
+				if err := w.Add(dir); err != nil {
+					if strict {
+						return fmt.Errorf("watch directory %q: %w", dir, err)
+					}
+					continue
+				}
+				addedDirs[dir] = true
+			}
+			next[absPath] = true
 		}
+		watched = next
+		return nil
+	}
+	if err := refresh(true); err != nil {
+		return err
 	}
 
 	var timer *time.Timer
@@ -119,6 +141,7 @@ func WatchFiles(ctx context.Context, paths []string, onChange func()) error {
 		case <-timerChan:
 			timer = nil
 			onChange()
+			_ = refresh(false) // non-strict: never returns an error
 		}
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -41,6 +42,16 @@ func TestReadIncludeFile(t *testing.T) {
 			name:    "header row is skipped",
 			content: "Host,Name,DSCP\n10.0.0.1,core\n",
 			want:    []hostEntry{{Host: "10.0.0.1", Name: "core"}},
+		},
+		{
+			name:    "hostname header row is skipped",
+			content: "HOSTNAME,name\n10.0.0.1,core\n",
+			want:    []hostEntry{{Host: "10.0.0.1", Name: "core"}},
+		},
+		{
+			name:    "IPv6 with zone and underscores in hostnames are valid",
+			content: "fe80::1%en0\n_srv.example.com\n",
+			want:    []hostEntry{{Host: "fe80::1%en0"}, {Host: "_srv.example.com"}},
 		},
 		{
 			name:    "patterns are expanded",
@@ -88,6 +99,9 @@ func TestReadIncludeFile_Errors(t *testing.T) {
 		{name: "invalid DSCP", content: "10.0.0.1,a,bogus\n", wantErr: "line 1: invalid dscp"},
 		{name: "invalid pattern", content: "10.0.0.0/16\n", wantErr: "line 1: expands to more than"},
 		{name: "name on multi-host pattern", content: "10.0.0.1-5,pair\n", wantErr: "line 1: name cannot be used"},
+		{name: "host with a space", content: "10.0.0.1\nsw 01.lab\n", wantErr: "line 2: host is not a valid IP address or hostname"},
+		{name: "host with shell characters", content: "a;b\n", wantErr: "line 1: host is not a valid IP address or hostname"},
+		{name: "overlong hostname", content: strings.Repeat("a", 254) + "\n", wantErr: "line 1: host is not a valid IP address or hostname"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -108,15 +122,36 @@ func TestReadIncludeFile_Errors(t *testing.T) {
 func TestReadIncludeFile_ErrorsDoNotEchoContent(t *testing.T) {
 	// mping may run setuid root (macOS install.sh); an include error must
 	// not turn it into a way to print another user's file contents.
-	path := writeTestFile(t, t.TempDir(), "secret", "root:s3cret:0:0:/var/root:/bin/sh\n")
+	tests := []struct{ name, content string }{
+		{name: "passwd-style line", content: "root:s3cret:0:0:/var/root:/bin/sh\n"},
+		{name: "config-style line", content: "Defaults s3cret_env\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTestFile(t, t.TempDir(), "secret", tt.content)
+
+			_, err := readIncludeFile(path)
+
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if strings.Contains(err.Error(), "s3cret") {
+				t.Fatalf("error %q echoes file content", err)
+			}
+		})
+	}
+}
+
+func TestReadIncludeFile_RequiresRealUserReadAccess(t *testing.T) {
+	path := writeTestFile(t, t.TempDir(), "list.txt", "10.0.0.1\n")
+	orig := realUserCanRead
+	t.Cleanup(func() { realUserCanRead = orig })
+	realUserCanRead = func(string) error { return errors.New("permission denied") }
 
 	_, err := readIncludeFile(path)
 
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if strings.Contains(err.Error(), "s3cret") {
-		t.Fatalf("error %q echoes file content", err)
+	if err == nil || !strings.Contains(err.Error(), "not readable by the invoking user") {
+		t.Fatalf("error = %v, want a real-user access error", err)
 	}
 }
 

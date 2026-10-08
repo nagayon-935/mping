@@ -258,7 +258,10 @@ func checkPortReloadDrift(activeRaw, reloadedRaw []string) string {
 }
 
 // startWatcher launches the YAML file watcher goroutine when hostsFile is
-// set, watching the hosts file and every include file it names. When it isn't, it returns a no-op cancel and a pre-closed done
+// set, watching the hosts file and every include file it names. The include
+// set is re-read after each change, so an edit that adds a not-yet-existing
+// include (and is rejected) still reloads once that file is created. When
+// hostsFile isn't set, it returns a no-op cancel and a pre-closed done
 // channel so callers can treat both cases uniformly.
 func startWatcher(hostsFile string, onFileChange func(), logCh chan<- string) (cancel func(), done chan struct{}) {
 	if hostsFile == "" {
@@ -270,7 +273,8 @@ func startWatcher(hostsFile string, onFileChange func(), logCh chan<- string) (c
 	watchCtx, cancelFn := context.WithCancel(context.Background())
 	go func() {
 		defer close(innerDone)
-		if err := watcher.WatchFiles(watchCtx, hostsFileWatchPaths(hostsFile), onFileChange); err != nil {
+		paths := func() []string { return hostsFileWatchPaths(hostsFile) }
+		if err := watcher.WatchPaths(watchCtx, paths, onFileChange); err != nil {
 			select {
 			case logCh <- fmt.Sprintf("[red][%s] Watcher error: %v — auto-reload disabled, restart mping to re-enable[-]",
 				time.Now().Format("15:04:05"), err):

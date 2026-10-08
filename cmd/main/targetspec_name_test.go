@@ -26,7 +26,9 @@ func TestTargetSpecDisplay(t *testing.T) {
 }
 
 func TestBuildPingerOptions_ResolvesNamedTargetsToTheirHost(t *testing.T) {
-	specs := []targetSpec{{Host: "127.0.0.1", Name: "loopback"}}
+	// The name must never resolve on its own (.invalid is reserved), so the
+	// test can only pass through the display→address map.
+	specs := []targetSpec{{Host: "127.0.0.1", Name: "named-target.invalid"}}
 	opts := buildPingerOptions(config{}, "ip", nil, specs)
 
 	addr, err := opts.ResolveIPAddr("ip", specs[0].display())

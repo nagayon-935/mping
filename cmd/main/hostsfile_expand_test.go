@@ -104,7 +104,7 @@ func TestParseHostsFile_ExpansionErrors(t *testing.T) {
 		{
 			name:    "include entry must be a string",
 			yaml:    "include: {a: b}\n",
-			wantErr: "include",
+			wantErr: "include: line 1: expected a file path or a list of file paths",
 		},
 		{
 			name:    "empty include path",
