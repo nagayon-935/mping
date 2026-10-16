@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -103,5 +104,69 @@ func TestHealthEventsShareBackendDecisionAndDoNotExposeStaleNames(t *testing.T) 
 	target.SetDisplayName("edge")
 	if target.GetView().Host != "edge" || target.ResolveAddress() != "192.0.2.1" {
 		t.Fatal("rename changed probe address")
+	}
+}
+
+func TestHealthPolicyValidateRejectsOutOfRangeSettings(t *testing.T) {
+	valid := DefaultHealthPolicy()
+	tests := []struct {
+		name   string
+		mutate func(*HealthPolicy)
+		want   string
+	}{
+		{"no failures", func(p *HealthPolicy) { p.Failures = 0 }, "failure/recovery"},
+		{"too many recoveries", func(p *HealthPolicy) { p.Recoveries = 10001 }, "failure/recovery"},
+		{"short window", func(p *HealthPolicy) { p.Window = time.Millisecond }, "window"},
+		{"long window", func(p *HealthPolicy) { p.Window = 2 * time.Hour }, "window"},
+		{"rtt crit below warn", func(p *HealthPolicy) { p.RTTCrit = p.RTTWarn }, "thresholds"},
+		{"loss above 100", func(p *HealthPolicy) { p.LossCrit = 101 }, "thresholds"},
+		{"loss NaN", func(p *HealthPolicy) { p.LossWarn = math.NaN() }, "thresholds"},
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("default policy: %v", err)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := DefaultHealthPolicy()
+			tt.mutate(&p)
+
+			err := p.Validate()
+
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Validate() = %v, want an error about %s", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfigureHealthFallsBackToDefaultsForAnInvalidPolicy(t *testing.T) {
+	target := NewTargetStats("example.com")
+	invalid := DefaultHealthPolicy()
+	invalid.Window = 0
+
+	target.ConfigureHealth(invalid)
+
+	if got := target.health.policy; got != DefaultHealthPolicy() {
+		t.Fatalf("policy = %+v, want the defaults", got)
+	}
+}
+
+func TestMeasurementStateReturnsTheLastSetState(t *testing.T) {
+	target := NewTargetStats("example.com")
+
+	target.SetMeasurementState("stopped")
+
+	if got := target.MeasurementState(); got != "stopped" {
+		t.Fatalf("MeasurementState() = %q, want stopped", got)
+	}
+}
+
+func TestHistorySamplesWithNegativeCountIsEmpty(t *testing.T) {
+	target := NewTargetStats("example.com")
+	target.IncSent()
+	target.OnSuccess(time.Millisecond, 64)
+
+	if got := target.HistorySamples(-1); len(got) != 0 {
+		t.Fatalf("HistorySamples(-1) = %v, want none", got)
 	}
 }

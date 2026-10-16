@@ -444,3 +444,66 @@ func TestMonitoringControlsAuthorizationStopAndDownloads(t *testing.T) {
 		t.Fatalf("reload control=%d", status)
 	}
 }
+
+func newMonitoringServer(t *testing.T, p Provider) string {
+	t.Helper()
+	src := NewSource()
+	src.Set(p)
+	cfg := defaultTestConfig()
+	cfg.token = testToken
+	return newTestServer(t, src, cfg).URL
+}
+
+func TestMeasurementAndReportControlsNeedACapableProvider(t *testing.T) {
+	base, _ := providerWithTarget("router")
+	url := newMonitoringServer(t, &controlProvider{fakeProvider: base})
+
+	for _, route := range []struct{ method, path string }{
+		{"POST", "/api/v1/stop"}, {"POST", "/api/v1/restart"}, {"GET", "/api/v1/report"},
+	} {
+		status, body := send(t, url, req{method: route.method, path: route.path, headers: authed(nil)})
+
+		if status != http.StatusNotImplemented || !strings.Contains(body, "unavailable") {
+			t.Errorf("%s %s = %d %s, want 501 unavailable", route.method, route.path, status, body)
+		}
+	}
+}
+
+func TestMeasurementAndReportErrorsAreReportedAsConflict(t *testing.T) {
+	base, _ := providerWithTarget("router")
+	p := &monitoringProvider{controlProvider: &controlProvider{fakeProvider: base, err: errors.New("supervisor is busy")}}
+	url := newMonitoringServer(t, p)
+
+	for _, route := range []struct{ method, path string }{
+		{"POST", "/api/v1/stop"}, {"POST", "/api/v1/restart"}, {"GET", "/api/v1/report"},
+	} {
+		status, body := send(t, url, req{method: route.method, path: route.path, headers: authed(nil)})
+
+		if status != http.StatusConflict || !strings.Contains(body, "supervisor is busy") {
+			t.Errorf("%s %s = %d %s, want 409 with the provider's message", route.method, route.path, status, body)
+		}
+	}
+}
+
+func TestReportDefaultsToJSON(t *testing.T) {
+	base, _ := providerWithTarget("router")
+	url := newMonitoringServer(t, &monitoringProvider{controlProvider: &controlProvider{fakeProvider: base}})
+
+	status, body := send(t, url, req{method: "GET", path: "/api/v1/report", headers: authed(nil)})
+
+	var decoded map[string]any
+	if status != http.StatusOK || json.Unmarshal([]byte(body), &decoded) != nil {
+		t.Fatalf("report without format = %d %s, want a JSON report", status, body)
+	}
+}
+
+func TestDeleteTargetErrorsAreReportedAsConflict(t *testing.T) {
+	p, _, base := newControlServer(t)
+	p.err = errors.New("no such target")
+
+	status, body := send(t, base, req{method: http.MethodDelete, path: "/api/v1/targets/7", headers: authed(nil)})
+
+	if status != http.StatusConflict || !strings.Contains(body, "no such target") {
+		t.Fatalf("delete = %d %s, want 409 with the controller's message", status, body)
+	}
+}
