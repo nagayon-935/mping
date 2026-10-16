@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {configuredTargets,sortTargets,frozenOrder,filterTargets} from "../static/js/workspace.js";
+import {configuredTargets,sortTargets,frozenOrder,filterTargets,createTargetOrder} from "../static/js/workspace.js";
 import {controlToken} from "../static/js/control.js";
 const th={loss_warn_pct:20,loss_crit_pct:80,rtt_warn_ms:50,rtt_crit_ms:200,jitter_warn_ms:10,jitter_crit_ms:50};
 const meta={thresholds:th,features:{ptr:true,asn:true}};
@@ -39,4 +39,39 @@ test("tokens accept raw values or a copied loopback URL without navigating",()=>
  assert.equal(controlToken(token),token);
  for(const host of ["127.0.0.1","localhost","[::1]"])assert.equal(controlToken(`http://${host}:8080/#token=${token}`,"http://127.0.0.1:8080"),token);
  for(const input of ["short","bad token with spaces",`http://example.com:8080/#token=${token}`,`http://127.0.0.1:8090/#token=${token}`,`https://localhost:8080/#token=${token}`])assert.equal(controlToken(input,"http://127.0.0.1:8080"),null);
+});
+
+
+test("prepared workspace keeps all hosts ranked when a filter hides the leaders", () => {
+  const order = createTargetOrder();
+  const view = { snapshot: { targets: [target(1), target(2)] }, meta,
+    sort: {key: "last", direction: "desc"}, filter: "host-1", status: "all" };
+  const first = order.derive(view);
+  assert.deepEqual(ids(first.targets), [1]);
+  assert.equal(first.total, 2);
+  assert.equal(first.orderUpToDate, true);
+
+  view.snapshot.targets[0].last_rtt_ms = 500;
+  assert.equal(order.derive(view).orderUpToDate, false);
+  view.filter = "";
+  assert.deepEqual(ids(order.derive(view).targets), [2, 1]);
+  order.refresh(view);
+  assert.deepEqual(ids(order.derive(view).targets), [1, 2]);
+  assert.equal(order.derive(view).orderUpToDate, true);
+});
+
+test("workspace membership changes retain frozen rows and configured order restores groups", () => {
+  const order = createTargetOrder();
+  const view = {snapshot: {targets: [target(1), target(2), target(3)]},
+    meta: {...meta, groups: [{name: "core", target_ids: [2, 1]}]},
+    sort: {key: "last", direction: "desc"}, filter: "", status: "all"};
+  assert.deepEqual(ids(order.derive(view).targets), [3, 2, 1]);
+  view.snapshot.targets = [target(1), target(3), target(4)];
+  assert.deepEqual(ids(order.derive(view).targets), [3, 1, 4]);
+  assert.equal(order.derive(view).orderUpToDate, false);
+  view.sort = {key: "config", direction: "asc"};
+  assert.deepEqual(ids(order.derive(view).targets), [1, 3, 4]);
+  assert.equal(order.derive(view).orderUpToDate, true);
+  view.snapshot.targets = [];
+  assert.deepEqual(order.derive(view), {targets: [], total: 0, orderUpToDate: true});
 });

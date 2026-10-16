@@ -1,13 +1,9 @@
 // One SSE stream drives the monitoring workspace and independent global pages.
 import { el, fetchJSON, readSession, selectionWithin, writeSession } from "./dom.js";
-import { renderTargets } from "./table.js";
 import { createGraphs } from "./graphs.js";
 import { createInspect } from "./inspect.js";
-import { renderMTR } from "./mtr.js";
-import { renderTraceroutes } from "./traceroute.js";
 import { createLog } from "./log.js";
 import { httpFor } from "./checks.js";
-import { reconcileWindow } from "./timeline.js";
 import { createControl } from "./control.js";
 import { createReportDialog } from "./report.js";
 import { createConfirmation } from "./dialogs.js";
@@ -17,16 +13,12 @@ import { createAddDialog, createAuthDialog } from "./control_dialogs.js";
 import { installShortcuts } from "./shortcuts.js";
 import { createActions } from "./actions.js";
 import { measurementState, renderHeader } from "./header.js";
-import { STATUSES, STATUS_LABELS, healthFilterItems, parseSort, sortOptions } from "./toolbar.js";
-import { configuredTargets, sortTargets, frozenOrder, filterTargets } from "./workspace.js";
+import { createMonitorToolbar } from "./toolbar.js";
+import { createTargetOrder } from "./workspace.js";
+import { createWorkspaceView } from "./workspace_view.js";
+import { createGraphTools } from "./graph_tools.js";
 
 const HISTORY_EVERY_MS = 2000;
-const MAX_HISTORY_POINTS = 3000; // the server's per-target RTT ring
-const FILTER_KEY = "mping.filter";
-const WINDOW_KEY = "mping.window";
-const SCALE_KEY = "mping.sharedScale";
-const STATUS_KEY = "mping.status";
-const SORT_KEY = "mping.sort";
 const SHORTCUTS_KEY = "mping.shortcuts";
 
 const $ = (id) => document.getElementById(id);
@@ -46,13 +38,12 @@ const view = {
   series: new Map(), // id -> samples for the graphs window
   windows: [],
   window: null,
-  shared: readSession(SCALE_KEY) !== "false",
+  shared: true, // restored by graphTools.install() before the first render
   inspectOpen: false,
   historyNow: null,
   page: "monitor",
-  status: readSession(STATUS_KEY) || "all",
+  status: "all",
   sort: { key: "config", direction: "asc" },
-  order: null, // frozen target IDs for a non-config sort
   focusedId: null,
 };
 
@@ -149,6 +140,30 @@ const actions = createActions({
   afterChange: afterControlChange,
 });
 
+const toolbar = createMonitorToolbar(view, {
+  filter: $("filter"), status: $("status-filter"), summary: $("summary"), order: $("sort-order"),
+  refresh: $("refresh-sort"), clear: $("clear-filter"), empty: $("empty-action"), table: $("targets"),
+}, {
+  requestRender: scheduleRender,
+  onOrderChange: refreshOrder,
+  onStatusChange() {
+    if (view.page !== "monitor") showMonitorPage();
+    else scheduleRender();
+  },
+  openAddHost: addHost.open,
+});
+
+const workspace = createWorkspaceView({
+  graphs, inspect, selectTarget, sortColumn: toolbar.sortColumn,
+  canControl: () => control.allowed,
+  renderUnlessSelecting: unlessSelecting,
+  selectedId: () => view.selectedId,
+});
+
+const graphTools = createGraphTools(view, {
+  window: $("graph-window"), perTarget: $("scale-each"), shared: $("scale-shared"),
+}, { requestRender: scheduleRender, refreshHistory });
+
 // --- Pages and ordering ----------------------------------------------------
 
 function readPage() {
@@ -174,53 +189,12 @@ function renderPages() {
   log.activate(view.page === "log");
 }
 
-function baseTargets() {
-  return configuredTargets(view.snapshot.targets, view.meta.groups);
-}
-
-const sortedIds = (targets) => sortTargets(targets, view.sort, view.meta.thresholds).map((t) => t.id);
+const targetOrder = createTargetOrder();
 
 function refreshOrder() {
   if (!view.snapshot) return;
-  view.order = sortedIds(baseTargets());
+  targetOrder.refresh(view);
   scheduleRender();
-}
-
-function setSort(key, direction) {
-  view.sort = { key, direction: direction || (["host", "ip", "config"].includes(key) ? "asc" : "desc") };
-  writeSession(SORT_KEY, JSON.stringify(view.sort));
-  $("sort-order").value = `${view.sort.key}:${view.sort.direction}`;
-  refreshOrder();
-}
-
-/** Column headings cycle: first direction, the other one, then config order. */
-function sortColumn(key) {
-  const first = ["host", "ip"].includes(key) ? "asc" : "desc";
-  if (view.sort.key !== key) setSort(key, first);
-  else if (view.sort.direction === first) setSort(key, first === "asc" ? "desc" : "asc");
-  else setSort("config", "asc");
-}
-
-function setStatus(status) {
-  view.status = status;
-  $("status-filter").value = status;
-  writeSession(STATUS_KEY, status);
-  if (view.page !== "monitor") showMonitorPage();
-  else scheduleRender();
-}
-
-function clearFilters() {
-  view.filter = "";
-  $("filter").value = "";
-  writeSession(FILTER_KEY, "");
-  setStatus("all");
-}
-
-function visibleTargets() {
-  const base = baseTargets();
-  if (view.order === null) view.order = sortedIds(base);
-  const ordered = view.sort.key === "config" ? base : frozenOrder(base, view.order);
-  return filterTargets(ordered, view.filter, view.status, view.meta);
 }
 
 // --- Rendering -------------------------------------------------------------
@@ -252,7 +226,7 @@ function renderBody() {
     clearSelection(); // deleted, or gone after a reload
   }
   if (view.page === "http") unlessSelecting($("http-body"), renderHttpPage);
-  else renderMonitorPage();
+  else workspace.render(view, targetOrder.derive(view));
 }
 
 function renderHttpPage() {
@@ -269,97 +243,6 @@ function renderHttpPage() {
     body.replaceChildren(next);
   }
   body.scrollTop = top;
-}
-
-function renderMonitorPage() {
-  const targets = visibleTargets();
-  const total = view.snapshot.targets.length;
-  const { features } = view.meta;
-  const showMTR = !!features.mtr;
-  const showTrace = !!features.traceroute && !showMTR;
-
-  $("pane-inspect").hidden = !view.inspectOpen;
-  $("workspace").classList.toggle("has-inspect", view.inspectOpen);
-  $("pane-mtr").hidden = !showMTR;
-  $("pane-traceroute").hidden = !showTrace;
-  $("workspace").classList.toggle("has-route", showMTR || showTrace);
-
-  if (showMTR) renderMTRPane(targets, total);
-  if (showTrace) renderTraceroutePane(targets);
-  renderTargetsPane(targets, total);
-  renderMonitorChrome(targets, total, showMTR || showTrace);
-  graphs.render({
-    targets,
-    history: view.series,
-    meta: view.meta,
-    points: view.window?.points ?? 0,
-    shared: view.shared,
-    selectedId: view.selectedId,
-    now: view.historyNow,
-  });
-  unlessSelecting($("inspect-body"), () => { if (view.inspectOpen) inspect.render(view); });
-}
-
-const hostCount = (n) => `${n} ${n === 1 ? "host" : "hosts"} · ICMP`;
-
-function renderMTRPane(targets, total) {
-  $("mtr-summary").textContent = hostCount(targets.length);
-  unlessSelecting($("mtr-scroll"), () => {
-    const groups = renderMTR($("mtr"), targets, view.meta, view.selectedId);
-    $("mtr-table-wrap").hidden = groups === 0;
-    $("mtr-empty").hidden = groups > 0;
-    $("mtr-empty").textContent = total === 0 ? "No targets." : "No targets match the filter.";
-  });
-}
-
-function renderTraceroutePane(targets) {
-  $("traceroute-summary").textContent = hostCount(targets.length);
-  unlessSelecting($("traceroute-scroll"), () =>
-    renderTraceroutes($("traceroute-scroll"), targets, view.meta.features, view.selectedId));
-}
-
-function emptyTargetsMessage(total) {
-  if (total === 0) return "No hosts are being monitored. Add a host here or in the TUI / hosts file.";
-  const query = view.filter ? `“${view.filter}” and ` : "";
-  return `No hosts match ${query}${STATUS_LABELS[view.status] ?? "the current filters"}.`;
-}
-
-function renderTargetsPane(targets, total) {
-  const { features } = view.meta;
-  const fields = ["host", "IP", ...(features.ptr ? ["PTR"] : []), ...(features.asn ? ["AS"] : [])].join(", ");
-  $("filter").placeholder = `Filter ${fields}`;
-  $("filter").setAttribute("aria-label", `Filter ${fields}`);
-  unlessSelecting($("targets"), () => {
-    const shown = renderTargets($("targets"), { ...view, visibleTargets: targets }, selectTarget, sortColumn);
-    $("targets-empty").hidden = shown > 0;
-    $("targets-empty-message").textContent = emptyTargetsMessage(total);
-    $("empty-action").hidden = false;
-    $("empty-action").textContent = total ? "Clear filters" : control.allowed ? "Add host" : "Enable controls";
-  });
-}
-
-/** Counts, sort state, locate buttons and hints around the monitor panes. */
-function renderMonitorChrome(targets, total, routeShown) {
-  $("shown-count").textContent = `${targets.length} / ${total} hosts`;
-
-  const base = baseTargets();
-  const upToDate = sortedIds(base).join() === frozenOrder(base, view.order).map((t) => t.id).join();
-  const refresh = $("refresh-sort");
-  refresh.disabled = view.sort.key === "config" || upToDate;
-  refresh.textContent = refresh.disabled ? "Order up to date" : "Refresh order •";
-
-  const selectedVisible = view.selectedId != null && targets.some((t) => t.id === view.selectedId);
-  $("selection-note").hidden = view.selectedId == null || selectedVisible;
-  for (const id of ["locate-mtr", "locate-traceroute", "locate-graphs"]) {
-    $(id).disabled = !selectedVisible;
-    $(id).title = selectedVisible ? "Scroll to the selected host without changing order." : "Select a host visible in the current filters.";
-  }
-
-  $("graphs-empty").hidden = targets.length > 0;
-  $("graphs-empty").textContent = total ? "No hosts match the current filters." : "Add a host to start collecting RTT history.";
-  const hint = `Loss % is lifetime loss; health uses recent measurements.${routeShown ? "" : " Route monitoring is disabled (start with -M or -T)."}`;
-  $("monitor-hint").textContent = hint;
-  $("monitor-hint").title = hint;
 }
 
 let renderQueued = false;
@@ -388,7 +271,7 @@ function applySnapshot(body) {
   view.state = body.state;
   renderControls();
   if (intervalChanged) {
-    initWindows();
+    graphTools.updateWindows(view.meta.interval_ms);
     refreshHistory();
   }
   scheduleRender();
@@ -446,49 +329,6 @@ async function reloadSnapshot() {
   }
 }
 
-// --- Graph tools -----------------------------------------------------------
-
-function initWindows() {
-  const { options, window } = reconcileWindow(view.window?.label ?? readSession(WINDOW_KEY), view.meta.interval_ms, MAX_HISTORY_POINTS);
-  view.windows = options;
-  view.window = window;
-  $("graph-window").replaceChildren(...view.windows.map((w) =>
-    el("option", { text: w.label, attrs: { value: w.label, ...(w === view.window ? { selected: "" } : {}) } })));
-}
-
-function initGraphTools() {
-  $("graph-window").addEventListener("change", (e) => {
-    view.window = view.windows.find((w) => w.label === e.target.value) ?? view.window;
-    writeSession(WINDOW_KEY, view.window.label);
-    refreshHistory();
-  });
-  const setShared = (shared) => {
-    view.shared = shared;
-    writeSession(SCALE_KEY, String(shared));
-    $("scale-each").setAttribute("aria-pressed", String(!shared));
-    $("scale-shared").setAttribute("aria-pressed", String(shared));
-    scheduleRender();
-  };
-  $("scale-each").addEventListener("click", () => setShared(false));
-  $("scale-shared").addEventListener("click", () => setShared(true));
-  setShared(view.shared);
-
-  // Locate scrolls a pane to the selected host without reordering anything.
-  const locators = [
-    ["locate-mtr", () => $("mtr-table-wrap"), "#mtr tbody", 36], // below the sticky column header
-    ["locate-traceroute", () => $("traceroute-scroll"), ".trace-target", 0],
-    ["locate-graphs", () => $("graphs").parentElement, ".graph-card", 0],
-  ];
-  for (const [button, scroller, selector, offset] of locators) {
-    $(button).addEventListener("click", () => {
-      const node = document.querySelector(`${selector}[data-target-id="${view.selectedId}"]`);
-      if (!node) return;
-      const scroll = scroller();
-      scroll.scrollTop += node.getBoundingClientRect().top - scroll.getBoundingClientRect().top - offset;
-    });
-  }
-}
-
 // --- Controls --------------------------------------------------------------
 
 function renderControls() {
@@ -534,43 +374,9 @@ function initControls() {
   control.refresh().then(afterControlChange);
 }
 
-// --- Monitor toolbar -------------------------------------------------------
+// --- Keyboard shortcuts ----------------------------------------------------
 
-function initFilter() {
-  $("filter").value = readSession(FILTER_KEY) ?? "";
-  view.filter = $("filter").value;
-  $("filter").addEventListener("input", () => {
-    view.filter = $("filter").value;
-    writeSession(FILTER_KEY, view.filter);
-    scheduleRender();
-  });
-
-  if (!STATUSES.includes(view.status)) view.status = "all";
-  $("status-filter").value = view.status;
-  $("status-filter").addEventListener("change", (event) => setStatus(event.target.value));
-  $("summary").replaceChildren(...healthFilterItems(view.status, setStatus));
-
-  view.sort = parseSort(readSession(SORT_KEY)) ?? view.sort;
-  $("sort-order").append(...sortOptions());
-  $("sort-order").value = `${view.sort.key}:${view.sort.direction}`;
-  $("sort-order").addEventListener("change", (event) => {
-    const [key, direction] = event.target.value.split(":");
-    setSort(key, direction);
-  });
-  $("refresh-sort").addEventListener("click", refreshOrder);
-  $("clear-filter").addEventListener("click", clearFilters);
-  $("empty-action").addEventListener("click", () => (view.snapshot?.targets.length ? clearFilters() : addHost.open()));
-
-  // Roving tabindex: only the focused host's button is in the tab order.
-  $("targets").addEventListener("focusin", (event) => {
-    const row = event.target.closest(".target-row");
-    if (!row) return;
-    view.focusedId = Number(row.dataset.targetId);
-    for (const button of $("targets").querySelectorAll(".host-open")) {
-      button.tabIndex = button.dataset.targetId === row.dataset.targetId ? 0 : -1;
-    }
-  });
-
+function initShortcuts() {
   installShortcuts({
     table: $("targets"),
     filter: $("filter"),
@@ -605,8 +411,9 @@ rerenderOnWidthChange($("targets").parentElement);
 rerenderOnWidthChange($("mtr-table-wrap"));
 new ResizeObserver(() => graphs.repaint()).observe($("graphs"));
 
-initFilter();
-initGraphTools();
+toolbar.install();
+initShortcuts();
+graphTools.install();
 window.addEventListener("hashchange", readPage);
 readPage();
 window.addEventListener("resize", scheduleRender);

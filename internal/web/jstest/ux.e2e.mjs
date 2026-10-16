@@ -145,6 +145,16 @@ try{
   await p.waitForFunction(()=>document.activeElement.id==='toggle-actions');
  });
  await p.close();
+ await check('filter, sort and graph preferences survive reloading the page',async()=>{
+  const q=await open();await q.fill('#filter',fixture.snapshot.targets[1].host);
+  await q.selectOption('#status-filter','warn');await q.selectOption('#sort-order','last:desc');
+  await q.selectOption('#graph-window','1m');await q.click('#scale-each');
+  await q.reload();await q.waitForSelector('#shown-count:text("hosts")');await settle(q);
+  assert.equal(await q.inputValue('#filter'),fixture.snapshot.targets[1].host);
+  assert.equal(await q.inputValue('#status-filter'),'warn');assert.equal(await q.inputValue('#sort-order'),'last:desc');
+  assert.equal(await q.inputValue('#graph-window'),'1m');assert.equal(await q.getAttribute('#scale-each','aria-pressed'),'true');
+  assert.deepEqual(await ids(q),[2]);await q.close();
+ });
  await check('cancelling pending authentication never stores the candidate',async()=>{
   const q=await open();let started;const request=new Promise(r=>started=r);
   await q.route('**/api/v1/session',async r=>{started();await new Promise(resolve=>setTimeout(resolve,300));try{await r.fulfill({contentType:'application/json',body:'{"control":true}'});}catch{}});
