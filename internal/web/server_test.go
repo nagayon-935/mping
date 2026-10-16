@@ -139,6 +139,53 @@ func TestStaticHandlerHidesDirectoryListings(t *testing.T) {
 	}
 }
 
+// The embedded files change with every mping build but carry no modification
+// time, so without this header a browser may keep running an older
+// dashboard's scripts against a newer API after an upgrade.
+func TestStaticFilesMustBeRevalidated(t *testing.T) {
+	fsys := fstest.MapFS{
+		"index.html": {Data: []byte("<title>x</title>")},
+		"app.js":     {Data: []byte("console.log(1)")},
+	}
+	srv := httptest.NewServer(staticHandler(fsys))
+	t.Cleanup(srv.Close)
+
+	for _, path := range []string{"/", "/app.js"} {
+		t.Run(path, func(t *testing.T) {
+			resp := get(t, srv.URL+path)
+
+			if got := resp.Header.Get("Cache-Control"); got != "no-cache" {
+				t.Fatalf("Cache-Control = %q, want %q", got, "no-cache")
+			}
+			if resp.Header.Get("ETag") == "" {
+				t.Fatal("ETag missing; revalidation would re-send the whole file")
+			}
+		})
+	}
+}
+
+func TestStaticRevalidationWithMatchingETagIsNotModified(t *testing.T) {
+	fsys := fstest.MapFS{"app.js": {Data: []byte("console.log(1)")}}
+	srv := httptest.NewServer(staticHandler(fsys))
+	t.Cleanup(srv.Close)
+	tag := get(t, srv.URL+"/app.js").Header.Get("ETag")
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/app.js", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("If-None-Match", tag)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotModified {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusNotModified)
+	}
+}
+
 func TestStartAlsoListensOnIPv6Loopback(t *testing.T) {
 	probe, err := net.Listen("tcp6", "[::1]:0")
 	if err != nil {

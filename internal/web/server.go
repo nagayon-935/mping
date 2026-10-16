@@ -2,7 +2,9 @@ package web
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -114,14 +116,12 @@ func start(opts Options, token string) (*Server, error) {
 	}
 	var wg sync.WaitGroup
 	for _, ln := range listeners {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			// Serve only ever returns ErrServerClosed after Shutdown, or a
 			// listener error that leaves nothing to recover; Close reports
 			// the shutdown outcome either way.
 			_ = s.srv.Serve(ln)
-		}()
+		})
 	}
 	go func() {
 		wg.Wait()
@@ -192,8 +192,14 @@ func newHandler(ctx context.Context, src *Source, cfg handlerConfig) http.Handle
 
 // staticHandler serves files from fsys, answering 404 for any directory
 // other than the root so http.FileServer never renders a listing.
+//
+// Embedded files have no modification time, so browsers would otherwise
+// cache them heuristically and could run an older dashboard against a newer
+// API after an upgrade. Every response must be revalidated; a content hash
+// ETag keeps that revalidation a cheap 304.
 func staticHandler(fsys fs.FS) http.Handler {
 	files := http.FileServerFS(fsys)
+	etags := contentETags(fsys)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
 		if name != "" {
@@ -202,8 +208,34 @@ func staticHandler(fsys fs.FS) http.Handler {
 				return
 			}
 		}
+		if name == "" {
+			name = "index.html"
+		}
+		w.Header().Set("Cache-Control", "no-cache")
+		if tag, ok := etags[name]; ok {
+			w.Header().Set("ETag", tag)
+		}
 		files.ServeHTTP(w, r)
 	})
+}
+
+// contentETags hashes every regular file in fsys. A file that cannot be read
+// is left without an ETag and is simply re-sent on each request.
+func contentETags(fsys fs.FS) map[string]string {
+	tags := make(map[string]string)
+	_ = fs.WalkDir(fsys, ".", func(name string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		data, err := fs.ReadFile(fsys, name)
+		if err != nil {
+			return nil
+		}
+		sum := sha256.Sum256(data)
+		tags[name] = `"` + hex.EncodeToString(sum[:16]) + `"`
+		return nil
+	})
+	return tags
 }
 
 // guard rejects requests that did not come from a same-machine page:
