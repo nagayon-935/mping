@@ -229,7 +229,7 @@ export function summaryItems(s) {
  * (e.g. localhost) never sees it.
  */
 export function readOnlyHint(hostname) {
-  const base = "To add or delete hosts here, open the Web UI link shown in mping's Log pane";
+  const base = "To enable browser controls, press b in mping's TUI, choose Copy URL, and open that link";
   return hostname === "127.0.0.1"
     ? { text: "Read-only", title: `${base}.` }
     : { text: "Read-only", title: `${base} (it uses 127.0.0.1; open that address instead of ${hostname}).` };

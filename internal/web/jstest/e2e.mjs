@@ -42,6 +42,7 @@ async function open(opts, context = browser, url = base, snapshot) {
     // The duplicate-host check provokes a 409 on purpose; the browser logs
     // every non-2xx fetch as a console error.
     if (/status of (409|403)/.test(m.text())) return;
+    if (/status of 500/.test(m.text()) && /\/api\/v1\/report\?/.test(m.location().url)) return;
     if (["error", "warning"].includes(m.type())) problems.push(m.text());
   });
   page.on("pageerror", (e) => problems.push(e.message));
@@ -496,12 +497,13 @@ try {
     assert.ok(await ro.isVisible("#readonly-hint"));
     assert.ok(await ro.isHidden("#add-form"));
     assert.ok(await ro.isHidden("#reset-slot"));
+    assert.ok(await ro.isHidden("#open-report"));
     await ro.click("tr.target-row >> nth=0");
     await ro.waitForFunction(() => !!document.querySelector("#inspect-target").textContent);
     assert.equal(await ro.$$eval('#inspect-body [data-section="actions"]', (n) => n.length), 0);
     await ro.click("#readonly-hint");
     assert.ok(await ro.isVisible("#readonly-explanation"));
-    assert.match(await ro.textContent("#readonly-explanation"), /Log pane/);
+    assert.match(await ro.textContent("#readonly-explanation"), /press b.*Copy URL/);
     await ro.close();
   });
 
@@ -595,17 +597,114 @@ try {
     const before=await sent();
     await ctl.waitForTimeout(2500);
     assert.equal(await sent(),before);
+    assert.equal(await ctl.locator("#report-json, #report-text").count(),0);
+    await ctl.click("#open-report");
+    await ctl.waitForSelector("#report-dialog[open]");
+    await ctl.selectOption("#report-format","json");
+    await ctl.fill("#report-name","network-check");
     const downloadPromise=ctl.waitForEvent("download");
-    await ctl.click("#report-json");
+    await ctl.click("#download-report");
     const download=await downloadPromise;
-    assert.equal(download.suggestedFilename(),"mping-report.json");
+    assert.equal(download.suggestedFilename(),"network-check.json");
     const stream=await download.createReadStream();let contents="";
     for await (const chunk of stream) contents+=chunk;
     assert.equal(JSON.parse(contents).schema_version,1);
+    await ctl.waitForSelector("#report-dialog",{state:"hidden"});
     await ctl.click("#measurement-action");
     await ctl.waitForFunction(()=>document.querySelector("#measurement-action").textContent==="Stop");
     await ctl.waitForTimeout(1500);
     assert.notEqual(await sent(),before);
+  });
+
+  await check("Report chooses a format and editable name without moving the workspace", async () => {
+    const geometry=()=>ctl.$eval("#workspace",n=>{const r=n.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};});
+    const before=await geometry();
+    await ctl.click("#open-report");
+    await ctl.waitForSelector("#report-dialog[open]");
+    await ctl.fill("#report-name","東京-回線チェック.json");
+    await ctl.selectOption("#report-format","text");
+    assert.equal(await ctl.inputValue("#report-name"),"東京-回線チェック.txt");
+    await ctl.waitForTimeout(1500);
+    assert.equal(await ctl.inputValue("#report-name"),"東京-回線チェック.txt","live snapshots preserve input");
+    assert.deepEqual(await geometry(),before);
+    await ctl.fill("#report-name","");
+    await ctl.click("#download-report");
+    assert.match(await ctl.textContent("#report-error"),/Enter a file name/);
+    await ctl.fill("#report-name","folder/report");
+    await ctl.click("#download-report");
+    assert.match(await ctl.textContent("#report-error"),/without folders/);
+    await ctl.fill("#report-name","東京-回線チェック");
+    const promise=ctl.waitForEvent("download");
+    await ctl.click("#download-report");
+    const download=await promise;
+    assert.equal(download.suggestedFilename(),"東京-回線チェック.txt");
+    const stream=await download.createReadStream();let text="";
+    for await(const chunk of stream)text+=chunk;
+    assert.match(text,/mping/i);
+    await ctl.waitForSelector("#report-dialog",{state:"hidden"});
+    await ctl.click("#open-report");
+    await ctl.waitForSelector("#report-dialog[open]");
+    await ctl.keyboard.press("Escape");
+    await ctl.waitForSelector("#report-dialog",{state:"hidden"});
+    assert.equal(await ctl.evaluate(()=>document.activeElement.id),"open-report");
+    await ctl.setViewportSize({width:390,height:844});
+    await ctl.click("#open-report");
+    await ctl.waitForSelector("#report-dialog[open]");
+    assert.ok(await ctl.$eval("#report-dialog",n=>{const r=n.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&n.scrollWidth<=n.clientWidth;}));
+    await shot(ctl,"report-dialog-mobile");
+    await ctl.click("#cancel-report");
+    await ctl.waitForSelector("#report-dialog",{state:"hidden"});
+    await ctl.setViewportSize(WIDE);
+  });
+
+  await check("Report prevents duplicate downloads and preserves choices after an error", async () => {
+    let requests=0;
+    const fail=async route=>{
+      requests++;
+      await new Promise(resolve=>setTimeout(resolve,300));
+      await route.fulfill({status:500,contentType:"application/json",body:JSON.stringify({error:"Report is temporarily unavailable."})});
+    };
+    await ctl.route("**/api/v1/report?*",fail);
+    await ctl.click("#open-report");
+    await ctl.waitForSelector("#report-dialog[open]");
+    await ctl.selectOption("#report-format","json");
+    await ctl.fill("#report-name","retry-report");
+    await ctl.$eval("#report-form",form=>{form.requestSubmit();form.requestSubmit();});
+    await ctl.waitForFunction(()=>document.querySelector("#report-error").textContent.includes("temporarily unavailable"));
+    assert.equal(requests,1);
+    assert.equal(await ctl.inputValue("#report-name"),"retry-report.json");
+    assert.ok(await ctl.isVisible("#report-dialog"));
+    assert.equal(await ctl.isEnabled("#download-report"),true);
+    await ctl.unroute("**/api/v1/report?*",fail);
+    const next=ctl.waitForEvent("download");
+    await ctl.click("#download-report");
+    assert.equal((await next).suggestedFilename(),"retry-report.json");
+    await ctl.waitForSelector("#report-dialog",{state:"hidden"});
+  });
+
+  await check("cancelling a pending Report request does not start a download", async () => {
+    let started;
+    const requestStarted=new Promise(resolve=>{started=resolve;});
+    const delayed=async route=>{
+      started();
+      await new Promise(resolve=>setTimeout(resolve,400));
+      // The browser may already have aborted the intercepted request.
+      try { await route.fulfill({contentType:"application/json",body:"{}"}); } catch {}
+    };
+    let downloads=0;
+    const received=()=>downloads++;
+    ctl.on("download",received);
+    await ctl.route("**/api/v1/report?*",delayed);
+    await ctl.click("#open-report");
+    await ctl.waitForSelector("#report-dialog[open]");
+    await ctl.click("#download-report");
+    await requestStarted;
+    await ctl.click("#cancel-report");
+    await ctl.waitForSelector("#report-dialog",{state:"hidden"});
+    await ctl.waitForTimeout(600);
+    assert.equal(downloads,0);
+    await ctl.unroute("**/api/v1/report?*",delayed);
+    ctl.off("download",received);
   });
 
   await check("adding a host: client-side validation, then a live row", async () => {

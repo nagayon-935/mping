@@ -79,21 +79,26 @@ export function createControl() {
     reset: () => request("POST", "api/v1/reset"),
     stop: () => request("POST", "api/v1/stop"),
     restart: () => request("POST", "api/v1/restart"),
-    async downloadReport(format) {
+    async downloadReport(format, filename, { signal } = {}) {
       try {
-        const response = await fetch(`api/v1/report?format=${format}`, { headers: { "X-Mping-Token": token ?? "" } });
+        const response = await fetch(`api/v1/report?format=${format}`, { headers: { "X-Mping-Token": token ?? "" }, signal });
         if (!response.ok) {
           if (response.status === 403) { allowed = false; store(null); }
           return { ok: false, error: (await response.json()).error ?? `HTTP ${response.status}` };
         }
-        const url = URL.createObjectURL(await response.blob());
-        const link = el("a", { attrs: { href: url, download: `mping-report.${format === "text" ? "txt" : "json"}` } });
+        const blob = await response.blob();
+        if (signal?.aborted) return { ok: false, cancelled: true };
+        const url = URL.createObjectURL(blob);
+        const link = el("a", { attrs: { href: url, download: filename } });
         document.body.append(link);
         link.click();
         link.remove();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
         return { ok: true };
-      } catch (err) { return { ok: false, error: `Couldn't download report: ${err.message}` }; }
+      } catch (err) {
+        if (signal?.aborted) return { ok: false, cancelled: true };
+        return { ok: false, error: `Couldn't download report: ${err.message}` };
+      }
     },
   };
 }

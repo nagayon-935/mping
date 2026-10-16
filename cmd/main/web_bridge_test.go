@@ -48,6 +48,9 @@ func TestRunWithWebServesLiveSnapshotWhileUIRuns(t *testing.T) {
 	var logs []string
 	started = stubRunSeams(t, func(opts ui.RunOptions) error {
 		logs = opts.InitialLogs
+		if opts.WebControlURL != started().ControlURL() {
+			t.Error("TUI must retain the current control URL independently of Log")
+		}
 		resp, err := http.Get(started().URL() + "api/v1/snapshot")
 		if err != nil {
 			t.Errorf("GET snapshot: %v", err)
@@ -101,7 +104,12 @@ func TestRunWithWebClosesServerOnExit(t *testing.T) {
 }
 
 func TestRunWithoutWebDoesNotStartServer(t *testing.T) {
-	stubRunSeams(t, func(ui.RunOptions) error { return nil })
+	stubRunSeams(t, func(opts ui.RunOptions) error {
+		if opts.WebControlURL != "" {
+			t.Error("web access must be disabled when --web is absent")
+		}
+		return nil
+	})
 	called := false
 	webStart = func(web.Options) (*web.Server, error) {
 		called = true

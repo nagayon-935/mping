@@ -33,8 +33,7 @@
   </form>
   <span id="measurement-controls" hidden>
     <button id="measurement-action" class="btn" type="button">Stop</button>
-    <button id="report-json" class="btn" type="button">Report JSON</button>
-    <button id="report-text" class="btn" type="button">Report text</button>
+    <button id="open-report" class="btn" type="button" aria-haspopup="dialog">Report</button>
   </span>
   <span id="reset-slot" hidden></span>
   <details id="readonly-help" class="readonly-help" hidden>
@@ -47,6 +46,27 @@
   </details>
   <p id="notice" class="notice" role="status" aria-live="polite"></p>
 </header>
+
+<dialog id="report-dialog" class="report-dialog" aria-labelledby="report-title">
+  <form id="report-form" novalidate>
+    <h2 id="report-title" class="pane-title">Save report</h2>
+    <label class="report-field" for="report-format">Format
+      <select id="report-format">
+        <option value="json">JSON (.json)</option>
+        <option value="text">Text (.txt)</option>
+      </select>
+    </label>
+    <label class="report-field" for="report-name">File name
+      <input id="report-name" type="text" value="mping-report.json" autocomplete="off" spellcheck="false" aria-describedby="report-name-hint report-error" autofocus>
+    </label>
+    <p id="report-name-hint" class="pane-hint">The extension follows the selected format.</p>
+    <p id="report-error" class="report-error" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button id="cancel-report" class="btn" type="button">Cancel</button>
+      <button id="download-report" class="btn" type="submit">Download</button>
+    </div>
+  </form>
+</dialog>
 
 <div id="workspace" class="workspace">
   <section id="pane-monitor" class="pane" aria-labelledby="targets-title">

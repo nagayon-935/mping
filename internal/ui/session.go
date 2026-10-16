@@ -134,3 +134,13 @@ func (s *uiSession) bind(app *tview.Application, input func(*tcell.EventKey) *tc
 		return nil
 	})
 }
+
+// copyClipboard asks the active terminal to copy text (OSC 52 where supported).
+// The terminal may ignore the request, so callers must not claim confirmation.
+func (s *uiSession) copyClipboard(text string) {
+	s.screenMu.RLock()
+	defer s.screenMu.RUnlock()
+	if s.screen != nil {
+		s.screen.SetClipboard([]byte(text))
+	}
+}

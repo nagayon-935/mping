@@ -209,7 +209,7 @@ test("summaryItems lists waiting targets only when there are some", () => {
 });
 
 test("readOnlyHint explains the 127.0.0.1 origin when opened via another host name", () => {
-  assert.match(readOnlyHint("127.0.0.1").title, /Log pane/);
+  assert.match(readOnlyHint("127.0.0.1").title, /press b.*Copy URL/);
   assert.doesNotMatch(readOnlyHint("127.0.0.1").title, /instead/);
   assert.match(readOnlyHint("localhost").title, /127\.0\.0\.1/);
   assert.match(readOnlyHint("[::1]").text, /Read-only/);

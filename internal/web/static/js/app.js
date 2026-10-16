@@ -11,6 +11,7 @@ import { badgeFor, buildSections, matchesFilter, readOnlyHint, summarize, summar
 import { reconcileWindow } from "./timeline.js";
 import { confirmButton, createControl } from "./control.js";
 import { formatTime } from "./time.js";
+import { createReportDialog } from "./report.js";
 
 const HISTORY_EVERY_MS = 2000;
 const MAX_HISTORY_POINTS = 3000; // the server's per-target RTT ring
@@ -87,6 +88,17 @@ const inspect = createInspect({
 });
 
 const log = createLog({ body: $("log-body"), status: $("log-status"), requestRender: scheduleRender });
+
+const report = createReportDialog({
+  dialog: $("report-dialog"), form: $("report-form"), format: $("report-format"),
+  name: $("report-name"), error: $("report-error"), cancel: $("cancel-report"), submit: $("download-report"),
+  download: (...args) => control.downloadReport(...args),
+  canControl: () => control.allowed,
+  onError(message) {
+    if (!control.allowed) notify(message, true);
+    renderControls();
+  },
+});
 
 function readPage() {
   view.page = location.hash === "#log" ? "log" : location.hash === "#http" ? "http" : "monitor";
@@ -338,6 +350,7 @@ function renderControls() {
   $("reset-slot").hidden = !on;
   $("measurement-controls").hidden = !on;
   $("readonly-help").hidden = on;
+  if (!on) report.close();
   // A rejected token (e.g. from an earlier mping run) also retracts the
   // inspect pane's delete button, not just the header controls.
   if (!on) document.querySelector('#inspect-body [data-section="actions"]')?.remove();
@@ -363,10 +376,7 @@ function initControls() {
       renderControls();
     } finally { $("measurement-action").disabled = false; }
   });
-  for (const format of ["json", "text"]) $("report-" + format).addEventListener("click", async () => {
-    const res = await control.downloadReport(format);
-    if (!res.ok) { notify(res.error, true); renderControls(); }
-  });
+  $("open-report").addEventListener("click", report.open);
 
   const hint = readOnlyHint(location.hostname);
   $("readonly-hint").textContent = `${hint.text} · How to enable`;

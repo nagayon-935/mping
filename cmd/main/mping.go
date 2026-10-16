@@ -432,6 +432,9 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			thresholds: currentCfg.thresholds, sig: sig, logCh: logCh,
 			currentHosts: currentHosts, currentGroups: currentGroups,
 		})
+		if webSrv != nil && !cfg.noTUI {
+			runOpts.WebControlURL = webSrv.ControlURL()
+		}
 		uiErr := runUI(runOpts)
 		// Stop accepting browser edits before the host list is captured and
 		// the supervisor torn down: an edit accepted from here on would be

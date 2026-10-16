@@ -144,7 +144,7 @@ func handleSession(src *Source, token string) http.HandlerFunc {
 func controlled(src *Source, token string, next func(http.ResponseWriter, *http.Request, Controller)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !hasToken(r, token) {
-			writeError(w, http.StatusForbidden, "control token missing or invalid; open the link shown in mping's Log pane")
+			writeError(w, http.StatusForbidden, "control token missing or invalid; press b in mping's TUI to show or copy the control URL")
 			return
 		}
 		p, state, _ := src.load()
