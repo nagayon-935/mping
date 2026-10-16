@@ -1,9 +1,9 @@
 // Browser checks for the dashboard against the simulated server. Not part of
 // CI (it needs a Chromium); run it by hand after UI changes:
 //
-//   MPING_WEB_DEV_PORT=8090 MPING_WEB_DEV_TOKEN=e2e-token MPING_WEB_DEV_UNTRUSTED=1 \
+//   MPING_WEB_DEV_PORT=8090 MPING_WEB_DEV_TOKEN=e2e-token-0123456789 MPING_WEB_DEV_UNTRUSTED=1 \
 //     go test -run TestDevServer -timeout 0 ./internal/web &
-//   E2E_TOKEN=e2e-token PLAYWRIGHT_CORE=/path/to/node_modules/playwright-core \
+//   E2E_TOKEN=e2e-token-0123456789 PLAYWRIGHT_CORE=/path/to/node_modules/playwright-core \
 //     [CHROMIUM_PATH=/path/to/chrome] node internal/web/jstest/e2e.mjs http://127.0.0.1:8090/
 //
 // Scope selectors to #targets: the HTTP table reuses col-sent/col-max.
