@@ -3,6 +3,7 @@
 import { el, statusChip } from "./dom.js";
 import { countCell, numCell, rttCell, textCell } from "./cells.js";
 import { columnWidthPx, setColumns } from "./columns.js";
+import { SORTS } from "./workspace.js";
 import {
   buildSections, cellLevels, dscpName, formatPct, lossRate, matchesFilter, rowLevel,
   selectColumns, statusReasons,
@@ -35,23 +36,24 @@ function isIPLiteral(host) {
   return host.includes(":") || (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) && host.split(".").every((n) => Number(n) <= 255));
 }
 
-function hostCell(t, features) {
+function hostCell(t, features, group, focused) {
   const td = el("td", { className: "host-cell" },
-    el("button", { className: "host-open", attrs: { type: "button", tabindex: "-1", title: t.host, "aria-label": `Inspect ${t.host}` } },
+    el("button", { className: "host-open", attrs: { type: "button", tabindex: focused ? "0" : "-1", "data-target-id": String(t.id), title: t.host, "aria-label": `Inspect ${t.host}` } },
       el("span", { className: "host", text: t.host }),
       el("span", { className: "host-arrow", text: "›", attrs: { "aria-hidden": "true" } })));
-  if (features.ptr && t.ptr && t.ptr !== t.host) td.append(el("span", { className: "sub", text: t.ptr, attrs: { title: t.ptr } }));
+  if (group) td.append(el("span", { className: "sub", text: group, attrs: { title: `Group: ${group}` } }));
+  else if (features.ptr && t.ptr && t.ptr !== t.host) td.append(el("span", { className: "sub", text: t.ptr, attrs: { title: t.ptr } }));
   return td;
 }
 
-function targetCell(col, t, th, cells, features) {
+function targetCell(col, t, th, cells, features, group, focused) {
   switch (col.key) {
     case "status": {
       const reasons = statusReasons(t, th).join(" · ");
       return el("td", {}, statusChip(rowLevel(t, th)),
         el("span", { className: "status-reason", text: reasons, attrs: { title: reasons } }));
     }
-    case "host": return hostCell(t, features);
+    case "host": return hostCell(t, features, group, focused);
     case "ip": return textCell(t.ip || "–", "mono");
     case "asn": return textCell([t.asn, t.org].filter(Boolean).join(" ") || "–");
     case "loss": return metricCell(numCell(t.recv + t.loss === 0 ? "–" : formatPct(lossRate(t)), cells.loss));
@@ -77,19 +79,35 @@ function metricCell(td) {
  * @param {(id: number) => void} onOpen
  * @returns {number} rows rendered (after filtering)
  */
-export function renderTargets(table, view, onOpen) {
+export function renderTargets(table, view, onOpen, onSort) {
   const { snapshot, meta, filter, selectedId } = view;
   const th = meta.thresholds;
   // The table is as wide as its wrapper; widths come from the CSS contract,
   // which already reflects the current breakpoint and pane layout.
   const available = table.parentElement.clientWidth;
   const columns = selectColumns(targetColumns(meta.features, snapshot.targets), (c) => columnWidthPx(table, c.key), available);
+  const active = document.activeElement;
+  const focusedSortBefore = table.contains(active) ? active?.dataset?.sort : null;
   setColumns(table, columns, "host");
-
-  const focusedId = document.activeElement?.dataset?.targetId;
-  const visible = snapshot.targets.filter((t) => matchesFilter(t, filter, meta.features));
+  const focusedId = table.contains(active) ? active?.dataset?.targetId : null;
+  const focusedSort = focusedSortBefore;
+  const visible = view.visibleTargets ?? snapshot.targets.filter((t) => matchesFilter(t, filter, meta.features));
+  const focusId = visible.some(t => String(t.id) === focusedId) ? Number(focusedId)
+    : visible.some(t => t.id === view.focusedId) ? view.focusedId
+    : visible.some(t => t.id === selectedId) ? selectedId : visible[0]?.id;
+  for (const th of table.tHead.querySelectorAll("th")) {
+    const key = columns[[...th.parentElement.children].indexOf(th)].key;
+    if (!onSort || !SORTS[key]) continue;
+    const current = view.sort?.key === key;
+    th.setAttribute("aria-sort", current ? view.sort.direction === "asc" ? "ascending" : "descending" : "none");
+    const button = el("button", { className: "sort-heading", text: `${th.textContent}${current ? view.sort.direction === "asc" ? " ↑" : " ↓" : ""}`,
+      attrs: { type: "button", "data-sort": key, "aria-label": `Sort by ${SORTS[key]}` } });
+    button.addEventListener("click", () => onSort(key));
+    th.replaceChildren(button);
+  }
+  const groupsById = new Map(meta.groups?.flatMap(g => g.target_ids.map(id => [id, g.name])) ?? []);
   const rows = [];
-  for (const section of buildSections(visible, meta.groups)) {
+  for (const section of buildSections(visible, view.sort?.key && view.sort.key !== "config" ? [] : meta.groups)) {
     if (section.name != null) {
       rows.push(el("tr", { className: "group-row" },
         el("td", { text: `${section.name} (${section.targets.length})`, attrs: { colspan: String(columns.length) } })));
@@ -97,21 +115,26 @@ export function renderTargets(table, view, onOpen) {
     for (const t of section.targets) {
       const cells = cellLevels(t, th);
       const tr = el("tr", {
-        className: "target-row",
+        className: `target-row health-${rowLevel(t, th)}`,
         attrs: {
-          tabindex: "0",
+          tabindex: "-1",
           ...(t.id === selectedId ? { "aria-current": "true" } : {}),
           "aria-label": `${t.host}, select to inspect`,
           "data-target-id": String(t.id),
         },
       });
       for (const c of columns) {
-        const cell = targetCell(c, t, th, cells, meta.features);
+        const cell = targetCell(c, t, th, cells, meta.features, view.sort?.key && view.sort.key !== "config" ? groupsById.get(t.id) : null, t.id === focusId);
         cell.classList.add(`col-${c.key}`);
         tr.append(cell);
       }
       tr.addEventListener("click", () => onOpen(t.id));
+      tr.querySelector(".host-open").addEventListener("keydown", e => {
+        if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onOpen(t.id); }
+      });
       tr.addEventListener("keydown", (e) => {
+        if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
         if (e.target === tr && (e.key === "Enter" || e.key === " ")) {
           e.preventDefault();
           onOpen(t.id);
@@ -122,6 +145,7 @@ export function renderTargets(table, view, onOpen) {
   }
   table.tBodies[0].replaceChildren(...rows);
 
-  if (focusedId) table.querySelector(`tr[data-target-id="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
+  if (focusedId && table.contains(active) === false) table.querySelector(`.host-open[data-target-id="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
+  if (focusedSort) table.querySelector(`[data-sort="${CSS.escape(focusedSort)}"]`)?.focus({ preventScroll: true });
   return visible.length;
 }

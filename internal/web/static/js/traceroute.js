@@ -36,13 +36,13 @@ export function tracePath(target, features) {
 }
 
 /** All hosts are visible independently of the selected Summary target. */
-export function renderTraceroutes(container, targets, features) {
+export function renderTraceroutes(container, targets, features, selectedId = null) {
   const top = container.scrollTop;
   if (!targets.length) {
     container.replaceChildren(el("p", { className: "empty", text: "No targets match the filter." }));
   } else {
     container.replaceChildren(...targets.map(target => el("section", {
-      className: "trace-target", attrs: { "data-target-id": String(target.id), "aria-label": target.host },
+      className: `trace-target${target.id === selectedId ? " is-selected" : ""}`, attrs: { "data-target-id": String(target.id), "aria-label": target.host },
     }, el("div", { className: "trace-target-head" },
       el("strong", { className: "cell-text", text: target.host, attrs: { title: target.host } }),
       el("span", { className: "mono cell-text", text: target.ip || "Resolving address…", attrs: { title: target.ip || "" } })),

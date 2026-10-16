@@ -74,8 +74,8 @@ try {
   const page = await open({ viewport: WIDE });
 
   await check("live badge and grouped rows", async () => {
-    assert.match(await page.textContent("#badge"), /Live/);
-    assert.match(await page.textContent("#updated"), /^Last change /);
+    assert.match(await page.textContent("#badge"), /Online/);
+    assert.match(await page.textContent("#updated"), /^Last probe /);
     assert.deepEqual(await page.$$eval("tr.group-row", (r) => r.map((x) => x.textContent)), ["core (2)", "internet (3)", "Ungrouped (1)"]);
     assert.equal(await page.$$eval("tr.target-row", (r) => r.length), 6);
     assert.ok(await page.isHidden("#pane-inspect"));
@@ -98,7 +98,7 @@ try {
     const headers = () => page.$$eval("#targets th", (h) => h.map((x) => x.textContent));
     assert.deepEqual(await headers(),
       ["Status", "Host", "IP", "AS", "Loss %", "Sent", "Recv", "RTT", "Jitter", "TTL"]);
-    assert.equal(await page.$$eval("input[type=checkbox]", (n) => n.length), 0, "no column toggle any more");
+    assert.equal(await page.$$eval("#pane-monitor input[type=checkbox]", (n) => n.length), 0, "no column toggle any more");
     // Live values never change column widths. Columns respond only to available width.
     const fit = await page.$eval("#targets", (t) => ({
       table: t.getBoundingClientRect().width, wrap: t.parentElement.clientWidth, zoom: Number(t.style.zoom || 1),
@@ -459,8 +459,8 @@ try {
     assert.equal(await page.evaluate(()=>location.hash),"");
     assert.ok(await page.isVisible("#targets th.col-asn"));
     assert.equal(await page.locator("#targets th.col-avg, #targets th.col-spark").count(),0);
-    assert.equal(await page.locator(".graph-value:visible").count(),0);
-    assert.match(await page.textContent("#updated"), /^Last change \d{2}:\d{2}:\d{2}$/);
+    assert.ok((await page.locator(".graph-value").allTextContents()).every(text=>!text));
+    assert.match(await page.textContent("#updated"), /^Last probe \d{2}:\d{2}:\d{2}$/);
   });
 
   await check("filter narrows the table", async () => {
@@ -494,16 +494,16 @@ try {
 
   await check("without a token the dashboard is read-only", async () => {
     const ro = await open({ viewport: { width: 1400, height: 900 } });
-    assert.ok(await ro.isVisible("#readonly-hint"));
+    assert.ok(await ro.isVisible("#open-auth"));
     assert.ok(await ro.isHidden("#add-form"));
     assert.ok(await ro.isHidden("#reset-slot"));
     assert.ok(await ro.isHidden("#open-report"));
     await ro.click("tr.target-row >> nth=0");
     await ro.waitForFunction(() => !!document.querySelector("#inspect-target").textContent);
     assert.equal(await ro.$$eval('#inspect-body [data-section="actions"]', (n) => n.length), 0);
-    await ro.click("#readonly-hint");
+    await ro.click("#open-auth");
     assert.ok(await ro.isVisible("#readonly-explanation"));
-    assert.match(await ro.textContent("#readonly-explanation"), /press b.*Copy URL/);
+    assert.match(await ro.textContent("#readonly-explanation"), /Press b.*Copy URL/i);
     await ro.close();
   });
 
@@ -584,15 +584,15 @@ try {
   const rowHosts = () => ctl.$$eval("tr.target-row .host", (h) => h.map((x) => x.textContent));
 
   await check("the token link enables controls and leaves the address bar", async () => {
-    await ctl.waitForSelector("#add-form:not([hidden])");
+    await ctl.waitForSelector("#measurement-controls:not([hidden])");
     assert.equal(await ctl.evaluate(() => location.hash), "");
-    assert.ok(await ctl.isHidden("#readonly-hint"));
+    assert.ok(await ctl.isDisabled("#open-auth"));
     await shot(ctl, "control");
   });
 
   await check("stop, report download and restart preserve counters", async () => {
     await ctl.click("#measurement-action");
-    await ctl.waitForFunction(()=>document.querySelector("#measurement-action").textContent==="Restart");
+    await ctl.waitForFunction(()=>document.querySelector("#measurement-action").textContent==="Restart all");
     const sent=()=>ctl.$eval("tr.target-row td.col-sent",td=>td.title);
     const before=await sent();
     await ctl.waitForTimeout(2500);
@@ -611,7 +611,7 @@ try {
     assert.equal(JSON.parse(contents).schema_version,1);
     await ctl.waitForSelector("#report-dialog",{state:"hidden"});
     await ctl.click("#measurement-action");
-    await ctl.waitForFunction(()=>document.querySelector("#measurement-action").textContent==="Stop");
+    await ctl.waitForFunction(()=>document.querySelector("#measurement-action").textContent==="Stop all");
     await ctl.waitForTimeout(1500);
     assert.notEqual(await sent(),before);
   });
@@ -648,6 +648,7 @@ try {
     await ctl.waitForSelector("#report-dialog",{state:"hidden"});
     assert.equal(await ctl.evaluate(()=>document.activeElement.id),"open-report");
     await ctl.setViewportSize({width:390,height:844});
+    await ctl.click("#toggle-actions");
     await ctl.click("#open-report");
     await ctl.waitForSelector("#report-dialog[open]");
     assert.ok(await ctl.$eval("#report-dialog",n=>{const r=n.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&n.scrollWidth<=n.clientWidth;}));
@@ -708,17 +709,19 @@ try {
   });
 
   await check("adding a host: client-side validation, then a live row", async () => {
+    await ctl.click("#open-add");
     await ctl.fill("#add-host", "bad host");
-    await ctl.click("#add-form button");
-    assert.match(await ctl.textContent("#notice"), /spaces/);
+    await ctl.click("#add-submit");
+    assert.match(await ctl.textContent("#add-error"), /spaces/);
     await ctl.fill("#add-host", "added.e2e.example");
-    await ctl.click("#add-form button");
+    await ctl.click("#add-submit");
     await ctl.waitForFunction(() => [...document.querySelectorAll(".host")].some((h) => h.textContent === "added.e2e.example"), null, { timeout: 5000 });
     assert.match(await ctl.textContent("#notice"), /Added added\.e2e\.example/);
     assert.equal(await ctl.inputValue("#add-host"), "");
   });
 
   await check("a double submit adds once without a spurious error", async () => {
+    await ctl.click("#open-add");
     await ctl.fill("#add-host", "double.e2e.example");
     await ctl.evaluate(() => {
       const form = document.getElementById("add-form");
@@ -732,18 +735,22 @@ try {
   });
 
   await check("server-side rejections are shown", async () => {
+    await ctl.click("#open-add");
     await ctl.fill("#add-host", "added.e2e.example");
-    await ctl.click("#add-form button");
-    await ctl.waitForFunction(() => document.querySelector("#notice").classList.contains("is-error"));
-    assert.match(await ctl.textContent("#notice"), /already in the list/);
+    await ctl.click("#add-submit");
+    await ctl.waitForSelector("#add-error:not([hidden])");
+    assert.match(await ctl.textContent("#add-error"), /already in the list/);
+    await ctl.locator('[data-close="add-dialog"]').click();
   });
 
-  await check("an armed delete stays armed across live updates", async () => {
+  await check("delete confirmation survives live updates without expiring", async () => {
     await ctl.locator("tr.target-row", { hasText: "added.e2e.example" }).click();
     await ctl.getByRole("button", { name: "Delete added.e2e.example" }).click();
-    await ctl.waitForTimeout(2500); // at least two snapshots
-    assert.equal(await ctl.getByRole("button", { name: "Confirm delete added.e2e.example?" }).count(), 1, "confirmation reset by an update");
-    await ctl.getByRole("button", { name: "Cancel" }).click();
+    assert.equal(await ctl.evaluate(()=>document.activeElement.id),"confirm-cancel");
+    assert.match(await ctl.textContent("#confirm-description"),/added.e2e.example[\s\S]*Target #/);
+    await ctl.waitForTimeout(6500);
+    assert.ok(await ctl.isVisible("#confirm-dialog"));
+    await ctl.click("#confirm-cancel");
   });
 
   await check("deleting needs a confirming second press", async () => {
@@ -752,7 +759,7 @@ try {
     const del = ctl.getByRole("button", { name: "Delete added.e2e.example" });
     await del.click();
     assert.ok((await rowHosts()).includes("added.e2e.example"), "first press must not delete");
-    await ctl.getByRole("button", { name: "Confirm delete added.e2e.example?" }).click();
+    await ctl.locator("#confirm-action").click();
     await ctl.waitForFunction(() => ![...document.querySelectorAll(".host")].some((h) => h.textContent === "added.e2e.example"), null, { timeout: 5000 });
     assert.ok(await ctl.isHidden("#pane-inspect"), "details close when the selected target is removed");
     assert.equal(await ctl.evaluate(() => location.hash), "", "the deleted target's address is dropped");
@@ -761,7 +768,7 @@ try {
   await check("deleting a target does not restrict the global log", async () => {
     await ctl.locator("tr.target-row",{hasText:"double.e2e.example"}).click();
     await ctl.getByRole("button",{name:"Delete double.e2e.example"}).click();
-    await ctl.getByRole("button",{name:"Confirm delete double.e2e.example?"}).click();
+    await ctl.locator("#confirm-action").click();
     await ctl.waitForFunction(()=>![...document.querySelectorAll(".host")].some(n=>n.textContent==="double.e2e.example"));
     await ctl.click("#nav-log");
     await ctl.waitForSelector("#log-body tbody tr");
@@ -776,7 +783,7 @@ try {
     const sent = () => ctl.$eval("tr.target-row td.col-sent", (td) => Number(td.title.replaceAll(",", "")));
     const before = await sent();
     await ctl.getByRole("button", { name: "Reset stats" }).click();
-    await ctl.getByRole("button", { name: "Confirm reset?" }).click();
+    await ctl.locator("#confirm-action").click();
     await ctl.waitForFunction((b) => Number(document.querySelector("tr.target-row td.col-sent").title.replaceAll(",", "")) < b, before, { timeout: 5000 });
     assert.match(await ctl.textContent("#notice"), /Statistics reset/);
   });
@@ -784,25 +791,29 @@ try {
   await check("a token rejected mid-session retracts every control", async () => {
     const other = await browser.newContext();
     const page2 = await open({ viewport: { width: 1400, height: 900 } }, other, `${base}#token=${token}`);
-    await page2.waitForSelector("#add-form:not([hidden])");
+    await page2.waitForSelector("#measurement-controls:not([hidden])");
     await page2.route("**/api/v1/targets/*", (route) =>
       route.request().method() === "DELETE"
         ? route.fulfill({ status: 403, contentType: "application/json", body: '{"error":"control token missing or invalid"}' })
         : route.continue());
     await page2.click("tr.target-row >> nth=0");
     await page2.getByRole("button", { name: /^Delete / }).click();
-    await page2.getByRole("button", { name: /^Confirm delete / }).click();
-    await page2.waitForFunction(() => document.querySelector("#add-form").hidden);
-    assert.ok(await page2.isVisible("#readonly-hint"));
+    await page2.locator("#confirm-action").click();
+    await page2.waitForFunction(() => document.querySelector("#measurement-controls").hidden);
+    assert.ok(await page2.isVisible("#open-auth"));
     assert.equal(await page2.$$eval('#inspect-body [data-section="actions"]', (n) => n.length), 0);
     await other.close();
   });
 
-  await check("opening via localhost explains why the page is read-only", async () => {
+  await check("opening via localhost provides in-place token authentication", async () => {
     const lh = await browser.newContext();
     const page3 = await open({ viewport: { width: 1400, height: 900 } }, lh, base.replace("127.0.0.1", "localhost"));
-    assert.ok(await page3.isVisible("#readonly-hint"));
-    assert.match(await page3.getAttribute("#readonly-hint", "title"), /127\.0\.0\.1/);
+    assert.ok(await page3.isVisible("#open-auth"));
+    await page3.click("#open-auth");
+    await page3.fill("#auth-token", `${base}#token=${token}`);
+    await page3.click("#auth-submit");
+    await page3.waitForSelector("#auth-dialog",{state:"hidden"});
+    assert.ok(await page3.isDisabled("#open-auth"));
     await lh.close();
   });
 
@@ -810,14 +821,14 @@ try {
     const stale = await browser.newContext();
     const page = await open({ viewport: { width: 1400, height: 900 } }, stale, `${base}#token=not-the-token`);
     await page.waitForTimeout(500);
-    assert.ok(await page.isVisible("#readonly-hint"));
+    assert.ok(await page.isVisible("#open-auth"));
     assert.ok(await page.isHidden("#add-form"));
     await stale.close();
   });
 
   const mobile = await open({ viewport: { width: 390, height: 844 } }, ctx);
   await check("phone width keeps status, host and the highest-priority columns without page overflow", async () => {
-    assert.ok(await mobile.isVisible("#add-form"));
+    assert.ok(await mobile.isVisible("#toggle-actions"));
     assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     const headers = await mobile.$$eval("#targets th", (h) => h.map((x) => x.textContent));
     assert.deepEqual(headers.slice(0, 2), ["Status", "Host"]);

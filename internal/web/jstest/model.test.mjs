@@ -171,10 +171,10 @@ test("matchesFilter searches host, IP, PTR and AS fields case-insensitively", ()
 });
 
 test("badgeFor keeps a final stopped state when the stream drops", () => {
-  assert.equal(badgeFor("running", true).label, "Live");
+  assert.equal(badgeFor("running", true).label, "Online");
   assert.equal(badgeFor("reloading", true).label, "Reloading");
-  assert.equal(badgeFor("running", false).label, "Disconnected");
-  assert.equal(badgeFor("stopped", false).label, "Stopped");
+  assert.equal(badgeFor("running", false).label, "Reconnecting");
+  assert.equal(badgeFor("stopped", false).label, "Session ended");
   assert.equal(badgeFor(null, false).label, "Connecting");
 });
 

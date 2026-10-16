@@ -10,6 +10,7 @@
 import { el, statusChip } from "./dom.js";
 import { drawChart, drawCrosshair, indexAt } from "./chart.js";
 import { formatRTT, rowLevel } from "./model.js";
+import { formatTime } from "./time.js";
 import { agoLabel, alignSamples, downsample, padTo, sharedMax } from "./timeline.js";
 
 /**
@@ -22,6 +23,9 @@ export function createGraphs(dom) {
   let reduced = { points: 0, size: 1 }; // shape of the last drawn series
   let lastKey = null;
   let paintQueued = false;
+  let announce = null;
+  const announcement = el("span", {className:"visually-hidden",attrs:{role:"status","aria-live":"polite"}});
+  dom.grid.after(announcement);
 
   const paint = () => {
     paintQueued = false;
@@ -47,13 +51,20 @@ export function createGraphs(dom) {
       // Numeric values belong to the point being inspected. The monitor
       // already shows latest RTT, so idle cards show only their history.
       const v = cursor >= 0 ? values[cursor] : undefined;
-      card.value.hidden = cursor < 0;
+      card.value.hidden = false;
       card.value.textContent = cursor < 0 ? "" : v === null ? "Lost" : v === undefined ? "–" : formatRTT(v);
       card.value.classList.toggle("is-lost", v === null);
+      const at = formatTime((state.now ?? Date.now()) - (values.length - 1 - Math.max(cursor,0)) * size * state.meta.interval_ms);
+      card.readout.textContent = cursor < 0 ? "Focus chart and use ← / → to inspect samples."
+        : `${at} · ${v === undefined ? "No measurement" : v === null ? "No reply" : `${size > 1 ? "Peak RTT" : "RTT"} ${formatRTT(v)}${lost[cursor] ? " · Includes lost probes" : ""}`}`;
+      card.readout.title = card.readout.textContent;
+      card.empty.hidden = full[i].some(value=>value !== undefined);
+      if (announce === t.id) announcement.textContent = `${t.host}: ${card.readout.textContent}`;
     });
+    announce = null;
     dom.cursorNote.textContent = cursor >= 0
-      ? `Cursor: ${agoLabel((reduced.points - 1 - cursor) * reduced.size, state.meta.interval_ms)} — hover any chart to compare targets at the same moment`
-      : "Hover any chart to compare targets at the same moment.";
+      ? `Cursor: ${agoLabel((reduced.points - 1 - cursor) * reduced.size, state.meta.interval_ms)} · ${state.shared ? "Shared scale" : "Individual scales: heights are not comparable"}`
+      : state.shared ? "Shared scale · hover or use ← / → to compare." : "Individual scales · heights are not directly comparable.";
   };
   const schedulePaint = () => {
     if (paintQueued) return;
@@ -65,14 +76,25 @@ export function createGraphs(dom) {
     const canvas = el("canvas", { className: "graph-canvas", attrs: { "aria-hidden": "true" } });
     const status = el("span", { className: "graph-status" });
     const title = el("span", { className: "graph-host" });
-    const value = el("span", { className: "graph-value", attrs: {hidden: ""} });
+    const value = el("span", { className: "graph-value" });
+    const readout = el("p",{className:"graph-readout",attrs:{id:`graph-readout-${t.id}`}});
+    const empty = el("p",{className:"graph-empty",text:"Waiting for the first completed measurement…"});
     const root = el("div", {
       className: "graph-card",
-      attrs: { tabindex: "0", role: "button", "data-target-id": String(t.id) },
-    }, el("div", { className: "graph-head" }, status, title, value), canvas);
-    const card = { root, status, title, value, canvas, geo: null };
+      attrs: { tabindex: "0", role: "button", "data-target-id": String(t.id), "aria-describedby":`graph-readout-${t.id}` },
+    }, el("div", { className: "graph-head" }, status, title, value), canvas, empty, readout);
+    const card = { root, status, title, value, canvas, readout, empty, geo: null };
     root.addEventListener("click", () => dom.onSelect(t.id));
     root.addEventListener("keydown", (e) => {
+      if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End") {
+        e.preventDefault();e.stopPropagation();
+        if (!reduced.points) return;
+        const current = cursor < 0 ? reduced.points - 1 : cursor;
+        cursor = e.key === "Home" ? 0 : e.key === "End" ? reduced.points - 1 : Math.max(0,Math.min(reduced.points-1,current+(e.key === "ArrowLeft"?-1:1)));
+        announce=t.id;schedulePaint();return;
+      }
+      if(e.key === "Escape"){e.preventDefault();e.stopPropagation();cursor=-1;schedulePaint();return;}
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         dom.onSelect(t.id);
@@ -87,6 +109,7 @@ export function createGraphs(dom) {
       }
     });
     canvas.addEventListener("pointerleave", () => {
+      if (document.activeElement === root) return;
       cursor = -1;
       schedulePaint();
     });

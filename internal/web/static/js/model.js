@@ -167,14 +167,14 @@ export function matchesFilter(t, query, features = {ptr: true, asn: true}) {
  * A final "stopped" survives the disconnect that follows it.
  */
 export function badgeFor(state, connected) {
-  if (state === "stopped") return { level: "stopped", label: "Stopped" };
+  if (state === "stopped") return { level: "stopped", label: "Session ended" };
   if (!connected) {
     return state == null
       ? { level: "pending", label: "Connecting" }
-      : { level: "crit", label: "Disconnected" };
+      : { level: "warn", label: "Reconnecting" };
   }
   switch (state) {
-    case "running": return { level: "ok", label: "Live" };
+    case "running": return { level: "ok", label: "Online" };
     case "reloading": return { level: "warn", label: "Reloading" };
     default: return { level: "pending", label: "Starting" };
   }

@@ -5,7 +5,7 @@ import { countCell, numCell, rttCell, textCell } from "./cells.js";
 import { setColumns } from "./columns.js";
 import { formatPct, hopLossLevel } from "./model.js";
 
-export function renderMTR(table, targets, meta) {
+export function renderMTR(table, targets, meta, selectedId = null) {
   const columns = [
     { key: "ttl", label: "Hop", num: true },
     { key: "ip", label: "Address" },
@@ -27,14 +27,14 @@ export function renderMTR(table, targets, meta) {
     const body = el("tbody", { attrs: { "data-target-id": String(target.id) } });
     const hops = target.mtr_hops ?? [];
     const label = target.ip && target.ip !== target.host ? `${target.host} · ${target.ip}` : target.host;
-    body.append(el("tr", { className: "mtr-target-row" },
+    body.append(el("tr", { className: `mtr-target-row${target.id === selectedId ? " is-selected" : ""}` },
       el("th", { attrs: { colspan: String(columns.length), scope: "rowgroup", title: label } },
         el("div", { className: "mtr-target-label" },
           el("span", { className: "mtr-target-kind", text: "Target" }),
           el("strong", { className: "cell-text", text: target.host }),
           el("span", { className: "mtr-target-count", text: hops.length ? `${hops.length} hops` : "Waiting" }),
           el("span", { className: "mtr-target-address cell-text", text: target.ip || "Resolving address…" })))));
-    if (!hops.length) body.append(el("tr", {}, el("td", { className: "mtr-waiting", text: "No MTR data for this target yet.", attrs: { colspan: String(columns.length) } })));
+    if (!hops.length) body.append(el("tr", {}, el("td", { className: "mtr-waiting", text: "Waiting for hop replies. No MTR route data has been received yet.", attrs: { colspan: String(columns.length) } })));
     for (const hop of hops) {
       const cells = [
         numCell(String(hop.ttl)), textCell(hop.ip || "No reply", "mono"),

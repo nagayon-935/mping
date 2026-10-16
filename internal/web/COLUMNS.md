@@ -101,3 +101,20 @@ has a Destination label. Target headings remain visible during vertical scroll.
 
 RTT charts default to a shared vertical scale. The tick interval is rounded to
 1/2/5 × 10^k, with four equal intervals, so all shared charts use identical ticks.
+
+## Live ordering and interaction stability
+
+Health filters and text search apply to the monitor, routes and graph membership.
+Sorting uses a snapshot of target IDs across groups; incoming values do not
+reorder existing rows. New targets append, deleted IDs disappear, and Refresh
+order explicitly recomputes ranking. Configured order restores group headings.
+Headers expose sort direction, and keyboard focus survives table rebuilds.
+
+The header reserves two rows for actions and connection/measurement state.
+Notifications overlay the workspace; chart captions, numeric readouts and
+sample descriptions reserve their height even when idle. Route and graph
+Selected host buttons scroll only their own pane. Graph sample inspection
+works with pointer or keyboard and announces only explicit keyboard actions.
+Destructive actions use native modal dialogs with Cancel focused initially.
+On phones, global controls are a dropdown anchored below the header; opening
+it does not resize panes. Filters use a bounded grid with full-width search.
