@@ -39,6 +39,7 @@ type reloadCoordinator struct {
 	mu        sync.Mutex
 	requested bool
 	doc       hostsFileYAML
+	tryLive   func(config, []targetSpec, []ui.TargetGroup) (bool, string, error)
 }
 
 func newReloadCoordinator(fs *pflag.FlagSet, cliCfg config, cliHosts []string) *reloadCoordinator {
@@ -69,6 +70,24 @@ func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile stri
 		default:
 		}
 		return
+	}
+	if rc.tryLive != nil {
+		specs, groups := buildHostsAndGroups(docHosts, docGroups, rc.cliHosts)
+		expanded, expandedGroups, expandErr := expandTargets(specs, groups, cfg)
+		if expandErr != nil {
+			reloadNotice(logCh, "Reload expansion error: "+expandErr.Error())
+			return
+		}
+		applied, reason, err := rc.tryLive(cfg, expanded, expandedGroups)
+		if err != nil {
+			reloadNotice(logCh, "Reload error: "+err.Error())
+			return
+		}
+		if applied {
+			reloadNotice(logCh, "Configuration reloaded; existing target measurements retained. "+reason)
+			return
+		}
+		reloadNotice(logCh, "Restarting measurements for configuration reload: "+reason)
 	}
 	rc.mu.Lock()
 	rc.requested = true

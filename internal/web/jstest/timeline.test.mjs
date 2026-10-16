@@ -118,3 +118,11 @@ test("reconcileWindow falls back to the default when the window no longer fits",
   assert.equal(got.window.label, "5m");
   assert.equal(got.window.points, 3000);
 });
+
+test("timestamp alignment preserves pause gaps and never pulls old replies to now", async () => {
+  const { alignSamples } = await import("../static/js/timeline.js");
+  const now = Date.parse("2026-10-16T00:00:10Z");
+  const samples = [{at: "2026-10-16T00:00:05Z",rtt_ms: 5},{at: "2026-10-16T00:00:08Z",rtt_ms: null}];
+  assert.deepEqual(alignSamples(samples,6,1000,now), [5,undefined,undefined,null,undefined,undefined]);
+  assert.deepEqual(alignSamples(samples,3,1000,now+10000), [undefined,undefined,undefined]);
+});

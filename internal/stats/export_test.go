@@ -191,3 +191,56 @@ func TestDurationMs(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildSnapshot_HTTPChecksSummarizeEachResult(t *testing.T) {
+	up := NewHTTPCheckResult("https://up.example/health")
+	up.SetResult(200, 15*time.Millisecond, nil)
+	down := NewHTTPCheckResult("https://down.example/health")
+	down.SetResult(503, 30*time.Millisecond, nil)
+
+	snap := BuildSnapshot(nil, []*HTTPCheckResult{up, down})
+
+	if len(snap.HTTPChecks) != 2 {
+		t.Fatalf("HTTPChecks = %d, want 2", len(snap.HTTPChecks))
+	}
+	got := snap.HTTPChecks[0]
+	if got.URL != "https://up.example/health" || got.Status != "Up" || got.StatusCode != 200 {
+		t.Errorf("first check = %+v, want Up 200 for up.example", got)
+	}
+	if got.LastRTTMs != 15 || got.UpCount != 1 || got.DownCount != 0 {
+		t.Errorf("first check RTT/counts = %v/%d/%d, want 15/1/0", got.LastRTTMs, got.UpCount, got.DownCount)
+	}
+	if snap.HTTPChecks[1].Status != "Down" || snap.HTTPChecks[1].DownCount != 1 {
+		t.Errorf("second check = %+v, want Down with one failure", snap.HTTPChecks[1])
+	}
+}
+
+func TestBuildSnapshotFromViews_PortsAndMTRHopsUseMilliseconds(t *testing.T) {
+	view := TargetView{
+		Host: "router.example",
+		PortResults: []PortCheckView{
+			{Port: 443, Protocol: "tcp", Status: "Open", RTT: 2500 * time.Microsecond, OpenCount: 3, ClosedCount: 1},
+		},
+		MTRHops: []HopView{
+			{TTL: 1, IP: "192.0.2.1", ASN: "AS64500", Country: "JP", Org: "Example", Sent: 10, Recv: 9, LossPct: 10,
+				LastRTT: time.Millisecond, AvgRTT: 2 * time.Millisecond, MinRTT: 500 * time.Microsecond,
+				MaxRTT: 4 * time.Millisecond, Jitter: 250 * time.Microsecond},
+		},
+	}
+
+	snap := BuildSnapshotFromViews([]TargetView{view}, nil)
+
+	target := snap.Targets[0]
+	wantPort := PortSummary{Port: 443, Protocol: "tcp", Status: "Open", RTTMs: 2.5, OpenCount: 3, ClosedCount: 1}
+	if len(target.PortResults) != 1 || target.PortResults[0] != wantPort {
+		t.Errorf("PortResults = %+v, want [%+v]", target.PortResults, wantPort)
+	}
+	wantHop := HopSummary{TTL: 1, IP: "192.0.2.1", ASN: "AS64500", Country: "JP", Org: "Example", Sent: 10, Recv: 9,
+		LossPct: 10, LastRTTMs: 1, AvgRTTMs: 2, MinRTTMs: 0.5, MaxRTTMs: 4, JitterMs: 0.25}
+	if len(target.MTRHops) != 1 || target.MTRHops[0] != wantHop {
+		t.Errorf("MTRHops = %+v, want [%+v]", target.MTRHops, wantHop)
+	}
+	if snap.HTTPChecks != nil {
+		t.Errorf("HTTPChecks = %+v, want nil without HTTP results", snap.HTTPChecks)
+	}
+}

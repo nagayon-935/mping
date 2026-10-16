@@ -13,26 +13,31 @@ import (
 )
 
 type Settings struct {
-	IntervalMS       int64              `json:"interval_ms"`
-	TimeoutMS        int64              `json:"timeout_ms"`
-	PayloadBytes     int                `json:"payload_bytes"`
-	Interface        string             `json:"interface,omitempty"`
-	BoundSource      string             `json:"bound_source,omitempty"`
-	SourceIPv4Hint   string             `json:"source_ipv4_hint,omitempty"`
-	SourceIPv6Hint   string             `json:"source_ipv6_hint,omitempty"`
-	Network          string             `json:"network"`
-	Count            int                `json:"count"`
-	DurationDeadline *time.Time         `json:"duration_deadline,omitempty"`
-	PMTUDiscovery    bool               `json:"pmtu_discovery"`
-	Duration         string             `json:"duration"`
-	DSCP             string             `json:"dscp,omitempty"`
-	DNSServer        string             `json:"dns_server,omitempty"`
-	ResolveAll       bool               `json:"resolve_all"`
-	Traceroute       bool               `json:"traceroute"`
-	MTR              bool               `json:"mtr"`
-	Ports            []string           `json:"ports,omitempty"`
-	HTTPURLs         []string           `json:"http_urls,omitempty"`
-	Thresholds       map[string]float64 `json:"thresholds"`
+	IntervalMS          int64              `json:"interval_ms"`
+	TimeoutMS           int64              `json:"timeout_ms"`
+	PayloadBytes        int                `json:"payload_bytes"`
+	Interface           string             `json:"interface,omitempty"`
+	BoundSource         string             `json:"bound_source,omitempty"`
+	SourceIPv4Hint      string             `json:"source_ipv4_hint,omitempty"`
+	SourceIPv6Hint      string             `json:"source_ipv6_hint,omitempty"`
+	Network             string             `json:"network"`
+	Count               int                `json:"count"`
+	DurationDeadline    *time.Time         `json:"duration_deadline,omitempty"`
+	PMTUDiscovery       bool               `json:"pmtu_discovery"`
+	Duration            string             `json:"duration"`
+	DSCP                string             `json:"dscp,omitempty"`
+	DNSServer           string             `json:"dns_server,omitempty"`
+	ResolveAll          bool               `json:"resolve_all"`
+	Traceroute          bool               `json:"traceroute"`
+	MTR                 bool               `json:"mtr"`
+	Ports               []string           `json:"ports,omitempty"`
+	HTTPURLs            []string           `json:"http_urls,omitempty"`
+	Thresholds          map[string]float64 `json:"thresholds"`
+	HealthFailures      int                `json:"health_failures"`
+	HealthRecoveries    int                `json:"health_recoveries"`
+	HealthWindowSeconds float64            `json:"health_window_seconds"`
+	HTTPStatus          string             `json:"http_status"`
+	HTTPFollowRedirects bool               `json:"http_follow_redirects"`
 }
 
 // Port uses milliseconds throughout, matching the statistics export.
@@ -124,7 +129,7 @@ func (r Report) Text() string {
 			fmt.Fprintf(&b, "%s | %s | Code %d | Last %.3f ms | Min/Avg/Max %.3f/%.3f/%.3f ms | Up %d Down %d\n", check.URL, check.Status, check.StatusCode, check.LastRTTMs, check.MinRTTMs, check.AvgRTTMs, check.MaxRTTMs, check.UpCount, check.DownCount)
 		}
 	}
-	fmt.Fprintln(&b, "\nCollection restarts on YAML reload. Ping statistics windows restart on manual reset. Port and HTTP counters can retain earlier results when reset while stopped. Targets and auxiliary checks are captured sequentially within the capture interval. Events and removed targets have bounded retention; this is a statistics snapshot, not a complete packet history. All *_ms fields are milliseconds.")
+	fmt.Fprintln(&b, "\nCollection restarts when a YAML change rebuilds probe/network settings; live metadata and membership reloads retain measurements. Ping statistics windows restart on manual reset. Port and HTTP counters can retain earlier results when reset while stopped. Targets and auxiliary checks are captured sequentially within the capture interval. Events and removed targets have bounded retention; this is a statistics snapshot, not a complete packet history. All *_ms fields are milliseconds.")
 	return b.String()
 }
 
@@ -136,6 +141,9 @@ func writeTarget(b *strings.Builder, t Target) {
 	}
 	fmt.Fprintf(b, "Sent %d | Received %d | Loss %d | Cancelled %d | Loss/sent %.1f%% | DUP %d | Late %d\nRTT last/min/avg/max %.3f/%.3f/%.3f/%.3f ms | Jitter %.3f ms | TTL %d\nError: %s | ASN: %s %s | PTR: %s | PMTU payload: %d\n", v.Sent, v.Recv, v.Loss, v.Cancelled, v.LossRatePct, v.Duplicates, v.LateReplies, v.LastRTTMs, v.MinRTTMs, v.AvgRTTMs, v.MaxRTTMs, v.JitterMs, v.LastTTL, v.LastError, v.ASN, v.Org, v.PTR, v.PMTU)
 	fmt.Fprintf(b, "Interface MTU: %d | DNS server: %s\n", t.InterfaceMTU, t.DNSServer)
+	if v.Health.Configured {
+		fmt.Fprintf(b, "Measurements: %s | Health: %s — %s | Recent loss (%.0fs): %.1f%%\nLast probe: %s | Last reply: %s | Consecutive failures / replies: %d / %d\n", v.MeasurementState, v.Health.Status, v.Health.Reason, v.Health.WindowSeconds, v.Health.RecentLossPct, v.Health.LastProbeAt.Format(time.RFC3339), v.Health.LastReplyAt.Format(time.RFC3339), v.Health.ConsecutiveFailures, v.Health.ConsecutiveSuccesses)
+	}
 	if t.IPChanges > 0 {
 		fmt.Fprintf(b, "Destination IP changed %d times during this measurement.\n", t.IPChanges)
 	}
@@ -159,6 +167,9 @@ func writeTarget(b *strings.Builder, t Target) {
 	}
 	for _, event := range t.Events {
 		fmt.Fprintf(b, "%s %s: %s\n", event.At.Format(time.RFC3339), event.Kind, event.Message)
+		if event.Count > 1 {
+			fmt.Fprintf(b, "  Repeated %d times; last %s\n", event.Count, event.LastAt.Format(time.RFC3339))
+		}
 	}
 	if t.EventsDropped > 0 {
 		fmt.Fprintf(b, "%d older target events omitted.\n", t.EventsDropped)

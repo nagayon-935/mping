@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/nagayon-935/mping/internal/report"
 	"io"
 	"net/http"
 	"strings"
@@ -366,5 +367,143 @@ func TestStartRejectsWeakOrMalformedTokens(t *testing.T) {
 				t.Fatalf("error %q echoes the token", err)
 			}
 		})
+	}
+}
+
+// Optional controls share the token, origin and source-state boundary with
+// target edits, including the GET download endpoint.
+type monitoringProvider struct {
+	*controlProvider
+	stopped bool
+	reports int
+}
+
+func (p *monitoringProvider) setStopped(stopped bool) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.err != nil {
+		return p.err
+	}
+	p.stopped = stopped
+	return nil
+}
+func (p *monitoringProvider) StopMeasurements() error    { return p.setStopped(true) }
+func (p *monitoringProvider) RestartMeasurements() error { return p.setStopped(false) }
+func (p *monitoringProvider) CaptureReport() (report.Report, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.reports++
+	return report.Report{SchemaVersion: 1, Scope: "session"}, p.err
+}
+
+func TestMonitoringControlsAuthorizationStopAndDownloads(t *testing.T) {
+	baseProvider, _ := providerWithTarget("router")
+	p := &monitoringProvider{controlProvider: &controlProvider{fakeProvider: baseProvider}}
+	src := NewSource()
+	src.Set(p)
+	cfg := defaultTestConfig()
+	cfg.token = testToken
+	base := newTestServer(t, src, cfg).URL
+	for _, route := range []struct{ method, path string }{
+		{"POST", "/api/v1/stop"}, {"POST", "/api/v1/restart"}, {"GET", "/api/v1/report?format=json"},
+	} {
+		if status, _ := send(t, base, req{method: route.method, path: route.path}); status != http.StatusForbidden {
+			t.Fatalf("unauthorized %s: %d", route.path, status)
+		}
+		if status, _ := send(t, base, req{method: route.method, path: route.path, headers: authed(map[string]string{"Origin": "https://elsewhere.example"})}); status != http.StatusForbidden {
+			t.Fatalf("cross-origin %s: %d", route.path, status)
+		}
+	}
+	if p.reports != 0 || p.stopped {
+		t.Fatal("unauthorized request changed provider")
+	}
+	if status, _ := send(t, base, req{method: "POST", path: "/api/v1/stop", headers: authed(nil)}); status != 204 || !p.stopped {
+		t.Fatalf("stop=%d", status)
+	}
+	if status, _ := send(t, base, req{method: "POST", path: "/api/v1/restart", headers: authed(nil)}); status != 204 || p.stopped {
+		t.Fatalf("restart=%d", status)
+	}
+	for _, format := range []string{"json", "text"} {
+		request, _ := http.NewRequest("GET", base+"/api/v1/report?format="+format, nil)
+		request.Header.Set(tokenHeader, testToken)
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		if response.StatusCode != 200 || !strings.Contains(response.Header.Get("Content-Disposition"), "attachment") || len(data) == 0 {
+			t.Fatalf("report %s: %d %s", format, response.StatusCode, data)
+		}
+	}
+	if status, _ := send(t, base, req{method: "GET", path: "/api/v1/report?format=csv", headers: authed(nil)}); status != 400 {
+		t.Fatalf("invalid format=%d", status)
+	}
+	src.MarkReloading()
+	if status, _ := send(t, base, req{method: "POST", path: "/api/v1/stop", headers: authed(nil)}); status != 409 {
+		t.Fatalf("reload control=%d", status)
+	}
+}
+
+func newMonitoringServer(t *testing.T, p Provider) string {
+	t.Helper()
+	src := NewSource()
+	src.Set(p)
+	cfg := defaultTestConfig()
+	cfg.token = testToken
+	return newTestServer(t, src, cfg).URL
+}
+
+func TestMeasurementAndReportControlsNeedACapableProvider(t *testing.T) {
+	base, _ := providerWithTarget("router")
+	url := newMonitoringServer(t, &controlProvider{fakeProvider: base})
+
+	for _, route := range []struct{ method, path string }{
+		{"POST", "/api/v1/stop"}, {"POST", "/api/v1/restart"}, {"GET", "/api/v1/report"},
+	} {
+		status, body := send(t, url, req{method: route.method, path: route.path, headers: authed(nil)})
+
+		if status != http.StatusNotImplemented || !strings.Contains(body, "unavailable") {
+			t.Errorf("%s %s = %d %s, want 501 unavailable", route.method, route.path, status, body)
+		}
+	}
+}
+
+func TestMeasurementAndReportErrorsAreReportedAsConflict(t *testing.T) {
+	base, _ := providerWithTarget("router")
+	p := &monitoringProvider{controlProvider: &controlProvider{fakeProvider: base, err: errors.New("supervisor is busy")}}
+	url := newMonitoringServer(t, p)
+
+	for _, route := range []struct{ method, path string }{
+		{"POST", "/api/v1/stop"}, {"POST", "/api/v1/restart"}, {"GET", "/api/v1/report"},
+	} {
+		status, body := send(t, url, req{method: route.method, path: route.path, headers: authed(nil)})
+
+		if status != http.StatusConflict || !strings.Contains(body, "supervisor is busy") {
+			t.Errorf("%s %s = %d %s, want 409 with the provider's message", route.method, route.path, status, body)
+		}
+	}
+}
+
+func TestReportDefaultsToJSON(t *testing.T) {
+	base, _ := providerWithTarget("router")
+	url := newMonitoringServer(t, &monitoringProvider{controlProvider: &controlProvider{fakeProvider: base}})
+
+	status, body := send(t, url, req{method: "GET", path: "/api/v1/report", headers: authed(nil)})
+
+	var decoded map[string]any
+	if status != http.StatusOK || json.Unmarshal([]byte(body), &decoded) != nil {
+		t.Fatalf("report without format = %d %s, want a JSON report", status, body)
+	}
+}
+
+func TestDeleteTargetErrorsAreReportedAsConflict(t *testing.T) {
+	p, _, base := newControlServer(t)
+	p.err = errors.New("no such target")
+
+	status, body := send(t, base, req{method: http.MethodDelete, path: "/api/v1/targets/7", headers: authed(nil)})
+
+	if status != http.StatusConflict || !strings.Contains(body, "no such target") {
+		t.Fatalf("delete = %d %s, want 409 with the controller's message", status, body)
 	}
 }

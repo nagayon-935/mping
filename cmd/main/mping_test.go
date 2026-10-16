@@ -592,6 +592,17 @@ hosts:
 }
 
 func TestMergeHosts_Options(t *testing.T) {
+	// Interface existence is now checked before a configuration is admitted;
+	// this merge fixture must not depend on the developer machine having eth0.
+	originalInterface := interfaceByName
+	interfaceByName = func(name string) (*net.Interface, error) {
+		if name == "eth0" {
+			return &net.Interface{Name: name}, nil
+		}
+		return originalInterface(name)
+	}
+	t.Cleanup(func() { interfaceByName = originalInterface })
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hosts.yaml")
 	yamlContent := `
@@ -981,7 +992,7 @@ func TestRunInvalidPortSpec(t *testing.T) {
 	if code == 0 {
 		t.Fatal("expected non-zero code for invalid port spec")
 	}
-	if !strings.Contains(errOut.String(), "Invalid port spec") {
+	if !strings.Contains(strings.ToLower(errOut.String()), "invalid port spec") {
 		t.Errorf("expected invalid port spec message, got: %q", errOut.String())
 	}
 }

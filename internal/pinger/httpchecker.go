@@ -40,6 +40,7 @@ type HTTPChecker struct {
 	cancel   context.CancelFunc
 	stopOnce sync.Once
 	wg       sync.WaitGroup
+	options  HTTPOptions
 }
 
 // NewHTTPChecker creates an HTTPChecker for the given URLs. bind carries the
@@ -47,15 +48,28 @@ type HTTPChecker struct {
 // same path as the ICMP probes; a zero BindConfig leaves http.DefaultTransport
 // in place, exactly as before those flags were wired in.
 func NewHTTPChecker(urls []string, interval, timeout time.Duration, bind BindConfig) *HTTPChecker {
+	return NewHTTPCheckerWithOptions(urls, interval, timeout, bind, DefaultHTTPOptions())
+}
+
+func NewHTTPCheckerWithOptions(urls []string, interval, timeout time.Duration, bind BindConfig, options HTTPOptions) *HTTPChecker {
+	options = options.Clone()
 	results := make([]*stats.HTTPCheckResult, len(urls))
 	for i, u := range urls {
 		results[i] = stats.NewHTTPCheckResult(u)
 	}
 	client := &http.Client{
 		Timeout: timeout,
-		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
-			if len(via) >= maxRedirects {
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if !options.FollowRedirects || len(via) >= maxRedirects {
 				return http.ErrUseLastResponse
+			}
+			// Custom API-key headers are not covered by net/http's built-in
+			// Authorization/Cookie filtering. Keep configured headers on the
+			// original origin only, including across HTTPS -> HTTP redirects.
+			if len(via) > 0 && (req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host) {
+				for name := range options.Headers {
+					req.Header.Del(name)
+				}
 			}
 			return nil
 		},
@@ -74,6 +88,7 @@ func NewHTTPChecker(urls []string, interval, timeout time.Duration, bind BindCon
 		client:   client,
 		ctx:      ctx,
 		cancel:   cancel,
+		options:  options.Clone(),
 	}
 }
 
@@ -129,6 +144,7 @@ func (hc *HTTPChecker) check(r *stats.HTTPCheckResult) {
 		r.SetResult(0, 0, err)
 		return
 	}
+	req.Header = hc.options.Headers.Clone()
 	resp, err := hc.client.Do(req)
 	rtt := time.Since(start)
 	if err != nil {
@@ -140,5 +156,5 @@ func (hc *HTTPChecker) check(r *stats.HTTPCheckResult) {
 	}
 	defer resp.Body.Close()
 	drainBody(resp.Body)
-	r.SetResult(resp.StatusCode, rtt, nil)
+	r.SetExpectedResult(resp.StatusCode, rtt, nil, hc.options.Accepts(resp.StatusCode))
 }

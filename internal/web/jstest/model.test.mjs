@@ -14,7 +14,6 @@ import {
   formatRTT,
   formatCount,
   selectColumns,
-  tableScale,
   formatPct,
   buildSections,
   summarize,
@@ -172,10 +171,10 @@ test("matchesFilter searches host, IP, PTR and AS fields case-insensitively", ()
 });
 
 test("badgeFor keeps a final stopped state when the stream drops", () => {
-  assert.equal(badgeFor("running", true).label, "Live");
+  assert.equal(badgeFor("running", true).label, "Online");
   assert.equal(badgeFor("reloading", true).label, "Reloading");
-  assert.equal(badgeFor("running", false).label, "Disconnected");
-  assert.equal(badgeFor("stopped", false).label, "Stopped");
+  assert.equal(badgeFor("running", false).label, "Reconnecting");
+  assert.equal(badgeFor("stopped", false).label, "Session ended");
   assert.equal(badgeFor(null, false).label, "Connecting");
 });
 
@@ -210,7 +209,7 @@ test("summaryItems lists waiting targets only when there are some", () => {
 });
 
 test("readOnlyHint explains the 127.0.0.1 origin when opened via another host name", () => {
-  assert.match(readOnlyHint("127.0.0.1").title, /Log pane/);
+  assert.match(readOnlyHint("127.0.0.1").title, /press b.*Copy URL/);
   assert.doesNotMatch(readOnlyHint("127.0.0.1").title, /instead/);
   assert.match(readOnlyHint("localhost").title, /127\.0\.0\.1/);
   assert.match(readOnlyHint("[::1]").text, /Read-only/);
@@ -250,28 +249,16 @@ test("selectColumns ignores columns the caller left out", () => {
   assert.deepEqual(keys(selectColumns(some, widthOf, 10000)), keys(some));
 });
 
-test("tableScale never shrinks the table below its natural size", () => {
-  assert.equal(tableScale(1000, 900, 1.6), 1);
-  assert.equal(tableScale(1000, 1000, 1.6), 1);
+test("backend health wins over a healthy lifetime average", () => {
+  const target = {recv: 10000, loss: 3, last_rtt_ms: 1, jitter_ms: 1, health: {configured: true, status: "crit", reason: "3 consecutive failures"}};
+  assert.equal(rowLevel(target, th), "crit");
+  assert.deepEqual(statusReasons(target, th), ["3 consecutive failures"]);
 });
 
-test("tableScale grows the table to fill the available width", () => {
-  assert.equal(tableScale(1000, 1250, 1.6), 1.25);
-  assert.equal(tableScale(1772, 1843, 1.6), 1.04);
-});
-
-test("tableScale stops at the cap, leaving the remainder empty", () => {
-  assert.equal(tableScale(1000, 5000, 1.6), 1.6);
-});
-
-test("tableScale rounds down so the scaled table cannot overflow by a pixel", () => {
-  const scale = tableScale(1333, 2000, 2);
-  assert.ok(1333 * scale <= 2000, String(scale));
-  assert.ok(2000 - 1333 * scale < 2, String(scale));
-});
-
-test("tableScale ignores unusable widths", () => {
-  assert.equal(tableScale(0, 1000, 1.6), 1);
-  assert.equal(tableScale(1000, 0, 1.6), 1);
-  assert.equal(tableScale(NaN, 1000, 1.6), 1);
+test("disabled optional data does not match an invisible AS or PTR field", () => {
+  const t={host:"router",ip:"192.0.2.1",asn:"AS64500",org:"Example Networks",ptr:"edge.example"};
+  assert.equal(matchesFilter(t,"AS64500",{asn:false,ptr:false}),false);
+  assert.equal(matchesFilter(t,"edge.example",{asn:false,ptr:false}),false);
+  assert.equal(matchesFilter(t,"AS64500",{asn:true,ptr:false}),true);
+  assert.equal(matchesFilter(t,"edge.example",{asn:false,ptr:true}),true);
 });

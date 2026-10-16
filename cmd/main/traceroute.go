@@ -36,7 +36,13 @@ func runTraceroutes(ctx context.Context, p tracer, targets []*stats.TargetStats)
 				defer wg.Done()
 				var hops []string
 				var err error
-				hops, err = p.TraceRoute(ctx, t.Host, tracerouteMaxHops, tracerouteHopTimeout)
+				// Trace the monitored address, as MTR does. Resolving the host
+				// independently can choose another address for multi-record DNS.
+				dest := t.GetView().IP
+				if dest == "" {
+					dest = t.ResolveAddress()
+				}
+				hops, err = p.TraceRoute(ctx, dest, tracerouteMaxHops, tracerouteHopTimeout)
 				if ctx.Err() != nil {
 					return // a cancelled run must not replace the displayed route
 				}

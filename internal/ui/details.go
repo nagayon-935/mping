@@ -47,37 +47,65 @@ func renderHostDetails(t *stats.TargetStats, opts RunOptions) string {
 	v := t.GetView()
 	var b strings.Builder
 	fmt.Fprintf(&b, "[yellow::b]%s[-::-]  Target #%d\n", tview.Escape(v.Host), v.ID)
-	fmt.Fprintf(&b, "IP: %s\nSource: %s\nStarted: %s  (%s elapsed)\n", tview.Escape(v.IP), tview.Escape(displaySourceIPForDst(v.IP, opts.SourceIPv4, opts.SourceIPv6)), v.StartedAt.Format(time.RFC3339), time.Since(v.StartedAt).Round(time.Second))
-	fmt.Fprintf(&b, "Ping statistics window: %s\n", v.WindowStartedAt.Format(time.RFC3339))
-	fmt.Fprintf(&b, "Interval: %s | Timeout: %s | Payload: %d bytes | DSCP: %s\n\n", opts.Interval, opts.Timeout, opts.PacketSize, tview.Escape(v.DSCP))
+	fmt.Fprintf(&b, "IP: %s\nSource: %s\nStarted: %s  (%s elapsed)\n", tview.Escape(v.IP), tview.Escape(displaySourceIPForDst(v.IP, opts.SourceIPv4, opts.SourceIPv6)), detailTimestamp(v.StartedAt), time.Since(v.StartedAt).Round(time.Second))
+	fmt.Fprintf(&b, "Ping statistics window: %s\n", detailTimestamp(v.WindowStartedAt))
+	if v.Health.Configured {
+		fmt.Fprintf(&b, "Measurements: %s | Health: %s — %s\nRecent loss (%.0fs): %.1f%% | Consecutive failures / replies: %d / %d\nLast probe: %s | Last reply: %s\n", tview.Escape(v.MeasurementState), v.Health.Status, tview.Escape(v.Health.Reason), v.Health.WindowSeconds, v.Health.RecentLossPct, v.Health.ConsecutiveFailures, v.Health.ConsecutiveSuccesses, detailTimestamp(v.Health.LastProbeAt), detailTimestamp(v.Health.LastReplyAt))
+	}
+	fmt.Fprintf(&b, "Interval: %s | Timeout: %s | Payload: %d bytes", opts.Interval, opts.Timeout, opts.PacketSize)
+	if opts.DSCPEnabled {
+		fmt.Fprintf(&b, " | DSCP: %s", tview.Escape(v.DSCP))
+	}
+	fmt.Fprint(&b, "\n\n")
 	fmt.Fprintf(&b, "[yellow]Ping[-]\nSent: %d | Received: %d | Loss: %d | Cancelled: %d\nLoss ratio (completed attempts): %.1f%% | DUP: %d | Late: %d\n", v.Sent, v.Recv, v.Loss, v.Cancelled, calcLossRate(v), v.Duplicates, v.LateReplies)
 	fmt.Fprintf(&b, "RTT last/min/avg/max: %s / %s / %s / %s\nJitter: %s | TTL: %s | Last loss: %s\nError: %s\n", formatRTT(v.LastRTT), formatRTT(v.MinRTT), formatRTT(v.AvgRTT), formatRTT(v.MaxRTT), formatRTT(v.Jitter), ttlString(v.LastTTL), formatLossAgo(v.LastLossTime), tview.Escape(v.LastError))
-	fmt.Fprintf(&b, "ASN: %s %s | PTR: %s | Interface MTU: %d | PMTU payload: %d\n", tview.Escape(v.ASN), tview.Escape(v.Org), tview.Escape(v.PTR), v.IfaceMTU, v.PMTU)
+	var annotations []string
+	if opts.ASNEnabled {
+		annotations = append(annotations, fmt.Sprintf("ASN: %s %s", tview.Escape(v.ASN), tview.Escape(v.Org)))
+	}
+	if opts.PTREnabled {
+		annotations = append(annotations, "PTR: "+tview.Escape(v.PTR))
+	}
+	if v.IfaceMTU > 0 {
+		annotations = append(annotations, fmt.Sprintf("Interface MTU: %d", v.IfaceMTU))
+	}
+	if opts.MTUEnabled && v.PMTU > 0 {
+		annotations = append(annotations, fmt.Sprintf("PMTU payload: %d", v.PMTU))
+	}
+	if len(annotations) > 0 {
+		fmt.Fprintln(&b, strings.Join(annotations, " | "))
+	}
 	if v.IPChanges > 0 {
 		fmt.Fprintf(&b, "[yellow]Destination IP changed %d times during this measurement.[-]\n", v.IPChanges)
 	}
 	for _, change := range v.IPHistory {
-		fmt.Fprintf(&b, "  %s  IP %s\n", change.At.Format("15:04:05"), tview.Escape(change.IP))
+		fmt.Fprintf(&b, "  %s  IP %s\n", change.At.Local().Format("15:04:05"), tview.Escape(change.IP))
 	}
-	fmt.Fprintln(&b, "\n[yellow]Route[-]")
-	if len(v.TraceHops) == 0 {
-		fmt.Fprintln(&b, "Traceroute not available.")
-	} else {
-		fmt.Fprintln(&b, tview.Escape(strings.Join(v.TraceHops, " → ")))
+	if opts.TraceEnabled {
+		fmt.Fprintln(&b, "\n[yellow]Route[-]")
+		if len(v.TraceHops) == 0 {
+			fmt.Fprintln(&b, "Traceroute not available.")
+		} else {
+			fmt.Fprintln(&b, tview.Escape(strings.Join(v.TraceHops, " → ")))
+		}
 	}
-	fmt.Fprintln(&b, "\n[yellow]MTR[-]")
-	if len(v.MTRHops) == 0 {
-		fmt.Fprintln(&b, "MTR not available.")
+	if opts.MTREnabled {
+		fmt.Fprintln(&b, "\n[yellow]MTR[-]")
+		if len(v.MTRHops) == 0 {
+			fmt.Fprintln(&b, "MTR not available.")
+		}
+		for _, hop := range v.MTRHops {
+			fmt.Fprintf(&b, "%2d  %-20s Loss %.1f%%  Sent %d  Last %s  Avg %s\n", hop.TTL, tview.Escape(hop.IP), hop.LossPct, hop.Sent, formatRTT(hop.LastRTT), formatRTT(hop.AvgRTT))
+		}
 	}
-	for _, hop := range v.MTRHops {
-		fmt.Fprintf(&b, "%2d  %-20s Loss %.1f%%  Sent %d  Last %s  Avg %s\n", hop.TTL, tview.Escape(hop.IP), hop.LossPct, hop.Sent, formatRTT(hop.LastRTT), formatRTT(hop.AvgRTT))
-	}
-	fmt.Fprintln(&b, "\n[yellow]Ports[-]")
-	if len(v.PortResults) == 0 {
-		fmt.Fprintln(&b, "Port checks not enabled.")
-	}
-	for _, port := range v.PortResults {
-		fmt.Fprintf(&b, "%d/%s  %s  RTT %s  Open %d  Closed/Filtered %d\n", port.Port, port.Protocol, tview.Escape(port.Status), formatRTT(port.RTT), port.OpenCount, port.ClosedCount)
+	if opts.PortEnabled {
+		fmt.Fprintln(&b, "\n[yellow]Ports[-]")
+		if len(v.PortResults) == 0 {
+			fmt.Fprintln(&b, "Port checks not enabled.")
+		}
+		for _, port := range v.PortResults {
+			fmt.Fprintf(&b, "%d/%s  %s  RTT %s  Open %d  Closed/Filtered %d\n", port.Port, port.Protocol, tview.Escape(port.Status), formatRTT(port.RTT), port.OpenCount, port.ClosedCount)
+		}
 	}
 	fmt.Fprintln(&b, "\n[yellow]Target Events[-]")
 	events, dropped := t.Events()
@@ -88,7 +116,14 @@ func renderHostDetails(t *stats.TargetStats, opts RunOptions) string {
 		fmt.Fprintln(&b, "No events recorded.")
 	}
 	for _, event := range events {
-		fmt.Fprintf(&b, "%s  %s: %s\n", event.At.Format("15:04:05"), tview.Escape(event.Kind), tview.Escape(event.Message))
+		fmt.Fprintf(&b, "%s  %s: %s\n", event.At.Local().Format("15:04:05"), tview.Escape(event.Kind), tview.Escape(event.Message))
 	}
 	return b.String()
+}
+
+func detailTimestamp(at time.Time) string {
+	if at.IsZero() {
+		return "–"
+	}
+	return at.Local().Format("2006-01-02 15:04:05")
 }

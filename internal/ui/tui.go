@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/stats"
@@ -18,27 +19,33 @@ const (
 var newApplication = tview.NewApplication
 
 type TargetSet struct {
-	Targets []*stats.TargetStats
-	Groups  []TargetGroup
+	Targets    []*stats.TargetStats
+	Groups     []TargetGroup
+	Thresholds *Thresholds
 }
 
 // RunOptions contains all parameters for the Run function.
 type RunOptions struct {
-	Targets      []*stats.TargetStats
-	TargetSource func() TargetSet
-	Interval     time.Duration
-	Timeout      time.Duration
-	DoneCh       chan struct{} // receives count-completion notifications; nil means unlimited
-	SourceIPv4   string
-	SourceIPv6   string
-	PacketSize   int
-	InitialLogs  []string
-	TraceEnabled bool
-	MTREnabled   bool
-	PortEnabled  bool
-	HTTPEnabled  bool
-	ASNEnabled   bool
-	PTREnabled   bool
+	Targets          []*stats.TargetStats
+	TargetSource     func() TargetSet
+	MeasurementState func() string
+	Interval         time.Duration
+	Timeout          time.Duration
+	DoneCh           chan struct{} // receives count-completion notifications; nil means unlimited
+	SourceIPv4       string
+	SourceIPv6       string
+	PacketSize       int
+	InitialLogs      []string
+	// WebControlURL is retained separately from the rotating Log. Empty disables
+	// the access dialog and header hint; never include it in exported reports.
+	WebControlURL string
+	TraceEnabled  bool
+	MTUEnabled    bool
+	MTREnabled    bool
+	PortEnabled   bool
+	HTTPEnabled   bool
+	ASNEnabled    bool
+	PTREnabled    bool
 	// DSCPEnabled shows the DSCP column (observed TOS/TrafficClass on each
 	// target's most recent reply). Same dynamic-column pattern as ASNEnabled/
 	// PTREnabled: cmd/main sets it when --dscp or any host's per-target dscp
@@ -100,6 +107,10 @@ func Run(opts RunOptions) error {
 	tablePane := newTablePane(table)
 	graphView := newGraphPane(targets, opts.Interval)
 	header := newHeader(opts.Interval)
+	if opts.WebControlURL != "" {
+		base, _, _ := strings.Cut(opts.WebControlURL, "#")
+		header.SetText(header.GetText(false) + "\nWeb: " + base + " | b: URL / Copy")
+	}
 	footer := newFooter()
 	addHostInput := newHostInput(" Add host: ", tcell.ColorYellow)
 	deleteHostInput := newHostInput(" Delete host: ", tcell.ColorRed)
@@ -121,6 +132,9 @@ func Run(opts RunOptions) error {
 	if opts.TargetSource != nil {
 		tr.beforeUpdate = func() {
 			set := opts.TargetSource()
+			if set.Thresholds != nil && set.Thresholds.RTTCrit > 0 {
+				setActiveThresholds(*set.Thresholds)
+			}
 			targets = set.Targets
 			tr.targets = targets
 			tr.groups = set.Groups
@@ -144,10 +158,11 @@ func Run(opts RunOptions) error {
 	root.AddPage("details", details.pane, true, false)
 	var reportDialog *saveDialog
 	var deleteConfirmation *deleteDialog
+	var webAccess *webAccessDialog
 	var reportReturnFocus tview.Primitive = table
 	closeDetails := func() {
 		details.open = false
-		if (reportDialog != nil && reportDialog.open) || (deleteConfirmation != nil && deleteConfirmation.open) {
+		if (reportDialog != nil && reportDialog.open) || (deleteConfirmation != nil && deleteConfirmation.open) || (webAccess != nil && webAccess.open) {
 			return
 		}
 		root.SwitchToPage("main")
@@ -206,6 +221,14 @@ func Run(opts RunOptions) error {
 		}
 	})
 	deleteConfirmation.quit = func() { session.Stop(); app.Stop() }
+	webAccess = newWebAccessDialog(app, root, opts.WebControlURL, session.copyClipboard, func(focus tview.Primitive) {
+		if !details.open && (focus == details.text || focus == details.graph) {
+			root.SwitchToPage("main")
+			app.SetFocus(table)
+		} else {
+			app.SetFocus(focus)
+		}
+	})
 	deleteSelected := func() {
 		if opts.OnDeleteTarget == nil {
 			return
@@ -261,20 +284,21 @@ func Run(opts RunOptions) error {
 				app.SetFocus(deleteHostInput)
 			}
 		},
-		traceEnabled: opts.TraceEnabled,
-		mtrEnabled:   opts.MTREnabled,
-		portEnabled:  opts.PortEnabled,
-		httpEnabled:  opts.HTTPEnabled,
-		onStop:       opts.OnStop,
-		onRestart:    opts.OnRestart,
-		onReset:      opts.OnReset,
-		onResetTrace: opts.OnResetTrace,
-		onResetMTR:   opts.OnResetMTR,
-		onResetPort:  opts.OnResetPort,
-		onResetHTTP:  opts.OnResetHTTP,
-		onAddHost:    opts.OnAddHost,
-		onDeleteHost: opts.OnDeleteHost,
-		session:      session,
+		traceEnabled:     opts.TraceEnabled,
+		mtrEnabled:       opts.MTREnabled,
+		portEnabled:      opts.PortEnabled,
+		httpEnabled:      opts.HTTPEnabled,
+		onStop:           opts.OnStop,
+		measurementState: opts.MeasurementState,
+		onRestart:        opts.OnRestart,
+		onReset:          opts.OnReset,
+		onResetTrace:     opts.OnResetTrace,
+		onResetMTR:       opts.OnResetMTR,
+		onResetPort:      opts.OnResetPort,
+		onResetHTTP:      opts.OnResetHTTP,
+		onAddHost:        opts.OnAddHost,
+		onDeleteHost:     opts.OnDeleteHost,
+		session:          session,
 	})
 	session.bind(app, func(event *tcell.EventKey) *tcell.EventKey {
 		if deleteConfirmation.open {
@@ -282,6 +306,13 @@ func Run(opts RunOptions) error {
 		}
 		if reportDialog.open {
 			return reportDialog.handle(event)
+		}
+		if webAccess.open {
+			return webAccess.handle(event)
+		}
+		if event.Rune() == 'b' && app.GetFocus() != addHostInput && app.GetFocus() != deleteHostInput && opts.WebControlURL != "" {
+			webAccess.show()
+			return nil
 		}
 		if event.Rune() == 'w' && app.GetFocus() != addHostInput && app.GetFocus() != deleteHostInput && opts.OnSaveReport != nil {
 			id := uint64(0)

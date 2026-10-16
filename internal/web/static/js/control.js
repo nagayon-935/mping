@@ -1,9 +1,22 @@
 // Control session: the per-launch token, the /session check, authorised
-// requests, and the two-step confirm used by destructive buttons.
+// requests, and in-place verification of pasted tokens.
 import { el } from "./dom.js";
 import { tokenFromHash } from "./model.js";
 
 const TOKEN_KEY = "mping.token";
+
+export function controlToken(raw, origin) {
+  let value = String(raw ?? "").trim();
+  if (/^https?:/i.test(value)) {
+    try {
+      const url = new URL(value);
+      if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) ||
+          (origin && url.port !== new URL(origin).port)) return null;
+      value = tokenFromHash(url.hash) ?? "";
+    } catch { return null; }
+  }
+  return /^[A-Za-z0-9._~-]{16,}$/.test(value) ? value : null;
+}
 
 function readStored() {
   try {
@@ -36,6 +49,7 @@ export function createControl() {
     token = readStored();
   }
   let allowed = false;
+  let revision = 0;
 
   const request = async (method, path, body) => {
     const headers = { "X-Mping-Token": token ?? "" };
@@ -56,6 +70,7 @@ export function createControl() {
     if (resp.status === 403) {
       // A stale token from an earlier mping run: fall back to read-only.
       allowed = false;
+      token = null; revision++;
       store(null);
     }
     return { ok: false, error };
@@ -66,56 +81,61 @@ export function createControl() {
     /** Asks the server whether this page may make changes. */
     async refresh() {
       if (!token) return (allowed = false);
+      const version = revision;
       try {
         const resp = await fetch("api/v1/session", { headers: { "X-Mping-Token": token } });
-        allowed = resp.ok && (await resp.json()).control === true;
+        const valid = resp.ok && (await resp.json()).control === true;
+        if (version !== revision) return allowed;
+        allowed = valid;
+        if (resp.ok && !valid) { token = null; store(null); }
       } catch {
-        allowed = false;
+        if (version === revision) allowed = false;
       }
       return allowed;
+    },
+    async authenticate(raw, signal) {
+      const candidate = controlToken(raw, location.origin);
+      if (!candidate) return { ok: false, error: "Paste the control token or the URL copied from mping's b menu (same port)." };
+      const version = ++revision;
+      try {
+        const resp = await fetch("api/v1/session", { headers: { "X-Mping-Token": candidate }, signal });
+        if (!resp.ok) return { ok: false, error: `Couldn't verify controls (HTTP ${resp.status}). Try again.` };
+        const body = await resp.json();
+        if (signal?.aborted || version !== revision) return { ok: false, cancelled: true };
+        if (!body.control) return { ok: false, error: "Token not accepted by this mping session. Copy the current URL from the TUI's b menu." };
+        token = candidate;
+        allowed = true;
+        store(token);
+        return { ok: true };
+      } catch {
+        return signal?.aborted ? { ok: false, cancelled: true } : { ok: false, error: "Cannot reach mping. Check the connection and try again." };
+      }
     },
     addHost: (host) => request("POST", "api/v1/targets", { host }),
     deleteTarget: (id) => request("DELETE", `api/v1/targets/${id}`),
     reset: () => request("POST", "api/v1/reset"),
+    stop: () => request("POST", "api/v1/stop"),
+    restart: () => request("POST", "api/v1/restart"),
+    async downloadReport(format, filename, { signal } = {}) {
+      try {
+        const response = await fetch(`api/v1/report?format=${format}`, { headers: { "X-Mping-Token": token ?? "" }, signal });
+        if (!response.ok) {
+          if (response.status === 403) { allowed = false; token = null; revision++; store(null); }
+          return { ok: false, error: (await response.json()).error ?? `HTTP ${response.status}` };
+        }
+        const blob = await response.blob();
+        if (signal?.aborted) return { ok: false, cancelled: true };
+        const url = URL.createObjectURL(blob);
+        const link = el("a", { attrs: { href: url, download: filename } });
+        document.body.append(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        return { ok: true };
+      } catch (err) {
+        if (signal?.aborted) return { ok: false, cancelled: true };
+        return { ok: false, error: `Couldn't download report: ${err.message}` };
+      }
+    },
   };
-}
-
-/**
- * Two-step destructive button: the first press arms it ("Confirm …?") next
- * to a Cancel button; the second runs action. Disarms itself after 6s.
- * @param {string} label
- * @param {string} armedLabel
- * @param {() => Promise<void>} action
- */
-export function confirmButton(label, armedLabel, action) {
-  const button = el("button", { className: "btn btn-danger", text: label, attrs: { type: "button" } });
-  const cancel = el("button", { className: "btn", text: "Cancel", attrs: { type: "button", hidden: "" } });
-  let timer = null;
-  const disarm = () => {
-    clearTimeout(timer);
-    button.textContent = label;
-    button.dataset.armed = "";
-    cancel.hidden = true;
-  };
-  button.addEventListener("click", async () => {
-    if (!button.dataset.armed) {
-      button.dataset.armed = "1";
-      button.textContent = armedLabel;
-      cancel.hidden = false;
-      timer = setTimeout(disarm, 6000);
-      return;
-    }
-    disarm();
-    button.disabled = true;
-    try {
-      await action();
-    } finally {
-      button.disabled = false;
-    }
-  });
-  cancel.addEventListener("click", () => {
-    disarm();
-    button.focus();
-  });
-  return el("span", { className: "confirm" }, button, cancel);
 }

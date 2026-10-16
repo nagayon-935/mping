@@ -128,12 +128,8 @@ func prepareRunEnv(cfg config, hosts []targetSpec, out, errOut io.Writer) (env r
 	return env, 0, true
 }
 
-// checkerBindConfig builds the source/interface binding for the port and HTTP
-// checkers. It deliberately mirrors what makePingerFactory feeds the ICMP
-// pinger — SetSource(bindIP) plus SetInterface(cfg.ifaceName) — including the
-// asymmetry that bindIP is resolved once at startup while ifaceName is re-read
-// from the (possibly reloaded) config, so all three check types always probe
-// over the same egress path.
+// checkerBindConfig uses the same source and interface as the ICMP pinger.
+// Full reloads re-resolve these values before rebuilding all checkers.
 func checkerBindConfig(cfg config, bindIP string) pinger.BindConfig {
 	return pinger.BindConfig{Source: bindIP, Interface: cfg.ifaceName}
 }
@@ -161,6 +157,8 @@ func resolverBindConfig(cfg config, specs []targetSpec) pinger.BindConfig {
 func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetStats {
 	targets := initTargets(specs)
 	for i, t := range targets {
+		t.SetResolveAddress(specs[i].resolveAddr())
+		t.ConfigureHealth(healthPolicy(cfg))
 		t.DSCP = cfg.dscp
 		if specs[i].DSCP != "" {
 			t.DSCP = specs[i].DSCP
@@ -243,16 +241,13 @@ func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resol
 	}
 }
 
-// checkPortReloadDrift returns a warning message when a reloaded config
-// requests a different --port / port: set than the one the running port
-// checker was actually built from. Port specs are parsed once at startup and
-// never re-applied mid-run (TD-25), so this is a "restart required" nudge
-// rather than a fix: it returns "" when there's no drift.
+// checkPortReloadDrift explains that port checks were rebuilt from the new
+// configuration. It is retained as a single notice shared by reload tests.
 func checkPortReloadDrift(activeRaw, reloadedRaw []string) string {
 	if slices.Equal(activeRaw, reloadedRaw) {
 		return ""
 	}
-	return fmt.Sprintf("[yellow][%s] port: change detected in the reloaded config — port checks require a full restart of mping to take effect[-]",
+	return fmt.Sprintf("[yellow][%s] port: change detected in the reloaded config — port checks restarted with updated configuration[-]",
 		time.Now().Format("15:04:05"))
 }
 
@@ -395,27 +390,29 @@ func dscpColumnEnabled(cfg config, hosts []targetSpec) bool {
 // without a reload. Reset callbacks exist only for the monitors running.
 func buildRunOptions(p runOptionsParams) ui.RunOptions {
 	opts := ui.RunOptions{
-		Targets:         p.targets,
-		TargetSource:    p.sup.liveTargets,
-		Interval:        p.interval,
-		Timeout:         p.timeout,
-		DoneCh:          p.doneCh,
-		SourceIPv4:      p.dispV4,
-		SourceIPv6:      p.dispV6,
-		PacketSize:      p.packetSize,
-		InitialLogs:     p.preLogs,
-		TraceEnabled:    p.cfg.trace,
-		MTREnabled:      p.cfg.mtr,
-		PortEnabled:     p.portCount > 0,
-		HTTPEnabled:     len(p.cfg.httpURLs) > 0,
-		HTTPResults:     p.sup.httpResults,
-		ASNEnabled:      p.cfg.asnEnabled,
-		PTREnabled:      p.cfg.ptrEnabled,
-		DSCPEnabled:     dscpColumnEnabled(p.cfg, p.currentHosts),
-		Thresholds:      &p.thresholds,
-		ExternalCloseCh: p.sig.ch,
-		ExternalLogCh:   p.logCh,
-		OnStop:          p.sup.stopAll,
+		Targets:          p.targets,
+		TargetSource:     p.sup.liveTargets,
+		Interval:         p.interval,
+		Timeout:          p.timeout,
+		DoneCh:           p.doneCh,
+		SourceIPv4:       p.dispV4,
+		SourceIPv6:       p.dispV6,
+		PacketSize:       p.packetSize,
+		InitialLogs:      p.preLogs,
+		TraceEnabled:     p.cfg.trace,
+		MTUEnabled:       p.cfg.mtuEnabled,
+		MTREnabled:       p.cfg.mtr,
+		PortEnabled:      p.portCount > 0,
+		HTTPEnabled:      len(p.cfg.httpURLs) > 0,
+		HTTPResults:      p.sup.httpResults,
+		ASNEnabled:       p.cfg.asnEnabled,
+		PTREnabled:       p.cfg.ptrEnabled,
+		DSCPEnabled:      dscpColumnEnabled(p.cfg, p.currentHosts),
+		Thresholds:       &p.thresholds,
+		MeasurementState: p.sup.measurementState,
+		ExternalCloseCh:  p.sig.ch,
+		ExternalLogCh:    p.logCh,
+		OnStop:           p.sup.stopAll,
 		OnRestart: func() error {
 			return p.sup.do(cmdRestart)
 		},

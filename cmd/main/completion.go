@@ -24,9 +24,10 @@ type flagInfo struct {
 // fileCompletionFlags are long flag names whose value is a filesystem path;
 // their shell templates delegate to the shell's own file-path completion.
 var fileCompletionFlags = map[string]bool{
-	"file":        true,
-	"output":      true,
-	"json-output": true,
+	"file":         true,
+	"output":       true,
+	"json-output":  true,
+	"event-output": true,
 }
 
 // interfaceCompletionFlags are long flag names whose value is a network
@@ -59,7 +60,7 @@ func collectFlags(fs *pflag.FlagSet) []flagInfo {
 			short:    f.Shorthand,
 			usage:    f.Usage,
 			takesArg: f.Value.Type() != "bool",
-			repeat:   f.Value.Type() == "stringSlice",
+			repeat:   f.Value.Type() == "stringSlice" || f.Value.Type() == "stringArray",
 		})
 	})
 	sort.Slice(flags, func(i, j int) bool { return flags[i].long < flags[j].long })

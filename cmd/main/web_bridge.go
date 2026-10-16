@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/nagayon-935/mping/internal/report"
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/nagayon-935/mping/internal/ui"
 	"github.com/nagayon-935/mping/internal/web"
@@ -110,7 +111,7 @@ func (c webController) DeleteTarget(id uint64) error {
 	host := fmt.Sprintf("#%d", id)
 	for _, t := range c.sup.liveTargets().Targets {
 		if t.ID == id {
-			host = t.Host
+			host = t.GetView().Host
 		}
 	}
 	if err := c.sup.deleteTargetID(id); err != nil {
@@ -123,6 +124,27 @@ func (c webController) DeleteTarget(id uint64) error {
 func (c webController) ResetStats() {
 	c.sup.resetStats()
 	c.logf("reset statistics")
+}
+
+func (c webController) StopMeasurements() error {
+	if err := c.sup.do(cmdStop); err != nil {
+		return err
+	}
+	c.logf("stopped measurements")
+	return nil
+}
+
+func (c webController) RestartMeasurements() error {
+	if err := c.sup.do(cmdRestart); err != nil {
+		return err
+	}
+	c.logf("restarted measurements")
+	return nil
+}
+
+func (c webController) CaptureReport() (snapshot report.Report, err error) {
+	err = c.sup.editTargets(func(s *supervisor) error { var e error; snapshot, e = s.captureReport(0); return e })
+	return
 }
 
 // logf posts to the TUI Log pane without ever blocking a web request on a
@@ -143,6 +165,10 @@ func (p webProvider) HTTPResults() []*stats.HTTPCheckResult { return p.httpResul
 // change which target IDs each group holds.
 func (p webProvider) Meta() web.Meta {
 	m := p.base
+	if snap := p.sup.targetSnap.Load(); snap != nil {
+		m = webMeta(snap.config, snap.specs, len(snap.config.portSpecs))
+		m.MeasurementState = snap.measurementState
+	}
 	m.Groups = webGroups(p.targets())
 	return m
 }
@@ -160,6 +186,7 @@ func webMeta(cfg config, hosts []targetSpec, portCount int) web.Meta {
 			HTTP:       len(cfg.httpURLs) > 0,
 			ASN:        cfg.asnEnabled,
 			PTR:        cfg.ptrEnabled,
+			MTU:        cfg.mtuEnabled,
 			DSCP:       dscpColumnEnabled(cfg, hosts),
 		},
 		Thresholds: web.Thresholds{

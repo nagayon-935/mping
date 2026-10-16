@@ -426,3 +426,20 @@ func TestBulkEventsIsAnEmptyListWithoutEvents(t *testing.T) {
 		t.Fatalf("body = %s, want an empty events array (not null)", raw)
 	}
 }
+
+func TestHistoryIncludesActualSampleTimesAndNullLoss(t *testing.T) {
+	p, target := providerWithTarget("router")
+	before := time.Now()
+	target.OnSuccess(1500*time.Microsecond, 64)
+	target.OnFailure("timeout")
+	src := NewSource()
+	src.Set(p)
+	base := newTestServer(t, src, defaultTestConfig()).URL
+	body := decode[HistoryResponse](t, get(t, fmt.Sprintf("%s/api/v1/targets/%d/history?n=2", base, target.ID)))
+	if len(body.Samples) != 2 || len(body.RTTMs) != 2 || body.Samples[0].RTTMS == nil || *body.Samples[0].RTTMS != 1.5 || body.Samples[1].RTTMS != nil {
+		t.Fatalf("samples=%+v", body.Samples)
+	}
+	if body.Samples[0].At.Before(before) || body.CapturedAt.Before(body.Samples[1].At) {
+		t.Fatal("history timestamps were synthesized incorrectly")
+	}
+}

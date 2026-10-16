@@ -52,7 +52,8 @@ func (s *supervisor) captureReport(selectedID uint64) (report.Report, error) {
 		Count: cfg.count, Duration: s.cfg.durationLimit.String(), DSCP: cfg.dscp,
 		DNSServer: cfg.dnsServer, ResolveAll: cfg.resolveAll,
 		Traceroute: s.cfg.traceEnabled, MTR: s.cfg.mtrEnabled, PMTUDiscovery: cfg.mtuEnabled,
-		HTTPURLs: append([]string(nil), s.cfg.httpURLs...),
+		HTTPURLs:       append([]string(nil), s.cfg.httpURLs...),
+		HealthFailures: healthPolicy(cfg).Failures, HealthRecoveries: healthPolicy(cfg).Recoveries, HealthWindowSeconds: healthPolicy(cfg).Window.Seconds(), HTTPStatus: cfg.httpStatus, HTTPFollowRedirects: cfg.httpFollowRedirects,
 		Thresholds: map[string]float64{
 			"rtt_warn_ms":    float64(thresholds.RTTWarn) / float64(time.Millisecond),
 			"rtt_crit_ms":    float64(thresholds.RTTCrit) / float64(time.Millisecond),

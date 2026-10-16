@@ -2,6 +2,7 @@ package mtr
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -150,7 +151,7 @@ func TestEngine_StarHopInMiddle(t *testing.T) {
 	}
 }
 
-func TestEngine_SkipsProbingUnknownHops(t *testing.T) {
+func TestEngine_ProbesUnknownHops(t *testing.T) {
 	target := stats.NewTargetStats("8.8.8.8")
 	target.SetIP("8.8.8.8")
 
@@ -181,8 +182,50 @@ func TestEngine_SkipsProbingUnknownHops(t *testing.T) {
 	if hops[1].IP != "" {
 		t.Fatalf("hop2 IP: want empty (* hop), got %q", hops[1].IP)
 	}
-	if hops[1].Sent != 0 {
-		t.Errorf("hop2 Sent: want 0 (continuous probing must skip unknown-IP hops), got %d", hops[1].Sent)
+	if hops[1].Sent == 0 || hops[1].LossPct != 100 {
+		t.Errorf("unknown hop must accumulate attempts and loss: %+v", hops[1])
+	}
+}
+
+func TestProbe_UnknownHopRecoversWithoutRediscovery(t *testing.T) {
+	prober := newFakeProber(map[int]pinger.HopReply{
+		3: {SrcIP: "8.8.8.8", Responded: true, ReachedDest: true},
+	})
+	m := stats.NewTargetStats("8.8.8.8").MTR()
+	cfg := (&Config{MaxHops: 5}).withDefaults()
+	ctx := context.Background()
+	sock := &fakeHopSocket{}
+	n := discover(ctx, prober, sock, m, "8.8.8.8", cfg, nil)
+	probe(ctx, prober, sock, m, "8.8.8.8", n, cfg, nil)
+	prober.replies[2] = pinger.HopReply{SrcIP: "10.0.0.2", Responded: true, RTT: 5 * time.Millisecond}
+	probe(ctx, prober, sock, m, "8.8.8.8", n, cfg, nil)
+	h := m.View()[1]
+	if h.IP != "10.0.0.2" || h.Sent != 2 || h.Recv != 1 || h.LossPct != 50 {
+		t.Fatalf("hop should recover on the next probe and retain earlier loss: %+v", h)
+	}
+}
+
+type failedDiscoveryProber struct{ *fakeProber }
+
+func (p failedDiscoveryProber) ProbeHop(context.Context, HopSocket, string, int, int, time.Duration) (pinger.HopReply, error) {
+	return pinger.HopReply{}, errors.New("temporary send error")
+}
+
+func TestDiscover_SendErrorsLeaveProbeableSlots(t *testing.T) {
+	prober := newFakeProber(map[int]pinger.HopReply{
+		3: {SrcIP: "8.8.8.8", Responded: true, ReachedDest: true},
+	})
+	m := stats.NewTargetStats("8.8.8.8").MTR()
+	cfg := (&Config{MaxHops: 3}).withDefaults()
+	ctx := context.Background()
+	sock := &fakeHopSocket{}
+	n := discover(ctx, failedDiscoveryProber{prober}, sock, m, "8.8.8.8", cfg, nil)
+	if n != 3 || len(m.View()) != 3 {
+		t.Fatalf("failed discovery must retain all TTL slots: count=%d, hops=%+v", n, m.View())
+	}
+	probe(ctx, prober, sock, m, "8.8.8.8", n, cfg, nil)
+	if h := m.View()[2]; h.IP != "8.8.8.8" || h.Recv != 1 {
+		t.Fatalf("slot must accept a later response: %+v", h)
 	}
 }
 

@@ -11,58 +11,173 @@
 </head>
 <body>
 <header class="topbar">
-  <h1 class="brand">mping</h1>
-  <span id="badge" class="badge lvl-pending" role="status">
-    <span class="badge-icon" aria-hidden="true">○</span>
-    <span class="badge-label">Connecting</span>
-  </span>
-  <span id="updated" class="muted"></span>
-  <span class="spacer"></span>
-  <ul id="summary" class="summary" aria-label="Target summary"></ul>
-  <input id="filter" class="filter" type="search" placeholder="Filter host, IP, PTR, AS" aria-label="Filter targets">
-  <form id="add-form" class="add-form" hidden>
-    <label class="visually-hidden" for="add-host">Host to add</label>
-    <input id="add-host" class="filter" placeholder="Add host or IP" autocomplete="off" spellcheck="false" maxlength="253">
-    <button class="btn" type="submit">Add</button>
-  </form>
-  <span id="reset-slot" hidden></span>
-  <details id="readonly-help" class="readonly-help" hidden>
-    <summary id="readonly-hint" class="readonly-hint">Read-only · How to enable</summary>
-    <div class="readonly-popover">
-      <strong>Enable browser controls</strong>
-      <p id="readonly-explanation"></p>
-      <p>You can then add hosts, delete targets and reset statistics.</p>
-    </div>
-  </details>
-  <p id="notice" class="notice" role="status" aria-live="polite"></p>
+  <div class="header-row">
+    <h1 class="brand">mping</h1>
+    <nav class="page-nav" aria-label="Pages">
+      <a id="nav-monitor" href="#monitor" aria-current="page">Monitor</a>
+      <a id="nav-log" href="#log">Log</a>
+      <a id="nav-http" href="#http" hidden>HTTP</a>
+    </nav>
+    <span class="spacer"></span>
+    <button id="open-shortcuts" class="btn" type="button" aria-label="Keyboard shortcuts" aria-haspopup="dialog">?</button>
+    <button id="open-auth" class="btn" type="button" aria-haspopup="dialog">Enable controls</button>
+    <button id="toggle-actions" class="btn" type="button" aria-expanded="false" aria-controls="measurement-controls" hidden>Actions</button>
+    <span id="measurement-controls" hidden>
+      <button id="open-add" class="btn" type="button" aria-haspopup="dialog">Add host</button>
+      <button id="open-report" class="btn" type="button" aria-haspopup="dialog">Report</button>
+      <button id="measurement-action" class="btn" type="button">Stop all</button>
+      <span id="reset-slot"></span>
+    </span>
+  </div>
+  <div class="header-row header-status">
+    <span id="badge" class="badge lvl-pending" role="status"><span class="badge-icon" aria-hidden="true">○</span><span class="badge-label">Connecting</span></span>
+    <span id="measurement-state" role="status"></span>
+    <span id="updated" class="muted"></span>
+    <span id="connection-note" class="muted"></span>
+  </div>
 </header>
+<aside id="notice" class="notice" hidden>
+  <span id="notice-message" role="status" aria-live="polite"></span>
+  <button id="dismiss-notice" class="btn" type="button" aria-label="Dismiss notification">×</button>
+</aside>
 
-<div class="workspace">
+<dialog id="auth-dialog" class="report-dialog" aria-labelledby="auth-title">
+  <form id="auth-form" novalidate>
+    <h2 id="auth-title" class="pane-title">Enable browser controls</h2>
+    <p id="readonly-explanation" class="dialog-description"></p>
+    <label class="report-field" for="auth-token">Control token or URL
+      <input id="auth-token" type="password" autocomplete="off" spellcheck="false" aria-describedby="auth-error" autofocus>
+    </label>
+    <label class="check-label"><input id="auth-show" type="checkbox"> Show token</label>
+    <p id="auth-error" class="report-error" role="alert" hidden></p>
+    <div class="dialog-actions"><button class="btn" type="button" data-close="auth-dialog">Cancel</button><button id="auth-submit" class="btn" type="submit">Enable controls</button></div>
+  </form>
+</dialog>
+
+<dialog id="confirm-dialog" class="report-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-description">
+  <form id="confirm-form">
+    <h2 id="confirm-title" class="pane-title"></h2>
+    <p id="confirm-description" class="dialog-description"></p>
+    <p id="confirm-error" class="report-error" role="alert" hidden></p>
+    <div class="dialog-actions"><button id="confirm-cancel" class="btn" type="button" autofocus>Cancel</button><button id="confirm-action" class="btn btn-danger" type="submit">Confirm</button></div>
+  </form>
+</dialog>
+
+<dialog id="add-dialog" class="report-dialog" aria-labelledby="add-title">
+  <form id="add-form" novalidate>
+    <h2 id="add-title" class="pane-title">Add host</h2>
+    <label class="report-field" for="add-host">Host name or IP address<input id="add-host" autocomplete="off" spellcheck="false" maxlength="253" autofocus></label>
+    <p id="add-error" class="report-error" role="alert" hidden></p>
+    <div class="dialog-actions"><button class="btn" type="button" data-close="add-dialog">Cancel</button><button id="add-submit" class="btn" type="submit">Add</button></div>
+  </form>
+</dialog>
+
+<dialog id="shortcuts-dialog" class="report-dialog" aria-labelledby="shortcuts-title">
+  <h2 id="shortcuts-title" class="pane-title">Keyboard shortcuts</h2>
+  <label class="check-label"><input id="shortcuts-enabled" type="checkbox" checked> Enable character shortcuts</label>
+  <dl class="shortcut-list">
+    <dt>/</dt><dd>Focus host search</dd><dt>j / k or ↓ / ↑</dt><dd>Move focus within the host list</dd>
+    <dt>Home / End</dt><dd>First / last host</dd><dt>Enter</dt><dd>Select host and open Summary</dd>
+    <dt>← / →</dt><dd>Inspect graph samples while a graph is focused</dd><dt>w</dt><dd>Open Report (controls enabled)</dd>
+    <dt>Delete</dt><dd>Confirm deletion of the focused host</dd><dt>Esc</dt><dd>Close a dialog or leave search</dd><dt>?</dt><dd>Show this help</dd>
+  </dl>
+  <p class="dialog-description">Route monitoring is enabled at startup: use -M for MTR or -T for Traceroute.</p>
+  <button class="btn" type="button" data-close="shortcuts-dialog">Close</button>
+</dialog>
+
+<dialog id="report-dialog" class="report-dialog" aria-labelledby="report-title">
+  <form id="report-form" novalidate>
+    <h2 id="report-title" class="pane-title">Save report</h2>
+    <label class="report-field" for="report-format">Format
+      <select id="report-format">
+        <option value="json">JSON (.json)</option>
+        <option value="text">Text (.txt)</option>
+      </select>
+    </label>
+    <label class="report-field" for="report-name">File name
+      <input id="report-name" type="text" value="mping-report.json" autocomplete="off" spellcheck="false" aria-describedby="report-name-hint report-error" autofocus>
+    </label>
+    <p id="report-name-hint" class="pane-hint">The extension follows the selected format.</p>
+    <p id="report-error" class="report-error" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button id="cancel-report" class="btn" type="button">Cancel</button>
+      <button id="download-report" class="btn" type="submit">Download</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="workspace" class="workspace">
   <section id="pane-monitor" class="pane" aria-labelledby="targets-title">
     <div class="pane-head">
       <div>
         <h2 id="targets-title" class="pane-title">Ping monitor</h2>
-        <p class="pane-hint">Select a target to inspect it.</p>
+        <p id="monitor-hint" class="pane-hint">Select a host for Summary. Loss % is lifetime loss.</p>
       </div>
     </div>
-    <p class="status-guide">Status uses latest RTT, jitter and overall loss. Averages and peaks describe the run since start or reset.</p>
+    <div class="monitor-toolbar">
+      <ul id="summary" class="summary" aria-label="Filter by target health"></ul>
+      <div class="monitor-filters">
+        <input id="filter" class="filter" type="search" placeholder="Filter host, IP, PTR, AS" aria-label="Filter targets">
+        <label class="visually-hidden" for="status-filter">Health filter</label><select id="status-filter" aria-label="Health filter"><option value="all">All states</option><option value="crit">Critical</option><option value="warn">Warning</option><option value="pending">Waiting</option><option value="ok">OK</option></select>
+        <label class="visually-hidden" for="sort-order">Sort order</label><select id="sort-order" aria-label="Sort order"></select>
+        <button id="refresh-sort" class="btn" type="button" disabled>Refresh order</button>
+        <button id="clear-filter" class="btn" type="button">Clear</button>
+        <span id="shown-count" class="muted"></span>
+      </div>
+    </div>
     <div class="pane-scroll">
       <div class="table-wrap">
         <table id="targets" class="grid">
+          <caption class="visually-hidden">Status reflects recent measurements. Loss % is cumulative.</caption>
           <thead></thead>
           <tbody></tbody>
         </table>
       </div>
-      <p id="targets-empty" class="empty" hidden></p>
+      <div id="targets-empty" class="empty" hidden><p id="targets-empty-message"></p><button id="empty-action" class="btn" type="button">Clear filters</button></div>
     </div>
   </section>
 
-  <section id="pane-inspect" class="pane" aria-label="Inspect">
+  <section id="pane-inspect" class="pane" aria-labelledby="inspect-title" hidden>
     <div class="pane-head">
-      <div id="inspect-tabs" class="tabs" role="tablist" aria-label="Inspect"></div>
-      <span id="inspect-target" class="pane-hint"></span>
+      <div>
+        <h2 id="inspect-title" class="pane-title">Summary</h2>
+        <p id="inspect-target" class="pane-hint"></p>
+      </div>
+      <button id="close-inspect" class="btn" type="button" aria-label="Close details">Close</button>
     </div>
-    <div id="inspect-body" class="inspect-body" role="tabpanel"></div>
+    <p id="selection-note" class="pane-hint selection-note" hidden>Selected host is outside the current filters.</p>
+    <div id="inspect-body" class="inspect-body"></div>
+  </section>
+
+  <section id="pane-traceroute" class="pane" aria-labelledby="traceroute-title" hidden>
+    <div class="pane-head">
+      <div>
+        <h2 id="traceroute-title" class="pane-title">Traceroute</h2>
+        <p id="traceroute-summary" class="pane-hint"></p>
+      </div>
+      <button id="locate-traceroute" class="btn locate-selected" type="button" disabled>Selected host</button>
+    </div>
+    <div id="traceroute-scroll" class="pane-scroll route-list"></div>
+  </section>
+
+  <section id="pane-mtr" class="pane" aria-labelledby="mtr-title" hidden>
+    <div class="pane-head">
+      <div>
+        <h2 id="mtr-title" class="pane-title">MTR monitor</h2>
+        <p id="mtr-summary" class="pane-hint"></p>
+      </div>
+      <button id="locate-mtr" class="btn locate-selected" type="button" disabled>Selected host</button>
+    </div>
+    <div id="mtr-scroll" class="pane-scroll">
+      <div id="mtr-table-wrap" class="table-wrap">
+        <table id="mtr" class="grid">
+          <caption class="visually-hidden">ICMP packet loss and RTT for each hop, grouped by target.</caption>
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p id="mtr-empty" class="empty" hidden>No targets.</p>
+    </div>
   </section>
 
   <section id="pane-graphs" class="pane" aria-labelledby="graphs-title">
@@ -72,17 +187,44 @@
         <p id="graphs-cursor" class="pane-hint"></p>
       </div>
       <div class="pane-tools">
+        <button id="locate-graphs" class="btn locate-selected" type="button" disabled>Selected host</button>
         <label class="tool">Window <select id="graph-window" aria-label="Time window"></select></label>
         <div class="segmented" role="group" aria-label="Y-axis scale">
-          <button id="scale-each" type="button" aria-pressed="true">Per target</button>
-          <button id="scale-shared" type="button" aria-pressed="false">Shared</button>
+          <button id="scale-shared" type="button" aria-pressed="true">Shared</button>
+          <button id="scale-each" type="button" aria-pressed="false">Per target</button>
         </div>
       </div>
     </div>
     <div class="pane-scroll">
+      <p id="graphs-empty" class="empty" hidden>No targets match the current filters.</p>
       <div id="graphs" class="graph-grid"></div>
     </div>
   </section>
 </div>
+
+<main id="page-log" class="page-view" aria-labelledby="log-title" hidden>
+  <section class="pane">
+    <div class="pane-head">
+      <div>
+        <h2 id="log-title" class="pane-title">Event log</h2>
+        <p id="log-status" class="pane-hint">Events from all targets.</p>
+      </div>
+      <button id="refresh-log" class="btn" type="button">Refresh</button>
+    </div>
+    <div id="log-body" class="pane-scroll"><p class="empty">Loading…</p></div>
+  </section>
+</main>
+
+<main id="page-http" class="page-view" aria-labelledby="http-title" hidden>
+  <section class="pane">
+    <div class="pane-head">
+      <div>
+        <h2 id="http-title" class="pane-title">HTTP checks</h2>
+        <p class="pane-hint">All configured endpoints.</p>
+      </div>
+    </div>
+    <div id="http-body" class="pane-scroll"></div>
+  </section>
+</main>
 </body>
 </html>

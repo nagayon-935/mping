@@ -390,3 +390,57 @@ func TestTargetStats_ResetClearsMTR(t *testing.T) {
 		t.Errorf("Reset should clear MTR hops, got %d", len(hops))
 	}
 }
+
+func TestMTRStats_OutOfRangeHopsAreIgnored(t *testing.T) {
+	m := NewMTRStats()
+	m.EnsureLen(2)
+
+	for _, ttl := range []int{0, 3} {
+		m.RecordReply(ttl, "192.0.2.9", "", "", "", time.Millisecond)
+		m.RecordLoss(ttl)
+		m.SetIP(ttl, "192.0.2.9", "", "", "")
+	}
+
+	for _, hop := range m.View() {
+		if hop.Sent != 0 || hop.IP != "" {
+			t.Fatalf("hop %d changed by an out-of-range ttl: %+v", hop.TTL, hop)
+		}
+	}
+}
+
+func TestMTRStats_HasIPReportsOnlyAnsweredHops(t *testing.T) {
+	m := NewMTRStats()
+	m.EnsureLen(2)
+	m.RecordReply(1, "192.0.2.1", "", "", "", time.Millisecond)
+	m.RecordLoss(2)
+
+	tests := []struct {
+		ttl  int
+		want bool
+	}{{1, true}, {2, false}, {0, false}, {3, false}}
+	for _, tt := range tests {
+		if got := m.HasIP(tt.ttl); got != tt.want {
+			t.Errorf("HasIP(%d) = %v, want %v", tt.ttl, got, tt.want)
+		}
+	}
+}
+
+func TestMTRStats_TruncateLenTreatsNegativeAsZero(t *testing.T) {
+	m := NewMTRStats()
+	m.EnsureLen(3)
+
+	m.TruncateLen(-1)
+
+	if n := len(m.View()); n != 0 {
+		t.Fatalf("hops = %d, want 0", n)
+	}
+}
+
+func TestBuildFlapDescListsEveryChangedHopWithStarsForSilence(t *testing.T) {
+	got := buildFlapDesc([]string{"192.0.2.1", "", "192.0.2.3"}, []string{"192.0.2.1", "198.51.100.2", ""})
+
+	want := "hop 2: * → 198.51.100.2; hop 3: 192.0.2.3 → *"
+	if got != want {
+		t.Fatalf("buildFlapDesc = %q, want %q", got, want)
+	}
+}

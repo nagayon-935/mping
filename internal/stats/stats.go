@@ -137,10 +137,16 @@ type TargetStats struct {
 	rtt rttAccumulator
 
 	// Jitter (RFC 1889)
-	jitter        int64 // Stored as nanoseconds for smooth calculation
-	events        []Event
-	eventsDropped int
-	probeEpoch    uint64 // Reset invalidates every probe from the previous window.
+	jitter           int64 // Stored as nanoseconds for smooth calculation
+	events           []Event
+	eventsDropped    int
+	probeEpoch       uint64 // Reset invalidates every probe from the previous window.
+	displayName      string
+	resolveAddress   string
+	health           targetHealth
+	historyTimes     []int64
+	measurementState string
+	eventSink        func(Event)
 
 	mu sync.RWMutex
 }
@@ -218,13 +224,15 @@ func reconstructHistoryWindow(buf []time.Duration, idx, length, n int) []time.Du
 
 // TargetView represents a read-only snapshot of the stats for UI rendering.
 type TargetView struct {
-	ID              uint64
-	StartedAt       time.Time
-	WindowStartedAt time.Time
-	DSCP            string
-	IPHistory       []IPChange
-	IPChanges       int
-	Cancelled       int
+	Health           Health
+	MeasurementState string
+	ID               uint64
+	StartedAt        time.Time
+	WindowStartedAt  time.Time
+	DSCP             string
+	IPHistory        []IPChange
+	IPChanges        int
+	Cancelled        int
 
 	Host             string
 	IP               string
@@ -263,10 +271,11 @@ type TargetView struct {
 func NewTargetStats(host string) *TargetStats {
 	now := time.Now()
 	return &TargetStats{
-		Host:            host,
-		ID:              targetIDs.Add(1),
-		StartedAt:       now,
-		WindowStartedAt: now,
+		Host:             host,
+		ID:               targetIDs.Add(1),
+		StartedAt:        now,
+		WindowStartedAt:  now,
+		measurementState: "running",
 	}
 }
 
@@ -300,12 +309,13 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 	}
 
 	return TargetView{
+		Health: t.healthViewLocked(), MeasurementState: t.measurementState,
 		DSCP: t.DSCP, IPHistory: append([]IPChange(nil), t.IPHistory...), IPChanges: t.IPChanges,
 		ID:               t.ID,
 		StartedAt:        t.StartedAt,
 		WindowStartedAt:  t.WindowStartedAt,
 		Cancelled:        t.Cancelled,
-		Host:             t.Host,
+		Host:             t.displayNameLocked(),
 		IP:               t.IP,
 		ASN:              t.ASN,
 		Country:          t.Country,
@@ -476,7 +486,9 @@ func (t *TargetStats) onSuccessLocked(rtt time.Duration, ttl int) {
 	t.LastRTT = rtt
 	t.LastTTL = ttl
 	t.rtt.record(rtt)
-	t.rtt.appendHistory(rtt, historySize)
+	now := time.Now()
+	t.appendHistoryLocked(rtt, now)
+	t.recordOutcomeLocked(now, true)
 
 	t.LastError = ""
 }
@@ -523,7 +535,8 @@ func (t *TargetStats) onFailureLocked(reason string) {
 	t.LastLossTime = time.Now()
 	t.LastError = reason
 	t.recordEventLocked("ping", reason)
-	t.rtt.appendHistory(0, historySize)
+	t.appendHistoryLocked(0, t.LastLossTime)
+	t.recordOutcomeLocked(t.LastLossTime, false)
 }
 
 func (t *TargetStats) Reset() {
@@ -545,8 +558,43 @@ func (t *TargetStats) Reset() {
 	t.LastLossTime = time.Time{}
 	t.LastError = ""
 	t.rtt = rttAccumulator{}
+	t.historyTimes = nil
+	policy, configured := t.health.policy, t.health.configured
+	t.health = targetHealth{policy: policy, configured: configured}
 	t.jitter = 0
 	if t.mtrStats != nil {
 		t.mtrStats.Reset()
 	}
+}
+
+// Host stays immutable for older callers. The display label may be changed
+// while probes keep using their original transport address.
+func (t *TargetStats) displayNameLocked() string {
+	if t.displayName != "" {
+		return t.displayName
+	}
+	return t.Host
+}
+func (t *TargetStats) SetDisplayName(name string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if name == t.displayNameLocked() {
+		return
+	}
+	t.displayName = name
+	t.recordEventLocked("renamed", "Display name changed to "+name)
+	bumpGeneration()
+}
+func (t *TargetStats) SetResolveAddress(address string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.resolveAddress = address
+}
+func (t *TargetStats) ResolveAddress() string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if t.resolveAddress != "" {
+		return t.resolveAddress
+	}
+	return t.Host
 }

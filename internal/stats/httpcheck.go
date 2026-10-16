@@ -43,6 +43,10 @@ func NewHTTPCheckResult(url string) *HTTPCheckResult {
 // SetResult records the outcome of one HTTP health check.
 // statusCode is 0 when err is non-nil.
 func (r *HTTPCheckResult) SetResult(statusCode int, rtt time.Duration, err error) {
+	r.SetExpectedResult(statusCode, rtt, err, statusCode >= 200 && statusCode < 400)
+}
+
+func (r *HTTPCheckResult) SetExpectedResult(statusCode int, rtt time.Duration, err error, expected bool) {
 	defer bumpGeneration()
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -51,7 +55,7 @@ func (r *HTTPCheckResult) SetResult(statusCode int, rtt time.Duration, err error
 	switch {
 	case err != nil:
 		status = "Error"
-	case statusCode >= 200 && statusCode < 400:
+	case expected:
 		status = "Up"
 	default:
 		status = "Down"

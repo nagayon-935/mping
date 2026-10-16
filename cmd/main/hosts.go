@@ -72,33 +72,40 @@ type groupYAML struct {
 // hostsFileYAML is a decoded hosts file. After parseHostsFile, Hosts and
 // every group's Hosts hold concrete, expanded hosts and Include is empty.
 type hostsFileYAML struct {
-	Hosts      []hostEntry     `yaml:"hosts"`
-	Include    includeList     `yaml:"include"`
-	Groups     []groupYAML     `yaml:"groups"`
-	IntervalMs *int            `yaml:"interval"`
-	TimeoutMs  *int            `yaml:"timeout"`
-	OutputFile *string         `yaml:"output"`
-	IfaceName  *string         `yaml:"interface"`
-	SourceAddr *string         `yaml:"source"`
-	PacketSize *int            `yaml:"size"`
-	Count      *int            `yaml:"count"`
-	MtuEnabled *bool           `yaml:"discovery-mtu"`
-	Trace      *bool           `yaml:"traceroute"`
-	AsnEnabled *bool           `yaml:"asn"`
-	PtrEnabled *bool           `yaml:"ptr"`
-	Ipv4Only   *bool           `yaml:"ipv4"`
-	Ipv6Only   *bool           `yaml:"ipv6"`
-	PortSpecs  []string        `yaml:"port"`
-	HTTPURLs   []string        `yaml:"http"`
-	JsonOutput *string         `yaml:"json-output"`
-	Mtr        *bool           `yaml:"mtr"`
-	DNSServer  *string         `yaml:"dns-server"`
-	ResolveAll *bool           `yaml:"resolve-all"`
-	Duration   *string         `yaml:"duration"`
-	DSCP       *string         `yaml:"dscp"`
-	Web        *bool           `yaml:"web"`
-	WebPort    *int            `yaml:"web-port"`
-	Thresholds *thresholdsYAML `yaml:"thresholds"`
+	Hosts               []hostEntry     `yaml:"hosts"`
+	Include             includeList     `yaml:"include"`
+	Groups              []groupYAML     `yaml:"groups"`
+	IntervalMs          *int            `yaml:"interval"`
+	TimeoutMs           *int            `yaml:"timeout"`
+	OutputFile          *string         `yaml:"output"`
+	IfaceName           *string         `yaml:"interface"`
+	SourceAddr          *string         `yaml:"source"`
+	PacketSize          *int            `yaml:"size"`
+	Count               *int            `yaml:"count"`
+	MtuEnabled          *bool           `yaml:"discovery-mtu"`
+	Trace               *bool           `yaml:"traceroute"`
+	AsnEnabled          *bool           `yaml:"asn"`
+	PtrEnabled          *bool           `yaml:"ptr"`
+	Ipv4Only            *bool           `yaml:"ipv4"`
+	Ipv6Only            *bool           `yaml:"ipv6"`
+	PortSpecs           []string        `yaml:"port"`
+	HTTPURLs            []string        `yaml:"http"`
+	JsonOutput          *string         `yaml:"json-output"`
+	Mtr                 *bool           `yaml:"mtr"`
+	DNSServer           *string         `yaml:"dns-server"`
+	ResolveAll          *bool           `yaml:"resolve-all"`
+	Duration            *string         `yaml:"duration"`
+	DSCP                *string         `yaml:"dscp"`
+	Web                 *bool           `yaml:"web"`
+	WebPort             *int            `yaml:"web-port"`
+	Thresholds          *thresholdsYAML `yaml:"thresholds"`
+	HealthFailures      *int            `yaml:"health-failures"`
+	HealthRecoveries    *int            `yaml:"health-recoveries"`
+	HealthWindow        *string         `yaml:"health-window"`
+	EventOutput         *string         `yaml:"event-output"`
+	HTTPStatus          *string         `yaml:"http-status"`
+	HTTPFollowRedirects *bool           `yaml:"http-follow-redirects"`
+	HTTPHeaders         []string        `yaml:"http-header"`
 }
 
 // thresholdsYAML mirrors the ui.Thresholds boundaries in the YAML config.
