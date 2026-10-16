@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -175,9 +175,8 @@ func handleBulkHistory(src *Source) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		p, _, _ := src.load()
-		if p == nil {
-			writeError(w, http.StatusServiceUnavailable, errNoProvider.Error())
+		p, ok := liveProvider(w, src)
+		if !ok {
 			return
 		}
 		targets := p.Targets()
@@ -192,16 +191,44 @@ func handleBulkHistory(src *Source) http.HandlerFunc {
 
 // historyPoints parses ?n=, writing a 400 itself when it returns ok=false.
 func historyPoints(w http.ResponseWriter, r *http.Request) (int, bool) {
-	raw := r.URL.Query().Get("n")
+	return queryInt(w, r, "n", defaultHistoryPoints, maxHistoryPoints)
+}
+
+// queryInt parses an optional query parameter in [1, maxValue], answering
+// 400 itself when it returns ok=false.
+func queryInt(w http.ResponseWriter, r *http.Request, name string, def, maxValue int) (int, bool) {
+	raw := r.URL.Query().Get(name)
 	if raw == "" {
-		return defaultHistoryPoints, true
+		return def, true
 	}
 	n, err := strconv.Atoi(raw)
-	if err != nil || n < 1 || n > maxHistoryPoints {
-		writeError(w, http.StatusBadRequest, "n must be an integer between 1 and "+strconv.Itoa(maxHistoryPoints))
+	if err != nil || n < 1 || n > maxValue {
+		writeError(w, http.StatusBadRequest, name+" must be an integer between 1 and "+strconv.Itoa(maxValue))
 		return 0, false
 	}
 	return n, true
+}
+
+// liveProvider returns the current provider, answering 503 itself when
+// mping has none (e.g. between hosts-file reloads).
+func liveProvider(w http.ResponseWriter, src *Source) (Provider, bool) {
+	p, _, _ := src.load()
+	if p == nil {
+		writeError(w, http.StatusServiceUnavailable, errNoProvider.Error())
+		return nil, false
+	}
+	return p, true
+}
+
+// targetID parses the {id} path value, answering 400 itself when it returns
+// ok=false.
+func targetID(w http.ResponseWriter, r *http.Request) (uint64, bool) {
+	id, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "target id must be an unsigned integer")
+		return 0, false
+	}
+	return id, true
 }
 
 func historyOf(t *stats.TargetStats, n int) HistoryResponse {
@@ -220,18 +247,12 @@ func historyOf(t *stats.TargetStats, n int) HistoryResponse {
 // list, the browser's counterpart to the TUI's Log pane.
 func handleBulkEvents(src *Source) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		limit := defaultEvents
-		if raw := r.URL.Query().Get("limit"); raw != "" {
-			n, err := strconv.Atoi(raw)
-			if err != nil || n < 1 || n > maxEvents {
-				writeError(w, http.StatusBadRequest, "limit must be an integer between 1 and "+strconv.Itoa(maxEvents))
-				return
-			}
-			limit = n
+		limit, ok := queryInt(w, r, "limit", defaultEvents, maxEvents)
+		if !ok {
+			return
 		}
-		p, _, _ := src.load()
-		if p == nil {
-			writeError(w, http.StatusServiceUnavailable, errNoProvider.Error())
+		p, ok := liveProvider(w, src)
+		if !ok {
 			return
 		}
 		all := []TargetEvent{}
@@ -241,7 +262,7 @@ func handleBulkEvents(src *Source) http.HandlerFunc {
 				all = append(all, TargetEvent{Event: e, Host: t.GetView().Host})
 			}
 		}
-		sort.SliceStable(all, func(i, j int) bool { return all[i].At.After(all[j].At) })
+		slices.SortStableFunc(all, func(a, b TargetEvent) int { return b.At.Compare(a.At) })
 		if len(all) > limit {
 			all = all[:limit]
 		}
@@ -266,14 +287,12 @@ func handleEvents(src *Source) http.HandlerFunc {
 // lookupTarget resolves the {id} path value against the live targets,
 // writing the error response itself when it returns ok=false.
 func lookupTarget(w http.ResponseWriter, r *http.Request, src *Source) (*stats.TargetStats, bool) {
-	p, _, _ := src.load()
-	if p == nil {
-		writeError(w, http.StatusServiceUnavailable, errNoProvider.Error())
+	p, ok := liveProvider(w, src)
+	if !ok {
 		return nil, false
 	}
-	id, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "target id must be an unsigned integer")
+	id, ok := targetID(w, r)
+	if !ok {
 		return nil, false
 	}
 	for _, t := range p.Targets() {

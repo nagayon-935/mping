@@ -86,7 +86,7 @@ export function createInspect(dom) {
       columns.replaceChildren(...parts.columns);
       const old = ports.querySelector(".table-wrap");
       const left = old?.scrollLeft ?? 0;
-      ports.replaceChildren(...(view.meta.features.port ? [section("Ports", ...portsFor(target))] : []));
+      ports.replaceChildren(...(view.meta.features.port ? [section("Ports", portsFor(target))] : []));
       const wrap = ports.querySelector(".table-wrap");
       if (wrap) wrap.scrollLeft = left;
       dom.body.scrollTop = top;

@@ -282,9 +282,13 @@ try {
   });
 
   await check("MTR preserves horizontal scroll, column widths and selected text during live updates", async () => {
-    await page.setViewportSize({width:900,height:900});
+    // Wider panes drop optional columns until the table fits; a phone still
+    // needs more than the required columns' width, so both axes scroll.
+    await page.setViewportSize({width:390,height:900});
     await page.click("tr.target-row >> nth=2");
     await page.waitForSelector("#mtr tbody tr");
+    // The resize re-selects columns for the narrower pane; measure once laid out.
+    await page.waitForFunction(()=>[...document.querySelectorAll("#mtr thead th")].every(n=>n.getBoundingClientRect().width>0));
     const geometry=()=>page.$$eval("#mtr thead th",ns=>ns.map(n=>n.getBoundingClientRect().width));
     const before=await geometry();
     const position=await page.$eval("#mtr-table-wrap",n=>{n.scrollLeft=120;n.scrollTop=80;return {left:n.scrollLeft,top:n.scrollTop,height:n.clientHeight}});

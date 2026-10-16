@@ -1,5 +1,5 @@
 // One SSE stream drives the monitoring workspace and independent global pages.
-import { el, badgeIcon, fetchJSON, readSession, selectionWithin, writeSession } from "./dom.js";
+import { el, fetchJSON, readSession, selectionWithin, writeSession } from "./dom.js";
 import { renderTargets } from "./table.js";
 import { createGraphs } from "./graphs.js";
 import { createInspect } from "./inspect.js";
@@ -7,36 +7,34 @@ import { renderMTR } from "./mtr.js";
 import { renderTraceroutes } from "./traceroute.js";
 import { createLog } from "./log.js";
 import { httpFor } from "./checks.js";
-import { badgeFor, summarize, validateHost } from "./model.js";
 import { reconcileWindow } from "./timeline.js";
 import { createControl } from "./control.js";
-import { formatTime } from "./time.js";
 import { createReportDialog } from "./report.js";
 import { createConfirmation } from "./dialogs.js";
-import { SORTS, configuredTargets, sortTargets, frozenOrder, filterTargets, editableTarget } from "./workspace.js";
+import { createNotice } from "./notice.js";
+import { createActionsMenu } from "./actions_menu.js";
+import { createAddDialog, createAuthDialog } from "./control_dialogs.js";
+import { installShortcuts } from "./shortcuts.js";
+import { createActions } from "./actions.js";
+import { measurementState, renderHeader } from "./header.js";
+import { STATUSES, STATUS_LABELS, healthFilterItems, parseSort, sortOptions } from "./toolbar.js";
+import { configuredTargets, sortTargets, frozenOrder, filterTargets } from "./workspace.js";
 
 const HISTORY_EVERY_MS = 2000;
 const MAX_HISTORY_POINTS = 3000; // the server's per-target RTT ring
 const FILTER_KEY = "mping.filter";
 const WINDOW_KEY = "mping.window";
 const SCALE_KEY = "mping.sharedScale";
+const STATUS_KEY = "mping.status";
+const SORT_KEY = "mping.sort";
+const SHORTCUTS_KEY = "mping.shortcuts";
 
 const $ = (id) => document.getElementById(id);
 
 // Must run before anything reads location.hash: it consumes "#token=".
 const control = createControl();
-
-let noticeTimer = null;
-function notify(message, isError = false) {
-  const node = $("notice"), text = $("notice-message");
-  clearTimeout(noticeTimer);
-  text.setAttribute("role", isError ? "alert" : "status");
-  text.setAttribute("aria-live", isError ? "assertive" : "polite");
-  text.textContent = message;
-  node.hidden = false;
-  node.classList.toggle("is-error", isError);
-  if (!isError) noticeTimer = setTimeout(() => { node.hidden = true; text.textContent = ""; }, 4000);
-}
+const notify = createNotice({ node: $("notice"), text: $("notice-message"), dismiss: $("dismiss-notice") });
+const menu = createActionsMenu({ toggle: $("toggle-actions"), menu: $("measurement-controls") });
 
 const view = {
   snapshot: null,
@@ -52,12 +50,17 @@ const view = {
   inspectOpen: false,
   historyNow: null,
   page: "monitor",
-  status: readSession("mping.status") || "all",
-  sort: {key:"config",direction:"asc"}, order: null, focusedId: null,
+  status: readSession(STATUS_KEY) || "all",
+  sort: { key: "config", direction: "asc" },
+  order: null, // frozen target IDs for a non-config sort
+  focusedId: null,
 };
 
+const hasTarget = (id) => !!view.snapshot?.targets.some((t) => t.id === id);
+const monitorHash = () => (view.selectedId == null ? "#monitor" : `#target-${view.selectedId}`);
+
 function selectTarget(id) {
-  if (!view.snapshot?.targets.some((t) => t.id === id)) return;
+  if (!hasTarget(id)) return;
   view.selectedId = id;
   view.inspectOpen = true;
   view.page = "monitor";
@@ -73,6 +76,12 @@ function clearSelection() {
   scheduleRender();
 }
 
+function showMonitorPage() {
+  view.page = "monitor";
+  history.replaceState(null, "", monitorHash());
+  scheduleRender();
+}
+
 const graphs = createGraphs({ grid: $("graphs"), cursorNote: $("graphs-cursor"), onSelect: selectTarget });
 
 const inspect = createInspect({
@@ -81,8 +90,8 @@ const inspect = createInspect({
   canControl: () => control.allowed,
   actionsFor(t) {
     if (!control.allowed) return null;
-    const button = el("button", {className:"btn btn-danger",text:`Delete ${t.host}`,attrs:{type:"button"}});
-    button.addEventListener("click", () => deleteTarget(t.id));
+    const button = el("button", { className: "btn btn-danger", text: `Delete ${t.host}`, attrs: { type: "button" } });
+    button.addEventListener("click", () => actions.deleteTarget(t.id));
     return button;
   },
 });
@@ -101,9 +110,46 @@ const report = createReportDialog({
 });
 
 const confirmation = createConfirmation({
-  dialog:$("confirm-dialog"),form:$("confirm-form"),title:$("confirm-title"),description:$("confirm-description"),
-  error:$("confirm-error"),cancel:$("confirm-cancel"),submit:$("confirm-action"),
+  dialog: $("confirm-dialog"), form: $("confirm-form"), title: $("confirm-title"), description: $("confirm-description"),
+  error: $("confirm-error"), cancel: $("confirm-cancel"), submit: $("confirm-action"),
 });
+
+const auth = createAuthDialog({
+  dialog: $("auth-dialog"), form: $("auth-form"), token: $("auth-token"), show: $("auth-show"),
+  error: $("auth-error"), submit: $("auth-submit"), explanation: $("readonly-explanation"),
+}, {
+  control,
+  onEnabled() {
+    notify("Browser controls enabled.");
+    afterControlChange();
+  },
+});
+
+const addHost = createAddDialog({
+  dialog: $("add-dialog"), form: $("add-form"), host: $("add-host"), error: $("add-error"), submit: $("add-submit"),
+}, { control, notify, onChange: afterControlChange, requestAuth: auth.open });
+
+const actions = createActions({
+  control, confirmation, notify,
+  button: $("measurement-action"),
+  findTarget: (id) => view.snapshot?.targets.find((t) => t.id === id),
+  isStopped: () => ["stopped", "finished"].includes(measurementState(view)),
+  onDeleted(target) {
+    if (view.selectedId === target.id) clearSelection();
+    requestAnimationFrame(() => $("filter").focus());
+  },
+  async onReset() {
+    view.series = new Map();
+    await refreshHistory();
+  },
+  async onMeasurementChange(ok) {
+    if (ok) await reloadSnapshot();
+    await refreshHistory();
+  },
+  afterChange: afterControlChange,
+});
+
+// --- Pages and ordering ----------------------------------------------------
 
 function readPage() {
   view.page = location.hash === "#log" ? "log" : location.hash === "#http" ? "http" : "monitor";
@@ -123,169 +169,127 @@ function renderPages() {
     if (view.page === page) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
-  $("nav-monitor").href = view.selectedId == null ? "#monitor" : `#target-${view.selectedId}`;
+  $("nav-monitor").href = monitorHash();
   $("nav-http").hidden = !view.meta?.features.http;
-
   log.activate(view.page === "log");
 }
 
-function baseTargets() { return configuredTargets(view.snapshot.targets, view.meta.groups); }
+function baseTargets() {
+  return configuredTargets(view.snapshot.targets, view.meta.groups);
+}
+
+const sortedIds = (targets) => sortTargets(targets, view.sort, view.meta.thresholds).map((t) => t.id);
+
 function refreshOrder() {
   if (!view.snapshot) return;
-  view.order = sortTargets(baseTargets(), view.sort, view.meta.thresholds).map(t => t.id);
+  view.order = sortedIds(baseTargets());
   scheduleRender();
 }
+
 function setSort(key, direction) {
   view.sort = { key, direction: direction || (["host", "ip", "config"].includes(key) ? "asc" : "desc") };
-  writeSession("mping.sort", JSON.stringify(view.sort));
+  writeSession(SORT_KEY, JSON.stringify(view.sort));
   $("sort-order").value = `${view.sort.key}:${view.sort.direction}`;
   refreshOrder();
 }
+
+/** Column headings cycle: first direction, the other one, then config order. */
 function sortColumn(key) {
   const first = ["host", "ip"].includes(key) ? "asc" : "desc";
   if (view.sort.key !== key) setSort(key, first);
   else if (view.sort.direction === first) setSort(key, first === "asc" ? "desc" : "asc");
   else setSort("config", "asc");
 }
+
 function setStatus(status) {
   view.status = status;
   $("status-filter").value = status;
-  writeSession("mping.status", status);
-  if (view.page !== "monitor") { view.page = "monitor"; history.replaceState(null,"",view.selectedId == null ? "#monitor" : `#target-${view.selectedId}`); }
-  scheduleRender();
+  writeSession(STATUS_KEY, status);
+  if (view.page !== "monitor") showMonitorPage();
+  else scheduleRender();
 }
+
 function clearFilters() {
-  view.filter = ""; $("filter").value = ""; writeSession(FILTER_KEY, "");
+  view.filter = "";
+  $("filter").value = "";
+  writeSession(FILTER_KEY, "");
   setStatus("all");
 }
+
 function visibleTargets() {
   const base = baseTargets();
-  if (view.order === null) view.order = sortTargets(base, view.sort, view.meta.thresholds).map(t => t.id);
+  if (view.order === null) view.order = sortedIds(base);
   const ordered = view.sort.key === "config" ? base : frozenOrder(base, view.order);
   return filterTargets(ordered, view.filter, view.status, view.meta);
 }
 
-function renderHeader() {
-  const badge = badgeFor(view.state, view.connected);
-  const node = $("badge");
-  node.className = `badge lvl-${badge.level}`;
-  node.querySelector(".badge-icon").textContent = badgeIcon(badge.level);
-  node.querySelector(".badge-label").textContent = `Connection: ${badge.label}`;
-  node.title = "Browser connection, independent of host health and measurement state.";
-  const measurement = view.meta?.measurement_state ?? view.snapshot?.targets[0]?.measurement_state;
-  const stopped = measurement === "stopped" || measurement === "finished";
-  $("measurement-state").textContent = measurement ? `Measurements: ${measurement}` : "Measurements: waiting";
-  $("measurement-state").classList.toggle("is-stopped", stopped);
-  if (!$("measurement-action").disabled) $("measurement-action").textContent = stopped ? "Restart all" : "Stop all";
-  $("measurement-action").title = "Stop or restart measurements for all hosts and enabled monitors. Existing statistics are retained.";
-  const latest = view.snapshot?.targets.map(t => t.health?.last_probe_at).filter(Boolean).sort().at(-1);
-  $("updated").textContent = `Last probe ${latest ? formatTime(latest) : "–"}`;
-  $("connection-note").textContent = !view.connected && view.snapshot
-    ? view.state === "stopped" ? "Session ended; last values retained." : "Reconnecting; showing last received values." : "";
-  const counts = view.snapshot ? summarize(view.snapshot.targets, view.meta.thresholds) : {total:0,crit:0,warn:0,pending:0,ok:0};
-  for (const button of $("summary").querySelectorAll("button")) {
-    const status = button.dataset.status;
-    button.querySelector("strong").textContent = String(status === "all" ? counts.total : counts[status]);
-    button.setAttribute("aria-pressed", String(view.status === status));
-    button.disabled = !view.snapshot;
-  }
-}
+// --- Rendering -------------------------------------------------------------
 
 // Rebuilding a table or the inspect pane drops any text the user is
 // selecting, so those parts wait while a selection is open inside them;
 // "selectionchange" re-runs the render once it is cleared.
 let heldBySelection = false;
 
+function unlessSelecting(node, render) {
+  if (selectionWithin(node)) heldBySelection = true;
+  else render();
+}
+
 function renderBody() {
   heldBySelection = false;
   renderPages();
   if (view.page === "log") {
-    if (selectionWithin($("log-body"))) heldBySelection = true;
-    else log.render();
+    unlessSelecting($("log-body"), log.render);
     return;
   }
-  const empty = $("targets-empty");
   if (!view.snapshot) {
     $("targets-empty-message").textContent = view.connected ? "Waiting for the first measurement…" : "Connecting to mping…";
     $("empty-action").hidden = true;
-    empty.hidden = false;
+    $("targets-empty").hidden = false;
     return;
   }
-  if (view.selectedId != null && !view.snapshot.targets.some((t) => t.id === view.selectedId)) {
+  if (view.selectedId != null && !hasTarget(view.selectedId)) {
     clearSelection(); // deleted, or gone after a reload
   }
-  if (view.page === "http") {
-    if (selectionWithin($("http-body"))) heldBySelection = true;
-    else {
-      const body = $("http-body");
-      const top = body.scrollTop;
-      const old = body.querySelector(".table-wrap");
-      const left = old?.scrollLeft ?? 0;
-      const [next] = httpFor(view.snapshot.http_checks);
-      if (old && next.classList.contains("table-wrap")) {
-        old.replaceChildren(...next.childNodes);
-        old.scrollLeft = left;
-      } else body.replaceChildren(next);
-      body.scrollTop = top;
-    }
-    return;
+  if (view.page === "http") unlessSelecting($("http-body"), renderHttpPage);
+  else renderMonitorPage();
+}
+
+function renderHttpPage() {
+  // Keep the existing scroll container so live updates preserve both axes.
+  const body = $("http-body");
+  const top = body.scrollTop;
+  const old = body.querySelector(".table-wrap");
+  const left = old?.scrollLeft ?? 0;
+  const next = httpFor(view.snapshot.http_checks);
+  if (old && next.classList.contains("table-wrap")) {
+    old.replaceChildren(...next.childNodes);
+    old.scrollLeft = left;
+  } else {
+    body.replaceChildren(next);
   }
+  body.scrollTop = top;
+}
+
+function renderMonitorPage() {
+  const targets = visibleTargets();
+  const total = view.snapshot.targets.length;
+  const { features } = view.meta;
+  const showMTR = !!features.mtr;
+  const showTrace = !!features.traceroute && !showMTR;
+
   $("pane-inspect").hidden = !view.inspectOpen;
   $("workspace").classList.toggle("has-inspect", view.inspectOpen);
-  const showMTR = !!view.meta.features.mtr;
   $("pane-mtr").hidden = !showMTR;
-  const showTrace = !!view.meta.features.traceroute && !showMTR;
   $("pane-traceroute").hidden = !showTrace;
   $("workspace").classList.toggle("has-route", showMTR || showTrace);
-  if (showMTR) {
-    const targets = visibleTargets();
-    $("mtr-summary").textContent = `${targets.length} ${targets.length === 1 ? "host" : "hosts"} · ICMP`;
-    if (selectionWithin($("mtr-scroll"))) heldBySelection = true;
-    else {
-      const groups = renderMTR($("mtr"), targets, view.meta, view.selectedId);
-      $("mtr-table-wrap").hidden = groups === 0;
-      $("mtr-empty").hidden = groups > 0;
-      $("mtr-empty").textContent = view.snapshot.targets.length === 0 ? "No targets." : "No targets match the filter.";
-    }
-  }
-  if (showTrace) {
-    const targets = visibleTargets();
-    $("traceroute-summary").textContent = `${targets.length} ${targets.length === 1 ? "host" : "hosts"} · ICMP`;
-    if (selectionWithin($("traceroute-scroll"))) heldBySelection = true;
-    else renderTraceroutes($("traceroute-scroll"), targets, view.meta.features, view.selectedId);
-  }
-  const fields = ["host", "IP", ...(view.meta.features.ptr ? ["PTR"] : []), ...(view.meta.features.asn ? ["AS"] : [])].join(", ");
-  $("filter").placeholder = `Filter ${fields}`;
-  $("filter").setAttribute("aria-label", `Filter ${fields}`);
-  if (selectionWithin($("targets"))) {
-    heldBySelection = true;
-  } else {
-    const targets = visibleTargets();
-    const shown = renderTargets($("targets"), {...view, visibleTargets:targets}, selectTarget, sortColumn);
-    empty.hidden = shown > 0;
-    $("targets-empty-message").textContent = view.snapshot.targets.length === 0
-      ? "No hosts are being monitored. Add a host here or in the TUI / hosts file."
-      : `No hosts match ${view.filter ? `“${view.filter}” and ` : ""}${view.status === "all" ? "the current filters" : view.status === "crit" ? "Critical" : view.status === "warn" ? "Warning" : view.status === "pending" ? "Waiting" : "OK"}.`;
-    $("empty-action").hidden = false;
-    $("empty-action").textContent = view.snapshot.targets.length ? "Clear filters" : control.allowed ? "Add host" : "Enable controls";
-  }
-  const targets = visibleTargets();
-  $("shown-count").textContent = `${targets.length} / ${view.snapshot.targets.length} hosts`;
-  const desired = sortTargets(baseTargets(), view.sort, view.meta.thresholds).map(t=>t.id);
-  const ordered = frozenOrder(baseTargets(), view.order).map(t=>t.id);
-  $("refresh-sort").disabled = view.sort.key === "config" || desired.join() === ordered.join();
-  $("refresh-sort").textContent = $("refresh-sort").disabled ? "Order up to date" : "Refresh order •";
-  $("selection-note").hidden = view.selectedId == null || targets.some(t=>t.id === view.selectedId);
-  for (const id of ["locate-mtr","locate-traceroute","locate-graphs"]) {
-    $(id).disabled = view.selectedId == null || !targets.some(t=>t.id === view.selectedId);
-    $(id).title = $(id).disabled ? "Select a host visible in the current filters." : "Scroll to the selected host without changing order.";
-  }
-  $("graphs-empty").hidden = targets.length > 0;
-  $("graphs-empty").textContent = view.snapshot.targets.length ? "No hosts match the current filters." : "Add a host to start collecting RTT history.";
-  $("monitor-hint").textContent = `Loss % is lifetime loss; health uses recent measurements.${showMTR || showTrace ? "" : " Route monitoring is disabled (start with -M or -T)."}`;
-  $("monitor-hint").title = $("monitor-hint").textContent;
+
+  if (showMTR) renderMTRPane(targets, total);
+  if (showTrace) renderTraceroutePane(targets);
+  renderTargetsPane(targets, total);
+  renderMonitorChrome(targets, total, showMTR || showTrace);
   graphs.render({
-    targets: visibleTargets(),
+    targets,
     history: view.series,
     meta: view.meta,
     points: view.window?.points ?? 0,
@@ -293,13 +297,70 @@ function renderBody() {
     selectedId: view.selectedId,
     now: view.historyNow,
   });
-  if (selectionWithin($("inspect-body"))) heldBySelection = true;
-  else if (view.inspectOpen) inspect.render(view);
+  unlessSelecting($("inspect-body"), () => { if (view.inspectOpen) inspect.render(view); });
 }
 
-document.addEventListener("selectionchange", () => {
-  if (heldBySelection) scheduleRender();
-});
+const hostCount = (n) => `${n} ${n === 1 ? "host" : "hosts"} · ICMP`;
+
+function renderMTRPane(targets, total) {
+  $("mtr-summary").textContent = hostCount(targets.length);
+  unlessSelecting($("mtr-scroll"), () => {
+    const groups = renderMTR($("mtr"), targets, view.meta, view.selectedId);
+    $("mtr-table-wrap").hidden = groups === 0;
+    $("mtr-empty").hidden = groups > 0;
+    $("mtr-empty").textContent = total === 0 ? "No targets." : "No targets match the filter.";
+  });
+}
+
+function renderTraceroutePane(targets) {
+  $("traceroute-summary").textContent = hostCount(targets.length);
+  unlessSelecting($("traceroute-scroll"), () =>
+    renderTraceroutes($("traceroute-scroll"), targets, view.meta.features, view.selectedId));
+}
+
+function emptyTargetsMessage(total) {
+  if (total === 0) return "No hosts are being monitored. Add a host here or in the TUI / hosts file.";
+  const query = view.filter ? `“${view.filter}” and ` : "";
+  return `No hosts match ${query}${STATUS_LABELS[view.status] ?? "the current filters"}.`;
+}
+
+function renderTargetsPane(targets, total) {
+  const { features } = view.meta;
+  const fields = ["host", "IP", ...(features.ptr ? ["PTR"] : []), ...(features.asn ? ["AS"] : [])].join(", ");
+  $("filter").placeholder = `Filter ${fields}`;
+  $("filter").setAttribute("aria-label", `Filter ${fields}`);
+  unlessSelecting($("targets"), () => {
+    const shown = renderTargets($("targets"), { ...view, visibleTargets: targets }, selectTarget, sortColumn);
+    $("targets-empty").hidden = shown > 0;
+    $("targets-empty-message").textContent = emptyTargetsMessage(total);
+    $("empty-action").hidden = false;
+    $("empty-action").textContent = total ? "Clear filters" : control.allowed ? "Add host" : "Enable controls";
+  });
+}
+
+/** Counts, sort state, locate buttons and hints around the monitor panes. */
+function renderMonitorChrome(targets, total, routeShown) {
+  $("shown-count").textContent = `${targets.length} / ${total} hosts`;
+
+  const base = baseTargets();
+  const upToDate = sortedIds(base).join() === frozenOrder(base, view.order).map((t) => t.id).join();
+  const refresh = $("refresh-sort");
+  refresh.disabled = view.sort.key === "config" || upToDate;
+  refresh.textContent = refresh.disabled ? "Order up to date" : "Refresh order •";
+
+  const selectedVisible = view.selectedId != null && targets.some((t) => t.id === view.selectedId);
+  $("selection-note").hidden = view.selectedId == null || selectedVisible;
+  for (const id of ["locate-mtr", "locate-traceroute", "locate-graphs"]) {
+    $(id).disabled = !selectedVisible;
+    $(id).title = selectedVisible ? "Scroll to the selected host without changing order." : "Select a host visible in the current filters.";
+  }
+
+  $("graphs-empty").hidden = targets.length > 0;
+  $("graphs-empty").textContent = total ? "No hosts match the current filters." : "Add a host to start collecting RTT history.";
+  const hint = `Loss % is lifetime loss; health uses recent measurements.${routeShown ? "" : " Route monitoring is disabled (start with -M or -T)."}`;
+  $("monitor-hint").textContent = hint;
+  $("monitor-hint").title = hint;
+}
 
 let renderQueued = false;
 function scheduleRender() {
@@ -307,10 +368,16 @@ function scheduleRender() {
   renderQueued = true;
   requestAnimationFrame(() => {
     renderQueued = false;
-    renderHeader();
+    renderHeader(view);
     renderBody();
   });
 }
+
+document.addEventListener("selectionchange", () => {
+  if (heldBySelection) scheduleRender();
+});
+
+// --- Data ------------------------------------------------------------------
 
 function applySnapshot(body) {
   // The window choices depend on the probe interval, which a hosts-file
@@ -330,7 +397,7 @@ function applySnapshot(body) {
   const wanted = /^#target-(\d+)$/.exec(location.hash);
   if (wanted && view.selectedId == null) {
     const id = Number(wanted[1]);
-    if (view.snapshot.targets.some((t) => t.id === id)) selectTarget(id);
+    if (hasTarget(id)) selectTarget(id);
     else history.replaceState(null, "", location.pathname);
   }
 }
@@ -339,7 +406,7 @@ function connect() {
   const stream = new EventSource("api/v1/stream");
   stream.addEventListener("open", () => {
     view.connected = true;
-    control.refresh().then(() => { renderControls(); scheduleRender(); });
+    control.refresh().then(afterControlChange);
     scheduleRender();
   });
   stream.addEventListener("snapshot", (e) => {
@@ -361,22 +428,31 @@ function connect() {
 async function refreshHistory() {
   if (document.hidden || !view.snapshot || !view.window || view.state === "stopped") return;
   try {
-    const n = view.window.points;
-    const body = await fetchJSON(`api/v1/history?n=${n}`);
+    const body = await fetchJSON(`api/v1/history?n=${view.window.points}`);
     view.series = new Map(body.targets.map((s) => [s.id, s.samples?.length ? s.samples : s.rtt_ms]));
-    view.historyNow = body.captured_at ? Date.parse(body.captured_at) : (body.targets[0]?.captured_at ? Date.parse(body.targets[0].captured_at) : Date.now());
+    const captured = body.captured_at || body.targets[0]?.captured_at;
+    view.historyNow = captured ? Date.parse(captured) : Date.now();
     scheduleRender();
   } catch {
     // Transient (e.g. mping between reloads); the next tick retries.
   }
 }
 
+async function reloadSnapshot() {
+  try {
+    applySnapshot(await fetchJSON("api/v1/snapshot"));
+  } catch {
+    // The stream delivers the same state shortly.
+  }
+}
+
+// --- Graph tools -----------------------------------------------------------
+
 function initWindows() {
   const { options, window } = reconcileWindow(view.window?.label ?? readSession(WINDOW_KEY), view.meta.interval_ms, MAX_HISTORY_POINTS);
   view.windows = options;
   view.window = window;
-  const select = $("graph-window");
-  select.replaceChildren(...view.windows.map((w) =>
+  $("graph-window").replaceChildren(...view.windows.map((w) =>
     el("option", { text: w.label, attrs: { value: w.label, ...(w === view.window ? { selected: "" } : {}) } })));
 }
 
@@ -396,196 +472,137 @@ function initGraphTools() {
   $("scale-each").addEventListener("click", () => setShared(false));
   $("scale-shared").addEventListener("click", () => setShared(true));
   setShared(view.shared);
+
+  // Locate scrolls a pane to the selected host without reordering anything.
+  const locators = [
+    ["locate-mtr", () => $("mtr-table-wrap"), "#mtr tbody", 36], // below the sticky column header
+    ["locate-traceroute", () => $("traceroute-scroll"), ".trace-target", 0],
+    ["locate-graphs", () => $("graphs").parentElement, ".graph-card", 0],
+  ];
+  for (const [button, scroller, selector, offset] of locators) {
+    $(button).addEventListener("click", () => {
+      const node = document.querySelector(`${selector}[data-target-id="${view.selectedId}"]`);
+      if (!node) return;
+      const scroll = scroller();
+      scroll.scrollTop += node.getBoundingClientRect().top - scroll.getBoundingClientRect().top - offset;
+    });
+  }
 }
+
+// --- Controls --------------------------------------------------------------
 
 function renderControls() {
   const on = control.allowed;
-  $("measurement-controls").hidden = !on;
-  $("toggle-actions").hidden = !on;
+  menu.setAvailable(on);
   $("open-auth").textContent = on ? "Controls enabled" : "Enable controls";
   $("open-auth").disabled = on;
   if (!on) {
     report.close();
-    $("add-dialog").close();
+    addHost.close();
     document.querySelector('#inspect-body [data-section="actions"]')?.remove();
   }
 }
 
-function openAuth() {
-  if (control.allowed) return;
-  $("auth-token").value = ""; $("auth-token").type = "password"; $("auth-show").checked = false;
-  $("auth-error").hidden = true; $("auth-token").removeAttribute("aria-invalid");
-  $("auth-dialog").showModal();
-}
-function openAdd() {
-  if (!control.allowed) return openAuth();
-  $("add-error").hidden = true;
-  $("add-dialog").showModal();
-}
-function deleteTarget(id) {
-  if (!control.allowed) return;
-  const target = view.snapshot?.targets.find(t=>t.id === id);
-  if (!target) return;
-  confirmation.open({ title:"Delete host?", label:"Delete host",
-    description:`${target.host}\n${target.ip || "Address not resolved"}\nTarget #${target.id}\n\nMeasurements for this host will stop. Re-adding it starts a new measurement.`,
-    run:async()=>{
-      const result = await control.deleteTarget(id);
-      if (result.ok) {
-        notify(`Deleted ${target.host}.`);
-        if (view.selectedId === id) clearSelection();
-        requestAnimationFrame(()=>$("filter").focus());
-      }
-      renderControls(); scheduleRender();
-      return result;
-    },
-  });
+function afterControlChange() {
+  renderControls();
+  scheduleRender();
 }
 
 function initControls() {
   $("refresh-log").addEventListener("click", log.refresh);
-  $("dismiss-notice").addEventListener("click",()=>{clearTimeout(noticeTimer);$("notice").hidden=true;$("notice-message").textContent="";});
-  $("close-inspect").addEventListener("click",()=>{clearSelection();$("filter").focus();});
-  $("toggle-actions").addEventListener("click",()=>{const on=$("toggle-actions").getAttribute("aria-expanded")!=="true";$("toggle-actions").setAttribute("aria-expanded",String(on));$("measurement-controls").classList.toggle("actions-open",on);});
-  $("measurement-controls").addEventListener("click",event=>{if(event.target.closest("button")){$("measurement-controls").classList.remove("actions-open");$("toggle-actions").setAttribute("aria-expanded","false");}});
-  document.addEventListener("click",event=>{if(!event.target.closest("#measurement-controls, #toggle-actions")){$("measurement-controls").classList.remove("actions-open");$("toggle-actions").setAttribute("aria-expanded","false");}});
-  for (const dialog of document.querySelectorAll("dialog")) {
-    dialog.addEventListener("close", () => requestAnimationFrame(() => {
-      const active = document.activeElement;
-      // A menu action is hidden once it opens a dialog. Restore focus to the
-      // mobile menu trigger after the browser finishes its own focus restore.
-      if ($("toggle-actions").getBoundingClientRect().width &&
-          (active === document.body || dialog.contains(active) || !active.getClientRects().length)) {
-        $("toggle-actions").focus();
-      }
-    }));
-  }
-  $("open-report").addEventListener("click",report.open);
-  $("open-add").addEventListener("click",openAdd);
-  $("open-auth").addEventListener("click",openAuth);
-  document.querySelectorAll("[data-close]").forEach(button=>button.addEventListener("click",()=>{if(button.dataset.close==="auth-dialog")authenticating?.abort();$(button.dataset.close).close();}));
-  $("open-shortcuts").addEventListener("click",()=>$("shortcuts-dialog").showModal());
-  $("shortcuts-enabled").checked=readSession("mping.shortcuts")!=="false";
-  $("shortcuts-enabled").addEventListener("change",()=>writeSession("mping.shortcuts",String($("shortcuts-enabled").checked)));
-  $("measurement-action").addEventListener("click",async()=>{
-    const state=view.meta?.measurement_state??view.snapshot?.targets[0]?.measurement_state;
-    const restart=state==="stopped"||state==="finished";
-    const button=$("measurement-action");button.disabled=true;button.textContent=restart?"Restarting…":"Stopping…";
-    try {
-      const result=await(restart?control.restart():control.stop());
-      notify(result.ok?restart?"All measurements restarted.":"All measurements stopped. Statistics are retained.":result.error,!result.ok);
-      if(result.ok){try{applySnapshot(await fetchJSON("api/v1/snapshot"));}catch{}}
-      await refreshHistory(); renderControls();
-    }finally{button.disabled=false;scheduleRender();}
+  $("close-inspect").addEventListener("click", () => {
+    clearSelection();
+    $("filter").focus();
   });
-  const reset=el("button",{className:"btn btn-danger",text:"Reset stats",attrs:{type:"button","aria-haspopup":"dialog"}});
-  reset.addEventListener("click",()=>confirmation.open({title:"Reset all statistics?",label:"Reset statistics",
-    description:`Reset counters and RTT histories for all hosts and enabled monitors.\n\nThe current running/stopped state is retained. This cannot be undone.`,
-    run:async()=>{const result=await control.reset();if(result.ok){view.series=new Map();notify("Statistics reset.");await refreshHistory();}renderControls();scheduleRender();return result;},
-  }));
+  $("open-report").addEventListener("click", report.open);
+  $("open-add").addEventListener("click", addHost.open);
+  $("open-auth").addEventListener("click", auth.open);
+  $("open-shortcuts").addEventListener("click", () => $("shortcuts-dialog").showModal());
+  for (const button of document.querySelectorAll("[data-close]")) {
+    button.addEventListener("click", () => $(button.dataset.close).close());
+  }
+  $("shortcuts-enabled").checked = readSession(SHORTCUTS_KEY) !== "false";
+  $("shortcuts-enabled").addEventListener("change", () =>
+    writeSession(SHORTCUTS_KEY, String($("shortcuts-enabled").checked)));
+  $("measurement-action").addEventListener("click", actions.toggleMeasurements);
+
+  const reset = el("button", { className: "btn btn-danger", text: "Reset stats", attrs: { type: "button", "aria-haspopup": "dialog" } });
+  reset.addEventListener("click", actions.confirmReset);
   $("reset-slot").replaceChildren(reset);
-  $("readonly-explanation").textContent="Press b in mping's TUI and choose Copy URL, then paste it below. You can also paste MPING_WEB_TOKEN for a headless run. Controls are verified without reloading this page.";
-  let authenticating=null;
-  const abortAuth=()=>authenticating?.abort();
-  $("auth-dialog").addEventListener("cancel",abortAuth);
-  $("auth-dialog").addEventListener("close",()=>{abortAuth();$("auth-token").value="";});
-  $("auth-show").addEventListener("change",()=>{$("auth-token").type=$("auth-show").checked?"text":"password";});
-  $("auth-token").addEventListener("input",()=>{$("auth-error").hidden=true;$("auth-token").removeAttribute("aria-invalid");});
-  $("auth-form").addEventListener("submit",async event=>{
-    event.preventDefault();if(authenticating)return;
-    const controller=new AbortController();authenticating=controller;
-    $("auth-submit").disabled=true;$("auth-submit").textContent="Verifying…";
-    try{
-      const result=await control.authenticate($("auth-token").value,controller.signal);
-      if(controller.signal.aborted)return;
-      if(result.ok){$("auth-dialog").close();notify("Browser controls enabled.");renderControls();scheduleRender();}
-      else{$("auth-error").textContent=result.error;$("auth-error").hidden=false;$("auth-token").setAttribute("aria-invalid","true");$("auth-token").focus();}
-    }finally{authenticating=null;$("auth-submit").disabled=false;$("auth-submit").textContent="Enable controls";}
-  });
-  let adding=false;
-  $("add-form").addEventListener("submit",async event=>{
-    event.preventDefault();if(adding)return;
-    const checked=validateHost($("add-host").value);
-    if(checked.error){$("add-error").textContent=checked.error;$("add-error").hidden=false;$("add-host").focus();return;}
-    adding=true;$("add-submit").disabled=true;$("add-submit").textContent="Adding…";
-    try{
-      const result=await control.addHost(checked.host);
-      if(result.ok){$("add-dialog").close();$("add-host").value="";notify(`Added ${checked.host}.`);}
-      else{$("add-error").textContent=result.error;$("add-error").hidden=false;if(!control.allowed)notify(result.error,true);}
-      renderControls();scheduleRender();
-    }finally{adding=false;$("add-submit").disabled=false;$("add-submit").textContent="Add";}
-  });
-  for(const [button,container,selector] of [["locate-mtr","mtr-table-wrap","#mtr tbody"],["locate-traceroute","traceroute-scroll",".trace-target"],["locate-graphs",null,".graph-card"]]){
-    $(button).addEventListener("click",()=>{
-      const node=document.querySelector(`${selector}[data-target-id="${view.selectedId}"]`);
-      if(!node)return;
-      const scroll=container?$(container):$("graphs").parentElement;
-      const heading=node.getBoundingClientRect(),bounds=scroll.getBoundingClientRect();
-      scroll.scrollTop+=heading.top-bounds.top-(button==="locate-mtr"?36:0);
-    });
-  }
-  renderControls();control.refresh().then(()=>{renderControls();scheduleRender();});
+
+  renderControls();
+  control.refresh().then(afterControlChange);
 }
+
+// --- Monitor toolbar -------------------------------------------------------
 
 function initFilter() {
-  $("filter").value=readSession(FILTER_KEY)??"";view.filter=$("filter").value;
-  $("filter").addEventListener("input",()=>{view.filter=$("filter").value;writeSession(FILTER_KEY,view.filter);scheduleRender();});
-  if(!["all","crit","warn","pending","ok"].includes(view.status))view.status="all";
-  $("status-filter").value=view.status;
-  $("status-filter").addEventListener("change",event=>setStatus(event.target.value));
-  const items=[["all","All",""],["crit","Critical","■"],["warn","Warning","▲"],["pending","Waiting","○"],["ok","OK","●"]];
-  $("summary").replaceChildren(...items.map(([status,label,icon])=>{
-    const button=el("button",{className:`health-filter health-${status}`,attrs:{type:"button","data-status":status,"aria-pressed":String(status===view.status)}},el("span",{text:icon,attrs:{"aria-hidden":"true"}}),el("strong",{text:"0"}),el("span",{text:label}));
-    button.addEventListener("click",()=>setStatus(status));return el("li",{},button);
-  }));
-  let saved;try{saved=JSON.parse(readSession("mping.sort"));}catch{}
-  if(saved&&SORTS[saved.key]&&["asc","desc"].includes(saved.direction))view.sort=saved;
-  for(const [key,label]of Object.entries(SORTS))for(const direction of key==="config"?["asc"]:["desc","asc"]){
-    $("sort-order").append(el("option",{text:key==="config"?label:`${label} ${direction==="desc"?"↓":"↑"}`,attrs:{value:`${key}:${direction}`}}));
-  }
-  $("sort-order").value=`${view.sort.key}:${view.sort.direction}`;
-  $("sort-order").addEventListener("change",event=>{const[key,direction]=event.target.value.split(":");setSort(key,direction);});
-  $("refresh-sort").addEventListener("click",refreshOrder);
-  $("clear-filter").addEventListener("click",clearFilters);
-  $("empty-action").addEventListener("click",()=>view.snapshot?.targets.length?clearFilters():openAdd());
-  $("targets").addEventListener("focusin",event=>{const row=event.target.closest(".target-row");if(row){view.focusedId=Number(row.dataset.targetId);$("targets").querySelectorAll(".host-open").forEach(button=>button.tabIndex=button.dataset.targetId===row.dataset.targetId?0:-1);}});
-  document.addEventListener("keydown",event=>{
-    if(event.defaultPrevented||event.isComposing||event.ctrlKey||event.metaKey||event.altKey||document.querySelector("dialog[open]"))return;
-    if(event.key==="Escape"&&$("toggle-actions").getAttribute("aria-expanded")==="true"){
-      event.preventDefault();$("measurement-controls").classList.remove("actions-open");$("toggle-actions").setAttribute("aria-expanded","false");$("toggle-actions").focus();return;
+  $("filter").value = readSession(FILTER_KEY) ?? "";
+  view.filter = $("filter").value;
+  $("filter").addEventListener("input", () => {
+    view.filter = $("filter").value;
+    writeSession(FILTER_KEY, view.filter);
+    scheduleRender();
+  });
+
+  if (!STATUSES.includes(view.status)) view.status = "all";
+  $("status-filter").value = view.status;
+  $("status-filter").addEventListener("change", (event) => setStatus(event.target.value));
+  $("summary").replaceChildren(...healthFilterItems(view.status, setStatus));
+
+  view.sort = parseSort(readSession(SORT_KEY)) ?? view.sort;
+  $("sort-order").append(...sortOptions());
+  $("sort-order").value = `${view.sort.key}:${view.sort.direction}`;
+  $("sort-order").addEventListener("change", (event) => {
+    const [key, direction] = event.target.value.split(":");
+    setSort(key, direction);
+  });
+  $("refresh-sort").addEventListener("click", refreshOrder);
+  $("clear-filter").addEventListener("click", clearFilters);
+  $("empty-action").addEventListener("click", () => (view.snapshot?.targets.length ? clearFilters() : addHost.open()));
+
+  // Roving tabindex: only the focused host's button is in the tab order.
+  $("targets").addEventListener("focusin", (event) => {
+    const row = event.target.closest(".target-row");
+    if (!row) return;
+    view.focusedId = Number(row.dataset.targetId);
+    for (const button of $("targets").querySelectorAll(".host-open")) {
+      button.tabIndex = button.dataset.targetId === row.dataset.targetId ? 0 : -1;
     }
-    if(editableTarget(event.target)){
-      if(event.key==="Escape"&&event.target.id==="filter"){event.preventDefault();$("targets").querySelector(".host-open[tabindex='0']")?.focus();}
-      return;
-    }
-    const characters=$("shortcuts-enabled").checked;
-    const row=event.target.closest?.("#targets .target-row");
-    if(row){
-      const buttons=[...$("targets").querySelectorAll(".host-open")];
-      const index=buttons.findIndex(button=>button.dataset.targetId===row.dataset.targetId);
-      let next;
-      if(event.key==="ArrowDown"||(characters&&event.key==="j"))next=Math.min(buttons.length-1,index+1);
-      if(event.key==="ArrowUp"||(characters&&event.key==="k"))next=Math.max(0,index-1);
-      if(event.key==="Home")next=0;if(event.key==="End")next=buttons.length-1;
-      if(next!==undefined){event.preventDefault();buttons[next]?.focus({preventScroll:true});buttons[next]?.closest("tr").scrollIntoView({block:"nearest"});return;}
-      if(event.key==="Delete"&&control.allowed){event.preventDefault();deleteTarget(Number(row.dataset.targetId));return;}
-    }
-    if(!characters)return;
-    if(event.key==="/"){event.preventDefault();view.page="monitor";history.replaceState(null,"",view.selectedId==null?"#monitor":`#target-${view.selectedId}`);scheduleRender();requestAnimationFrame(()=>$("filter").focus());}
-    if(event.key==="?"){event.preventDefault();$("shortcuts-dialog").showModal();}
-    if(event.key==="w"&&control.allowed){event.preventDefault();report.open();}
+  });
+
+  installShortcuts({
+    table: $("targets"),
+    filter: $("filter"),
+    menu,
+    charactersEnabled: () => $("shortcuts-enabled").checked,
+    canControl: () => control.allowed,
+    focusFilter() {
+      showMonitorPage();
+      requestAnimationFrame(() => $("filter").focus());
+    },
+    openHelp: () => $("shortcuts-dialog").showModal(),
+    openReport: report.open,
+    deleteTarget: actions.deleteTarget,
   });
 }
 
-// Which columns fit depends on the table's width, which changes with the
+// --- Startup ---------------------------------------------------------------
+
+// Which columns fit depends on each table's width, which changes with the
 // window, the pane layout and the scrollbar, not only on "resize".
-let tableWidth = 0;
-new ResizeObserver(([entry]) => {
-  const width = Math.round(entry.contentRect.width);
-  if (width !== tableWidth) {
-    tableWidth = width;
-    scheduleRender();
-  }
-}).observe($("targets").parentElement);
+function rerenderOnWidthChange(node) {
+  let width = 0;
+  new ResizeObserver(([entry]) => {
+    const next = Math.round(entry.contentRect.width);
+    if (next !== width) {
+      width = next;
+      scheduleRender();
+    }
+  }).observe(node);
+}
+rerenderOnWidthChange($("targets").parentElement);
+rerenderOnWidthChange($("mtr-table-wrap"));
 new ResizeObserver(() => graphs.repaint()).observe($("graphs"));
 
 initFilter();

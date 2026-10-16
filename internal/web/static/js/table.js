@@ -49,9 +49,12 @@ function hostCell(t, features, group, focused) {
 function targetCell(col, t, th, cells, features, group, focused) {
   switch (col.key) {
     case "status": {
+      // An OK row needs no explanation; leaving it blank makes the rows that
+      // do need attention stand out. Summary still states the reason.
+      const level = rowLevel(t, th);
       const reasons = statusReasons(t, th).join(" · ");
-      return el("td", {}, statusChip(rowLevel(t, th)),
-        el("span", { className: "status-reason", text: reasons, attrs: { title: reasons } }));
+      return el("td", { attrs: { title: reasons } }, statusChip(level),
+        el("span", { className: "status-reason", text: level === "ok" ? "" : reasons }));
     }
     case "host": return hostCell(t, features, group, focused);
     case "ip": return textCell(t.ip || "–", "mono");

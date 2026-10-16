@@ -16,23 +16,23 @@ function simpleTable(headers, rows, flexibleKey) {
 }
 
 export function portsFor(t) {
-  if (!t.port_results?.length) return [el("p", { className: "empty", text: "No port checks for this target." })];
+  if (!t.port_results?.length) return el("p", { className: "empty", text: "No port checks for this target." });
   const levels = { Open: "ok", Closed: "crit", Filtered: "warn" };
-  return [simpleTable(
+  return simpleTable(
     [["Port", false, "port"], ["Status", false, "statusLabel"], ["RTT", true, "rtt"], ["Open", true, "count"], ["Closed", true, "count"]],
     t.port_results.map((p) => [
       textCell(`${p.port}/${p.protocol}`, "mono"),
       el("td", {}, statusChip(levels[p.status] ?? "pending", p.status || "Waiting")),
       rttCell(p.rtt_ms), countCell(p.open_count), countCell(p.closed_count),
     ]),
-  )];
+  );
 }
 
 const httpLevels = { Up: "ok", Down: "crit", Error: "crit" };
 
 export function httpFor(checks) {
-  if (!checks?.length) return [el("p", { className: "empty", text: "No HTTP checks." })];
-  return [simpleTable(
+  if (!checks?.length) return el("p", { className: "empty", text: "No HTTP checks." });
+  return simpleTable(
     [["Status", false, "statusLabel"], ["URL", false, "url"], ["Code", true, "code"], ["Last", true, "last"], ["Avg", true, "avg"],
       ["Min", true, "min"], ["Max", true, "max"], ["Up", true, "sent"], ["Down", true, "recv"]],
     checks.map((c) => [
@@ -43,5 +43,5 @@ export function httpFor(checks) {
       countCell(c.up_count), countCell(c.down_count),
     ]),
     "url",
-  )];
+  );
 }

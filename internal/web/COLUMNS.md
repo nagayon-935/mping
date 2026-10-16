@@ -14,7 +14,7 @@ Widths include cell padding. Numeric text uses a 13px monospace font, with
 
 | Field | Input range / length | Display budget | Standard width |
 | --- | --- | --- | --- |
-| Status | OK, Warning, Critical, Waiting | One label + two reserved lines of explanation | 168px |
+| Status | OK, Warning, Critical, Waiting | One label + one reserved line of explanation (blank for OK; full reason in title and Summary) | 168px |
 | Host / PTR | Host input accepts up to 253 UTF-8 bytes; DNS names can be long | One line per name, ellipsis; full name in title and details | At least 200px; flexible |
 | IP | IPv4 up to 15 chars; mixed IPv6 notation up to 45, scope suffixes may add more | One line, ellipsis; full address in title and details | 196px |
 | AS | `AS4294967295` is 12 chars; organization names have no UI length cap | One line, ellipsis; full text in title and details | 200px |
@@ -41,6 +41,11 @@ Columns retain their normal display order. The current RTT header reads
 the redundant IP column is omitted. This decision uses the full target list,
 so filtering and incoming DNS results cannot toggle the column. Widths never
 depend on live values.
+
+The MTR table follows the same rule. It always keeps **Hop, Address, Loss %,
+RTT and Avg**, then adds Worst, Best, AS (when enabled), Jitter, Sent and Recv
+as the pane widens. Only a pane narrower than the required columns (phones)
+scrolls horizontally.
 
 There is no table-size selector or automatic zoom. CSS uses compact cell and
 font sizes on phones; column selection uses the actual available width. The

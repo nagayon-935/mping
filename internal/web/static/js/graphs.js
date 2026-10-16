@@ -56,15 +56,20 @@ export function createGraphs(dom) {
       card.value.classList.toggle("is-lost", v === null);
       const at = formatTime((state.now ?? Date.now()) - (values.length - 1 - Math.max(cursor,0)) * size * state.meta.interval_ms);
       card.readout.textContent = cursor < 0 ? "Focus chart and use ← / → to inspect samples."
-        : `${at} · ${v === undefined ? "No measurement" : v === null ? "No reply" : `${size > 1 ? "Peak RTT" : "RTT"} ${formatRTT(v)}${lost[cursor] ? " · Includes lost probes" : ""}`}`;
+        : `${at} · ${sampleText(v, size, lost[cursor])}`;
       card.readout.title = card.readout.textContent;
       card.empty.hidden = full[i].some(value=>value !== undefined);
       if (announce === t.id) announcement.textContent = `${t.host}: ${card.readout.textContent}`;
     });
     announce = null;
-    dom.cursorNote.textContent = cursor >= 0
-      ? `Cursor: ${agoLabel((reduced.points - 1 - cursor) * reduced.size, state.meta.interval_ms)} · ${state.shared ? "Shared scale" : "Individual scales: heights are not comparable"}`
-      : state.shared ? "Shared scale · hover or use ← / → to compare." : "Individual scales · heights are not directly comparable.";
+    if (cursor >= 0) {
+      const ago = agoLabel((reduced.points - 1 - cursor) * reduced.size, state.meta.interval_ms);
+      dom.cursorNote.textContent = `Cursor: ${ago} · ${state.shared ? "Shared scale" : "Individual scales: heights are not comparable"}`;
+    } else {
+      dom.cursorNote.textContent = state.shared
+        ? "Shared scale · hover or use ← / → to compare."
+        : "Individual scales · heights are not directly comparable.";
+    }
   };
   const schedulePaint = () => {
     if (paintQueued) return;
@@ -88,13 +93,21 @@ export function createGraphs(dom) {
     root.addEventListener("keydown", (e) => {
       if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End") {
-        e.preventDefault();e.stopPropagation();
+        e.preventDefault();
+        e.stopPropagation();
         if (!reduced.points) return;
-        const current = cursor < 0 ? reduced.points - 1 : cursor;
-        cursor = e.key === "Home" ? 0 : e.key === "End" ? reduced.points - 1 : Math.max(0,Math.min(reduced.points-1,current+(e.key === "ArrowLeft"?-1:1)));
-        announce=t.id;schedulePaint();return;
+        cursor = movedCursor(e.key, cursor, reduced.points);
+        announce = t.id;
+        schedulePaint();
+        return;
       }
-      if(e.key === "Escape"){e.preventDefault();e.stopPropagation();cursor=-1;schedulePaint();return;}
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        cursor = -1;
+        schedulePaint();
+        return;
+      }
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         dom.onSelect(t.id);
@@ -156,4 +169,19 @@ export function createGraphs(dom) {
     },
     repaint: schedulePaint,
   };
+}
+
+/** Readout for one inspected point; a downsampled point shows its peak. */
+function sampleText(value, samplesPerPoint, includesLoss) {
+  if (value === undefined) return "No measurement";
+  if (value === null) return "No reply";
+  return `${samplesPerPoint > 1 ? "Peak RTT" : "RTT"} ${formatRTT(value)}${includesLoss ? " · Includes lost probes" : ""}`;
+}
+
+/** Arrow keys step from the cursor (or the newest point); Home/End jump. */
+function movedCursor(key, cursor, points) {
+  if (key === "Home") return 0;
+  if (key === "End") return points - 1;
+  const current = cursor < 0 ? points - 1 : cursor;
+  return Math.max(0, Math.min(points - 1, current + (key === "ArrowLeft" ? -1 : 1)));
 }

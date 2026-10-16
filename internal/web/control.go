@@ -10,7 +10,6 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"strconv"
 	"strings"
 	"unicode"
 
@@ -220,9 +219,8 @@ func validHost(raw string) (string, error) {
 }
 
 func handleDeleteTarget(w http.ResponseWriter, r *http.Request, c Controller) {
-	id, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "target id must be an unsigned integer")
+	id, ok := targetID(w, r)
+	if !ok {
 		return
 	}
 	if err := c.DeleteTarget(id); err != nil {
