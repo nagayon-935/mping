@@ -1,0 +1,31 @@
+# CLI flags override these values. Validate without starting probes:
+# mping --check-config -f examples/monitoring.yaml
+hosts:
+  - host: 192.0.2.1
+    name: edge-router
+groups:
+  - name: Branches
+    hosts:
+      - '192.0.2.{10..12}'
+interval: 1000
+timeout: 1000
+health-failures: 3
+health-recoveries: 2
+health-window: 1m
+thresholds:
+  rtt-warn: 50
+  rtt-crit: 200
+  jitter-warn: 10
+  jitter-crit: 50
+  loss-warn: 20
+  loss-crit: 80
+http:
+  - https://status.example/health
+http-status: 200-299
+http-follow-redirects: false
+# Uncomment after setting HEALTH_TOKEN. Never put credentials in the URL.
+# http-header:
+#   - 'Authorization=Bearer ${HEALTH_TOKEN}'
+# event-output: events.jsonl
+# web: true
+# web-port: 8080

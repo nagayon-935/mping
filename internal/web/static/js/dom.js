@@ -17,7 +17,7 @@ export function el(tag, opts = {}, ...children) {
 }
 
 const icons = { ok: "●", warn: "▲", crit: "■", pending: "○", none: "○", stopped: "◼" };
-const labels = { ok: "OK", warn: "Warn", crit: "Crit", pending: "Waiting", none: "–" };
+const labels = { ok: "OK", warn: "Warning", crit: "Critical", pending: "Waiting", none: "–" };
 
 /** Status as shape + label so it never relies on colour alone. */
 export function statusChip(level, label = labels[level]) {

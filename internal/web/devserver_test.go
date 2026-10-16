@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nagayon-935/mping/internal/report"
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
@@ -82,11 +83,13 @@ type simulation struct {
 	mu      sync.Mutex
 	targets []simTarget
 	http    []*stats.HTTPCheckResult
+	stopped bool
 }
 
 func newSimulation(includeUntrusted, longValues bool) *simulation {
 	mk := func(host, ip, ptr string, base, jitter, loss float64) simTarget {
 		ts := stats.NewTargetStats(host)
+		ts.ConfigureHealth(stats.DefaultHealthPolicy())
 		ts.SetIP(ip)
 		if ptr != "" {
 			ts.SetPTR(ptr)
@@ -140,6 +143,9 @@ func newSimulation(includeUntrusted, longValues bool) *simulation {
 func (s *simulation) step(n int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.stopped {
+		return
+	}
 	for i, st := range s.targets {
 		st.ts.IncSent()
 		if rand.Float64() < st.lossProb {
@@ -154,6 +160,8 @@ func (s *simulation) step(n int) {
 		return
 	}
 	m := s.targets[2].ts.MTR()
+	// A statistics reset clears the path; rediscover it like the real engine.
+	m.EnsureLen(4)
 	for ttl, ip := range []string{"192.0.2.254", "198.51.100.1", "", "198.51.100.10"} {
 		if ip == "" {
 			m.RecordLoss(ttl + 1)
@@ -187,7 +195,11 @@ func (s *simulation) AddHost(host string) error {
 		}
 	}
 	ts := stats.NewTargetStats(host)
+	ts.ConfigureHealth(stats.DefaultHealthPolicy())
 	ts.SetIP("192.0.2.200")
+	if s.stopped {
+		ts.SetMeasurementState("stopped")
+	}
 	s.targets = append(s.targets, simTarget{ts: ts, baseMs: 8, jitterMs: 1})
 	return nil
 }
@@ -231,11 +243,40 @@ func (s *simulation) Meta() Meta {
 	}
 	return Meta{
 		IntervalMs: 250,
-		Features:   Features{MTR: true, Port: true, HTTP: true, ASN: true, PTR: true},
+		Features:   Features{Traceroute: true, MTR: true, Port: true, HTTP: true, ASN: true, PTR: true},
 		Thresholds: Thresholds{RTTWarnMs: 50, RTTCritMs: 200, JitterWarnMs: 10, JitterCritMs: 50, LossWarnPct: 20, LossCritPct: 80},
 		Groups: []Group{
 			{Name: "core", TargetIDs: ids("core-rtr1.example", "core-rtr2.example")},
 			{Name: "internet", TargetIDs: ids("cdn.example", "flaky.example", "down.example")},
 		},
 	}
+}
+
+func (s *simulation) setStopped(stopped bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopped = stopped
+	state := "running"
+	if stopped {
+		state = "stopped"
+	}
+	for _, st := range s.targets {
+		st.ts.SetMeasurementState(state)
+	}
+	return nil
+}
+func (s *simulation) StopMeasurements() error    { return s.setStopped(true) }
+func (s *simulation) RestartMeasurements() error { return s.setStopped(false) }
+func (s *simulation) CaptureReport() (report.Report, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := report.Report{SchemaVersion: 1, CapturedAt: time.Now(), Scope: "session", State: "running"}
+	if s.stopped {
+		r.State = "stopped"
+	}
+	for _, st := range s.targets {
+		r.Targets = append(r.Targets, report.NewTarget(st.ts))
+	}
+	r.CaptureCompletedAt = time.Now()
+	return r, nil
 }

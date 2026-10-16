@@ -13,6 +13,7 @@ import (
 	"github.com/nagayon-935/mping/internal/report"
 	"github.com/nagayon-935/mping/internal/stats"
 	ui "github.com/nagayon-935/mping/internal/ui"
+	"github.com/rivo/tview"
 )
 
 // supervisorConfig holds the values a supervisor needs for the lifetime of
@@ -46,6 +47,7 @@ type supervisorConfig struct {
 	mtrEnabled   bool
 	countLimited bool
 	logCh        chan string
+	eventSink    func(uint64, string, stats.Event)
 }
 
 // supervisorState tracks whether this supervisor's components are running.
@@ -189,6 +191,9 @@ func newSupervisor(cfg supervisorConfig) *supervisor {
 		cfg.collectionStartedAt = time.Now().UTC()
 	}
 	s := &supervisor{cfg: cfg}
+	for _, t := range cfg.targets {
+		s.configureTarget(t)
+	}
 	if cfg.countLimited {
 		s.finished = make(chan struct{}, 1)
 	}
@@ -242,6 +247,9 @@ func (s *supervisor) handle(c command) error {
 			case s.finished <- struct{}{}:
 			default:
 			}
+			for _, t := range s.cfg.targets {
+				t.SetMeasurementState("finished")
+			}
 		}
 		return nil
 	case cmdStart:
@@ -259,6 +267,7 @@ func (s *supervisor) handle(c command) error {
 		}
 		s.tearDownAll()
 		for _, t := range s.cfg.targets {
+			t.SetMeasurementState("stopped")
 			t.RecordEvent("stopped", "Measurements stopped")
 		}
 		s.state = stateStopped
@@ -337,6 +346,11 @@ func (s *supervisor) handle(c command) error {
 			s.tearDownAll()
 		}
 		s.state = stateTerminated
+		for _, t := range s.cfg.targets {
+			if t.GetView().MeasurementState != "finished" {
+				t.SetMeasurementState("stopped")
+			}
+		}
 		return nil
 	}
 	return fmt.Errorf("supervisor: unknown command %d", c.kind)
@@ -369,9 +383,10 @@ func (s *supervisor) startAll() error {
 		s.restartMTR(false)
 	}
 	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout, s.cfg.bind)
-	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout, s.cfg.bind)
+	s.httpChecker = s.setupHTTPChecker()
 	s.state = stateRunning
 	for _, t := range s.cfg.targets {
+		t.SetMeasurementState("running")
 		t.RecordEvent("started", "Measurements started")
 	}
 	if s.cfg.countLimited {
@@ -406,6 +421,36 @@ func (s *supervisor) startAll() error {
 		}()
 	}
 	return nil
+}
+
+func (s *supervisor) configureTarget(t *stats.TargetStats) {
+	t.ConfigureHealth(healthPolicy(s.cfg.config))
+	id, host := t.ID, t.GetView().Host
+	sink, logCh := s.cfg.eventSink, s.cfg.logCh
+	t.SetEventSink(func(e stats.Event) {
+		if sink != nil {
+			sink(id, host, e)
+		}
+		if e.Kind == "health" {
+			select {
+			case logCh <- fmt.Sprintf("[%s] %s: %s", e.At.Format("15:04:05"), tview.Escape(host), tview.Escape(e.Message)):
+			default:
+			}
+		}
+	})
+}
+
+func (s *supervisor) setupHTTPChecker() *pinger.HTTPChecker {
+	if len(s.cfg.httpURLs) == 0 {
+		return nil
+	}
+	opts, err := httpOptions(s.cfg.config)
+	if err != nil {
+		return nil
+	} // validation precedes supervisor construction
+	hc := pinger.NewHTTPCheckerWithOptions(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout, s.cfg.bind, opts)
+	hc.Start()
+	return hc
 }
 
 // tearDownAll stops everything in dependency order: the traceroute goroutine
@@ -495,7 +540,7 @@ func (s *supervisor) restartHTTPChecker() {
 		s.httpChecker.Stop()
 		s.httpChecker.Wait()
 	}
-	s.httpChecker = setupHTTPChecker(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout, s.cfg.bind)
+	s.httpChecker = s.setupHTTPChecker()
 }
 
 func (s *supervisor) startPinger() error { return s.do(cmdStart) }

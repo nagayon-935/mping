@@ -1,0 +1,179 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/netip"
+	"net/url"
+	"os"
+	"strings"
+	"unicode"
+
+	"github.com/nagayon-935/mping/internal/pinger"
+	"github.com/nagayon-935/mping/internal/stats"
+	"github.com/spf13/pflag"
+)
+
+func healthPolicy(cfg config) stats.HealthPolicy {
+	p := stats.DefaultHealthPolicy()
+	// Zero configs are used by library-facing tests; parsed configs always set all three.
+	if cfg.healthFailures != 0 || cfg.healthRecoveries != 0 || cfg.healthWindow != 0 {
+		p.Failures, p.Recoveries, p.Window = cfg.healthFailures, cfg.healthRecoveries, cfg.healthWindow
+	}
+	if cfg.thresholds.RTTCrit != 0 {
+		p.RTTWarn, p.RTTCrit = cfg.thresholds.RTTWarn, cfg.thresholds.RTTCrit
+		p.JitterWarn, p.JitterCrit = cfg.thresholds.JitterWarn, cfg.thresholds.JitterCrit
+		p.LossWarn, p.LossCrit = cfg.thresholds.LossWarn, cfg.thresholds.LossCrit
+	}
+	return p
+}
+
+func httpOptions(cfg config) (pinger.HTTPOptions, error) {
+	status := cfg.httpStatus
+	follow := cfg.httpFollowRedirects
+	if status == "" {
+		status = "200-399"
+		follow = true
+	}
+	ranges, err := pinger.ParseHTTPStatus(status)
+	if err != nil {
+		return pinger.HTTPOptions{}, err
+	}
+	headers := make(http.Header)
+	for i, raw := range cfg.httpHeaders {
+		name, value, ok := strings.Cut(raw, "=")
+		name = strings.TrimSpace(name)
+		if !ok || name == "" || strings.EqualFold(name, "Host") {
+			return pinger.HTTPOptions{}, fmt.Errorf("http-header[%d]: expected Name=value (Host is not supported)", i)
+		}
+		for _, r := range name {
+			if r > unicode.MaxASCII || !(unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("!#$%&'*+-.^_`|~", r)) {
+				return pinger.HTTPOptions{}, fmt.Errorf("http-header[%d]: invalid header name", i)
+			}
+		}
+		missing := false
+		value = os.Expand(value, func(key string) string {
+			v, ok := os.LookupEnv(key)
+			if !ok {
+				missing = true
+			}
+			return v
+		})
+		if missing {
+			return pinger.HTTPOptions{}, fmt.Errorf("http-header[%d]: referenced environment variable is not set", i)
+		}
+		invalidValue := false
+		for i := range len(value) {
+			if value[i] < 32 && value[i] != '\t' || value[i] == 127 {
+				invalidValue = true
+				break
+			}
+		}
+		if invalidValue {
+			return pinger.HTTPOptions{}, fmt.Errorf("http-header[%d]: invalid header value", i)
+		}
+		headers.Add(name, value)
+	}
+	for i, raw := range cfg.httpURLs {
+		u, err := url.Parse(raw)
+		if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+			return pinger.HTTPOptions{}, fmt.Errorf("http[%d]: expected http(s) URL without credentials or fragment", i)
+		}
+	}
+	return pinger.HTTPOptions{ExpectedStatus: ranges, FollowRedirects: follow, Headers: headers}, nil
+}
+
+func validateBinding(cfg config) error {
+	if cfg.sourceAddr != "" {
+		address, err := netip.ParseAddr(cfg.sourceAddr)
+		if err != nil {
+			return fmt.Errorf("source: expected an IP address")
+		}
+		if cfg.ipv4Only && !address.Is4() || cfg.ipv6Only && address.Is4() {
+			return fmt.Errorf("source: address does not match the selected IP family")
+		}
+	}
+	if cfg.ifaceName != "" {
+		if _, err := interfaceByName(cfg.ifaceName); err != nil {
+			return fmt.Errorf("interface: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateOutputPaths(cfg config) error {
+	paths := []string{cfg.outputFile, cfg.jsonOutputFile, cfg.eventOutput, cfg.hostsFile}
+	seen := map[string]bool{}
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		canonical := canonicalOutputPath(path)
+		if seen[canonical] {
+			return fmt.Errorf("output and configuration files must use different paths")
+		}
+		seen[canonical] = true
+	}
+	return nil
+}
+
+func printCheckedConfig(out io.Writer, sp startupParams) error {
+	overrides := []string{}
+	sp.fs.Visit(func(f *pflag.Flag) { overrides = append(overrides, f.Name) })
+	targets := make([]map[string]string, len(sp.hosts))
+	for i, spec := range sp.hosts {
+		dscp := spec.DSCP
+		if dscp == "" {
+			dscp = sp.cfg.dscp
+		}
+		targets[i] = map[string]string{"host": spec.Host, "address": spec.resolveAddr(), "name": spec.display(), "dscp": dscp}
+	}
+	cfg := sp.cfg
+	// Header values are deliberately excluded, including values resolved from the environment.
+	headers := []string{}
+	for _, raw := range cfg.httpHeaders {
+		name, _, _ := strings.Cut(raw, "=")
+		headers = append(headers, strings.TrimSpace(name))
+	}
+	groups := make([]map[string]any, len(sp.groups))
+	for i, group := range sp.groups {
+		names := []string{}
+		for _, idx := range group.Indices {
+			if idx >= 0 && idx < len(sp.hosts) {
+				names = append(names, sp.hosts[idx].display())
+			}
+		}
+		groups[i] = map[string]any{"name": group.Name, "targets": names, "target_count": len(names)}
+	}
+	encoder := json.NewEncoder(out)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(map[string]any{
+		"valid": true, "target_count": len(targets), "targets": targets,
+		"groups": groups, "cli_overrides": overrides,
+		"settings": map[string]any{
+			"interval_ms": cfg.intervalMs, "timeout_ms": cfg.timeoutMs,
+			"size": cfg.packetSize, "count": cfg.count, "duration": cfg.duration.String(),
+			"interface": cfg.ifaceName, "source": cfg.sourceAddr,
+			"ipv4": cfg.ipv4Only, "ipv6": cfg.ipv6Only,
+			"dns_server": cfg.dnsServer, "resolve_all": cfg.resolveAll, "dscp": cfg.dscp,
+			"traceroute": cfg.trace, "mtr": cfg.mtr, "asn": cfg.asnEnabled,
+			"ptr": cfg.ptrEnabled, "discovery_mtu": cfg.mtuEnabled,
+			"ports": cfg.portSpecs, "http_urls": cfg.httpURLs,
+			"http_status": cfg.httpStatus, "http_follow_redirects": cfg.httpFollowRedirects,
+			"http_header_names": headers,
+			"health_failures":   cfg.healthFailures, "health_recoveries": cfg.healthRecoveries,
+			"health_window": cfg.healthWindow.String(),
+			"thresholds": map[string]any{
+				"rtt_warn_ms":    durationMs(cfg.thresholds.RTTWarn),
+				"rtt_crit_ms":    durationMs(cfg.thresholds.RTTCrit),
+				"jitter_warn_ms": durationMs(cfg.thresholds.JitterWarn),
+				"jitter_crit_ms": durationMs(cfg.thresholds.JitterCrit),
+				"loss_warn_pct":  cfg.thresholds.LossWarn, "loss_crit_pct": cfg.thresholds.LossCrit,
+			},
+			"web": cfg.webEnabled, "web_port": cfg.webPort, "no_tui": cfg.noTUI,
+			"output": cfg.outputFile, "json_output": cfg.jsonOutputFile, "event_output": cfg.eventOutput,
+		},
+	})
+}

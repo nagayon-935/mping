@@ -48,15 +48,16 @@ type inputHandlerDeps struct {
 	portEnabled  bool
 	httpEnabled  bool
 
-	onReset      func()
-	onStop       func()
-	onRestart    func() error
-	onResetTrace func()
-	onResetMTR   func()
-	onResetPort  func()
-	onResetHTTP  func()
-	onAddHost    func(host string) error
-	onDeleteHost func(host string) error
+	onReset          func()
+	onStop           func()
+	measurementState func() string
+	onRestart        func() error
+	onResetTrace     func()
+	onResetMTR       func()
+	onResetPort      func()
+	onResetHTTP      func()
+	onAddHost        func(host string) error
+	onDeleteHost     func(host string) error
 
 	session *uiSession
 }
@@ -89,6 +90,16 @@ func newInputHandler(d inputHandlerDeps) func(event *tcell.EventKey) *tcell.Even
 }
 
 func (h *inputHandler) handle(event *tcell.EventKey) *tcell.EventKey {
+	// Browser controls and count completion can change the supervisor while
+	// this input handler is idle. Never override an operation still queued.
+	if h.measurementState != nil && (h.state == monitorRunning || h.state == monitorStopped) {
+		state := h.measurementState()
+		if state == "stopped" || state == "finished" {
+			h.state = monitorStopped
+		} else if state == "running" {
+			h.state = monitorRunning
+		}
+	}
 	// Pass all events through when a text input is focused.
 	switch h.app.GetFocus() {
 	case h.addHostInput, h.deleteHostInput:

@@ -176,6 +176,9 @@ func newHandler(ctx context.Context, src *Source, cfg handlerConfig) http.Handle
 	mux.HandleFunc("POST /api/v1/targets", controlled(src, cfg.token, handleAddHost))
 	mux.HandleFunc("DELETE /api/v1/targets/{id}", controlled(src, cfg.token, handleDeleteTarget))
 	mux.HandleFunc("POST /api/v1/reset", controlled(src, cfg.token, handleReset))
+	mux.HandleFunc("POST /api/v1/stop", controlled(src, cfg.token, handleMeasurement(false)))
+	mux.HandleFunc("POST /api/v1/restart", controlled(src, cfg.token, handleMeasurement(true)))
+	mux.HandleFunc("GET /api/v1/report", controlled(src, cfg.token, handleReport))
 	mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such endpoint")
 	})

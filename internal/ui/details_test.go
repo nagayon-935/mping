@@ -161,3 +161,27 @@ func TestDetailsSimulationSelectsDuplicateAndReturnsAfterDeletion(t *testing.T) 
 		t.Fatal("UI did not exit")
 	}
 }
+
+func TestDetailsOptionalSectionsFollowOptionsEvenWithCachedData(t *testing.T) {
+	target := stats.NewTargetStats("router")
+	target.SetASNInfo("AS64500", "JP", "Example")
+	target.SetPTR("router.example")
+	target.DSCP = "EF"
+	target.SetPMTU(1400)
+	target.SetTraceHops([]string{"192.0.2.1"})
+	target.MTR().EnsureLen(1)
+	target.SetPortResults([]*stats.PortCheckResult{{Port: 443, Protocol: "tcp"}})
+	off := renderHostDetails(target, RunOptions{})
+	on := renderHostDetails(target, RunOptions{ASNEnabled: true, PTREnabled: true, DSCPEnabled: true, MTUEnabled: true, TraceEnabled: true, MTREnabled: true, PortEnabled: true})
+	for _, label := range []string{"ASN:", "PTR:", "DSCP:", "PMTU payload:", "[yellow]Route", "[yellow]MTR", "[yellow]Ports"} {
+		if strings.Contains(off, label) {
+			t.Fatalf("disabled option shown: %s", label)
+		}
+		if !strings.Contains(on, label) {
+			t.Fatalf("enabled option hidden: %s", label)
+		}
+	}
+	if detailTimestamp(time.Time{}) != "–" {
+		t.Fatal("zero timestamp shown as a year-one date")
+	}
+}

@@ -39,6 +39,13 @@ function niceCeil(v) {
   return 10 * p;
 }
 
+/** Four equal intervals, rounding the interval itself to a readable value. */
+export function rttAxis(peak) {
+  const step = niceCeil(Math.max(Number.isFinite(peak) ? peak * 1.15 : 0, 1) / 4);
+  const ticks = Array.from({ length: 5 }, (_, i) => Number((step * i).toPrecision(12)));
+  return { max: ticks[4], ticks };
+}
+
 /** Strokes the series as line segments, breaking at nulls; fills a wash under each run. */
 function plotLine(ctx, series, xAt, yAt, baseY, colour) {
   let run = [];
@@ -89,22 +96,6 @@ function endDot(ctx, x, y, colour) {
   ctx.fill();
 }
 
-/** Per-row sparkline: shape only, scaled to its own maximum. */
-export function drawSparkline(canvas, series) {
-  const { ctx, w, h } = setupCanvas(canvas);
-  if (!series || series.length === 0) return;
-  const pad = 4;
-  const max = seriesMax(series) || 1;
-  const n = Math.max(series.length - 1, 1);
-  const xAt = (i) => pad + (i / n) * (w - pad * 2);
-  const yAt = (v) => h - pad - (v / max) * (h - pad * 2);
-  const colour = cssVar("--series");
-  plotLine(ctx, series, xAt, yAt, h - pad, colour);
-  plotLosses(ctx, series, xAt, h, 4);
-  const last = series.length - 1;
-  if (series[last] != null) endDot(ctx, xAt(last), yAt(series[last]), colour);
-}
-
 /**
  * RTT chart with a y axis in ms, warn/crit reference lines, and an
  * "s ago" x axis derived from the probe interval. Returns the geometry the
@@ -112,12 +103,14 @@ export function drawSparkline(canvas, series) {
  */
 export function drawChart(canvas, series, th, intervalMs, opts = {}) {
   const { ctx, w, h } = setupCanvas(canvas);
-  const left = 44, right = 12, top = 10, bottom = 24;
+  const { max, ticks } = rttAxis(opts.yMax ?? seriesMax(series));
+  ctx.font = `11px ${cssVar("--font")}`;
+  const left = Math.max(44, ...ticks.map(v => ctx.measureText(tickLabel(v)).width + 12));
+  const right = 12, top = 20, bottom = 24;
   const plotW = w - left - right;
   const plotH = h - top - bottom;
   // opts.yMax shares one scale across several charts (e.g. all targets);
   // opts.lost flags lost probes when `series` was downsampled.
-  const max = niceCeil(Math.max((opts.yMax ?? seriesMax(series)) * 1.15, 1));
   const n = Math.max(series.length - 1, 1);
   const xAt = (i) => left + (i / n) * plotW;
   const yAt = (v) => top + plotH - (Math.min(v, max) / max) * plotH;
@@ -126,8 +119,10 @@ export function drawChart(canvas, series, th, intervalMs, opts = {}) {
   ctx.font = `11px ${cssVar("--font")}`;
   ctx.textBaseline = "middle";
   ctx.lineWidth = 1;
-  for (let k = 0; k <= 4; k++) {
-    const v = (max / 4) * k;
+  ctx.fillStyle = cssVar("--muted");
+  ctx.textAlign = "right";
+  ctx.fillText("ms", left - 6, 7);
+  for (const [k, v] of ticks.entries()) {
     const y = Math.round(yAt(v)) + 0.5;
     ctx.strokeStyle = k === 0 ? cssVar("--axis") : cssVar("--grid");
     ctx.beginPath();

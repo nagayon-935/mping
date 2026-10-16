@@ -10,14 +10,14 @@
 import { el, statusChip } from "./dom.js";
 import { drawChart, drawCrosshair, indexAt } from "./chart.js";
 import { formatRTT, rowLevel } from "./model.js";
-import { agoLabel, downsample, padTo, sharedMax } from "./timeline.js";
+import { agoLabel, alignSamples, downsample, padTo, sharedMax } from "./timeline.js";
 
 /**
  * @param {{grid: HTMLElement, cursorNote: HTMLElement, onSelect: (id: number) => void}} dom
  */
 export function createGraphs(dom) {
   const cards = new Map(); // target id -> {root, title, value, canvas, geo}
-  let state = { targets: [], history: new Map(), meta: null, points: 0, shared: false, selectedId: null };
+  let state = { targets: [], history: new Map(), meta: null, points: 0, shared: true, selectedId: null };
   let cursor = -1; // shared point index into every reduced series
   let reduced = { points: 0, size: 1 }; // shape of the last drawn series
   let lastKey = null;
@@ -26,7 +26,12 @@ export function createGraphs(dom) {
   const paint = () => {
     paintQueued = false;
     if (!state.meta || state.targets.length === 0) return;
-    const full = state.targets.map((t) => padTo(state.history.get(t.id), state.points));
+    const full = state.targets.map((t) => {
+      const samples = state.history.get(t.id) ?? [];
+      return samples.length && typeof samples[0] === "object" && samples[0] !== null
+        ? alignSamples(samples, state.points, state.meta.interval_ms, state.now ?? Date.now())
+        : padTo(samples, state.points);
+    });
     const yMax = state.shared ? sharedMax(full) : undefined;
     // Every card has the same width, so one bucket count serves them all and
     // the shared cursor index means the same moment in each chart.
@@ -39,10 +44,11 @@ export function createGraphs(dom) {
       card.geo = drawChart(card.canvas, values, state.meta.thresholds, state.meta.interval_ms,
         { yMax, lost, samplesPerPoint: size });
       if (cursor >= 0) drawCrosshair(card.canvas, card.geo, values, cursor);
-      // At the cursor: that point's peak RTT. Otherwise the latest sample
-      // itself, matching the monitor's "Last" rather than a bucket peak.
-      const v = cursor >= 0 ? values[cursor] : full[i][full[i].length - 1];
-      card.value.textContent = v === null ? "Lost" : v === undefined ? "–" : formatRTT(v);
+      // Numeric values belong to the point being inspected. The monitor
+      // already shows latest RTT, so idle cards show only their history.
+      const v = cursor >= 0 ? values[cursor] : undefined;
+      card.value.hidden = cursor < 0;
+      card.value.textContent = cursor < 0 ? "" : v === null ? "Lost" : v === undefined ? "–" : formatRTT(v);
       card.value.classList.toggle("is-lost", v === null);
     });
     dom.cursorNote.textContent = cursor >= 0
@@ -59,7 +65,7 @@ export function createGraphs(dom) {
     const canvas = el("canvas", { className: "graph-canvas", attrs: { "aria-hidden": "true" } });
     const status = el("span", { className: "graph-status" });
     const title = el("span", { className: "graph-host" });
-    const value = el("span", { className: "graph-value" });
+    const value = el("span", { className: "graph-value", attrs: {hidden: ""} });
     const root = el("div", {
       className: "graph-card",
       attrs: { tabindex: "0", role: "button", "data-target-id": String(t.id) },
@@ -119,7 +125,7 @@ export function createGraphs(dom) {
       // needs a repaint. A new history fetch replaces the Map, so identity
       // is enough to notice it.
       const key = [state.history, state.points, state.shared, state.targets.map((t) => t.id).join(),
-        state.meta && JSON.stringify(state.meta.thresholds), state.meta?.interval_ms];
+        state.meta && JSON.stringify(state.meta.thresholds), state.meta?.interval_ms, state.now];
       if (!lastKey || key.some((v, i) => v !== lastKey[i])) {
         lastKey = key;
         schedulePaint();

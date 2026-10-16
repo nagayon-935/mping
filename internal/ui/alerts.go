@@ -68,6 +68,9 @@ func buildErrorLogMessage(view stats.TargetView, sourceIP string, errMsg string,
 }
 
 func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, now time.Time, state alertFlags) (alertFlags, []string) {
+	if view.Health.Configured {
+		return state, nil
+	} // backend events are delivered through ExternalLogCh
 	th := getActiveThresholds()
 	var msgs []string
 	if lossRate > th.LossCrit {

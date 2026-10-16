@@ -249,6 +249,19 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	cfg, hosts, fs := sp.cfg, sp.hosts, sp.fs
 	cliCfg, cliHosts := sp.cliCfg, sp.cliHosts
 	currentGroups := sp.groups
+	if cfg.checkConfig {
+		if err := printCheckedConfig(out, sp); err != nil {
+			fmt.Fprintf(errOut, "Error: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	eventSink, closeEvents, eventErr := startEventOutput(cfg.eventOutput, errOut)
+	if eventErr != nil {
+		fmt.Fprintf(errOut, "Error: %v\n", eventErr)
+		return 1
+	}
+	defer closeEvents()
 
 	env, code, ok := prepareRunEnv(cfg, hosts, out, errOut)
 	if !ok {
@@ -298,16 +311,32 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		durationDeadline, _ = durationCtx.Deadline()
 	}
 
-	// activePortSpecsRaw is the --port / port: value the running port
-	// checker was actually built from (env.portSpecs is parsed once and
-	// never re-derived on reload; see checkPortReloadDrift, TD-25).
+	// Record port changes so a rebuild is explained in the next UI iteration.
 	activePortSpecsRaw := cfg.portSpecs
 	var pendingWarnings []string
 	sessionIDs := &pinger.IDAllocator{}
 	sessionStartedAt := time.Now().UTC()
 
 	// Main run loop (re-entered on YAML reload).
-	for {
+	for iteration := 0; ; iteration++ {
+
+		if iteration > 0 {
+			// A full reload rebuilds transport-dependent settings as well as workers.
+			resNetwork = resolveNetwork(currentCfg)
+			var bindErr error
+			bindIP, displaySourceIPv4, displaySourceIPv6, bindErr = determineSourceIPs(currentCfg, currentHosts)
+			if bindErr != nil {
+				webSrc.MarkStopped()
+				fmt.Fprintf(errOut, "Error applying network settings: %v\n", bindErr)
+				return 1
+			}
+			portSpecs = nil
+			for _, raw := range currentCfg.portSpecs {
+				spec, _ := pinger.ParsePortSpec(raw)
+				portSpecs = append(portSpecs, spec)
+			}
+		}
+
 		interval := time.Duration(currentCfg.intervalMs) * time.Millisecond
 		timeout := time.Duration(currentCfg.timeoutMs) * time.Millisecond
 
@@ -342,7 +371,8 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			specs:      currentHosts, groups: currentGroups, config: currentCfg,
 			startedAt: sessionStartedAt, sourceIPv4: displaySourceIPv4, sourceIPv6: displaySourceIPv6,
 			durationLimit: cfg.duration, durationDeadline: durationDeadline,
-			network: resNetwork, reservedOutputs: []string{cfg.outputFile, currentCfg.jsonOutputFile},
+			network: resNetwork, reservedOutputs: []string{cfg.outputFile, currentCfg.jsonOutputFile, cfg.eventOutput},
+			eventSink: eventSink,
 			makeTargetPinger: func(size int, targets []*stats.TargetStats, specs []targetSpec) pingerController {
 				options := buildPingerOptions(currentCfg, resNetwork, customResolver, specs)
 				options.IDs = sessionIDs
@@ -382,6 +412,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		// sig is closed to signal TUI shutdown, either by the YAML watcher or
 		// (below) --duration elapsing.
 		sig := newReloadSignal()
+		rc.tryLive = sup.reloadLive
 		onFileChange := func() { rc.requestFileReload(sig, currentCfg.hostsFile, logCh) }
 		watchCancel, watchDone := startWatcher(currentCfg.hostsFile, onFileChange, logCh)
 		jsonCancel, jsonDone := startLiveJSONWriter(currentCfg.jsonOutputFile, func() []*stats.TargetStats { return sup.liveTargets().Targets }, sup.httpResults, errOut)
@@ -438,6 +469,15 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		}
 		webSrc.MarkReloading()
 		pendingWarnings = reloadWarnings(cfg, currentCfg, activePortSpecsRaw, expandWarning)
+		activePortSpecsRaw = append([]string(nil), currentCfg.portSpecs...)
+		if currentCfg.outputFile != cfg.outputFile {
+			pendingWarnings = append(pendingWarnings, "CSV output changes require restarting mping; continuing the startup writer.")
+			currentCfg.outputFile = cfg.outputFile
+		}
+		if currentCfg.eventOutput != cfg.eventOutput {
+			pendingWarnings = append(pendingWarnings, "event-output changes require restarting mping; continuing the startup writer.")
+			currentCfg.eventOutput = cfg.eventOutput
+		}
 		// Loop continues: targets are re-initialised with the new currentHosts.
 	}
 
@@ -464,7 +504,7 @@ func chooseUIRunner(cfg config, out, errOut io.Writer) (runUI func(ui.RunOptions
 }
 
 // reloadWarnings collects the Log notices for a reload: settings that only
-// take effect after a restart (web, ports) and a failed --resolve-all
+// require a process restart (web), rebuilt port checks and a failed --resolve-all
 // re-expansion. startup is the config mping was started with.
 func reloadWarnings(startup, reloaded config, activePortSpecs []string, expandWarning string) []string {
 	var warnings []string

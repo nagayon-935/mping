@@ -314,7 +314,7 @@ func (tr *tableRenderer) scanTargets(views []stats.TargetView) ([]columnRowConte
 	for i := range tr.targets {
 		view := views[i]
 		rowSourceIP := displaySourceIPForDst(view.IP, tr.sourceIPv4, tr.sourceIPv6)
-		if !view.LastLossTime.IsZero() {
+		if !view.Health.Configured && !view.LastLossTime.IsZero() {
 			lastTime, exists := tr.vs.lastLossTimes[targetViewKey(view)]
 			if !exists || view.LastLossTime.After(lastTime) {
 				tr.vs.lastLossTimes[targetViewKey(view)] = view.LastLossTime

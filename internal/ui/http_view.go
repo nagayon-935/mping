@@ -65,22 +65,6 @@ func httpStatusColorTag(status string) string {
 	}
 }
 
-// httpCodeColorTag returns a tview color tag for an HTTP status code.
-func httpCodeColorTag(code int) string {
-	switch {
-	case code == 0:
-		return "[darkgray]"
-	case code < 300:
-		return "[green]"
-	case code < 400:
-		return "[orange]"
-	case code < 500:
-		return "[orange]"
-	default:
-		return "[red::b]"
-	}
-}
-
 // httpCodeStr formats a status code for display.
 func httpCodeStr(code int) string {
 	if code == 0 {
@@ -153,7 +137,7 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 			return boxCell{text: v.Status, tag: httpStatusColorTag(v.Status)}
 		}, false},
 		{boxColumn{header: "Code", width: httpCodeColW}, func(v stats.HTTPCheckView) boxCell {
-			return boxCell{text: httpCodeStr(v.StatusCode), tag: httpCodeColorTag(v.StatusCode)}
+			return boxCell{text: httpCodeStr(v.StatusCode), tag: httpStatusColorTag(v.Status)}
 		}, false},
 		{boxColumn{header: "Last", width: httpLatColW}, rtt(func(v stats.HTTPCheckView) time.Duration { return v.RTT }), false},
 		{boxColumn{header: "Min", width: httpLatColW}, rtt(func(v stats.HTTPCheckView) time.Duration { return v.MinRTT }), true},

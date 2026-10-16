@@ -1,16 +1,17 @@
-// Dashboard entry point: one SSE stream drives every render. The layout
-// follows the TUI's panes: the ping monitor with the inspect pane (summary,
-// traceroute/MTR, ports, HTTP, log) beside it, and the RTT graphs below.
-// Selecting a target anywhere points the per-target panes at it.
+// One SSE stream drives the monitoring workspace and independent global pages.
 import { el, badgeIcon, fetchJSON, readSession, selectionWithin, writeSession } from "./dom.js";
 import { renderTargets } from "./table.js";
 import { createGraphs } from "./graphs.js";
 import { createInspect } from "./inspect.js";
+import { renderMTR } from "./mtr.js";
+import { renderTraceroutes } from "./traceroute.js";
+import { createLog } from "./log.js";
+import { httpFor } from "./checks.js";
 import { badgeFor, buildSections, matchesFilter, readOnlyHint, summarize, summaryItems, validateHost } from "./model.js";
-import { reconcileWindow, tail } from "./timeline.js";
+import { reconcileWindow } from "./timeline.js";
 import { confirmButton, createControl } from "./control.js";
+import { formatTime } from "./time.js";
 
-const SPARK_POINTS = 60;
 const HISTORY_EVERY_MS = 2000;
 const MAX_HISTORY_POINTS = 3000; // the server's per-target RTT ring
 const FILTER_KEY = "mping.filter";
@@ -38,23 +39,28 @@ const view = {
   connected: false,
   filter: "",
   selectedId: null,
-  history: new Map(), // id -> newest SPARK_POINTS samples (table sparklines)
   series: new Map(), // id -> samples for the graphs window
   windows: [],
   window: null,
-  shared: readSession(SCALE_KEY) === "true",
+  shared: readSession(SCALE_KEY) !== "false",
+  inspectOpen: false,
+  historyNow: null,
+  page: "monitor",
 };
 
 function selectTarget(id) {
   if (!view.snapshot?.targets.some((t) => t.id === id)) return;
   view.selectedId = id;
+  view.inspectOpen = true;
+  view.page = "monitor";
   history.replaceState(null, "", `#target-${id}`);
   scheduleRender();
 }
 
 function clearSelection() {
-  if (view.selectedId == null) return;
   view.selectedId = null;
+  view.inspectOpen = false;
+  inspect.clear();
   if (location.hash) history.replaceState(null, "", location.pathname);
   scheduleRender();
 }
@@ -62,12 +68,9 @@ function clearSelection() {
 const graphs = createGraphs({ grid: $("graphs"), cursorNote: $("graphs-cursor"), onSelect: selectTarget });
 
 const inspect = createInspect({
-  tabs: $("inspect-tabs"),
   target: $("inspect-target"),
   body: $("inspect-body"),
-  onSelect: selectTarget,
   canControl: () => control.allowed,
-  requestRender: () => scheduleRender(),
   actionsFor(t) {
     if (!control.allowed) return null;
     return confirmButton(`Delete ${t.host}`, `Confirm delete ${t.host}?`, async () => {
@@ -83,9 +86,35 @@ const inspect = createInspect({
   },
 });
 
+const log = createLog({ body: $("log-body"), status: $("log-status"), requestRender: scheduleRender });
+
+function readPage() {
+  view.page = location.hash === "#log" ? "log" : location.hash === "#http" ? "http" : "monitor";
+  const wanted = /^#target-(\d+)$/.exec(location.hash);
+  if (wanted && view.snapshot) selectTarget(Number(wanted[1]));
+  scheduleRender();
+}
+
+function renderPages() {
+  if (view.page === "http" && view.meta && !view.meta.features.http) {
+    view.page = "monitor";
+    history.replaceState(null, "", "#monitor");
+  }
+  for (const page of ["monitor", "log", "http"]) {
+    $(page === "monitor" ? "workspace" : `page-${page}`).hidden = view.page !== page;
+    const link = $(`nav-${page}`);
+    if (view.page === page) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
+  $("nav-monitor").href = view.selectedId == null ? "#monitor" : `#target-${view.selectedId}`;
+  $("nav-http").hidden = !view.meta?.features.http;
+  $("filter").hidden = view.page !== "monitor";
+  log.activate(view.page === "log");
+}
+
 /** Targets in display order (groups, then filter), shared by table and graphs. */
 function visibleTargets() {
-  const filtered = view.snapshot.targets.filter((t) => matchesFilter(t, view.filter));
+  const filtered = view.snapshot.targets.filter((t) => matchesFilter(t, view.filter, view.meta.features));
   return buildSections(filtered, view.meta.groups).flatMap((s) => s.targets);
 }
 
@@ -97,10 +126,14 @@ function renderHeader() {
   node.querySelector(".badge-label").textContent = badge.label;
   node.title = "Dashboard connection and session state. Target health is shown in the table.";
 
+  const measurement = view.meta?.measurement_state ?? view.snapshot?.targets[0]?.measurement_state;
+  $("measurement-state").textContent = measurement ? `Measurements: ${measurement}` : "";
+  const stopped = measurement === "stopped" || measurement === "finished";
+  $("measurement-action").textContent = stopped ? "Restart" : "Stop";
   // Snapshots are only sent when something changed, so this is the time
   // of the last change, not of the last check.
   $("updated").textContent = view.snapshot
-    ? `Last change ${new Date(view.snapshot.timestamp).toLocaleTimeString()}`
+    ? `Last change ${formatTime(view.snapshot.timestamp)}`
     : "";
 
   const summary = $("summary");
@@ -120,6 +153,12 @@ let heldBySelection = false;
 
 function renderBody() {
   heldBySelection = false;
+  renderPages();
+  if (view.page === "log") {
+    if (selectionWithin($("log-body"))) heldBySelection = true;
+    else log.render();
+    return;
+  }
   const empty = $("targets-empty");
   if (!view.snapshot) {
     empty.textContent = view.connected ? "Waiting for the first measurements…" : "Connecting to mping…";
@@ -129,6 +168,49 @@ function renderBody() {
   if (view.selectedId != null && !view.snapshot.targets.some((t) => t.id === view.selectedId)) {
     clearSelection(); // deleted, or gone after a reload
   }
+  if (view.page === "http") {
+    if (selectionWithin($("http-body"))) heldBySelection = true;
+    else {
+      const body = $("http-body");
+      const top = body.scrollTop;
+      const old = body.querySelector(".table-wrap");
+      const left = old?.scrollLeft ?? 0;
+      const [next] = httpFor(view.snapshot.http_checks);
+      if (old && next.classList.contains("table-wrap")) {
+        old.replaceChildren(...next.childNodes);
+        old.scrollLeft = left;
+      } else body.replaceChildren(next);
+      body.scrollTop = top;
+    }
+    return;
+  }
+  $("pane-inspect").hidden = !view.inspectOpen;
+  $("workspace").classList.toggle("has-inspect", view.inspectOpen);
+  const showMTR = !!view.meta.features.mtr;
+  $("pane-mtr").hidden = !showMTR;
+  const showTrace = !!view.meta.features.traceroute && !showMTR;
+  $("pane-traceroute").hidden = !showTrace;
+  $("workspace").classList.toggle("has-route", showMTR || showTrace);
+  if (showMTR) {
+    const targets = visibleTargets();
+    $("mtr-summary").textContent = `${targets.length} ${targets.length === 1 ? "host" : "hosts"} · ICMP`;
+    if (selectionWithin($("mtr-scroll"))) heldBySelection = true;
+    else {
+      const groups = renderMTR($("mtr"), targets, view.meta);
+      $("mtr-table-wrap").hidden = groups === 0;
+      $("mtr-empty").hidden = groups > 0;
+      $("mtr-empty").textContent = view.snapshot.targets.length === 0 ? "No targets." : "No targets match the filter.";
+    }
+  }
+  if (showTrace) {
+    const targets = visibleTargets();
+    $("traceroute-summary").textContent = `${targets.length} ${targets.length === 1 ? "host" : "hosts"} · ICMP`;
+    if (selectionWithin($("traceroute-scroll"))) heldBySelection = true;
+    else renderTraceroutes($("traceroute-scroll"), targets, view.meta.features);
+  }
+  const fields = ["host", "IP", ...(view.meta.features.ptr ? ["PTR"] : []), ...(view.meta.features.asn ? ["AS"] : [])].join(", ");
+  $("filter").placeholder = `Filter ${fields}`;
+  $("filter").setAttribute("aria-label", `Filter ${fields}`);
   if (selectionWithin($("targets"))) {
     heldBySelection = true;
   } else {
@@ -143,9 +225,10 @@ function renderBody() {
     points: view.window?.points ?? 0,
     shared: view.shared,
     selectedId: view.selectedId,
+    now: view.historyNow,
   });
   if (selectionWithin($("inspect-body"))) heldBySelection = true;
-  else inspect.render(view);
+  else if (view.inspectOpen) inspect.render(view);
 }
 
 document.addEventListener("selectionchange", () => {
@@ -170,6 +253,7 @@ function applySnapshot(body) {
   view.snapshot = body.snapshot;
   view.meta = body.meta;
   view.state = body.state;
+  renderControls();
   if (intervalChanged) {
     initWindows();
     refreshHistory();
@@ -189,6 +273,7 @@ function connect() {
   const stream = new EventSource("api/v1/stream");
   stream.addEventListener("open", () => {
     view.connected = true;
+    control.refresh().then(renderControls);
     scheduleRender();
   });
   stream.addEventListener("snapshot", (e) => {
@@ -210,10 +295,10 @@ function connect() {
 async function refreshHistory() {
   if (document.hidden || !view.snapshot || !view.window || view.state === "stopped") return;
   try {
-    const n = Math.max(SPARK_POINTS, view.window.points);
+    const n = view.window.points;
     const body = await fetchJSON(`api/v1/history?n=${n}`);
-    view.series = new Map(body.targets.map((s) => [s.id, s.rtt_ms]));
-    view.history = new Map(body.targets.map((s) => [s.id, tail(s.rtt_ms, SPARK_POINTS)]));
+    view.series = new Map(body.targets.map((s) => [s.id, s.samples?.length ? s.samples : s.rtt_ms]));
+    view.historyNow = body.captured_at ? Date.parse(body.captured_at) : (body.targets[0]?.captured_at ? Date.parse(body.targets[0].captured_at) : Date.now());
     scheduleRender();
   } catch {
     // Transient (e.g. mping between reloads); the next tick retries.
@@ -251,6 +336,7 @@ function renderControls() {
   const on = control.allowed;
   $("add-form").hidden = !on;
   $("reset-slot").hidden = !on;
+  $("measurement-controls").hidden = !on;
   $("readonly-help").hidden = on;
   // A rejected token (e.g. from an earlier mping run) also retracts the
   // inspect pane's delete button, not just the header controls.
@@ -258,6 +344,30 @@ function renderControls() {
 }
 
 function initControls() {
+  $("refresh-log").addEventListener("click", log.refresh);
+  $("close-inspect").addEventListener("click", () => {
+    clearSelection();
+    $("filter").focus();
+  });
+  $("measurement-action").addEventListener("click", async () => {
+    const state = view.meta?.measurement_state ?? view.snapshot?.targets[0]?.measurement_state;
+    const restart = state === "stopped" || state === "finished";
+    $("measurement-action").disabled = true;
+    try {
+      const res = await (restart ? control.restart() : control.stop());
+      notify(res.ok ? (restart ? "Measurements restarted." : "Measurements stopped.") : res.error, !res.ok);
+      if (res.ok) {
+        try { applySnapshot(await fetchJSON("api/v1/snapshot")); } catch { /* SSE will retry. */ }
+      }
+      await refreshHistory();
+      renderControls();
+    } finally { $("measurement-action").disabled = false; }
+  });
+  for (const format of ["json", "text"]) $("report-" + format).addEventListener("click", async () => {
+    const res = await control.downloadReport(format);
+    if (!res.ok) { notify(res.error, true); renderControls(); }
+  });
+
   const hint = readOnlyHint(location.hostname);
   $("readonly-hint").textContent = `${hint.text} · How to enable`;
   $("readonly-hint").title = hint.title;
@@ -327,6 +437,8 @@ new ResizeObserver(() => graphs.repaint()).observe($("graphs"));
 
 initFilter();
 initGraphTools();
+window.addEventListener("hashchange", readPage);
+readPage();
 window.addEventListener("resize", scheduleRender);
 initControls();
 connect();

@@ -12,10 +12,16 @@
 <body>
 <header class="topbar">
   <h1 class="brand">mping</h1>
+  <nav class="page-nav" aria-label="Pages">
+    <a id="nav-monitor" href="#monitor" aria-current="page">Monitor</a>
+    <a id="nav-log" href="#log">Log</a>
+    <a id="nav-http" href="#http" hidden>HTTP</a>
+  </nav>
   <span id="badge" class="badge lvl-pending" role="status">
     <span class="badge-icon" aria-hidden="true">○</span>
     <span class="badge-label">Connecting</span>
   </span>
+  <span id="measurement-state" class="muted" role="status"></span>
   <span id="updated" class="muted"></span>
   <span class="spacer"></span>
   <ul id="summary" class="summary" aria-label="Target summary"></ul>
@@ -25,30 +31,35 @@
     <input id="add-host" class="filter" placeholder="Add host or IP" autocomplete="off" spellcheck="false" maxlength="253">
     <button class="btn" type="submit">Add</button>
   </form>
+  <span id="measurement-controls" hidden>
+    <button id="measurement-action" class="btn" type="button">Stop</button>
+    <button id="report-json" class="btn" type="button">Report JSON</button>
+    <button id="report-text" class="btn" type="button">Report text</button>
+  </span>
   <span id="reset-slot" hidden></span>
   <details id="readonly-help" class="readonly-help" hidden>
     <summary id="readonly-hint" class="readonly-hint">Read-only · How to enable</summary>
     <div class="readonly-popover">
       <strong>Enable browser controls</strong>
       <p id="readonly-explanation"></p>
-      <p>You can then add hosts, delete targets and reset statistics.</p>
+      <p>You can then stop or restart measurements, download reports, add hosts, delete targets and reset statistics.</p>
     </div>
   </details>
   <p id="notice" class="notice" role="status" aria-live="polite"></p>
 </header>
 
-<div class="workspace">
+<div id="workspace" class="workspace">
   <section id="pane-monitor" class="pane" aria-labelledby="targets-title">
     <div class="pane-head">
       <div>
         <h2 id="targets-title" class="pane-title">Ping monitor</h2>
-        <p class="pane-hint">Select a target to inspect it.</p>
+        <p class="pane-hint">Select a host for details and RTT statistics.</p>
       </div>
     </div>
-    <p class="status-guide">Status uses latest RTT, jitter and overall loss. Averages and peaks describe the run since start or reset.</p>
     <div class="pane-scroll">
       <div class="table-wrap">
         <table id="targets" class="grid">
+          <caption class="visually-hidden">Status reflects recent measurements. Loss % is cumulative.</caption>
           <thead></thead>
           <tbody></tbody>
         </table>
@@ -57,12 +68,44 @@
     </div>
   </section>
 
-  <section id="pane-inspect" class="pane" aria-label="Inspect">
+  <section id="pane-inspect" class="pane" aria-labelledby="inspect-title" hidden>
     <div class="pane-head">
-      <div id="inspect-tabs" class="tabs" role="tablist" aria-label="Inspect"></div>
-      <span id="inspect-target" class="pane-hint"></span>
+      <div>
+        <h2 id="inspect-title" class="pane-title">Summary</h2>
+        <p id="inspect-target" class="pane-hint"></p>
+      </div>
+      <button id="close-inspect" class="btn" type="button" aria-label="Close details">Close</button>
     </div>
-    <div id="inspect-body" class="inspect-body" role="tabpanel"></div>
+    <div id="inspect-body" class="inspect-body"></div>
+  </section>
+
+  <section id="pane-traceroute" class="pane" aria-labelledby="traceroute-title" hidden>
+    <div class="pane-head">
+      <div>
+        <h2 id="traceroute-title" class="pane-title">Traceroute</h2>
+        <p id="traceroute-summary" class="pane-hint"></p>
+      </div>
+    </div>
+    <div id="traceroute-scroll" class="pane-scroll route-list"></div>
+  </section>
+
+  <section id="pane-mtr" class="pane" aria-labelledby="mtr-title" hidden>
+    <div class="pane-head">
+      <div>
+        <h2 id="mtr-title" class="pane-title">MTR monitor</h2>
+        <p id="mtr-summary" class="pane-hint"></p>
+      </div>
+    </div>
+    <div id="mtr-scroll" class="pane-scroll">
+      <div id="mtr-table-wrap" class="table-wrap">
+        <table id="mtr" class="grid">
+          <caption class="visually-hidden">ICMP packet loss and RTT for each hop, grouped by target.</caption>
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p id="mtr-empty" class="empty" hidden>No targets.</p>
+    </div>
   </section>
 
   <section id="pane-graphs" class="pane" aria-labelledby="graphs-title">
@@ -74,8 +117,8 @@
       <div class="pane-tools">
         <label class="tool">Window <select id="graph-window" aria-label="Time window"></select></label>
         <div class="segmented" role="group" aria-label="Y-axis scale">
-          <button id="scale-each" type="button" aria-pressed="true">Per target</button>
-          <button id="scale-shared" type="button" aria-pressed="false">Shared</button>
+          <button id="scale-shared" type="button" aria-pressed="true">Shared</button>
+          <button id="scale-each" type="button" aria-pressed="false">Per target</button>
         </div>
       </div>
     </div>
@@ -84,5 +127,30 @@
     </div>
   </section>
 </div>
+
+<main id="page-log" class="page-view" aria-labelledby="log-title" hidden>
+  <section class="pane">
+    <div class="pane-head">
+      <div>
+        <h2 id="log-title" class="pane-title">Event log</h2>
+        <p id="log-status" class="pane-hint">Events from all targets.</p>
+      </div>
+      <button id="refresh-log" class="btn" type="button">Refresh</button>
+    </div>
+    <div id="log-body" class="pane-scroll"><p class="empty">Loading…</p></div>
+  </section>
+</main>
+
+<main id="page-http" class="page-view" aria-labelledby="http-title" hidden>
+  <section class="pane">
+    <div class="pane-head">
+      <div>
+        <h2 id="http-title" class="pane-title">HTTP checks</h2>
+        <p class="pane-hint">All configured endpoints.</p>
+      </div>
+    </div>
+    <div id="http-body" class="pane-scroll"></div>
+  </section>
+</main>
 </body>
 </html>

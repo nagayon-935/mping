@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/nagayon-935/mping/internal/stats"
 )
@@ -29,14 +30,17 @@ type SnapshotResponse struct {
 // HistoryResponse is the body of /api/v1/targets/{id}/history. RTTMs is
 // oldest-first; a null entry is a lost probe.
 type HistoryResponse struct {
-	ID    uint64     `json:"id"`
-	RTTMs []*float64 `json:"rtt_ms"`
+	Samples    []stats.HistorySample `json:"samples"`
+	CapturedAt time.Time             `json:"captured_at"`
+	ID         uint64                `json:"id"`
+	RTTMs      []*float64            `json:"rtt_ms"`
 }
 
 // BulkHistoryResponse is the body of /api/v1/history: one HistoryResponse
 // per live target, in display order.
 type BulkHistoryResponse struct {
-	Targets []HistoryResponse `json:"targets"`
+	CapturedAt time.Time         `json:"captured_at"`
+	Targets    []HistoryResponse `json:"targets"`
 }
 
 // EventsResponse is the body of /api/v1/targets/{id}/events.
@@ -181,6 +185,7 @@ func handleBulkHistory(src *Source) http.HandlerFunc {
 		for i, t := range targets {
 			out.Targets[i] = historyOf(t, n)
 		}
+		out.CapturedAt = time.Now().UTC()
 		writeJSON(w, out)
 	}
 }
@@ -200,16 +205,15 @@ func historyPoints(w http.ResponseWriter, r *http.Request) (int, bool) {
 }
 
 func historyOf(t *stats.TargetStats, n int) HistoryResponse {
-	view := t.GetViewWindow(n)
-	rtt := make([]*float64, len(view.History))
-	for i, d := range view.History {
-		// The stats package records a lost probe as a zero RTT.
-		if d > 0 {
-			ms := float64(d.Microseconds()) / 1000
+	samples := t.HistorySamples(n)
+	rtt := make([]*float64, len(samples))
+	for i, sample := range samples {
+		if sample.RTTMS != nil {
+			ms := *sample.RTTMS
 			rtt[i] = &ms
 		}
 	}
-	return HistoryResponse{ID: t.ID, RTTMs: rtt}
+	return HistoryResponse{ID: t.ID, RTTMs: rtt, Samples: samples, CapturedAt: time.Now().UTC()}
 }
 
 // handleBulkEvents merges every live target's events into one newest-first
@@ -234,7 +238,7 @@ func handleBulkEvents(src *Source) http.HandlerFunc {
 		for _, t := range p.Targets() {
 			events, _ := t.Events()
 			for _, e := range events {
-				all = append(all, TargetEvent{Event: e, Host: t.Host})
+				all = append(all, TargetEvent{Event: e, Host: t.GetView().Host})
 			}
 		}
 		sort.SliceStable(all, func(i, j int) bool { return all[i].At.After(all[j].At) })

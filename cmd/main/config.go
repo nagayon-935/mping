@@ -54,7 +54,14 @@ type config struct {
 	// thresholds holds the colour-coding / alert boundaries (warn = orange,
 	// crit = red), unified onto ui.Thresholds directly (TD-10) instead of
 	// six separate ms/pct fields that had to be converted at every use site.
-	thresholds ui.Thresholds
+	thresholds                       ui.Thresholds
+	healthFailures, healthRecoveries int
+	healthWindow                     time.Duration
+	eventOutput                      string
+	checkConfig                      bool
+	httpStatus                       string
+	httpFollowRedirects              bool
+	httpHeaders                      []string
 }
 
 // applyDocToCfg applies YAML document fields to cfg, respecting CLI flag
@@ -84,6 +91,15 @@ func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]hostEntr
 	syncField(fs, "dscp", doc.DSCP, &cfg.dscp)
 	syncField(fs, "web", doc.Web, &cfg.webEnabled)
 	syncField(fs, "web-port", doc.WebPort, &cfg.webPort)
+	syncField(fs, "health-failures", doc.HealthFailures, &cfg.healthFailures)
+	syncField(fs, "health-recoveries", doc.HealthRecoveries, &cfg.healthRecoveries)
+	syncField(fs, "event-output", doc.EventOutput, &cfg.eventOutput)
+	syncField(fs, "http-status", doc.HTTPStatus, &cfg.httpStatus)
+	syncField(fs, "http-follow-redirects", doc.HTTPFollowRedirects, &cfg.httpFollowRedirects)
+	syncSlice(fs, "http-header", doc.HTTPHeaders, &cfg.httpHeaders)
+	if err := syncDuration(fs, "health-window", doc.HealthWindow, &cfg.healthWindow); err != nil {
+		return nil, nil, cfg, err
+	}
 	if err := syncDuration(fs, "duration", doc.Duration, &cfg.duration); err != nil {
 		return nil, nil, cfg, err
 	}
@@ -173,7 +189,28 @@ func validateMergedHosts(cfg config, hosts []hostEntry, groups []groupYAML, cliH
 	if err := validateHostsDoc(doc); err != nil {
 		return err
 	}
-	return cfg.thresholds.Validate()
+	if err := cfg.thresholds.Validate(); err != nil {
+		return err
+	}
+	policy := healthPolicy(cfg)
+	// Parsed configurations must not use the zero-config compatibility
+	// defaults used by supervisor test fixtures.
+	policy.Failures, policy.Recoveries, policy.Window = cfg.healthFailures, cfg.healthRecoveries, cfg.healthWindow
+	if err := policy.Validate(); err != nil {
+		return err
+	}
+	if _, err := httpOptions(cfg); err != nil {
+		return err
+	}
+	for _, raw := range cfg.portSpecs {
+		if _, err := pinger.ParsePortSpec(raw); err != nil {
+			return fmt.Errorf("invalid port spec %q: %w", raw, err)
+		}
+	}
+	if err := validateBinding(cfg); err != nil {
+		return err
+	}
+	return validateOutputPaths(cfg)
 }
 
 // validateHostEntries checks the rules shared by grouped and ungrouped hosts.

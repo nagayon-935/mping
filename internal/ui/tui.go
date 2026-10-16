@@ -18,27 +18,30 @@ const (
 var newApplication = tview.NewApplication
 
 type TargetSet struct {
-	Targets []*stats.TargetStats
-	Groups  []TargetGroup
+	Targets    []*stats.TargetStats
+	Groups     []TargetGroup
+	Thresholds *Thresholds
 }
 
 // RunOptions contains all parameters for the Run function.
 type RunOptions struct {
-	Targets      []*stats.TargetStats
-	TargetSource func() TargetSet
-	Interval     time.Duration
-	Timeout      time.Duration
-	DoneCh       chan struct{} // receives count-completion notifications; nil means unlimited
-	SourceIPv4   string
-	SourceIPv6   string
-	PacketSize   int
-	InitialLogs  []string
-	TraceEnabled bool
-	MTREnabled   bool
-	PortEnabled  bool
-	HTTPEnabled  bool
-	ASNEnabled   bool
-	PTREnabled   bool
+	Targets          []*stats.TargetStats
+	TargetSource     func() TargetSet
+	MeasurementState func() string
+	Interval         time.Duration
+	Timeout          time.Duration
+	DoneCh           chan struct{} // receives count-completion notifications; nil means unlimited
+	SourceIPv4       string
+	SourceIPv6       string
+	PacketSize       int
+	InitialLogs      []string
+	TraceEnabled     bool
+	MTUEnabled       bool
+	MTREnabled       bool
+	PortEnabled      bool
+	HTTPEnabled      bool
+	ASNEnabled       bool
+	PTREnabled       bool
 	// DSCPEnabled shows the DSCP column (observed TOS/TrafficClass on each
 	// target's most recent reply). Same dynamic-column pattern as ASNEnabled/
 	// PTREnabled: cmd/main sets it when --dscp or any host's per-target dscp
@@ -121,6 +124,9 @@ func Run(opts RunOptions) error {
 	if opts.TargetSource != nil {
 		tr.beforeUpdate = func() {
 			set := opts.TargetSource()
+			if set.Thresholds != nil && set.Thresholds.RTTCrit > 0 {
+				setActiveThresholds(*set.Thresholds)
+			}
 			targets = set.Targets
 			tr.targets = targets
 			tr.groups = set.Groups
@@ -261,20 +267,21 @@ func Run(opts RunOptions) error {
 				app.SetFocus(deleteHostInput)
 			}
 		},
-		traceEnabled: opts.TraceEnabled,
-		mtrEnabled:   opts.MTREnabled,
-		portEnabled:  opts.PortEnabled,
-		httpEnabled:  opts.HTTPEnabled,
-		onStop:       opts.OnStop,
-		onRestart:    opts.OnRestart,
-		onReset:      opts.OnReset,
-		onResetTrace: opts.OnResetTrace,
-		onResetMTR:   opts.OnResetMTR,
-		onResetPort:  opts.OnResetPort,
-		onResetHTTP:  opts.OnResetHTTP,
-		onAddHost:    opts.OnAddHost,
-		onDeleteHost: opts.OnDeleteHost,
-		session:      session,
+		traceEnabled:     opts.TraceEnabled,
+		mtrEnabled:       opts.MTREnabled,
+		portEnabled:      opts.PortEnabled,
+		httpEnabled:      opts.HTTPEnabled,
+		onStop:           opts.OnStop,
+		measurementState: opts.MeasurementState,
+		onRestart:        opts.OnRestart,
+		onReset:          opts.OnReset,
+		onResetTrace:     opts.OnResetTrace,
+		onResetMTR:       opts.OnResetMTR,
+		onResetPort:      opts.OnResetPort,
+		onResetHTTP:      opts.OnResetHTTP,
+		onAddHost:        opts.OnAddHost,
+		onDeleteHost:     opts.OnDeleteHost,
+		session:          session,
 	})
 	session.bind(app, func(event *tcell.EventKey) *tcell.EventKey {
 		if deleteConfirmation.open {

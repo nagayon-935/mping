@@ -1,4 +1,4 @@
-// Package web serves a read-only, loopback-only browser view of mping's live
+// Package web serves a loopback-only browser view of mping's live
 // statistics: a JSON API plus a server-sent-events stream that pushes a fresh
 // snapshot whenever stats.Generation() moves.
 package web
@@ -20,10 +20,11 @@ type Provider interface {
 // Meta is the run configuration the browser needs to render a snapshot the
 // same way the TUI does (which columns exist, colour thresholds, grouping).
 type Meta struct {
-	IntervalMs float64    `json:"interval_ms"`
-	Features   Features   `json:"features"`
-	Thresholds Thresholds `json:"thresholds"`
-	Groups     []Group    `json:"groups,omitempty"`
+	MeasurementState string     `json:"measurement_state,omitempty"`
+	IntervalMs       float64    `json:"interval_ms"`
+	Features         Features   `json:"features"`
+	Thresholds       Thresholds `json:"thresholds"`
+	Groups           []Group    `json:"groups,omitempty"`
 }
 
 // Features mirrors the TUI's feature toggles.
@@ -34,6 +35,7 @@ type Features struct {
 	HTTP       bool `json:"http"`
 	ASN        bool `json:"asn"`
 	PTR        bool `json:"ptr"`
+	MTU        bool `json:"mtu"`
 	DSCP       bool `json:"dscp"`
 }
 

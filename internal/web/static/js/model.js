@@ -30,6 +30,7 @@ function worst(...levels) {
 
 /** Overall status of a target row. */
 export function rowLevel(t, th) {
+  if (t.health?.configured && ["pending", "ok", "warn", "crit"].includes(t.health.status)) return t.health.status;
   if (t.recv + t.loss === 0) return "pending";
   if (t.recv === 0) return "crit";
   return worst(
@@ -41,6 +42,7 @@ export function rowLevel(t, th) {
 
 /** Explain the same measurements used by rowLevel; historical peaks do not affect status. */
 export function statusReasons(t, th) {
+  if (t.health?.configured && t.health.reason) return [t.health.reason];
   const level = rowLevel(t, th);
   if (level === "pending") return ["Waiting for a completed probe"];
   if (t.recv === 0) return ["No replies received"];
@@ -153,10 +155,10 @@ export function summarize(targets, th) {
   return out;
 }
 
-export function matchesFilter(t, query) {
+export function matchesFilter(t, query, features = {ptr: true, asn: true}) {
   const q = query.trim().toLowerCase();
   if (q === "") return true;
-  return [t.host, t.ip, t.ptr, t.asn, t.org]
+  return [t.host, t.ip, features.ptr && t.ptr, features.asn && t.asn, features.asn && t.org]
     .some((v) => typeof v === "string" && v.toLowerCase().includes(q));
 }
 
@@ -252,15 +254,4 @@ export function selectColumns(columns, widthOf, available) {
     used += width;
   }
   return columns.filter((c) => chosen.has(c));
-}
-
-/**
- * Zoom that makes a table of `natural` pixels fill `available` pixels:
- * never below 1, never above `max`. Rounded down to 3 decimals so the scaled
- * table is never a pixel wider than its wrapper (which would add a scrollbar).
- */
-export function tableScale(natural, available, max) {
-  if (!(natural > 0) || !(available > 0)) return 1;
-  const scale = Math.floor((available / natural) * 1000) / 1000;
-  return Math.min(max, Math.max(1, scale));
 }

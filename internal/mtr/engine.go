@@ -125,7 +125,7 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 	v := ts.GetView()
 	dest := v.IP
 	if dest == "" {
-		dest = v.Host
+		dest = ts.ResolveAddress()
 	}
 
 	sock, err := prober.OpenHopSocket(ctx, dest)
@@ -156,7 +156,7 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 			v := ts.GetView()
 			currentDest := v.IP
 			if currentDest == "" {
-				currentDest = v.Host
+				currentDest = ts.ResolveAddress()
 			}
 			if currentDest != dest {
 				newSock, err := prober.OpenHopSocket(ctx, currentDest)
@@ -180,7 +180,7 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 			}
 			hopCount = newHopCount
 			if changed, desc := mtr.CheckFlap(prevIPs, time.Now()); changed && cfg.OnFlap != nil {
-				cfg.OnFlap(ts.Host, desc)
+				cfg.OnFlap(ts.GetView().Host, desc)
 			}
 		case <-probeTicker.C:
 			probe(ctx, prober, sock, mtr, dest, hopCount, cfg, sem)
@@ -252,11 +252,12 @@ func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.
 	// Drop any trailing hops from a previously longer path so the UI doesn't
 	// keep rendering frozen IP/RTT data for hops that no longer exist.
 	mtr.TruncateLen(hopCount)
+	// Keep every TTL probeable, including slots whose discovery send failed.
+	mtr.EnsureLen(hopCount)
 
 	// Register hops only up to the discovered hopCount to avoid leaking outer hops
 	for _, res := range results {
 		if res.ttl <= hopCount {
-			mtr.EnsureLen(res.ttl)
 			if res.reply.Responded && res.reply.SrcIP != "" {
 				info := prober.ASNInfoFor(res.reply.SrcIP)
 				mtr.SetIP(res.ttl, res.reply.SrcIP, info.Number, info.Country, info.Org)
@@ -268,18 +269,12 @@ func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.
 }
 
 // probe sends one probe per hop concurrently for a single round and records
-// results. Hops that have never had a responder IP recorded (rendered as
-// "*" in the UI) are skipped: continuous per-tick probing wouldn't reveal
-// anything discover()/rediscovery hasn't already tried, and would just log
-// permanent 100% loss for a hop the user never learned the address of. The
-// row stays visible via the hop slot discover() already created. sem bounds
+// results, including for TTLs that did not respond during discovery. A missed
+// initial response must not hide a hop until the next rediscovery. sem bounds
 // concurrent ProbeHop calls across the whole Engine; see discover.
 func probe(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTRStats, dest string, hopCount int, cfg Config, sem chan struct{}) {
 	var wg sync.WaitGroup
 	for ttl := 1; ttl <= hopCount; ttl++ {
-		if !mtr.HasIP(ttl) {
-			continue
-		}
 		wg.Add(1)
 		go func(t int) {
 			defer wg.Done()

@@ -88,7 +88,7 @@ func setSentinel(fieldName string, v reflect.Value) bool {
 		v.Set(elem)
 		return true
 	case reflect.String:
-		if fieldName == "Duration" {
+		if fieldName == "Duration" || fieldName == "HealthWindow" {
 			// Duration is parsed with time.ParseDuration, unlike every other
 			// *string field here — the plain "sentinel" text below would
 			// make applyDocToCfg return an error instead of applying it.

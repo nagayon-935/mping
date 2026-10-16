@@ -41,6 +41,16 @@ jobs:
         with:
           path-to-profile: profile.cov
 
+  test-web:
+    name: Web logic tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test internal/web/jstest/*.test.mjs
+
   test-macos:
     name: Run Tests (macOS)
     runs-on: macos-latest

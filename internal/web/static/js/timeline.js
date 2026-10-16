@@ -1,9 +1,7 @@
 // Time-window logic for the RTT graphs pane (no DOM, unit-tested under node).
 //
-// mping probes every target on one shared interval and keeps each target's
-// RTT samples in a ring, newest last. Counting samples back from the newest
-// one therefore lines every target up on the same time axis, including
-// hosts added later (their series are simply shorter).
+// Timestamped samples share a wall-time axis. Missing intervals (including
+// pauses) are undefined; completed probes without a reply are null.
 
 const CANDIDATES = [[60, "1m"], [300, "5m"], [900, "15m"], [1800, "30m"], [3600, "1h"]];
 
@@ -99,4 +97,22 @@ export function downsample(series, buckets) {
 export function reconcileWindow(label, intervalMs, maxPoints) {
   const options = windowOptions(intervalMs, maxPoints);
   return { options, window: options.find((o) => o.label === label) ?? defaultWindow(options) };
+}
+
+/** Bucket timestamped measurements onto one wall-time axis. Never invent loss
+ * for an interval in which no measurement completed. */
+export function alignSamples(samples, points, intervalMs, now) {
+  const out = new Array(points).fill(undefined);
+  for (const sample of samples ?? []) {
+    const at = Date.parse(sample.at);
+    if (!Number.isFinite(at)) continue;
+    const ago = Math.floor((now - at) / intervalMs);
+    const i = points - 1 - ago;
+    if (ago < 0 || i < 0 || i >= points) continue;
+    const value = sample.rtt_ms;
+    // A lost probe remains visible if two completions land in one bucket.
+    if (value === null || out[i] === null) out[i] = null;
+    else if (Number.isFinite(value)) out[i] = Math.max(out[i] ?? 0, value);
+  }
+  return out;
 }

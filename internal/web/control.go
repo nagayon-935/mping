@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/nagayon-935/mping/internal/report"
 )
 
 // Controller is implemented by providers that let the browser change the
@@ -21,6 +23,63 @@ type Controller interface {
 	AddHost(host string) error
 	DeleteTarget(id uint64) error
 	ResetStats()
+}
+
+type MeasurementController interface {
+	StopMeasurements() error
+	RestartMeasurements() error
+}
+type ReportController interface{ CaptureReport() (report.Report, error) }
+
+func handleMeasurement(restart bool) func(http.ResponseWriter, *http.Request, Controller) {
+	return func(w http.ResponseWriter, r *http.Request, c Controller) {
+		m, ok := c.(MeasurementController)
+		if !ok {
+			writeError(w, http.StatusNotImplemented, "measurement controls unavailable")
+			return
+		}
+		var err error
+		if restart {
+			err = m.RestartMeasurements()
+		} else {
+			err = m.StopMeasurements()
+		}
+		if err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func handleReport(w http.ResponseWriter, r *http.Request, c Controller) {
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = "json"
+	}
+	if format != "json" && format != "text" {
+		writeError(w, http.StatusBadRequest, "format must be json or text")
+		return
+	}
+	p, ok := c.(ReportController)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "reports unavailable")
+		return
+	}
+	snapshot, err := p.CaptureReport()
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	if format == "text" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="mping-report.txt"`)
+		_, _ = io.WriteString(w, snapshot.Text())
+	} else {
+		w.Header().Set("Content-Disposition", `attachment; filename="mping-report.json"`)
+		writeJSON(w, snapshot)
+	}
 }
 
 const (

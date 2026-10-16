@@ -6,7 +6,7 @@ const widths = {
   sent: "var(--col-count)", recv: "var(--col-count)", count: "var(--col-count)",
   last: "var(--col-rtt)", avg: "var(--col-rtt)", min: "var(--col-rtt)",
   max: "var(--col-rtt)", jitter: "var(--col-rtt)", rtt: "var(--col-rtt)",
-  ttl: "var(--col-ttl)", dscp: "var(--col-dscp)", spark: "var(--col-spark)",
+  ttl: "var(--col-ttl)", dscp: "var(--col-dscp)",
   url: "var(--col-url)", code: "var(--col-code)", port: "var(--col-port)",
   statusLabel: "var(--col-status-label)",
 };
@@ -17,20 +17,12 @@ export function columnWidthPx(table, key) {
   return name ? parseFloat(getComputedStyle(table).getPropertyValue(name)) || 0 : 0;
 }
 
-/** A pixel-valued CSS custom property (e.g. "--host-grow") as a number. */
-export function cssPx(table, name) {
-  return parseFloat(getComputedStyle(table).getPropertyValue(name)) || 0;
-}
-
 export function setColumns(table, columns, flexibleKey) {
   const group = elGroup(columns, flexibleKey);
   table.querySelector("colgroup")?.remove();
-  table.prepend(group);
+  table.insertBefore(group, table.tHead);
   const total = columns.map((c) => widths[c.key]).join(" + ");
   table.style.minWidth = `calc(${total})`;
-  // A flexible host column may only grow by --host-grow beyond its minimum;
-  // spare width stays empty rather than stretching names across the page.
-  table.style.maxWidth = flexibleKey === "host" ? `calc(${total} + var(--host-grow))` : "";
   const row = document.createElement("tr");
   for (const c of columns) {
     const th = document.createElement("th");

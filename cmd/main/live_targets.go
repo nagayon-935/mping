@@ -18,9 +18,11 @@ type dynamicPinger interface {
 }
 
 type targetSnapshot struct {
-	targets []*stats.TargetStats
-	specs   []targetSpec
-	groups  []ui.TargetGroup
+	targets          []*stats.TargetStats
+	specs            []targetSpec
+	groups           []ui.TargetGroup
+	config           config
+	measurementState string
 }
 
 func (s *supervisor) publishTargets() {
@@ -28,7 +30,31 @@ func (s *supervisor) publishTargets() {
 	for i, g := range s.cfg.groups {
 		groups[i] = ui.TargetGroup{Name: g.Name, Indices: append([]int(nil), g.Indices...)}
 	}
-	s.targetSnap.Store(&targetSnapshot{targets: append([]*stats.TargetStats(nil), s.cfg.targets...), specs: append([]targetSpec(nil), s.cfg.specs...), groups: groups})
+	s.targetSnap.Store(&targetSnapshot{targets: append([]*stats.TargetStats(nil), s.cfg.targets...), specs: append([]targetSpec(nil), s.cfg.specs...), groups: groups, config: s.cfg.config, measurementState: s.currentMeasurementState()})
+}
+
+// This runs on the command loop. A completed target does not make a newly
+// added target's active worker disappear from the session state.
+func (s *supervisor) currentMeasurementState() string {
+	if s.state == stateTerminated {
+		return "stopped"
+	}
+	if s.state == stateStopped {
+		return "stopped"
+	}
+	for _, t := range s.cfg.targets {
+		if t.MeasurementState() != "finished" {
+			return "running"
+		}
+	}
+	return "finished"
+}
+
+func (s *supervisor) measurementState() string {
+	if snap := s.targetSnap.Load(); snap != nil {
+		return snap.measurementState
+	}
+	return ""
 }
 
 func (s *supervisor) liveTargets() ui.TargetSet {
@@ -36,7 +62,8 @@ func (s *supervisor) liveTargets() ui.TargetSet {
 	if v == nil {
 		return ui.TargetSet{}
 	}
-	return ui.TargetSet{Targets: v.targets, Groups: v.groups}
+	th := v.config.thresholds
+	return ui.TargetSet{Targets: v.targets, Groups: v.groups, Thresholds: &th}
 }
 
 func (s *supervisor) editTargets(edit func(*supervisor) error) error {
@@ -71,6 +98,10 @@ func (s *supervisor) addHost(host string) error {
 		}
 		added := buildTargetsForIteration(specs, s.cfg.config)
 		for _, t := range added {
+			s.configureTarget(t)
+			if s.state != stateRunning {
+				t.SetMeasurementState("stopped")
+			}
 			// New targets use the running session's actual payload and interface MTU.
 			if len(s.cfg.targets) > 0 {
 				v := s.cfg.targets[0].GetView()

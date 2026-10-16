@@ -117,7 +117,7 @@ func (p *Pinger) resolveTargetContext(ctx context.Context, t *stats.TargetStats)
 	address := p.resolveAddresses[t]
 	p.mapMu.RUnlock()
 	if address == "" {
-		address = t.Host
+		address = t.ResolveAddress()
 	}
 	addr, err := p.resolveIPAddrContext(ctx, "ip", address)
 	if ctx.Err() != nil {

@@ -141,7 +141,7 @@ func TestRunExitsWhenWebServerCannotStart(t *testing.T) {
 
 func TestWebMetaReflectsConfig(t *testing.T) {
 	cfg := config{
-		intervalMs: 500, trace: true, mtr: true, asnEnabled: true, ptrEnabled: true,
+		intervalMs: 500, trace: true, mtr: true, asnEnabled: true, ptrEnabled: true, mtuEnabled: true,
 		httpURLs: []string{"https://example.com/"}, dscp: "EF",
 		thresholds: ui.Thresholds{
 			RTTWarn: 40 * time.Millisecond, RTTCrit: 150 * time.Millisecond,
@@ -154,7 +154,7 @@ func TestWebMetaReflectsConfig(t *testing.T) {
 
 	want := web.Meta{
 		IntervalMs: 500,
-		Features:   web.Features{Traceroute: true, MTR: true, Port: true, HTTP: true, ASN: true, PTR: true, DSCP: true},
+		Features:   web.Features{Traceroute: true, MTR: true, Port: true, HTTP: true, ASN: true, PTR: true, DSCP: true, MTU: true},
 		Thresholds: web.Thresholds{RTTWarnMs: 40, RTTCritMs: 150, JitterWarnMs: 5, JitterCritMs: 25, LossWarnPct: 10, LossCritPct: 50},
 	}
 	if got.IntervalMs != want.IntervalMs || got.Features != want.Features || got.Thresholds != want.Thresholds {
@@ -282,10 +282,7 @@ func TestRunWithWebMarksSourceStoppedOnExit(t *testing.T) {
 	}
 }
 
-// TestRunReloadWithWeb drives a real YAML reload: between iterations the
-// web source must say "reloading" (observed when the second iteration
-// builds its pinger), and a changed web-port must surface a
-// restart-required warning because the server is not restarted.
+// A startup-only web port change must warn without restarting measurements.
 func TestRunReloadWithWeb(t *testing.T) {
 	dir := t.TempDir()
 	yamlPath := filepath.Join(dir, "hosts.yaml")
@@ -302,7 +299,16 @@ func TestRunReloadWithWeb(t *testing.T) {
 			if err := os.WriteFile(yamlPath, []byte("hosts:\n  - example.com\nweb: true\nweb-port: 19090\n"), 0o644); err != nil {
 				t.Errorf("write yaml: %v", err)
 			}
-			time.Sleep(600 * time.Millisecond)
+			deadline := time.After(2 * time.Second)
+			for !sawWarning {
+				select {
+				case line := <-opts.ExternalLogCh:
+					sawWarning = strings.Contains(line, "web: change detected")
+				case <-deadline:
+					t.Error("missing live reload warning")
+					return nil
+				}
+			}
 			return nil
 		}
 		sawWarning = containsSubstring(opts.InitialLogs, "web: change detected")
@@ -327,11 +333,11 @@ func TestRunReloadWithWeb(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("run = %d, want 0 (stderr: %s)", code, errOut.String())
 	}
-	if calls < 2 {
-		t.Fatalf("uiRun calls = %d, want a reload (>= 2)", calls)
+	if calls != 1 {
+		t.Fatalf("UI restarted for metadata change: calls=%d", calls)
 	}
-	if !slices.Contains(statesAtPingerBuild, web.StateReloading) {
-		t.Errorf("states seen while building pingers = %v, want %q during the reload", statesAtPingerBuild, web.StateReloading)
+	if slices.Contains(statesAtPingerBuild, web.StateReloading) {
+		t.Fatal("pinger rebuilt for web port change")
 	}
 	if !sawWarning {
 		t.Error("second iteration's InitialLogs lack the web restart-required warning")

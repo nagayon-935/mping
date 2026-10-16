@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -110,31 +109,6 @@ func TestRenderHTTPMonitorTable_HeadersPresent(t *testing.T) {
 		if !strings.Contains(out, hdr) {
 			t.Errorf("Header %q not found in output:\n%s", hdr, out)
 		}
-	}
-}
-
-// ---- httpCodeColorTag ----
-
-func TestHTTPCodeColorTag(t *testing.T) {
-	tests := []struct {
-		code int
-		want string
-	}{
-		{0, "[darkgray]"},
-		{200, "[green]"},
-		{204, "[green]"},
-		{301, "[orange]"},
-		{302, "[orange]"},
-		{404, "[orange]"},
-		{500, "[red::b]"},
-		{503, "[red::b]"},
-	}
-	for _, tt := range tests {
-		t.Run(fmt.Sprintf("code_%d", tt.code), func(t *testing.T) {
-			if got := httpCodeColorTag(tt.code); got != tt.want {
-				t.Errorf("httpCodeColorTag(%d) = %q, want %q", tt.code, got, tt.want)
-			}
-		})
 	}
 }
 

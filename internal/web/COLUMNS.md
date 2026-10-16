@@ -1,10 +1,10 @@
 # Web UI column sizing
 
 Tables use a shared `colgroup` and fixed layout. Values cannot resize columns
-between updates or after filtering. The target table's host column takes spare
-width only up to a cap (`--host-grow`, 80px); any further width stays empty on
-the right. The HTTP table's URL column receives all the space left after its
-fixed columns. If the minimum widths do not fit, only the table
+between updates or after filtering. The target table fills its pane: its host
+column receives the width left after the fixed numeric and metadata columns.
+The workspace fills the browser width and remaining viewport height on desktop. The HTTP table's URL column
+also receives the space left after its fixed columns. If the minimum widths do not fit, only the table
 scrolls horizontally.
 The page reserves scrollbar space so filtering a long list cannot shift the
 columns when the vertical scrollbar disappears. Detail panes do the same.
@@ -14,8 +14,8 @@ Widths include cell padding. Numeric text uses a 13px monospace font, with
 
 | Field | Input range / length | Display budget | Standard width |
 | --- | --- | --- | --- |
-| Status | OK, Warn, Crit, Waiting | One label + at most two lines of explanation | 152px |
-| Host / PTR | Host input accepts up to 253 UTF-8 bytes; DNS names can be long | One line per name, ellipsis; full name in title and details | 200px, growing to at most 280px (40px more than the compact width on phones) |
+| Status | OK, Warning, Critical, Waiting | One label + two reserved lines of explanation | 168px |
+| Host / PTR | Host input accepts up to 253 UTF-8 bytes; DNS names can be long | One line per name, ellipsis; full name in title and details | At least 200px; flexible |
 | IP | IPv4 up to 15 chars; mixed IPv6 notation up to 45, scope suffixes may add more | One line, ellipsis; full address in title and details | 196px |
 | AS | `AS4294967295` is 12 chars; organization names have no UI length cap | One line, ellipsis; full text in title and details | 200px |
 | Loss | 0–100%, formatted to one decimal | 5 chars (`100.0`) | 68px (96px for MTR icon + number) |
@@ -23,7 +23,6 @@ Widths include cell padding. Numeric text uses a 13px monospace font, with
 | Counts | Nonnegative Go integer counts, up to int64 maximum | At most 8 chars; grouped below 1M, M/B/T above, scientific from 1e15 | 88px |
 | TTL / hop | 0–255 | 3 digits | 60px |
 | DSCP | Named codepoints up to 4 chars, or 0–63 | 4 chars | 72px |
-| Trend | 60 samples | Canvas uses available inner width | 140px |
 | HTTP URL | No new length restriction | One line, ellipsis; full URL remains in the DOM and title | At least 240px; flexible |
 | HTTP code | 3-digit status codes | 3 digits | 64px |
 | Port | `65535/udp` | 9 chars | 104px |
@@ -34,34 +33,71 @@ the complete underlying strings, not their ellipsized presentation.
 
 ## Which columns are shown
 
-There is no column toggle. The target table shows as many columns as fit in
-its current width and drops the least important ones first. Status and host
-identify a row and are always kept; the rest are added in this order and the
-first one that does not fit ends the list (a narrower, less important column
-never takes the place of a dropped one):
+The overview always keeps **Status, Host, Loss % and latest RTT**. Extra
+columns appear as the viewport or the available pane width grows, in priority
+order: Jitter, Sent, Recv, IP, TTL, AS (when enabled), DSCP (when enabled).
+Columns retain their normal display order. The current RTT header reads
+**RTT**, with units in each value. If all configured hosts are IP literals,
+the redundant IP column is omitted. This decision uses the full target list,
+so filtering and incoming DNS results cannot toggle the column. Widths never
+depend on live values.
 
-1. Loss %  2. Last  3. Avg  4. Jitter  5. RTT trend  6. IP  7. Min  8. Peak
-9. Sent  10. Recv  11. TTL  12. AS (when enabled)  13. DSCP (when enabled)
+There is no table-size selector or automatic zoom. CSS uses compact cell and
+font sizes on phones; column selection uses the actual available width. The
+panes reserve scrollbar space, so filtering or receiving measurements cannot
+change column widths. Summary and HTTP tables keep all enabled columns and scroll
+horizontally when needed.
 
-Columns keep their normal display order, whatever their priority. The set is
-recomputed when the window, the pane layout or the scrollbar changes
-the table's width, using the widths in the table above (as overridden below).
-Only if status and host alone do not fit does the table scroll horizontally.
-The HTTP and inspect-pane tables always show all their columns.
+The monitor shows current RTT; average/minimum/peak live in Summary. RTT
+history is shown only in the graphs pane. Graph cards show a numeric RTT only
+at the cursor, rather than repeating the monitor's current value.
 
-Whatever width is left after choosing columns is turned into a larger table:
-the whole target table (text, columns and row heights) is zoomed by the ratio of
-the wrapper width to the widest the chosen columns can be, never below 1 and at
-most 2. Beyond that (very large monitors) the remainder stays empty. A column
-appearing as the screen widens resets the zoom to about 1.
-
-The ping monitor shares the width with the inspect pane on screens of 1100px
-and up (about 7/12 of it), so it shows fewer columns there than when the panes
-stack on narrower screens. On screens up to 640px every column uses the
-compact widths: status 72, host 94, loss 46, RTT 80 and trend 60 (4px cell
-padding, 12px text); up to 360px the status and host shrink to 68 and 90.
+On desktop (1100px and up), a two-row grid fills the space below the header.
+The upper row contains the monitor and, after selection, Summary (7:5 widths).
+The lower row contains the route pane and graphs (7:5), or full-width graphs
+when no route option is enabled. Summary selection does not move the lower row.
+Every desktop pane takes its grid cell's height and scrolls internally. Narrower
+screens stack the panes. Phones use compact status/host/loss/RTT widths of
+72/94/46/80px, reduced to 72/66/44/80px up to 360px.
 Status, host, loss and latest RTT need 292px (72 + 94 + 46 + 80), so a phone
-keeps at least those, plus average RTT when it fits.
+keeps these four fields. AS and DSCP are omitted unless enabled, including in
+the selected target's details; PTR annotations and PMTU details follow their
+respective options as well.
 
-Target rows are 76px tall, with one-line host/PTR and two-line explanations;
-HTTP/MTR/port rows are 44px. Exceptionally long group headings are ellipsized.
+Target rows are 68px tall, with one-line host/PTR and two reserved explanation
+lines so changing health cannot move the following rows. HTTP/MTR/port rows
+are 44px. Exceptionally long group headings are ellipsized. Abnormal overview
+values use a small tinted badge rather than coloring the whole cell.
+
+## Summary and global pages
+
+Summary is the only selected-host detail view; there are no tabs. It contains
+statistics, enabled port checks and authorized target actions. It retains its
+height and action-button state during live measurements. Log is an independent
+`#log` page with the latest 200 events across all targets, unaffected by host
+selection or the monitor filter. HTTP checks use the independent `#http` page
+when enabled. Page navigation retains Summary selection and monitor/route
+scroll positions. Log and HTTP preserve selected text and scroll during updates.
+
+## Route displays
+
+- Traceroute enabled, MTR disabled: standalone Traceroute pane.
+- MTR enabled: standalone MTR pane, even when Traceroute is also enabled.
+- Neither enabled: no route pane.
+
+Both route views show all filtered hosts without requiring selection. Desktop
+route panes fill their grid cell; stacked panes reserve 420px (360px on phones).
+MTR has one two-axis scroll viewport with 36px sticky column headings and 64px
+sticky target headings showing host, address and hop count. Target identity stays
+visible when the numeric columns are scrolled horizontally. Numeric widths
+remain fixed. AS appears only when enabled. Selecting or clearing a host does not
+change MTR membership or scroll positions. Probes use TTL/Hop Limit-limited ICMP
+Echo for IPv4/IPv6, not UDP.
+
+Traceroute uses a numbered vertical path for each target, with wrapping addresses
+and optional AS/PTR annotations. Empty and `*` hops are unanswered; progress and
+error states are separate from the hop list. A responder matching the target IP
+has a Destination label. Target headings remain visible during vertical scroll.
+
+RTT charts default to a shared vertical scale. The tick interval is rounded to
+1/2/5 × 10^k, with four equal intervals, so all shared charts use identical ticks.
