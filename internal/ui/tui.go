@@ -142,8 +142,6 @@ func Run(opts RunOptions) error {
 		}
 	}
 
-	updateTickerCh := make(chan time.Duration, 1)
-
 	session := newUISession()
 	defer func() { session.Stop(); session.Wait() }()
 	wireHostInputs(app, table, pages, addHostInput, deleteHostInput, vs, session, opts.OnAddHost, opts.OnDeleteHost)
@@ -195,6 +193,14 @@ func Run(opts RunOptions) error {
 			vs.appendLog("[yellow]Selected target was removed; returned to overview[-]")
 		}
 	}
+	restoreFocus := func(focus tview.Primitive) {
+		if !details.open && (focus == details.text || focus == details.graph) {
+			root.SwitchToPage("main")
+			app.SetFocus(table)
+		} else {
+			app.SetFocus(focus)
+		}
+	}
 	deleteConfirmation = newDeleteDialog(app, root, func(id uint64, host string) {
 		if !session.Submit(func() {
 			err := opts.OnDeleteTarget(id)
@@ -212,23 +218,9 @@ func Run(opts RunOptions) error {
 		}) {
 			vs.appendLog("[yellow]Operation queue full; please try again[-]")
 		}
-	}, func(focus tview.Primitive) {
-		if !details.open && (focus == details.text || focus == details.graph) {
-			root.SwitchToPage("main")
-			app.SetFocus(table)
-		} else {
-			app.SetFocus(focus)
-		}
-	})
+	}, restoreFocus)
 	deleteConfirmation.quit = func() { session.Stop(); app.Stop() }
-	webAccess = newWebAccessDialog(app, root, opts.WebControlURL, session.copyClipboard, func(focus tview.Primitive) {
-		if !details.open && (focus == details.text || focus == details.graph) {
-			root.SwitchToPage("main")
-			app.SetFocus(table)
-		} else {
-			app.SetFocus(focus)
-		}
-	})
+	webAccess = newWebAccessDialog(app, root, opts.WebControlURL, session.copyClipboard, restoreFocus)
 	deleteSelected := func() {
 		if opts.OnDeleteTarget == nil {
 			return
@@ -351,7 +343,7 @@ func Run(opts RunOptions) error {
 		}
 		return input(event)
 	})
-	startRefreshLoop(app, tr, footer, opts.Interval, updateTickerCh, opts.ExternalLogCh, opts.ExternalCloseCh, opts.DoneCh,
+	startRefreshLoop(app, tr, footer, opts.Interval, opts.ExternalLogCh, opts.ExternalCloseCh, opts.DoneCh,
 		vs, session)
 
 	err := app.SetRoot(root, true).Run()

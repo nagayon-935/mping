@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 	ui "github.com/nagayon-935/mping/internal/ui"
 )
@@ -67,18 +68,47 @@ func (s *supervisor) liveTargets() ui.TargetSet {
 }
 
 func (s *supervisor) editTargets(edit func(*supervisor) error) error {
-	reply := make(chan error, 1)
-	select {
-	case s.cmds <- command{kind: cmdEditTargets, edit: edit, reply: reply}:
-	case <-s.done:
-		return errSupervisorShutDown
+	return s.sendCmd(command{kind: cmdEditTargets, edit: edit})
+}
+
+func (s *supervisor) registerDynamicTarget(p dynamicPinger, t *stats.TargetStats, spec targetSpec) error {
+	var dscp *int
+	if spec.DSCP != "" {
+		value, _ := pinger.ParseDSCP(spec.DSCP)
+		dscp = &value
 	}
-	select {
-	case err := <-reply:
-		return err
-	case <-s.done:
-		return errSupervisorShutDown
+	return p.AddTarget(t, spec.resolveAddr(), dscp)
+}
+
+func (s *supervisor) attachTargetMonitors(t *stats.TargetStats) {
+	if s.state != stateRunning {
+		t.SetMeasurementState("stopped")
+		return
 	}
+	if s.cfg.traceEnabled {
+		s.startTargetTrace(s.p, t)
+	}
+	if s.mtrEngine != nil {
+		s.mtrEngine.AddTarget(t)
+	}
+	if s.portChecker != nil {
+		s.portChecker.AddTarget(t)
+	}
+}
+
+func (s *supervisor) detachTargetMonitors(p dynamicPinger, t *stats.TargetStats, reason string) {
+	if p != nil {
+		s.stopTargetTrace(t)
+		if s.mtrEngine != nil {
+			s.mtrEngine.RemoveTarget(t)
+		}
+		if s.portChecker != nil {
+			s.portChecker.RemoveTarget(t)
+		}
+		p.RemoveTarget(t)
+	}
+	t.RecordEvent("removed", reason)
+	s.archiveTarget(t)
 }
 
 func (s *supervisor) addHost(host string) error {
@@ -99,12 +129,9 @@ func (s *supervisor) addHost(host string) error {
 		added := buildTargetsForIteration(specs, s.cfg.config)
 		for _, t := range added {
 			s.configureTarget(t)
-			if s.state != stateRunning {
-				t.SetMeasurementState("stopped")
-			}
 			// New targets use the running session's actual payload and interface MTU.
 			if len(s.cfg.targets) > 0 {
-				v := s.cfg.targets[0].GetView()
+				v := s.cfg.targets[0].GetViewWindow(0)
 				t.SetIfaceMTU(v.IfaceMTU)
 			}
 		}
@@ -114,26 +141,16 @@ func (s *supervisor) addHost(host string) error {
 				return fmt.Errorf("pinger does not support live target changes")
 			}
 			for i, t := range added {
-				if err := p.AddTarget(t, specs[i].resolveAddr(), nil); err != nil {
+				if err := s.registerDynamicTarget(p, t, specs[i]); err != nil {
 					for _, previous := range added[:i] {
 						p.RemoveTarget(previous)
 					}
 					return err
 				}
 			}
-			for _, t := range added {
-				if s.cfg.traceEnabled {
-					s.startTargetTrace(s.p, t)
-				}
-				if s.mtrEngine != nil {
-					s.mtrEngine.AddTarget(t)
-				}
-				if s.portChecker != nil {
-					s.portChecker.AddTarget(t)
-				}
-			}
 		}
 		for _, t := range added {
+			s.attachTargetMonitors(t)
 			t.RecordEvent("added", "Target added")
 		}
 		s.cfg.targets = append(append([]*stats.TargetStats(nil), s.cfg.targets...), added...)
@@ -169,22 +186,15 @@ func (s *supervisor) removeTarget(i int) error {
 		return fmt.Errorf("cannot delete the last host")
 	}
 	t := s.cfg.targets[i]
+	var dynamic dynamicPinger
 	if s.state == stateRunning {
-		p, ok := s.p.(dynamicPinger)
+		var ok bool
+		dynamic, ok = s.p.(dynamicPinger)
 		if !ok {
 			return fmt.Errorf("pinger does not support live target changes")
 		}
-		s.stopTargetTrace(t)
-		if s.mtrEngine != nil {
-			s.mtrEngine.RemoveTarget(t)
-		}
-		if s.portChecker != nil {
-			s.portChecker.RemoveTarget(t)
-		}
-		p.RemoveTarget(t)
 	}
-	t.RecordEvent("removed", "Target removed")
-	s.archiveTarget(t)
+	s.detachTargetMonitors(dynamic, t, "Target removed")
 	newSpecs := append([]targetSpec(nil), s.cfg.specs[:i]...)
 	newSpecs = append(newSpecs, s.cfg.specs[i+1:]...)
 	var groups []ui.TargetGroup

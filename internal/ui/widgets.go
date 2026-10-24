@@ -98,3 +98,26 @@ func newSidePanes(opts RunOptions, currentTargets func() []*stats.TargetStats, v
 	})
 	return []*monitorPane{trace, mtr, port, http}
 }
+
+func newStyledModal(title, message string, buttons []string, done func(index int, label string)) *tview.Modal {
+	modal := tview.NewModal().
+		SetBackgroundColor(tcell.ColorBlack).
+		SetTextColor(tcell.ColorWhite).
+		SetButtonStyle(tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlack)).
+		SetButtonActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorWhite)).
+		SetText(message).
+		AddButtons(buttons).
+		SetFocus(0).
+		SetDoneFunc(done)
+	modal.Box.SetBackgroundColor(tcell.ColorBlack)
+	modal.SetTitle(title).SetTitleColor(tcell.ColorWhite).SetBorderColor(tcell.ColorWhite)
+	return modal
+}
+
+func handleModalKey(event *tcell.EventKey) *tcell.EventKey {
+	switch event.Key() {
+	case tcell.KeyTab, tcell.KeyBacktab, tcell.KeyLeft, tcell.KeyRight, tcell.KeyEnter, tcell.KeyEscape, tcell.KeyCtrlC:
+		return event
+	}
+	return nil
+}

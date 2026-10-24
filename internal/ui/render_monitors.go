@@ -14,7 +14,7 @@ import (
 func maxHostWidth(header string, targets []*stats.TargetStats) int {
 	w := runewidth.StringWidth(header)
 	for _, t := range targets {
-		if cur := runewidth.StringWidth(t.GetView().Host); cur > w {
+		if cur := runewidth.StringWidth(t.DisplayName()); cur > w {
 			w = cur
 		}
 	}
@@ -73,7 +73,7 @@ func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
 
 	var groups [][][]boxCell
 	for _, t := range targets {
-		view := t.GetView()
+		view := t.GetViewWindow(0)
 		if len(view.TraceHops) == 0 {
 			continue
 		}
@@ -129,7 +129,7 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 	// Targets that have results; detect status changes.
 	var views []stats.TargetView
 	for _, t := range targets {
-		view := t.GetView()
+		view := t.GetViewWindow(0)
 		if len(view.PortResults) == 0 {
 			continue
 		}

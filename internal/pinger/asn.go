@@ -1,7 +1,6 @@
 package pinger
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -115,35 +114,7 @@ func (p *Pinger) getASNInfo(ipStr string) ASNInfo {
 // lookupTXTBounded runs cancellable DNS on the calling goroutine. Only
 // explicitly injected context-free hooks use the legacy bounded adapter.
 func (p *Pinger) lookupTXTBounded(name string) ([]string, error) {
-	if p.stopped() {
-		return nil, errPingerStopped
-	}
-	if p.lookupTXTContext != nil {
-		ctx, cancel := p.lookupContext(context.Background(), asnLookupTimeout)
-		defer cancel()
-		txts, err := p.lookupTXTContext(ctx, name)
-		if p.stopped() {
-			return nil, errPingerStopped
-		}
-		return txts, err
-	}
-	type result struct {
-		txts []string
-		err  error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		txts, err := p.lookupTXT(name)
-		ch <- result{txts, err}
-	}()
-	select {
-	case r := <-ch:
-		return r.txts, r.err
-	case <-p.done:
-		return nil, errPingerStopped
-	case <-time.After(asnLookupTimeout):
-		return nil, fmt.Errorf("asn lookup for %q timed out after %s", name, asnLookupTimeout)
-	}
+	return lookupBounded(p, asnLookupTimeout, "asn", name, p.lookupTXTContext, p.lookupTXT)
 }
 
 // lookupOrg resolves the org name for asnNumber. The returned error is

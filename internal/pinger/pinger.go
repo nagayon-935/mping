@@ -402,8 +402,9 @@ func (p *Pinger) log(t *stats.TargetStats, seq int, status string, rtt time.Dura
 	timestamp := p.now().Format(time.RFC3339Nano)
 	rttMs := float64(rtt.Microseconds()) / 1000.0
 
+	host, ip := t.HostAndIP()
 	line := fmt.Sprintf("%s,%s,%s,%d,%s,%.3f,%d,%s\n",
-		timestamp, t.GetView().Host, t.GetView().IP, seq, status, rttMs, ttl, errMsg)
+		timestamp, host, ip, seq, status, rttMs, ttl, errMsg)
 
 	if _, err := p.LogWriter.Write([]byte(line)); err != nil && p.LogWriter != io.Discard {
 		// Best-effort logging; write errors are non-fatal but surfaced via stderr when possible.

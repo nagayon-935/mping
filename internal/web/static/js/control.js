@@ -51,6 +51,23 @@ export function createControl() {
   let allowed = false;
   let revision = 0;
 
+  const parseErrorResponse = async (resp) => {
+    let error = `HTTP ${resp.status}`;
+    try {
+      error = (await resp.json()).error ?? error;
+    } catch {
+      // Non-JSON error body; keep the status line.
+    }
+    if (resp.status === 403) {
+      // A stale token from an earlier mping run: fall back to read-only.
+      allowed = false;
+      token = null;
+      revision++;
+      store(null);
+    }
+    return { ok: false, error };
+  };
+
   const request = async (method, path, body) => {
     const headers = { "X-Mping-Token": token ?? "" };
     if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -61,19 +78,7 @@ export function createControl() {
       return { ok: false, error: `mping is unreachable (${err.message})` };
     }
     if (resp.ok) return { ok: true };
-    let error = `HTTP ${resp.status}`;
-    try {
-      error = (await resp.json()).error ?? error;
-    } catch {
-      // Non-JSON error body; keep the status line.
-    }
-    if (resp.status === 403) {
-      // A stale token from an earlier mping run: fall back to read-only.
-      allowed = false;
-      token = null; revision++;
-      store(null);
-    }
-    return { ok: false, error };
+    return parseErrorResponse(resp);
   };
 
   return {
@@ -120,8 +125,7 @@ export function createControl() {
       try {
         const response = await fetch(`api/v1/report?format=${format}`, { headers: { "X-Mping-Token": token ?? "" }, signal });
         if (!response.ok) {
-          if (response.status === 403) { allowed = false; token = null; revision++; store(null); }
-          return { ok: false, error: (await response.json()).error ?? `HTTP ${response.status}` };
+          return parseErrorResponse(response);
         }
         const blob = await response.blob();
         if (signal?.aborted) return { ok: false, cancelled: true };

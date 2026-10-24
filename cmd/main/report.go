@@ -11,19 +11,25 @@ import (
 
 const maxRemovedTargets = 128
 
+func (s *supervisor) groupNameForIndex(targetIdx int) string {
+	var name string
+	for _, group := range s.cfg.groups {
+		for _, idx := range group.Indices {
+			if idx == targetIdx {
+				name = group.Name
+			}
+		}
+	}
+	return name
+}
+
 func (s *supervisor) archiveTarget(target *stats.TargetStats) {
 	record := report.NewTarget(target)
 	for i, t := range s.cfg.targets {
 		if t != target {
 			continue
 		}
-		for _, group := range s.cfg.groups {
-			for _, idx := range group.Indices {
-				if idx == i {
-					record.Group = group.Name
-				}
-			}
-		}
+		record.Group = s.groupNameForIndex(i)
 	}
 	now := time.Now().UTC()
 	record.RemovedAt = &now
@@ -44,7 +50,6 @@ func (s *supervisor) captureReport(selectedID uint64) (report.Report, error) {
 		r.PingFinished = p.WorkersFinished()
 	}
 	cfg := s.cfg.config
-	thresholds := cfg.thresholds
 	r.Settings = report.Settings{
 		IntervalMS: s.cfg.interval.Milliseconds(), TimeoutMS: s.cfg.timeout.Milliseconds(),
 		PayloadBytes: s.cfg.packetSize, Interface: s.cfg.bind.Interface, BoundSource: s.cfg.bind.Source,
@@ -54,13 +59,7 @@ func (s *supervisor) captureReport(selectedID uint64) (report.Report, error) {
 		Traceroute: s.cfg.traceEnabled, MTR: s.cfg.mtrEnabled, PMTUDiscovery: cfg.mtuEnabled,
 		HTTPURLs:       append([]string(nil), s.cfg.httpURLs...),
 		HealthFailures: healthPolicy(cfg).Failures, HealthRecoveries: healthPolicy(cfg).Recoveries, HealthWindowSeconds: healthPolicy(cfg).Window.Seconds(), HTTPStatus: cfg.httpStatus, HTTPFollowRedirects: cfg.httpFollowRedirects,
-		Thresholds: map[string]float64{
-			"rtt_warn_ms":    float64(thresholds.RTTWarn) / float64(time.Millisecond),
-			"rtt_crit_ms":    float64(thresholds.RTTCrit) / float64(time.Millisecond),
-			"jitter_warn_ms": float64(thresholds.JitterWarn) / float64(time.Millisecond),
-			"jitter_crit_ms": float64(thresholds.JitterCrit) / float64(time.Millisecond),
-			"loss_warn_pct":  thresholds.LossWarn, "loss_crit_pct": thresholds.LossCrit,
-		},
+		Thresholds: thresholdsMap(cfg.thresholds),
 	}
 	if !s.cfg.durationDeadline.IsZero() {
 		deadline := s.cfg.durationDeadline.UTC()
@@ -74,13 +73,7 @@ func (s *supervisor) captureReport(selectedID uint64) (report.Report, error) {
 			continue
 		}
 		record := report.NewTarget(t)
-		for _, group := range s.cfg.groups {
-			for _, idx := range group.Indices {
-				if idx == i {
-					record.Group = group.Name
-				}
-			}
-		}
+		record.Group = s.groupNameForIndex(i)
 		r.Targets = append(r.Targets, record)
 	}
 	if selectedID != 0 {

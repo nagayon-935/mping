@@ -49,7 +49,6 @@ type GraphView struct {
 	targets      []*stats.TargetStats
 	interval     time.Duration
 	vividCyan    tcell.Color
-	vividRed     tcell.Color
 	scrollRow    int
 	includePorts bool
 
@@ -67,8 +66,7 @@ func NewGraphView(targets []*stats.TargetStats, interval time.Duration) *GraphVi
 		Box:          tview.NewBox(),
 		targets:      targets,
 		interval:     interval,
-		vividCyan:    tcell.NewRGBColor(0, 255, 255),
-		vividRed:     tcell.NewRGBColor(255, 0, 0),
+		vividCyan:    vividCyan,
 		currentScale: computeYScale(0, graphScaleFloorMs),
 	}
 }

@@ -257,9 +257,10 @@ func handleBulkEvents(src *Source) http.HandlerFunc {
 		}
 		all := []TargetEvent{}
 		for _, t := range p.Targets() {
+			host := t.DisplayName()
 			events, _ := t.Events()
 			for _, e := range events {
-				all = append(all, TargetEvent{Event: e, Host: t.GetView().Host})
+				all = append(all, TargetEvent{Event: e, Host: host})
 			}
 		}
 		slices.SortStableFunc(all, func(a, b TargetEvent) int { return b.At.Compare(a.At) })

@@ -27,33 +27,20 @@ func (d *webAccessDialog) show() {
 	d.open = true
 	focus := d.app.GetFocus()
 	message := "Open this URL to enable browser controls:\n\n" + tview.Escape(d.url) + "\n\nEnter: Copy URL | Tab: Select | Esc: Close"
-	d.modal = tview.NewModal().
-		SetBackgroundColor(tcell.ColorBlack).
-		SetTextColor(tcell.ColorWhite).
-		SetButtonStyle(tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlack)).
-		SetButtonActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorWhite)).
-		SetText(message).
-		AddButtons([]string{"Copy URL", "Close"}).
-		SetDoneFunc(func(index int, _ string) {
-			if index == 0 {
-				d.copy(d.url)
-				d.modal.SetText(message + "\n\nCopy requested. If blocked by your terminal, select the URL above.")
-				return
-			}
-			d.open = false
-			d.root.RemovePage("webAccess")
-			d.restore(focus)
-		})
-	d.modal.Box.SetBackgroundColor(tcell.ColorBlack)
-	d.modal.SetTitle(" Web UI access ").SetTitleColor(tcell.ColorWhite).SetBorderColor(tcell.ColorWhite)
+	d.modal = newStyledModal(" Web UI access ", message, []string{"Copy URL", "Close"}, func(index int, _ string) {
+		if index == 0 {
+			d.copy(d.url)
+			d.modal.SetText(message + "\n\nCopy requested. If blocked by your terminal, select the URL above.")
+			return
+		}
+		d.open = false
+		d.root.RemovePage("webAccess")
+		d.restore(focus)
+	})
 	d.root.AddPage("webAccess", d.modal, true, true)
 	d.app.SetFocus(d.modal)
 }
 
 func (d *webAccessDialog) handle(event *tcell.EventKey) *tcell.EventKey {
-	switch event.Key() {
-	case tcell.KeyTab, tcell.KeyBacktab, tcell.KeyLeft, tcell.KeyRight, tcell.KeyEnter, tcell.KeyEscape, tcell.KeyCtrlC:
-		return event
-	}
-	return nil
+	return handleModalKey(event)
 }

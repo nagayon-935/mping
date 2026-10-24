@@ -60,7 +60,8 @@ func TestSetupPortChecker_PassesBindConfig(t *testing.T) {
 }
 
 func TestSetupHTTPChecker_PassesBindConfig(t *testing.T) {
-	hc := setupHTTPChecker([]string{"http://127.0.0.1:1"}, time.Hour, 100*time.Millisecond, testBind)
+	sup := newBindTestSupervisor()
+	hc := sup.setupHTTPChecker()
 	if hc == nil {
 		t.Fatal("expected non-nil HTTPChecker for a non-empty URL list")
 	}

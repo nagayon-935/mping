@@ -192,3 +192,9 @@ func TestHandle_RestartReleasesPreviousPinger(t *testing.T) {
 		t.Error("expected the second pinger to be the live one")
 	}
 }
+
+func TestCmdKindString_CoversEditTargets(t *testing.T) {
+	if got := cmdEditTargets.String(); got != "editTargets" {
+		t.Errorf("cmdEditTargets.String() = %q, want %q", got, "editTargets")
+	}
+}

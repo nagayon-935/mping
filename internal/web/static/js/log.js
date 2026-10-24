@@ -7,7 +7,7 @@ export function createLog(dom) {
   let active = false, pending = false, events = null, error = null;
   let version = 0, rendered = -1;
   const refresh = async () => {
-    if (!active || pending || document.hidden) return;
+    if (!active || pending || document.hidden || dom.isStopped?.()) return;
     pending = true;
     try {
       const result = await fetchJSON("api/v1/events?limit=200");
@@ -17,8 +17,10 @@ export function createLog(dom) {
         version++;
       }
     } catch (err) {
-      error = err;
-      version++;
+      if (events === null) {
+        error = err;
+        version++;
+      }
     } finally {
       pending = false;
       dom.requestRender();

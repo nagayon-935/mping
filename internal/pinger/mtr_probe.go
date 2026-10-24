@@ -104,13 +104,9 @@ func (p *Pinger) GetASNInfoFor(ip string) ASNInfo {
 	return p.getASNInfo(ip)
 }
 
-// OpenHopSocket opens a send socket for TTL-limited probes to dest.
+// OpenHopSocketContext opens a send socket for TTL-limited probes to dest,
+// cancelling DNS resolution with the MTR engine's context.
 // The caller must call HopSocket.Close() when done.
-func (p *Pinger) OpenHopSocket(dest string) (*HopSocket, error) {
-	return p.OpenHopSocketContext(context.Background(), dest)
-}
-
-// OpenHopSocketContext cancels DNS resolution with the MTR engine's context.
 func (p *Pinger) OpenHopSocketContext(ctx context.Context, dest string) (*HopSocket, error) {
 	dstAddr, err := p.resolveIPAddrContext(ctx, "ip", dest)
 	if err != nil {

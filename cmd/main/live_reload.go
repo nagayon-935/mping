@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/nagayon-935/mping/internal/ui"
 )
@@ -23,44 +22,56 @@ func probeConfig(cfg config) config {
 	return cfg
 }
 
+func diffProbeConfig(oldCfg, newCfg config) []string {
+	a, b := reflect.ValueOf(probeConfig(oldCfg)), reflect.ValueOf(probeConfig(newCfg))
+	if reflect.DeepEqual(a.Interface(), b.Interface()) {
+		return nil
+	}
+	var changed []string
+	for i := 0; i < a.NumField(); i++ {
+		if !reflect.DeepEqual(reflectValue(a.Field(i)), reflectValue(b.Field(i))) {
+			changed = append(changed, settingName(a.Type().Field(i).Name))
+		}
+	}
+	return changed
+}
+
+func (s *supervisor) reconcileTargets(cfg config, specs []targetSpec) (targets []*stats.TargetStats, added []int, reused map[*stats.TargetStats]bool) {
+	type key struct{ host, ip, dscp string }
+	identity := func(spec targetSpec) key { return key{spec.Host, spec.PinnedIP, spec.DSCP} }
+	old := map[key][]*stats.TargetStats{}
+	for i, spec := range s.cfg.specs {
+		old[identity(spec)] = append(old[identity(spec)], s.cfg.targets[i])
+	}
+	targets = make([]*stats.TargetStats, len(specs))
+	added = []int{}
+	reused = map[*stats.TargetStats]bool{}
+	for i, spec := range specs {
+		entries := old[identity(spec)]
+		if len(entries) > 0 {
+			targets[i] = entries[0]
+			old[identity(spec)] = entries[1:]
+			reused[targets[i]] = true
+		} else {
+			targets[i] = buildTargetsForIteration([]targetSpec{spec}, cfg)[0]
+			s.configureTarget(targets[i])
+			if len(s.cfg.targets) > 0 {
+				targets[i].SetIfaceMTU(s.cfg.targets[0].GetViewWindow(0).IfaceMTU)
+			}
+			added = append(added, i)
+		}
+	}
+	return targets, added, reused
+}
+
 func (s *supervisor) reloadLive(cfg config, specs []targetSpec, groups []ui.TargetGroup) (bool, string, error) {
 	applied, reason := false, ""
 	err := s.editTargets(func(s *supervisor) error {
-		if !reflect.DeepEqual(probeConfig(s.cfg.config), probeConfig(cfg)) {
-			var changed []string
-			a, b := reflect.ValueOf(probeConfig(s.cfg.config)), reflect.ValueOf(probeConfig(cfg))
-			for i := 0; i < a.NumField(); i++ {
-				if !reflect.DeepEqual(reflectValue(a.Field(i)), reflectValue(b.Field(i))) {
-					changed = append(changed, settingName(a.Type().Field(i).Name))
-				}
-			}
+		if changed := diffProbeConfig(s.cfg.config, cfg); len(changed) > 0 {
 			reason = "probe settings changed: " + strings.Join(changed, ", ")
 			return nil
 		}
-		type key struct{ host, ip, dscp string }
-		identity := func(spec targetSpec) key { return key{spec.Host, spec.PinnedIP, spec.DSCP} }
-		old := map[key][]*stats.TargetStats{}
-		for i, spec := range s.cfg.specs {
-			old[identity(spec)] = append(old[identity(spec)], s.cfg.targets[i])
-		}
-		targets := make([]*stats.TargetStats, len(specs))
-		added := []int{}
-		reused := map[*stats.TargetStats]bool{}
-		for i, spec := range specs {
-			entries := old[identity(spec)]
-			if len(entries) > 0 {
-				targets[i] = entries[0]
-				old[identity(spec)] = entries[1:]
-				reused[targets[i]] = true
-			} else {
-				targets[i] = buildTargetsForIteration([]targetSpec{spec}, cfg)[0]
-				s.configureTarget(targets[i])
-				if len(s.cfg.targets) > 0 {
-					targets[i].SetIfaceMTU(s.cfg.targets[0].GetView().IfaceMTU)
-				}
-				added = append(added, i)
-			}
-		}
+		targets, added, reused := s.reconcileTargets(cfg, specs)
 		var dynamic dynamicPinger
 		if s.state == stateRunning && (len(added) > 0 || len(reused) != len(s.cfg.targets)) {
 			var ok bool
@@ -69,14 +80,9 @@ func (s *supervisor) reloadLive(cfg config, specs []targetSpec, groups []ui.Targ
 				reason = "pinger does not support live membership changes"
 				return nil
 			}
-			registered := []*stats.TargetStats{}
+			var registered []*stats.TargetStats
 			for _, i := range added {
-				var dscp *int
-				if specs[i].DSCP != "" {
-					value, _ := pinger.ParseDSCP(specs[i].DSCP)
-					dscp = &value
-				}
-				if err := dynamic.AddTarget(targets[i], specs[i].resolveAddr(), dscp); err != nil {
+				if err := s.registerDynamicTarget(dynamic, targets[i], specs[i]); err != nil {
 					for _, t := range registered {
 						dynamic.RemoveTarget(t)
 					}
@@ -89,18 +95,7 @@ func (s *supervisor) reloadLive(cfg config, specs []targetSpec, groups []ui.Targ
 			if reused[t] {
 				continue
 			}
-			if dynamic != nil {
-				s.stopTargetTrace(t)
-				if s.mtrEngine != nil {
-					s.mtrEngine.RemoveTarget(t)
-				}
-				if s.portChecker != nil {
-					s.portChecker.RemoveTarget(t)
-				}
-				dynamic.RemoveTarget(t)
-			}
-			t.RecordEvent("removed", "Target removed by configuration reload")
-			s.archiveTarget(t)
+			s.detachTargetMonitors(dynamic, t, "Target removed by configuration reload")
 		}
 		previous := s.cfg.config
 		s.cfg.config = cfg
@@ -116,19 +111,7 @@ func (s *supervisor) reloadLive(cfg config, specs []targetSpec, groups []ui.Targ
 		s.cfg.targets, s.cfg.specs, s.cfg.groups = targets, append([]targetSpec(nil), specs...), groups
 		for _, i := range added {
 			t := targets[i]
-			if s.state == stateRunning {
-				if s.cfg.traceEnabled {
-					s.startTargetTrace(s.p, t)
-				}
-				if s.mtrEngine != nil {
-					s.mtrEngine.AddTarget(t)
-				}
-				if s.portChecker != nil {
-					s.portChecker.AddTarget(t)
-				}
-			} else {
-				t.SetMeasurementState("stopped")
-			}
+			s.attachTargetMonitors(t)
 			t.RecordEvent("added", "Target added by configuration reload")
 		}
 		applied = true

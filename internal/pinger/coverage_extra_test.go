@@ -3,6 +3,7 @@ package pinger
 import (
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,9 +109,9 @@ func TestGetASNFor_Disabled(t *testing.T) {
 func TestGetASNFor_Enabled(t *testing.T) {
 	mockLookup := func(query string) ([]string, error) {
 		switch {
-		case contains(query, "origin"):
+		case strings.Contains(query, "origin"):
 			return []string{"15169 | 8.8.8.0/24 | US | arin | 1992-12-01"}, nil
-		case contains(query, "15169.asn"):
+		case strings.Contains(query, "15169.asn"):
 			return []string{"15169 | GOOGLE - Google LLC, US | 1992-12-01"}, nil
 		}
 		return nil, fmt.Errorf("not found")
@@ -128,14 +129,4 @@ func TestGetASNFor_Enabled(t *testing.T) {
 	if info.Country != "US" {
 		t.Errorf("GetASNInfoFor.Country = %q, want US", info.Country)
 	}
-}
-
-// contains is a tiny helper to avoid importing strings in this file.
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

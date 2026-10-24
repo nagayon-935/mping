@@ -80,3 +80,20 @@ func TestPaneControlsLeaveTextInputsAndMeasurementKeysAlone(t *testing.T) {
 		t.Fatal("hostname input intercepted")
 	}
 }
+
+func TestPaneControlsTabRestoresUnfocusedBorderColors(t *testing.T) {
+	c, _, graph := testPaneControls()
+	// Cycle through all panes with Tab and ensure Graph and Log retain their
+	// distinct unfocused border colors after focus leaves them.
+	for range len(c.panes) {
+		if !c.handle(tcell.NewEventKey(tcell.KeyTab, 0, tcell.ModNone)) {
+			t.Fatal("Tab not handled")
+		}
+	}
+	if got := graph.GetBorderColor(); got != vividCyan {
+		t.Errorf("graph unfocused border color = %v, want %v (vividCyan)", got, vividCyan)
+	}
+	if got := c.log.content.(*tview.TextView).GetBorderColor(); got != vividRed {
+		t.Errorf("log unfocused border color = %v, want %v (vividRed)", got, vividRed)
+	}
+}

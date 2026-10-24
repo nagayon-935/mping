@@ -104,9 +104,11 @@ func NewEngine(prober HopProber, targets []*stats.TargetStats, cfg Config) *Engi
 // Start launches one goroutine per target. Safe to call once.
 func (e *Engine) Start() {
 	ctx, cancel := context.WithCancel(context.Background())
+	e.mu.Lock()
 	e.cancel = cancel
 	e.ctx = ctx
 	e.targetRuns = make(map[*stats.TargetStats]*targetRun)
+	e.mu.Unlock()
 	for _, t := range e.targets {
 		e.AddTarget(t)
 	}
@@ -114,19 +116,18 @@ func (e *Engine) Start() {
 
 // Stop signals all goroutines to exit and waits for them to finish.
 func (e *Engine) Stop() {
-	if e.cancel != nil {
-		e.cancel()
+	e.mu.Lock()
+	cancel := e.cancel
+	e.mu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 	e.wg.Wait()
 }
 
 // runTarget is the per-target goroutine: discover hops, then continuously probe.
 func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg Config, sem chan struct{}) {
-	v := ts.GetView()
-	dest := v.IP
-	if dest == "" {
-		dest = ts.ResolveAddress()
-	}
+	dest := ts.EffectiveAddress()
 
 	sock, err := prober.OpenHopSocket(ctx, dest)
 	if err != nil {
@@ -153,11 +154,7 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 			return
 		case <-rediscoverTicker.C:
 			// Check if target IP has changed after DNS re-resolution and recreate socket
-			v := ts.GetView()
-			currentDest := v.IP
-			if currentDest == "" {
-				currentDest = ts.ResolveAddress()
-			}
+			currentDest := ts.EffectiveAddress()
 			if currentDest != dest {
 				newSock, err := prober.OpenHopSocket(ctx, currentDest)
 				if err != nil {
@@ -180,7 +177,7 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 			}
 			hopCount = newHopCount
 			if changed, desc := mtr.CheckFlap(prevIPs, time.Now()); changed && cfg.OnFlap != nil {
-				cfg.OnFlap(ts.GetView().Host, desc)
+				cfg.OnFlap(ts.DisplayName(), desc)
 			}
 		case <-probeTicker.C:
 			probe(ctx, prober, sock, mtr, dest, hopCount, cfg, sem)

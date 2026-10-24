@@ -87,7 +87,12 @@ const inspect = createInspect({
   },
 });
 
-const log = createLog({ body: $("log-body"), status: $("log-status"), requestRender: scheduleRender });
+const log = createLog({
+  body: $("log-body"),
+  status: $("log-status"),
+  requestRender: scheduleRender,
+  isStopped: () => view.state === "stopped",
+});
 
 const report = createReportDialog({
   dialog: $("report-dialog"), form: $("report-form"), format: $("report-format"),

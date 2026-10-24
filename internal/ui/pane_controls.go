@@ -14,13 +14,14 @@ const (
 )
 
 type paneControl struct {
-	title   string
-	content tview.Primitive
-	focus   tview.Primitive
-	border  func(tcell.Color)
-	folded  bool
-	weight  int
-	stub    *tview.TextView
+	title          string
+	content        tview.Primitive
+	focus          tview.Primitive
+	border         func(tcell.Color)
+	unfocusedColor tcell.Color
+	folded         bool
+	weight         int
+	stub           *tview.TextView
 	// desired returns the pane's content height (borders included) for the
 	// given layout width; fit sizes the pane to it when space allows.
 	desired func(width int) int
@@ -45,17 +46,17 @@ type paneControls struct {
 // (header included).
 func newPaneControls(app *tview.Application, layout *tview.Flex, header *tview.TextView, footer *tview.Pages, table *tview.Table, tablePane *tview.Flex, tableRows func() int, monitors []*monitorPane, graph *GraphView, log *tview.TextView) *paneControls {
 	c := &paneControls{app: app, layout: layout, header: header, footer: footer}
-	add := func(title string, content, focus tview.Primitive, weight int, border func(tcell.Color), desired func(width int) int) *paneControl {
+	add := func(title string, content, focus tview.Primitive, weight int, unfocusedColor tcell.Color, border func(tcell.Color), desired func(width int) int) *paneControl {
 		stub := tview.NewTextView().SetText(fmt.Sprintf("[+] %s  (f: Expand, z: Maximize)", title)).SetWrap(false)
 		stub.SetBackgroundColor(tcell.ColorBlack)
 		stub.SetTextColor(tcell.ColorYellow)
-		pane := &paneControl{title: title, content: content, focus: focus, weight: weight, border: border, stub: stub, desired: desired}
+		pane := &paneControl{title: title, content: content, focus: focus, weight: weight, unfocusedColor: unfocusedColor, border: border, stub: stub, desired: desired}
 		c.panes = append(c.panes, pane)
 		return pane
 	}
 	// Bordered table: a top border plus each row and the rule below it,
 	// inside the pane's own border.
-	add("Ping Monitor", tablePane, table, 3, func(color tcell.Color) { tablePane.SetBorderColor(color) },
+	add("Ping Monitor", tablePane, table, 3, tcell.ColorWhite, func(color tcell.Color) { tablePane.SetBorderColor(color) },
 		func(int) int { return 2*max(tableRows(), 1) + 3 })
 	active := 0
 	for _, pane := range monitors {
@@ -70,13 +71,13 @@ func newPaneControls(app *tview.Application, layout *tview.Flex, header *tview.T
 	for _, pane := range monitors {
 		if pane.enabled {
 			mp := pane
-			add(mp.title, mp.pane, mp.view, weight, mp.setBorderColor,
+			add(mp.title, mp.pane, mp.view, weight, tcell.ColorWhite, mp.setBorderColor,
 				func(int) int { return mp.lines + 2 })
 		}
 	}
-	c.graph = add("RTT Graphs", graph, graph, 3, func(color tcell.Color) { graph.SetBorderColor(color) },
+	c.graph = add("RTT Graphs", graph, graph, 3, vividCyan, func(color tcell.Color) { graph.SetBorderColor(color) },
 		func(width int) int { return graph.preferredHeight(width - 2) })
-	c.log = add("Log", log, log, 2, func(color tcell.Color) { log.SetBorderColor(color) },
+	c.log = add("Log", log, log, 2, vividRed, func(color tcell.Color) { log.SetBorderColor(color) },
 		func(int) int { return max(logContentLines(log), logLines) + 2 })
 	return c
 }
@@ -167,7 +168,7 @@ func (c *paneControls) current() *paneControl {
 
 func (c *paneControls) focus(pane *paneControl) {
 	for _, p := range c.panes {
-		p.border(tcell.ColorWhite)
+		p.border(p.unfocusedColor)
 		p.stub.SetTextColor(tcell.ColorYellow)
 	}
 	pane.border(tcell.ColorGreen)
