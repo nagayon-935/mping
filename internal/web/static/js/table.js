@@ -5,7 +5,7 @@ import { countCell, numCell, rttCell, textCell } from "./cells.js";
 import { columnWidthPx, setColumns } from "./columns.js";
 import { SORTS } from "./workspace.js";
 import {
-  buildSections, cellLevels, dscpName, formatPct, lossRate, matchesFilter, rowLevel,
+  buildSections, cellLevels, dscpName, formatPct, isIPLiteral, lossRate, matchesFilter, rowLevel,
   selectColumns, statusReasons,
 } from "./model.js";
 
@@ -28,12 +28,6 @@ export function targetColumns(features, targets = []) {
     { key: "ttl", label: "TTL", num: true, priority: 7 },
     features.dscp && { key: "dscp", label: "DSCP", priority: 9 },
   ].filter(Boolean);
-}
-
-function isIPLiteral(host) {
-  // Host validation already accepts only host names and IP literals. A colon
-  // identifies IPv6 (including scoped addresses); IPv4 needs four octets.
-  return host.includes(":") || (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) && host.split(".").every((n) => Number(n) <= 255));
 }
 
 function hostCell(t, features, group, focused) {

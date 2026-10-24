@@ -48,7 +48,7 @@ func (s *supervisor) loop() {
 	}
 }
 
-// do sends a command and waits for its result.
+// sendCmd dispatches a command to the supervisor loop and waits for its result.
 //
 // The command channel is deliberately never closed: completion observers or
 // other callers may still attempt a send during Shutdown. Both the send and
@@ -57,10 +57,11 @@ func (s *supervisor) loop() {
 //
 // Waiting on the reply MUST also watch s.done: without it, a caller whose
 // command was accepted just before Shutdown would block forever.
-func (s *supervisor) do(k cmdKind) error {
+func (s *supervisor) sendCmd(c command) error {
 	reply := make(chan error, 1)
+	c.reply = reply
 	select {
-	case s.cmds <- command{kind: k, reply: reply}:
+	case s.cmds <- c:
 	case <-s.done:
 		return errSupervisorShutDown
 	}
@@ -70,6 +71,11 @@ func (s *supervisor) do(k cmdKind) error {
 	case <-s.done:
 		return errSupervisorShutDown
 	}
+}
+
+// do sends a command and waits for its result.
+func (s *supervisor) do(k cmdKind) error {
+	return s.sendCmd(command{kind: k})
 }
 
 // publish republishes the values read outside the command loop. httpResults()

@@ -3,7 +3,7 @@
 import { el, statusChip } from "./dom.js";
 import { countCell, numCell, rttCell, textCell } from "./cells.js";
 import { columnWidthPx, setColumns } from "./columns.js";
-import { formatPct, hopLossLevel, selectColumns } from "./model.js";
+import { formatPct, hopLossLevel, selectColumns, targetAddress } from "./model.js";
 
 /** Hop, address, loss and latest/average RTT always show; the rest appear as
  * the pane widens, in priority order, like the target table. */
@@ -49,14 +49,15 @@ export function renderMTR(table, targets, meta, selectedId = null) {
   const groups = targets.map((target) => {
     const body = el("tbody", { attrs: { "data-target-id": String(target.id) } });
     const hops = target.mtr_hops ?? [];
-    const label = target.ip && target.ip !== target.host ? `${target.host} · ${target.ip}` : target.host;
+    const address = targetAddress(target);
+    const label = address && target.ip ? `${target.host} · ${target.ip}` : target.host;
     body.append(el("tr", { className: `mtr-target-row${target.id === selectedId ? " is-selected" : ""}` },
       el("th", { attrs: { colspan: String(columns.length), scope: "rowgroup", title: label } },
         el("div", { className: "mtr-target-label" },
           el("span", { className: "mtr-target-kind", text: "Target" }),
           el("strong", { className: "cell-text", text: target.host }),
           el("span", { className: "mtr-target-count", text: hops.length ? `${hops.length} hops` : "Waiting" }),
-          el("span", { className: "mtr-target-address cell-text", text: target.ip || "Resolving address…" })))));
+          address && el("span", { className: "mtr-target-address cell-text", text: address })))));
     if (!hops.length) body.append(el("tr", {}, el("td", { className: "mtr-waiting", text: "Waiting for hop replies. No MTR route data has been received yet.", attrs: { colspan: String(columns.length) } })));
     for (const hop of hops) {
       body.append(el("tr", {}, ...columns.map((c) => {

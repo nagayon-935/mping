@@ -68,36 +68,29 @@ func writeJSONSnapshot(path string, targets []*stats.TargetStats, httpResults []
 	})
 }
 
-func determineSourceIPs(cfg config, hosts []targetSpec) (string, string, string, error) {
-	bindIP := ""
-	displaySourceIPv4 := ""
-	displaySourceIPv6 := ""
+func classifySourceIP(bindIP string) (bind, v4, v6 string) {
+	if ip := net.ParseIP(bindIP); ip != nil && ip.To4() == nil {
+		return bindIP, "", bindIP
+	}
+	return bindIP, bindIP, ""
+}
 
+func determineSourceIPs(cfg config, hosts []targetSpec) (string, string, string, error) {
 	if cfg.sourceAddr != "" {
-		bindIP = cfg.sourceAddr
-		if ip := net.ParseIP(bindIP); ip != nil && ip.To4() == nil {
-			displaySourceIPv6 = bindIP
-		} else {
-			displaySourceIPv4 = bindIP
-		}
-		return bindIP, displaySourceIPv4, displaySourceIPv6, nil
+		bind, v4, v6 := classifySourceIP(cfg.sourceAddr)
+		return bind, v4, v6, nil
 	}
 	if cfg.ifaceName != "" {
 		ip, err := getInterfaceIP(cfg.ifaceName, cfg.ipv6Only)
 		if err != nil {
 			return "", "", "", err
 		}
-		bindIP = ip
-		if parsed := net.ParseIP(bindIP); parsed != nil && parsed.To4() == nil {
-			displaySourceIPv6 = bindIP
-		} else {
-			displaySourceIPv4 = bindIP
-		}
-		return bindIP, displaySourceIPv4, displaySourceIPv6, nil
+		bind, v4, v6 := classifySourceIP(ip)
+		return bind, v4, v6, nil
 	}
 
-	displaySourceIPv4, displaySourceIPv6 = detectAutoSourceIPs(hosts)
-	return bindIP, displaySourceIPv4, displaySourceIPv6, nil
+	displaySourceIPv4, displaySourceIPv6 := detectAutoSourceIPs(hosts)
+	return "", displaySourceIPv4, displaySourceIPv6, nil
 }
 
 func setupLogger(path string) (*os.File, error) {
@@ -223,15 +216,6 @@ func setupPortChecker(targets []*stats.TargetStats, portSpecs []pinger.PortSpec,
 	pc := pinger.NewPortChecker(targets, portSpecs, interval, timeout, bind)
 	pc.Start()
 	return pc
-}
-
-func setupHTTPChecker(urls []string, interval, timeout time.Duration, bind pinger.BindConfig) *pinger.HTTPChecker {
-	if len(urls) == 0 {
-		return nil
-	}
-	hc := pinger.NewHTTPChecker(urls, interval, timeout, bind)
-	hc.Start()
-	return hc
 }
 
 func run(args []string, out io.Writer, errOut io.Writer) int {
@@ -403,6 +387,9 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		webSrc.Set(newWebProvider(sup, currentCfg, currentHosts, len(portSpecs), logCh))
 		if webSrv != nil {
 			preLogs = append(preLogs, webAnnouncement(webSrv, showToken))
+			if iteration == 0 && showToken {
+				openBrowser(webSrv.ControlURL())
+			}
 		}
 
 		// Each natural count completion sends a notification, including after

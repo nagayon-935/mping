@@ -107,10 +107,14 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 
 	urlW := httpURLColW(results, availW, compact)
 
+	views := make([]stats.HTTPCheckView, len(results))
+	for i, r := range results {
+		views[i] = r.GetView()
+	}
+
 	// Detect status changes and log them.
 	if lastStatuses != nil && errorLogs != nil {
-		for _, r := range results {
-			v := r.GetView()
+		for _, v := range views {
 			subject := fmt.Sprintf("[white]HTTP %s:[white]", tview.Escape(v.URL))
 			logStatusChangeIfNeeded(lastStatuses, v.URL, v.Status, "Up", subject, errorLogs, errorView)
 		}
@@ -159,8 +163,7 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 	}
 
 	var groups [][][]boxCell
-	for _, r := range results {
-		v := r.GetView()
+	for _, v := range views {
 		cells := make([]boxCell, len(cols))
 		for i, c := range cols {
 			cells[i] = c.cell(v)

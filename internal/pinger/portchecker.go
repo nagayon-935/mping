@@ -121,11 +121,11 @@ func (pc *PortChecker) loopContext(ctx context.Context, t *stats.TargetStats, sp
 
 	// Defer the first check until the target IP is resolved (or we time out),
 	// so the user sees a real Open/Closed/Filtered result on the first tick.
-	if t.GetView().IP == "" {
+	if t.CurrentIP() == "" {
 		waitTicker := time.NewTicker(100 * time.Millisecond)
 		defer waitTicker.Stop()
 		deadline := time.Now().Add(maxDNSWait)
-		for t.GetView().IP == "" && time.Now().Before(deadline) {
+		for t.CurrentIP() == "" && time.Now().Before(deadline) {
 			select {
 			case <-ctx.Done():
 				return
@@ -151,7 +151,7 @@ func (pc *PortChecker) checkContext(ctx context.Context, t *stats.TargetStats, s
 	if ctx.Err() != nil {
 		return
 	}
-	ip := t.GetView().IP
+	ip := t.CurrentIP()
 	if ip == "" {
 		return
 	}
@@ -168,7 +168,7 @@ func (pc *PortChecker) checkContext(ctx context.Context, t *stats.TargetStats, s
 	if ctx.Err() != nil {
 		return // shutdown is not a failed health check
 	}
-	previous := result.GetView().Status
+	previous := result.CurrentStatus()
 	result.SetResult(status, rtt)
 	if previous != status {
 		t.RecordEvent("port", fmt.Sprintf("%d/%s: %s → %s", spec.Port, spec.Protocol, previous, status))
@@ -244,9 +244,17 @@ type portTargetRun struct {
 }
 
 func (pc *PortChecker) launchTarget(t *stats.TargetStats, results []*stats.PortCheckResult) {
+	pc.targetMu.Lock()
+	if pc.ctx == nil {
+		pc.targetMu.Unlock()
+		return
+	}
+	if _, exists := pc.targetRuns[t]; exists {
+		pc.targetMu.Unlock()
+		return
+	}
 	ctx, cancel := context.WithCancel(pc.ctx)
 	run := &portTargetRun{cancel: cancel, done: make(chan struct{})}
-	pc.targetMu.Lock()
 	pc.targetRuns[t] = run
 	pc.targetMu.Unlock()
 	pc.wg.Add(1)

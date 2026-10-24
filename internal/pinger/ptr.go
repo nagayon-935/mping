@@ -1,7 +1,6 @@
 package pinger
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -72,35 +71,7 @@ func (p *Pinger) getPTR(ipStr string) string {
 // lookupAddrBounded runs cancellable DNS on the calling goroutine. Only
 // explicitly injected context-free hooks use the legacy bounded adapter.
 func (p *Pinger) lookupAddrBounded(ipStr string) ([]string, error) {
-	if p.stopped() {
-		return nil, errPingerStopped
-	}
-	if p.lookupAddrContext != nil {
-		ctx, cancel := p.lookupContext(context.Background(), ptrLookupTimeout)
-		defer cancel()
-		names, err := p.lookupAddrContext(ctx, ipStr)
-		if p.stopped() {
-			return nil, errPingerStopped
-		}
-		return names, err
-	}
-	type result struct {
-		names []string
-		err   error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		names, err := p.lookupAddr(ipStr)
-		ch <- result{names, err}
-	}()
-	select {
-	case r := <-ch:
-		return r.names, r.err
-	case <-p.done:
-		return nil, errPingerStopped
-	case <-time.After(ptrLookupTimeout):
-		return nil, fmt.Errorf("ptr lookup for %q timed out after %s", ipStr, ptrLookupTimeout)
-	}
+	return lookupBounded(p, ptrLookupTimeout, "ptr", ipStr, p.lookupAddrContext, p.lookupAddr)
 }
 
 // annotateHopIP formats a traceroute/MTR-style hop responder IP, optionally

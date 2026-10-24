@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"runtime"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/report"
@@ -13,8 +15,39 @@ import (
 	"github.com/rivo/tview"
 )
 
-// webStart is a seam for tests, mirroring uiRun.
-var webStart = web.Start
+// webStart and openBrowser are seams for tests, mirroring uiRun.
+var (
+	webStart    = web.Start
+	openBrowser = defaultOpenBrowser
+)
+
+// defaultOpenBrowser launches the user's default browser on targetURL in the
+// background (best-effort). When mping runs under sudo or setuid-root,
+// privileges are dropped so the browser is never started as root.
+func defaultOpenBrowser(targetURL string) {
+	_ = asRealUser(func() error {
+		var cmd *exec.Cmd
+		switch runtime.GOOS {
+		case "darwin":
+			cmd = exec.Command("open", targetURL)
+		case "windows":
+			cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", targetURL)
+		default:
+			if os.Geteuid() == 0 {
+				if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+					cmd = exec.Command("sudo", "-u", sudoUser, "xdg-open", targetURL)
+					break
+				}
+			}
+			cmd = exec.Command("xdg-open", targetURL)
+		}
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		go func() { _ = cmd.Wait() }()
+		return nil
+	})
+}
 
 // startWebUI starts the dashboard when --web is set, returning a nil server
 // when it is off. ok=false means it was requested but could not start; the
@@ -111,7 +144,7 @@ func (c webController) DeleteTarget(id uint64) error {
 	host := fmt.Sprintf("#%d", id)
 	for _, t := range c.sup.liveTargets().Targets {
 		if t.ID == id {
-			host = t.GetView().Host
+			host = t.DisplayName()
 		}
 	}
 	if err := c.sup.deleteTargetID(id); err != nil {

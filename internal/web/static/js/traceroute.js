@@ -1,4 +1,5 @@
 import { el, statusChip } from "./dom.js";
+import { targetAddress } from "./model.js";
 
 /** TraceRoute exports IP(ASxxx Organization) PTR-name. Keep the parts
  * separate so optional annotations also follow the current feature flags. */
@@ -41,12 +42,18 @@ export function renderTraceroutes(container, targets, features, selectedId = nul
   if (!targets.length) {
     container.replaceChildren(el("p", { className: "empty", text: "No targets match the filter." }));
   } else {
-    container.replaceChildren(...targets.map(target => el("section", {
-      className: `trace-target${target.id === selectedId ? " is-selected" : ""}`, attrs: { "data-target-id": String(target.id), "aria-label": target.host },
-    }, el("div", { className: "trace-target-head" },
-      el("strong", { className: "cell-text", text: target.host, attrs: { title: target.host } }),
-      el("span", { className: "mono cell-text", text: target.ip || "Resolving address…", attrs: { title: target.ip || "" } })),
-    tracePath(target, features))));
+    container.replaceChildren(...targets.map((target) => {
+      const address = targetAddress(target);
+      return el("section", {
+        className: `trace-target${target.id === selectedId ? " is-selected" : ""}`,
+        attrs: { "data-target-id": String(target.id), "aria-label": target.host },
+      }, el("div", { className: "trace-target-head" },
+        el("span", { className: "mtr-target-kind", text: "Target" }),
+        el("strong", { className: "cell-text", text: target.host, attrs: { title: target.host } }),
+        address && el("span", { className: "trace-target-address mono cell-text", text: address, attrs: { title: target.ip || "" } })),
+      tracePath(target, features));
+    }));
   }
   container.scrollTop = top;
 }
+

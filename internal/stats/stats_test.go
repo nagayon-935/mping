@@ -540,3 +540,39 @@ func TestTargetStats_SetPortResults(t *testing.T) {
 		t.Errorf("PortResults[0]: got %v, want Port 80 Open", view.PortResults[0])
 	}
 }
+
+func TestLightweightReadAccessors(t *testing.T) {
+	tgt := NewTargetStats("Web(example.com)")
+	tgt.SetDisplayName("Web(example.com)")
+	tgt.SetResolveAddress("example.com")
+	if got := tgt.DisplayName(); got != "Web(example.com)" {
+		t.Fatalf("DisplayName() = %q, want %q", got, "Web(example.com)")
+	}
+	if got := tgt.CurrentIP(); got != "" {
+		t.Fatalf("CurrentIP() before SetIP = %q, want empty", got)
+	}
+	if got := tgt.EffectiveAddress(); got != "example.com" {
+		t.Fatalf("EffectiveAddress() before SetIP = %q, want %q", got, "example.com")
+	}
+
+	tgt.SetIP("93.184.216.34")
+	if got := tgt.CurrentIP(); got != "93.184.216.34" {
+		t.Fatalf("CurrentIP() after SetIP = %q, want %q", got, "93.184.216.34")
+	}
+	host, ip := tgt.HostAndIP()
+	if host != "Web(example.com)" || ip != "93.184.216.34" {
+		t.Fatalf("HostAndIP() = (%q, %q), want (\"Web(example.com)\", \"93.184.216.34\")", host, ip)
+	}
+	if got := tgt.EffectiveAddress(); got != "93.184.216.34" {
+		t.Fatalf("EffectiveAddress() after SetIP = %q, want %q", got, "93.184.216.34")
+	}
+
+	r := &PortCheckResult{Port: 443, Protocol: "tcp", Status: "Checking..."}
+	if got := r.CurrentStatus(); got != "Checking..." {
+		t.Fatalf("CurrentStatus() = %q, want %q", got, "Checking...")
+	}
+	r.SetResult("Open", 3*time.Millisecond)
+	if got := r.CurrentStatus(); got != "Open" {
+		t.Fatalf("CurrentStatus() after SetResult = %q, want %q", got, "Open")
+	}
+}

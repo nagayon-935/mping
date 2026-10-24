@@ -11,69 +11,6 @@ const (
 	jitterDivisor = 16   // RFC 1889 §A.8 smoothing factor: J = J + (|D| - J) / 16
 )
 
-// PortCheckResult holds the result of a single TCP/UDP port check.
-type PortCheckResult struct {
-	Port        int
-	Protocol    string // "tcp" or "udp"
-	Status      string // "Open", "Closed", "Filtered", "Open|Filtered", "Error"
-	RTT         time.Duration
-	OpenCount   int
-	ClosedCount int
-	LastChange  time.Time
-
-	// RTT statistics and ring buffer for Open responses only.
-	rtt rttAccumulator
-
-	mu sync.RWMutex
-}
-
-func (r *PortCheckResult) SetResult(status string, rtt time.Duration) {
-	defer bumpGeneration()
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if status != r.Status {
-		r.LastChange = time.Now()
-	}
-	r.Status = status
-	r.RTT = rtt
-	switch status {
-	case "Open":
-		r.OpenCount++
-		r.recordRTT(rtt)
-	case "Closed", "Filtered", "Open|Filtered":
-		r.ClosedCount++
-	}
-}
-
-// recordRTT updates RTT statistics and the ring buffer. Must be called with mu held.
-func (r *PortCheckResult) recordRTT(rtt time.Duration) {
-	if rtt <= 0 {
-		return
-	}
-	r.rtt.record(rtt)
-	r.rtt.appendHistory(rtt, historySize)
-}
-
-// GetView returns a thread-safe snapshot including RTT statistics and history.
-func (r *PortCheckResult) GetView() PortCheckView {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return PortCheckView{
-		Port:        r.Port,
-		Protocol:    r.Protocol,
-		Status:      r.Status,
-		RTT:         r.RTT,
-		MinRTT:      r.rtt.min,
-		AvgRTT:      r.rtt.avg(),
-		MaxRTT:      r.rtt.max,
-		StdDev:      r.rtt.stddev(),
-		History:     r.rtt.historySnapshot(),
-		OpenCount:   r.OpenCount,
-		ClosedCount: r.ClosedCount,
-		LastChange:  r.LastChange,
-	}
-}
-
 // TargetStats holds the statistics for a single ping target.
 var targetIDs atomic.Uint64
 
@@ -149,77 +86,6 @@ type TargetStats struct {
 	eventSink        func(Event)
 
 	mu sync.RWMutex
-}
-
-// PortCheckView is a read-only snapshot of a single port check result.
-type PortCheckView struct {
-	Port        int
-	Protocol    string
-	Status      string
-	RTT         time.Duration // Last RTT value
-	MinRTT      time.Duration
-	AvgRTT      time.Duration
-	MaxRTT      time.Duration
-	StdDev      time.Duration   // Population stddev, via Welford's online algorithm
-	History     []time.Duration // ordered ring buffer snapshot for RTT graph
-	OpenCount   int
-	ClosedCount int
-	LastChange  time.Time
-}
-
-// reconstructHistory rebuilds an ordered slice from a ring buffer.
-// buf is the raw buffer, idx is the write pointer, length is the count of valid entries.
-func reconstructHistory(buf []time.Duration, idx, length int) []time.Duration {
-	if length == 0 || buf == nil {
-		return nil
-	}
-	size := len(buf)
-	if length < size {
-		out := make([]time.Duration, length)
-		copy(out, buf[:length])
-		return out
-	}
-	start := idx % size
-	out := make([]time.Duration, size)
-	copy(out, buf[start:])
-	copy(out[size-start:], buf[:start])
-	return out
-}
-
-// reconstructHistoryWindow returns only the trailing min(n, length) entries
-// (oldest-to-newest order, same convention as reconstructHistory), without
-// allocating or copying the full ring first. Used by callers (e.g. the RTT
-// graph) that only ever need a fixed trailing window rather than the whole
-// multi-thousand-entry history — historySize is sized for the longest
-// possible display window, but most callers need far fewer points.
-func reconstructHistoryWindow(buf []time.Duration, idx, length, n int) []time.Duration {
-	if length == 0 || buf == nil || n <= 0 {
-		return nil
-	}
-	size := len(buf)
-	effLen := length
-	if n < effLen {
-		effLen = n
-	}
-	if length < size {
-		// No wraparound yet: buf[:length] is already chronological order.
-		out := make([]time.Duration, effLen)
-		copy(out, buf[length-effLen:length])
-		return out
-	}
-	// Full ring buffer: idx%size is both the next-write position and the
-	// oldest entry's position. The trailing effLen entries occupy the
-	// effLen slots immediately before idx%size, wrapping at most once.
-	windowStart := ((idx-effLen)%size + size) % size
-	out := make([]time.Duration, effLen)
-	if windowStart+effLen <= size {
-		copy(out, buf[windowStart:windowStart+effLen])
-	} else {
-		first := size - windowStart
-		copy(out, buf[windowStart:size])
-		copy(out[first:], buf[:effLen-first])
-	}
-	return out
 }
 
 // TargetView represents a read-only snapshot of the stats for UI rendering.
@@ -593,6 +459,45 @@ func (t *TargetStats) SetResolveAddress(address string) {
 func (t *TargetStats) ResolveAddress() string {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+	if t.resolveAddress != "" {
+		return t.resolveAddress
+	}
+	return t.Host
+}
+
+// DisplayName returns the target's display label (matching TargetView.Host)
+// without copying RTT history or auxiliary monitor views.
+func (t *TargetStats) DisplayName() string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.displayNameLocked()
+}
+
+// CurrentIP returns the target's currently resolved IP address without
+// copying RTT history or auxiliary monitor views.
+func (t *TargetStats) CurrentIP() string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.IP
+}
+
+// HostAndIP returns the target's display label and currently resolved IP
+// under a single read lock without copying RTT history or auxiliary views.
+func (t *TargetStats) HostAndIP() (host, ip string) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.displayNameLocked(), t.IP
+}
+
+// EffectiveAddress returns the resolved IP when available, falling back to
+// ResolveAddress() so auxiliary probes (traceroute, MTR) can start before or
+// after the first DNS resolution completes without calling GetView().
+func (t *TargetStats) EffectiveAddress() string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if t.IP != "" {
+		return t.IP
+	}
 	if t.resolveAddress != "" {
 		return t.resolveAddress
 	}

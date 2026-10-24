@@ -13,6 +13,7 @@ import (
 
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
+	ui "github.com/nagayon-935/mping/internal/ui"
 	"github.com/spf13/pflag"
 )
 
@@ -165,15 +166,20 @@ func printCheckedConfig(out io.Writer, sp startupParams) error {
 			"http_header_names": headers,
 			"health_failures":   cfg.healthFailures, "health_recoveries": cfg.healthRecoveries,
 			"health_window": cfg.healthWindow.String(),
-			"thresholds": map[string]any{
-				"rtt_warn_ms":    durationMs(cfg.thresholds.RTTWarn),
-				"rtt_crit_ms":    durationMs(cfg.thresholds.RTTCrit),
-				"jitter_warn_ms": durationMs(cfg.thresholds.JitterWarn),
-				"jitter_crit_ms": durationMs(cfg.thresholds.JitterCrit),
-				"loss_warn_pct":  cfg.thresholds.LossWarn, "loss_crit_pct": cfg.thresholds.LossCrit,
-			},
-			"web": cfg.webEnabled, "web_port": cfg.webPort, "no_tui": cfg.noTUI,
+			"thresholds":    thresholdsMap(cfg.thresholds),
+			"web":           cfg.webEnabled, "web_port": cfg.webPort, "no_tui": cfg.noTUI,
 			"output": cfg.outputFile, "json_output": cfg.jsonOutputFile, "event_output": cfg.eventOutput,
 		},
 	})
+}
+
+func thresholdsMap(th ui.Thresholds) map[string]float64 {
+	return map[string]float64{
+		"rtt_warn_ms":    durationMs(th.RTTWarn),
+		"rtt_crit_ms":    durationMs(th.RTTCrit),
+		"jitter_warn_ms": durationMs(th.JitterWarn),
+		"jitter_crit_ms": durationMs(th.JitterCrit),
+		"loss_warn_pct":  th.LossWarn,
+		"loss_crit_pct":  th.LossCrit,
+	}
 }

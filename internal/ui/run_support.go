@@ -86,7 +86,7 @@ func wireHostInputs(
 // for reading attention.
 func startRefreshLoop(
 	app *tview.Application, tr *tableRenderer, footer *tview.TextView,
-	interval time.Duration, updateTickerCh chan time.Duration,
+	interval time.Duration,
 	externalLogCh <-chan string, externalCloseCh <-chan struct{}, doneCh chan struct{},
 	vs *viewState,
 	session *uiSession,
@@ -104,12 +104,6 @@ func startRefreshLoop(
 
 		for {
 			select {
-			case newInterval, open := <-updateTickerCh:
-				if !open {
-					updateTickerCh = nil
-					continue
-				}
-				ticker.Reset(refreshTickInterval(newInterval))
 			case <-ticker.C:
 				now := time.Now()
 				gen := stats.Generation()

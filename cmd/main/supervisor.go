@@ -127,6 +127,8 @@ func (k cmdKind) String() string {
 		return "probesFinished"
 	case cmdResetStats:
 		return "resetStats"
+	case cmdEditTargets:
+		return "editTargets"
 	}
 	return "unknown"
 }
@@ -347,7 +349,7 @@ func (s *supervisor) handle(c command) error {
 		}
 		s.state = stateTerminated
 		for _, t := range s.cfg.targets {
-			if t.GetView().MeasurementState != "finished" {
+			if t.MeasurementState() != "finished" {
 				t.SetMeasurementState("stopped")
 			}
 		}
@@ -390,42 +392,46 @@ func (s *supervisor) startAll() error {
 		t.RecordEvent("started", "Measurements started")
 	}
 	if s.cfg.countLimited {
-		s.observers.Add(1)
-		go func() {
-			defer s.observers.Done()
-			notify := func() bool {
-				select {
-				case s.cmds <- command{kind: cmdProbesFinished, pinger: next}:
-					return true
-				case <-s.done:
-					return false
-				}
-			}
-			if dynamic, ok := next.(dynamicPinger); ok {
-				for {
-					select {
-					case <-dynamic.WorkerEvents():
-						if !notify() {
-							return
-						}
-					case <-s.done:
-						return
-					case <-dynamic.Done():
-						return
-					}
-				}
-			} else {
-				next.WaitWorkers()
-				notify()
-			}
-		}()
+		s.startCountObserver(next)
 	}
 	return nil
 }
 
+func (s *supervisor) startCountObserver(next pingerController) {
+	s.observers.Add(1)
+	go func() {
+		defer s.observers.Done()
+		notify := func() bool {
+			select {
+			case s.cmds <- command{kind: cmdProbesFinished, pinger: next}:
+				return true
+			case <-s.done:
+				return false
+			}
+		}
+		if dynamic, ok := next.(dynamicPinger); ok {
+			for {
+				select {
+				case <-dynamic.WorkerEvents():
+					if !notify() {
+						return
+					}
+				case <-s.done:
+					return
+				case <-dynamic.Done():
+					return
+				}
+			}
+		} else {
+			next.WaitWorkers()
+			notify()
+		}
+	}()
+}
+
 func (s *supervisor) configureTarget(t *stats.TargetStats) {
 	t.ConfigureHealth(healthPolicy(s.cfg.config))
-	id, host := t.ID, t.GetView().Host
+	id, host := t.ID, t.DisplayName()
 	sink, logCh := s.cfg.eventSink, s.cfg.logCh
 	t.SetEventSink(func(e stats.Event) {
 		if sink != nil {

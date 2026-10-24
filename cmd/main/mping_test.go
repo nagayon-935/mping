@@ -2167,7 +2167,8 @@ func TestWriteJSONSnapshot_WriteError(t *testing.T) {
 // ---- setupHTTPChecker ----
 
 func TestSetupHTTPChecker_NoURLs(t *testing.T) {
-	hc := setupHTTPChecker(nil, time.Second, time.Second, pinger.BindConfig{})
+	sup := newSupervisor(supervisorConfig{interval: time.Second, timeout: time.Second})
+	hc := sup.setupHTTPChecker()
 	if hc != nil {
 		t.Error("expected nil HTTPChecker for empty URL list")
 	}
@@ -2176,11 +2177,17 @@ func TestSetupHTTPChecker_NoURLs(t *testing.T) {
 func TestSetupHTTPChecker_WithURLs(t *testing.T) {
 	srv := &localHTTPServer{}
 	srv.start(t)
-	hc := setupHTTPChecker([]string{srv.url()}, 100*time.Millisecond, 100*time.Millisecond, pinger.BindConfig{})
+	sup := newSupervisor(supervisorConfig{
+		httpURLs: []string{srv.url()},
+		interval: 100 * time.Millisecond,
+		timeout:  100 * time.Millisecond,
+	})
+	hc := sup.setupHTTPChecker()
 	if hc == nil {
 		t.Fatal("expected non-nil HTTPChecker for non-empty URL list")
 	}
 	hc.Stop()
+	hc.Wait()
 }
 
 // localHTTPServer is a minimal test HTTP server.

@@ -225,14 +225,14 @@ export function summaryItems(s) {
 
 /**
  * Read-only badge text and tooltip. The token is stored per origin and the
- * Log pane links to 127.0.0.1, so a page opened under another host name
- * (e.g. localhost) never sees it.
+ * Log pane links to localhost, so a page opened under another host name
+ * (e.g. 127.0.0.1) never sees it.
  */
 export function readOnlyHint(hostname) {
   const base = "To enable browser controls, press b in mping's TUI, choose Copy URL, and open that link";
-  return hostname === "127.0.0.1"
+  return hostname === "localhost"
     ? { text: "Read-only", title: `${base}.` }
-    : { text: "Read-only", title: `${base} (it uses 127.0.0.1; open that address instead of ${hostname}).` };
+    : { text: "Read-only", title: `${base} (it uses localhost; open that address instead of ${hostname}).` };
 }
 
 /**
@@ -255,3 +255,27 @@ export function selectColumns(columns, widthOf, available) {
   }
   return columns.filter((c) => chosen.has(c));
 }
+
+/** True when `host` is an IPv4 or IPv6 literal (including scoped IPv6). */
+export function isIPLiteral(host) {
+  if (typeof host !== "string" || host === "") return false;
+  return host.includes(":") || (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) && host.split(".").every((n) => Number(n) <= 255));
+}
+
+/**
+ * Secondary address line for route headers (MTR and Traceroute).
+ * Returns null when the target's host label is already an IP literal or
+ * already displays the resolved IP (including --resolve-all "host (ip)" labels).
+ */
+export function targetAddress(target) {
+  const host = (target?.host ?? "").trim();
+  const ip = (target?.ip ?? "").trim();
+  if (isIPLiteral(host)) return null;
+  if (ip) {
+    const hostLower = host.toLowerCase();
+    const ipLower = ip.toLowerCase();
+    if (hostLower === ipLower || hostLower.endsWith(`(${ipLower})`)) return null;
+  }
+  return ip || "Resolving address…";
+}
+

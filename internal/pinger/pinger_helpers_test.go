@@ -68,3 +68,7 @@ func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.
 func (pc *PortChecker) check(t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
 	pc.checkContext(pc.ctx, t, spec, result)
 }
+
+func (p *Pinger) OpenHopSocket(dest string) (*HopSocket, error) {
+	return p.OpenHopSocketContext(context.Background(), dest)
+}

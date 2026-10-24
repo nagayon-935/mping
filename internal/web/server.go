@@ -134,7 +134,10 @@ func start(opts Options, token string) (*Server, error) {
 func (s *Server) Addr() string { return s.addr }
 
 // URL is the read-only address to open in a browser.
-func (s *Server) URL() string { return "http://" + s.addr + "/" }
+func (s *Server) URL() string {
+	_, port, _ := net.SplitHostPort(s.addr)
+	return "http://localhost:" + port + "/"
+}
 
 // ControlURL is URL plus the per-launch control token. The token rides in
 // the fragment, which browsers never send to the server or log in requests;
