@@ -21,16 +21,17 @@ import (
 	"github.com/nagayon-935/mping/internal/web"
 )
 
-// stubRunSeams swaps newPinger/uiRun/webStart for the duration of a test.
+// stubRunSeams swaps newPinger/uiRun/webStart/openBrowser for the duration of a test.
 // webStart is wrapped so the real server binds a kernel-chosen port instead
 // of the configured one, keeping tests independent of what is free locally.
 func stubRunSeams(t *testing.T, ui func(ui.RunOptions) error) (started func() *web.Server) {
 	t.Helper()
-	origPinger, origUI, origWeb := newPinger, uiRun, webStart
-	t.Cleanup(func() { newPinger, uiRun, webStart = origPinger, origUI, origWeb })
+	origPinger, origUI, origWeb, origBrowser := newPinger, uiRun, webStart, openBrowser
+	t.Cleanup(func() { newPinger, uiRun, webStart, openBrowser = origPinger, origUI, origWeb, origBrowser })
 
 	newPinger = func([]*stats.TargetStats, pinger.Options) pingerController { return &fakePinger{} }
 	uiRun = ui
+	openBrowser = func(string) {}
 	var srv *web.Server
 	webStart = func(opts web.Options) (*web.Server, error) {
 		opts.Port = 0
@@ -46,6 +47,7 @@ func TestRunWithWebServesLiveSnapshotWhileUIRuns(t *testing.T) {
 	var status int
 	var snap web.SnapshotResponse
 	var logs []string
+	var openedURL string
 	started = stubRunSeams(t, func(opts ui.RunOptions) error {
 		logs = opts.InitialLogs
 		if opts.WebControlURL != started().ControlURL() {
@@ -63,6 +65,7 @@ func TestRunWithWebServesLiveSnapshotWhileUIRuns(t *testing.T) {
 		}
 		return nil
 	})
+	openBrowser = func(u string) { openedURL = u }
 
 	var out, errOut bytes.Buffer
 	code := run([]string{"-S", "10.0.0.2", "--web", "--dscp", "EF", "example.com"}, &out, &errOut)
@@ -84,6 +87,9 @@ func TestRunWithWebServesLiveSnapshotWhileUIRuns(t *testing.T) {
 	}
 	if !containsSubstring(logs, "Web UI: "+started().URL()) {
 		t.Errorf("initial logs %q do not announce %s", logs, started().URL())
+	}
+	if openedURL != started().ControlURL() {
+		t.Errorf("openedURL = %q, want %q", openedURL, started().ControlURL())
 	}
 }
 
@@ -548,7 +554,7 @@ func TestWebAnnouncementIsATimestampedLogLine(t *testing.T) {
 	}
 	defer srv.Close()
 
-	want := regexp.MustCompile(`^\[\d{2}:\d{2}:\d{2}\] Web UI: http://127\.0\.0\.1:\d+/`)
+	want := regexp.MustCompile(`^\[\d{2}:\d{2}:\d{2}\] Web UI: http://localhost:\d+/`)
 	for _, showToken := range []bool{true, false} {
 		line := webAnnouncement(srv, showToken)
 		if got := plainLogLine(line); !want.MatchString(got) {

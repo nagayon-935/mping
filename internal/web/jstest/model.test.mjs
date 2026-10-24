@@ -210,10 +210,10 @@ test("summaryItems lists waiting targets only when there are some", () => {
   assert.deepEqual(summaryItems({ total: 2, ok: 1, warn: 0, crit: 0, pending: 1 }), [[2, "targets"], [1, "OK"], [0, "warn"], [0, "crit"], [1, "waiting"]]);
 });
 
-test("readOnlyHint explains the 127.0.0.1 origin when opened via another host name", () => {
-  assert.match(readOnlyHint("127.0.0.1").title, /press b.*Copy URL/);
-  assert.doesNotMatch(readOnlyHint("127.0.0.1").title, /instead/);
-  assert.match(readOnlyHint("localhost").title, /127\.0\.0\.1/);
+test("readOnlyHint explains the localhost origin when opened via another host name", () => {
+  assert.match(readOnlyHint("localhost").title, /press b.*Copy URL/);
+  assert.doesNotMatch(readOnlyHint("localhost").title, /instead/);
+  assert.match(readOnlyHint("127.0.0.1").title, /localhost/);
   assert.match(readOnlyHint("[::1]").text, /Read-only/);
 });
 

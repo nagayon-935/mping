@@ -387,6 +387,9 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		webSrc.Set(newWebProvider(sup, currentCfg, currentHosts, len(portSpecs), logCh))
 		if webSrv != nil {
 			preLogs = append(preLogs, webAnnouncement(webSrv, showToken))
+			if iteration == 0 && showToken {
+				openBrowser(webSrv.ControlURL())
+			}
 		}
 
 		// Each natural count completion sends a notification, including after

@@ -342,7 +342,7 @@ func TestURLUsesPortChosenByKernel(t *testing.T) {
 	if port == 0 {
 		t.Fatal("Addr still reports port 0")
 	}
-	if want := "http://127.0.0.1:" + portStr + "/"; s.URL() != want {
+	if want := "http://localhost:" + portStr + "/"; s.URL() != want {
 		t.Fatalf("URL = %q, want %q", s.URL(), want)
 	}
 }

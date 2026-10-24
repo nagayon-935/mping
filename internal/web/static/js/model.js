@@ -225,14 +225,14 @@ export function summaryItems(s) {
 
 /**
  * Read-only badge text and tooltip. The token is stored per origin and the
- * Log pane links to 127.0.0.1, so a page opened under another host name
- * (e.g. localhost) never sees it.
+ * Log pane links to localhost, so a page opened under another host name
+ * (e.g. 127.0.0.1) never sees it.
  */
 export function readOnlyHint(hostname) {
   const base = "To enable browser controls, press b in mping's TUI, choose Copy URL, and open that link";
-  return hostname === "127.0.0.1"
+  return hostname === "localhost"
     ? { text: "Read-only", title: `${base}.` }
-    : { text: "Read-only", title: `${base} (it uses 127.0.0.1; open that address instead of ${hostname}).` };
+    : { text: "Read-only", title: `${base} (it uses localhost; open that address instead of ${hostname}).` };
 }
 
 /**
