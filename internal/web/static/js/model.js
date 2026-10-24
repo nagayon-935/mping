@@ -255,3 +255,27 @@ export function selectColumns(columns, widthOf, available) {
   }
   return columns.filter((c) => chosen.has(c));
 }
+
+/** True when `host` is an IPv4 or IPv6 literal (including scoped IPv6). */
+export function isIPLiteral(host) {
+  if (typeof host !== "string" || host === "") return false;
+  return host.includes(":") || (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) && host.split(".").every((n) => Number(n) <= 255));
+}
+
+/**
+ * Secondary address line for route headers (MTR and Traceroute).
+ * Returns null when the target's host label is already an IP literal or
+ * already displays the resolved IP (including --resolve-all "host (ip)" labels).
+ */
+export function targetAddress(target) {
+  const host = (target?.host ?? "").trim();
+  const ip = (target?.ip ?? "").trim();
+  if (isIPLiteral(host)) return null;
+  if (ip) {
+    const hostLower = host.toLowerCase();
+    const ipLower = ip.toLowerCase();
+    if (hostLower === ipLower || hostLower.endsWith(`(${ipLower})`)) return null;
+  }
+  return ip || "Resolving address…";
+}
+

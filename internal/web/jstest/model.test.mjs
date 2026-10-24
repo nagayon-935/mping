@@ -24,6 +24,8 @@ import {
   validateHost,
   summaryItems,
   readOnlyHint,
+  isIPLiteral,
+  targetAddress,
 } from "../static/js/model.js";
 
 const th = {
@@ -262,3 +264,18 @@ test("disabled optional data does not match an invisible AS or PTR field", () =>
   assert.equal(matchesFilter(t,"AS64500",{asn:true,ptr:false}),true);
   assert.equal(matchesFilter(t,"edge.example",{asn:false,ptr:true}),true);
 });
+
+test("targetAddress omits redundant IP when target is already an IP or pinned label", () => {
+  assert.equal(isIPLiteral("1.1.1.1"), true);
+  assert.equal(isIPLiteral("2001:4860:4860::8888"), true);
+  assert.equal(isIPLiteral("fe80::1%en0"), true);
+  assert.equal(isIPLiteral("one.one.one.one"), false);
+
+  assert.equal(targetAddress({ host: "1.1.1.1", ip: "1.1.1.1" }), null);
+  assert.equal(targetAddress({ host: "1.1.1.1", ip: "" }), null);
+  assert.equal(targetAddress({ host: "2001:DB8::1", ip: "2001:db8::1" }), null);
+  assert.equal(targetAddress({ host: "dns.google (8.8.8.8)", ip: "8.8.8.8" }), null);
+  assert.equal(targetAddress({ host: "one.one.one.one", ip: "1.1.1.1" }), "1.1.1.1");
+  assert.equal(targetAddress({ host: "one.one.one.one", ip: "" }), "Resolving address…");
+});
+
