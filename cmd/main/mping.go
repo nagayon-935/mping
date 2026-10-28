@@ -94,10 +94,12 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	// durationCtx, when --duration is set, bounds the whole run() invocation
 	// (an overall session alarm, mirroring ping.c's -t) rather than being
 	// re-armed per reload iteration — the same one-shot-from-startup
-	// treatment bindIP already gets even though ifaceName/sourceAddr are
-	// re-synced into currentCfg on every reload above. It is deliberately
-	// derived from the pre-loop cfg, not currentCfg, so a YAML reload cannot
-	// silently extend or shorten an already-running deadline.
+	// treatment the CSV/event output writers and the web server get (a
+	// reload keeps their startup values or warns that a restart is needed),
+	// unlike bindIP, which every reload re-resolves from the reloaded
+	// ifaceName/sourceAddr. It is deliberately derived from the pre-loop cfg,
+	// not currentCfg, so a YAML reload cannot silently extend or shorten an
+	// already-running deadline.
 	var durationCtx context.Context
 	var durationDeadline time.Time
 	if cfg.duration > 0 {

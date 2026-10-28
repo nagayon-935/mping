@@ -133,15 +133,17 @@ func checkerBindConfig(cfg config, bindIP string) pinger.BindConfig {
 }
 
 // resolverBindConfig is checkerBindConfig for expandTargets' --resolve-all DNS
-// lookups, which run during parseAndLoadHosts — before prepareRunEnv has
-// resolved bindIP via determineSourceIPs. It resolves bindIP itself instead of
-// receiving it as a parameter. A resolution failure (e.g. an unknown -I
-// interface) is swallowed here rather than surfaced: the authoritative error
-// for a bad -I is prepareRunEnv's own determineSourceIPs call, which runs
-// moments later and stops the process before any pinger starts — duplicating
-// that failure here would just add a second, redundant error path for the
-// same misconfiguration, so --resolve-all's DNS lookups simply fall back to
-// unbound in that case.
+// lookups. expandTargets runs at startup (parseAndLoadHosts, before
+// prepareRunEnv has resolved bindIP via determineSourceIPs), on every
+// hosts-file reload (requestFileReload and apply) and when a host is added
+// live, so it resolves bindIP itself instead of receiving it as a parameter.
+// An unknown -I interface never gets this far: validateBinding, reached
+// through mergeHosts' validateMergedHosts, rejects it before expandTargets
+// runs. What is left to fail here is an interface that exists but has no
+// usable address, and that error is surfaced authoritatively by
+// determineSourceIPs in prepareRunEnv (or at the top of a reload iteration)
+// before any pinger starts — duplicating it here would add a second, redundant
+// error path, so --resolve-all's DNS lookups simply fall back to unbound.
 func resolverBindConfig(cfg config, specs []targetSpec) pinger.BindConfig {
 	bindIP, _, _, err := determineSourceIPs(cfg, specs)
 	if err != nil {
@@ -240,7 +242,8 @@ func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resol
 }
 
 // checkPortReloadDrift explains that port checks were rebuilt from the new
-// configuration. It is retained as a single notice shared by reload tests.
+// configuration. reloadWarnings emits it after a successful reload whose port
+// specs differ from the ones the running checkers were built from.
 func checkPortReloadDrift(activeRaw, reloadedRaw []string) string {
 	if slices.Equal(activeRaw, reloadedRaw) {
 		return ""
@@ -305,7 +308,7 @@ func startLiveJSONWriter(path string, targets func() []*stats.TargetStats, httpR
 // watchDurationLimit arms sig to fire once durationCtx's deadline elapses,
 // converging --duration onto the same ExternalCloseCh shutdown path a YAML
 // reload already uses (see reload_coordinator.go): this function never calls
-// rc.requestFileReload/requestHostsChange, so rc.apply() finds no pending
+// rc.requestFileReload, so rc.apply() finds no pending
 // reload afterwards and run()'s main loop breaks out to printExitSummary
 // instead of re-entering — the same outcome as the user pressing 'q'.
 //
