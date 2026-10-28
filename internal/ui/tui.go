@@ -150,6 +150,7 @@ func Run(opts RunOptions) error {
 	mainLayout := tview.NewFlex().SetDirection(tview.FlexRow)
 	mainLayout.SetBackgroundColor(tcell.ColorBlack)
 	controls := newPaneControls(app, mainLayout, header, pages, table, tablePane, func() int { return tr.rowCount }, sidePanes, graphView, errorView)
+	controls.onTableResize = tr.ensureRenderedForSize
 	controls.rebuild()
 	root := tview.NewPages().AddPage("main", controls.view(), true, true)
 	details := newHostDetails(opts)
