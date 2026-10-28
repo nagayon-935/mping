@@ -84,7 +84,7 @@ func (t *TargetStats) ConfigureHealth(p HealthPolicy) {
 	}
 	t.health.policy = p
 	t.health.configured = true
-	t.evaluateHealthLocked(time.Now(), t.health.configured)
+	t.evaluateHealthLocked(time.Now())
 	bumpGeneration()
 }
 
@@ -129,10 +129,19 @@ func (t *TargetStats) recordOutcomeLocked(now time.Time, success bool) {
 		h.failures++
 		h.successes = 0
 	}
-	t.evaluateHealthLocked(now, true)
+	t.evaluateHealthLocked(now)
 }
 
-func (t *TargetStats) evaluateHealthLocked(now time.Time, emit bool) {
+// recentLossPct is the share of completed probes in the recent window that
+// were lost, as a percentage; 0 when nothing has completed.
+func recentLossPct(received, lost int) float64 {
+	if received+lost == 0 {
+		return 0
+	}
+	return 100 * float64(lost) / float64(received+lost)
+}
+
+func (t *TargetStats) evaluateHealthLocked(now time.Time) {
 	h := &t.health
 	p := t.healthPolicyLocked()
 	h.recentReceived, h.recentLost = t.recentHealthLocked(now)
@@ -156,10 +165,7 @@ func (t *TargetStats) evaluateHealthLocked(now time.Time, emit bool) {
 			}
 		} else {
 			received, lost := h.recentReceived, h.recentLost
-			rate := 0.0
-			if received+lost > 0 {
-				rate = 100 * float64(lost) / float64(received+lost)
-			}
+			rate := recentLossPct(received, lost)
 			checks := []struct {
 				name              string
 				value, warn, crit float64
@@ -198,7 +204,7 @@ func (t *TargetStats) evaluateHealthLocked(now time.Time, emit bool) {
 		h.since = now
 	}
 	h.status, h.reason = status, reason
-	if emit && changed && h.configured {
+	if changed && h.configured {
 		t.recordEventLocked("health", fmt.Sprintf("%s: %s", status, reason))
 	}
 }
@@ -208,10 +214,7 @@ func (t *TargetStats) healthViewLocked() Health {
 	// These are the inputs of the last judgment, not a differently-aged
 	// window recomputed by a reader while measurements are paused.
 	received, lost := h.recentReceived, h.recentLost
-	rate := 0.0
-	if received+lost > 0 {
-		rate = 100 * float64(lost) / float64(received+lost)
-	}
+	rate := recentLossPct(received, lost)
 	status, reason := h.status, h.reason
 	if status == "" {
 		status, reason = "pending", "Waiting for a completed probe"
