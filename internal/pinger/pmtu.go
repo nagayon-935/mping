@@ -122,15 +122,7 @@ func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloa
 	}
 	defer c.Close()
 
-	doneChan := make(chan struct{})
-	defer close(doneChan)
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = c.Close()
-		case <-doneChan:
-		}
-	}()
+	defer closeOnCancel(ctx, func() { _ = c.Close() })()
 
 	rc, err := ipv4.NewRawConn(c)
 	if err != nil {

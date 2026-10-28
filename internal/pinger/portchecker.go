@@ -183,20 +183,7 @@ func checkUDP(ctx context.Context, dialer *net.Dialer, addr string, timeout time
 	}
 	defer conn.Close()
 
-	doneChan := make(chan struct{})
-	watcherDone := make(chan struct{})
-	defer func() {
-		close(doneChan)
-		<-watcherDone
-	}()
-	go func() {
-		defer close(watcherDone)
-		select {
-		case <-ctx.Done():
-			_ = conn.Close()
-		case <-doneChan:
-		}
-	}()
+	defer closeOnCancel(ctx, func() { _ = conn.Close() })()
 
 	start := time.Now()
 	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
