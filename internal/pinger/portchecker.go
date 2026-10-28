@@ -69,10 +69,7 @@ type PortChecker struct {
 func NewPortChecker(targets []*stats.TargetStats, specs []PortSpec, interval, timeout time.Duration, bind BindConfig) *PortChecker {
 	results := make([][]*stats.PortCheckResult, len(targets))
 	for i, t := range targets {
-		results[i] = make([]*stats.PortCheckResult, len(specs))
-		for j, s := range specs {
-			results[i][j] = &stats.PortCheckResult{Port: s.Port, Protocol: s.Protocol, Status: "Checking..."}
-		}
+		results[i] = newPortResults(specs)
 		t.SetPortResults(results[i])
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -134,17 +131,7 @@ func (pc *PortChecker) loopContext(ctx context.Context, t *stats.TargetStats, sp
 		}
 	}
 
-	pc.checkContext(ctx, t, spec, result)
-	ticker := time.NewTicker(pc.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			pc.checkContext(ctx, t, spec, result)
-		}
-	}
+	runPeriodic(ctx, pc.interval, func() { pc.checkContext(ctx, t, spec, result) })
 }
 
 func (pc *PortChecker) checkContext(ctx context.Context, t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
@@ -273,10 +260,7 @@ func (pc *PortChecker) launchTarget(t *stats.TargetStats, results []*stats.PortC
 	}()
 }
 func (pc *PortChecker) AddTarget(t *stats.TargetStats) {
-	results := make([]*stats.PortCheckResult, len(pc.specs))
-	for j, s := range pc.specs {
-		results[j] = &stats.PortCheckResult{Port: s.Port, Protocol: s.Protocol, Status: "Checking..."}
-	}
+	results := newPortResults(pc.specs)
 	t.SetPortResults(results)
 	pc.launchTarget(t, results)
 }
@@ -289,4 +273,13 @@ func (pc *PortChecker) RemoveTarget(t *stats.TargetStats) {
 		r.cancel()
 		<-r.done
 	}
+}
+
+// newPortResults keeps initial and dynamically added targets identical.
+func newPortResults(specs []PortSpec) []*stats.PortCheckResult {
+	results := make([]*stats.PortCheckResult, len(specs))
+	for i, spec := range specs {
+		results[i] = &stats.PortCheckResult{Port: spec.Port, Protocol: spec.Protocol, Status: "Checking..."}
+	}
+	return results
 }

@@ -104,7 +104,7 @@ mping google.com 1.1.1.1
 
 ### Build from source
 
-**Requirements:** Go 1.26.9 or later
+**Requirements:** Go 1.26.10 or later
 
 ```bash
 git clone https://github.com/nagayon-935/mping.git
@@ -267,7 +267,9 @@ hosts:
   - {host: 10.0.0.1, name: core-sw01}
 ```
 
-`include:` (top level or per group) appends hosts from text/CSV files, resolved relative to the YAML file. Each line is `host[,name[,dscp]]`; `#` starts a comment and a first line whose first column is `host` or `hostname` is treated as a header. Every host must be an IP address or a hostname (letters, digits, `.`, `-`, `_`), and the file must be readable by the user running mping. Include files are watched for changes like the YAML file itself, including ones added to the YAML before they exist.
+`include:` (top level or per group) appends hosts from text/CSV files, resolved relative to the YAML file (`.csv` files and NetBox CSV exports can also be passed directly via `mping -f hosts.csv`). Each line is `host[,name[,dscp]]`; `#` starts a comment and a first line whose first column is `host` or `hostname` is treated as a header. Every host must be an IP address or a hostname (letters, digits, `.`, `-`, `_`), and the file must be readable by the user running mping. Include files are watched for changes like the YAML file itself, including ones added to the YAML before they exist.
+
+NetBox IP Addresses CSV exports (CSVs with an `IP Address` column) are also accepted both directly via `-f` / `--file` and through `include:`. Prefix lengths (such as `/23`) are stripped automatically, only rows whose `Status` is `Active` (or blank) are loaded, and display names prefer `DNS name` (falling back to `Parent`), automatically disambiguating duplicates with the `Interface` and/or IP address.
 
 ```yaml
 groups:
@@ -285,7 +287,7 @@ See [examples/hosts-patterns.yaml](examples/hosts-patterns.yaml) and [examples/b
 | :--- | :--- | :--- | :--- |
 | `--interval` | `-i` | Ping send interval (ms) | `1000` |
 | `--timeout` | `-t` | Ping timeout (ms) | `1000` |
-| `--file` | `-f` | Path to YAML host list file | `""` |
+| `--file` | `-f` | Path to YAML or CSV host list file | `""` |
 | `--traceroute` | `-T` | Show Traceroute pane | `false` |
 | `--mtr` | `-M` | Show MTR Monitor pane (continuous per-hop loss/latency) | `false` |
 | `--dns-server` | `-d` | Custom DNS server IP address to resolve target hostnames | `""` (OS default) |

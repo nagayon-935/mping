@@ -98,13 +98,13 @@ func durationMs(d time.Duration) float64 {
 }
 
 // BuildSnapshot builds an ExportSnapshot from the given targets and optional HTTP results.
-// GetView is called once per target for a consistent, thread-safe snapshot.
+// GetViewWindow is called once per target without copying unused RTT history.
 // If targets is nil or empty, Targets in the returned snapshot is a non-nil,
 // empty slice (JSON encodes as [] rather than null).
 func BuildSnapshot(targets []*TargetStats, httpResults []*HTTPCheckResult) ExportSnapshot {
 	views := make([]TargetView, len(targets))
 	for i, t := range targets {
-		views[i] = t.GetView()
+		views[i] = t.GetViewWindow(0)
 	}
 	httpViews := make([]HTTPCheckView, len(httpResults))
 	for i, r := range httpResults {

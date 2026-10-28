@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"time"
 
@@ -13,7 +11,6 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 	ui "github.com/nagayon-935/mping/internal/ui"
 	"github.com/nagayon-935/mping/internal/web"
-	"github.com/rivo/tview"
 )
 
 const (
@@ -32,191 +29,6 @@ const (
 )
 
 var uiRun = func(opts ui.RunOptions) error { return ui.Run(opts) }
-
-func resolveNetwork(cfg config) string {
-	if cfg.ipv4Only {
-		return "ip4"
-	}
-	if cfg.ipv6Only {
-		return "ip6"
-	}
-	if !hasIPv6Connectivity() {
-		return "ip4"
-	}
-	return "ip"
-}
-
-// writeJSONSnapshot serialises a statistics snapshot to path atomically.
-// It writes to a temporary file first, then renames it to path, so readers
-// always see a complete file.
-func writeJSONSnapshot(path string, targets []*stats.TargetStats, httpResults []*stats.HTTPCheckResult) error {
-	snap := stats.BuildSnapshot(targets, httpResults)
-	data, err := json.MarshalIndent(snap, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal snapshot: %w", err)
-	}
-	tmp := path + ".tmp"
-	return asRealUser(func() error {
-		if err := os.WriteFile(tmp, data, 0600); err != nil {
-			return fmt.Errorf("write snapshot: %w", err)
-		}
-		if err := os.Rename(tmp, path); err != nil {
-			_ = os.Remove(tmp)
-			return fmt.Errorf("rename snapshot: %w", err)
-		}
-		return nil
-	})
-}
-
-func classifySourceIP(bindIP string) (bind, v4, v6 string) {
-	if ip := net.ParseIP(bindIP); ip != nil && ip.To4() == nil {
-		return bindIP, "", bindIP
-	}
-	return bindIP, bindIP, ""
-}
-
-func determineSourceIPs(cfg config, hosts []targetSpec) (string, string, string, error) {
-	if cfg.sourceAddr != "" {
-		bind, v4, v6 := classifySourceIP(cfg.sourceAddr)
-		return bind, v4, v6, nil
-	}
-	if cfg.ifaceName != "" {
-		ip, err := getInterfaceIP(cfg.ifaceName, cfg.ipv6Only)
-		if err != nil {
-			return "", "", "", err
-		}
-		bind, v4, v6 := classifySourceIP(ip)
-		return bind, v4, v6, nil
-	}
-
-	displaySourceIPv4, displaySourceIPv6 := detectAutoSourceIPs(hosts)
-	return "", displaySourceIPv4, displaySourceIPv6, nil
-}
-
-func setupLogger(path string) (*os.File, error) {
-	if path == "" {
-		return nil, nil
-	}
-	var f *os.File
-	err := asRealUser(func() error {
-		var err error
-		f, err = os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-		return err
-	})
-	if err != nil {
-		return nil, fmt.Errorf("open log file %q: %w", path, err)
-	}
-	// Write CSV header only when the file is new (empty).
-	info, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return nil, fmt.Errorf("stat log file %q: %w", path, err)
-	}
-	if info.Size() == 0 {
-		if _, err := f.Write([]byte("Timestamp,Host,IP,Seq,Status,RTT(ms),TTL,Error\n")); err != nil {
-			f.Close()
-			return nil, fmt.Errorf("write csv header: %w", err)
-		}
-	}
-	return f, nil
-}
-
-// newCustomResolver returns a *net.Resolver for --dns-server, or
-// net.DefaultResolver when it's unset. bind carries the -S source address and
-// -I interface name so name resolution leaves the host by the same path as
-// the ICMP probes and the port/HTTP checks; it only takes effect once
-// dnsServer picks a specific server to dial — the net.DefaultResolver
-// fallback can't be steered this way, so bind is a no-op in that case exactly
-// as before this feature.
-func newCustomResolver(dnsServer string, bind pinger.BindConfig) *net.Resolver {
-	if dnsServer == "" {
-		return net.DefaultResolver
-	}
-	host, port, err := net.SplitHostPort(dnsServer)
-	if err != nil {
-		host = dnsServer
-		port = "53"
-	}
-	dnsAddress := net.JoinHostPort(host, port)
-	dialer := pinger.NewBoundDialer("udp", 2*time.Second, bind)
-	return &net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			return dialer.DialContext(ctx, "udp", dnsAddress)
-		},
-	}
-}
-
-// makePingerFactory returns a closure that creates a configured pinger instance
-// with the given payload size. The returned factory is called each time a new
-// pinger is needed (initial start and after restart).
-func makePingerFactory(targets []*stats.TargetStats, opts pinger.Options, cfg config, bindIP string, logFile io.Writer) func(size int) pingerController {
-	return func(size int) pingerController {
-		p := newPinger(targets, opts)
-		p.SetSource(bindIP)
-		p.SetInterface(cfg.ifaceName)
-		p.SetSize(size)
-		p.SetCount(cfg.count)
-		p.SetResolveInterval(dnsResolveInterval)
-		if logFile != nil {
-			p.SetLogWriter(logFile)
-		}
-		return p
-	}
-}
-
-// setupPMTU runs PMTU discovery using a probe pinger and updates per-target
-// sizes. It returns the discovered payload size and any pre-log messages.
-func setupPMTU(makePinger func(size int) pingerController, cfg config, ifaceMTU int, targets []*stats.TargetStats, firstHost string, errOut io.Writer) (packetSize int, preLogs []string) {
-	packetSize = cfg.packetSize
-	if !cfg.mtuEnabled {
-		return
-	}
-	if cfg.ipv6Only {
-		fmt.Fprintln(errOut, "Warning: PMTU discovery disabled for IPv6")
-		return
-	}
-	probe := makePinger(cfg.packetSize)
-	// probe.Start() is never called — DiscoverMaxPayload opens/closes
-	// its own sockets internally. Stop() only closes the done channel
-	// (safe to call without Start) and prevents any future goroutine
-	// from blocking on it.
-	defer probe.Stop()
-	startPayload := pmtuMaxPayload
-	if ifaceMTU > pmtuHeaderBytes {
-		startPayload = ifaceMTU - pmtuHeaderBytes
-	}
-	// Progress lines are plain text ("[PMTU] payload=…"); escape them so the
-	// Log pane does not read "[PMTU]" as a colour tag.
-	maxPayload, bottleneckIP, err := probe.DiscoverMaxPayload(context.Background(), firstHost, startPayload, cfg.packetSize, func(line string) {
-		preLogs = append(preLogs, fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), tview.Escape(line)))
-	})
-	if err != nil {
-		fmt.Fprintf(errOut, "PMTU discovery failed: %v\n", err)
-		return
-	}
-	packetSize = maxPayload
-	for _, t := range targets {
-		t.SetPMTU(maxPayload)
-		if bottleneckIP != "" {
-			t.SetPMTUBottleneckIP(bottleneckIP)
-		}
-	}
-	return
-}
-
-// setupPortChecker parses port specs and starts a PortChecker if any specs are
-// provided. Returns nil if no specs are given. bind is the -S/-I pair the ICMP
-// pinger is already bound to (see makePingerFactory), so port checks probe over
-// the same egress path.
-func setupPortChecker(targets []*stats.TargetStats, portSpecs []pinger.PortSpec, interval, timeout time.Duration, bind pinger.BindConfig) *pinger.PortChecker {
-	if len(portSpecs) == 0 {
-		return nil
-	}
-	pc := pinger.NewPortChecker(targets, portSpecs, interval, timeout, bind)
-	pc.Start()
-	return pc
-}
 
 func run(args []string, out io.Writer, errOut io.Writer) int {
 	if len(args) > 0 && args[0] == "completion" {
@@ -508,51 +320,6 @@ func reloadWarnings(startup, reloaded config, activePortSpecs []string, expandWa
 		}
 	}
 	return warnings
-}
-
-// allTargetsUnresponsive reports whether every target finished with zero
-// replies. Mirrors the nreceived == 0 check Apple's ping.c/ping6.c use to
-// decide their exit code; only consulted when --count bounds the run (see
-// exitCodeNoResponse) — the always-on TUI mode has no notion of "finished".
-func allTargetsUnresponsive(targets []*stats.TargetStats) bool {
-	for _, t := range targets {
-		if t.GetView().Recv > 0 {
-			return false
-		}
-	}
-	return true
-}
-
-// printExitSummary writes the per-target ping statistics shown after the TUI exits.
-func printExitSummary(out io.Writer, targets []*stats.TargetStats) {
-	fmt.Fprintln(out, "\n--- mping statistics ---")
-	for _, t := range targets {
-		v := t.GetView()
-		lossRate := 0.0
-		if v.Sent > 0 {
-			lossRate = (float64(v.Loss) / float64(v.Sent)) * 100
-		}
-		fmt.Fprintf(out, "%s (%s): %d packets transmitted, %d received", v.Host, v.IP, v.Sent, v.Recv)
-		// Mirrors ping.c's "+N duplicates" / "N packets out of wait time":
-		// both are omitted when zero, so a run with neither dups nor late
-		// arrivals prints exactly as it did before this feature existed.
-		if v.Duplicates > 0 {
-			fmt.Fprintf(out, ", +%d duplicates", v.Duplicates)
-		}
-		fmt.Fprintf(out, ", %.1f%% packet loss", lossRate)
-		if v.LateReplies > 0 {
-			fmt.Fprintf(out, ", %d packets out of wait time", v.LateReplies)
-		}
-		fmt.Fprintln(out)
-		if v.Recv > 0 {
-			fmt.Fprintf(out, "rtt min/avg/max/stddev = %.3f/%.3f/%.3f/%.3f ms\n",
-				float64(v.MinRTT.Microseconds())/1000.0,
-				float64(v.AvgRTT.Microseconds())/1000.0,
-				float64(v.MaxRTT.Microseconds())/1000.0,
-				float64(v.StdDev.Microseconds())/1000.0)
-		}
-		fmt.Fprintln(out)
-	}
 }
 
 func main() {

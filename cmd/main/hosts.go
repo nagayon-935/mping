@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	ui "github.com/nagayon-935/mping/internal/ui"
 	"github.com/spf13/pflag"
@@ -29,6 +30,8 @@ type hostEntry struct {
 	// bare number), or "" when absent — parsed lazily, same rationale as
 	// config.dscp.
 	DSCP string
+	// netBox retains source naming data until all includes have been loaded.
+	netBox *netBoxRow
 }
 
 // UnmarshalYAML implements yaml.Unmarshaler. Field names are checked
@@ -121,7 +124,8 @@ type thresholdsYAML struct {
 
 // parseHostsFile reads, decodes, and expands a hosts file: host patterns
 // (ranges, CIDRs, {N..M}) become concrete hosts and include files are read
-// relative to the hosts file's directory.
+// relative to the hosts file's directory. A CSV host list or NetBox IP
+// addresses CSV export may also be passed directly via -f / --file.
 func parseHostsFile(path string) (hostsFileYAML, error) {
 	var data []byte
 	err := asRealUser(func() error {
@@ -131,6 +135,16 @@ func parseHostsFile(path string) (hostsFileYAML, error) {
 	})
 	if err != nil {
 		return hostsFileYAML{}, fmt.Errorf("read hosts file %q: %w", path, err)
+	}
+
+	if len(data) > 0 && (strings.EqualFold(filepath.Ext(path), ".csv") || isNetBoxCSVData(data)) {
+		entries, err := parseIncludeData(path, "hosts file", data)
+		if err != nil {
+			return hostsFileYAML{}, err
+		}
+		doc := hostsFileYAML{Hosts: entries}
+		resolveNetBoxDocNames(&doc)
+		return doc, nil
 	}
 
 	var doc hostsFileYAML

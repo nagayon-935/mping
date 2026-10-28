@@ -65,6 +65,8 @@ type tableRenderer struct {
 	afterUpdate       func()
 	scrollToSelection bool
 	beforeUpdate      func()
+	lastRenderWidth   int
+	lastRenderHeight  int
 	vs                *viewState
 }
 
@@ -177,7 +179,44 @@ func (tr *tableRenderer) calcColumnWidths(views []stats.TargetView) []int {
 // completes — a cheap extra safety net, not the primary mechanism.
 const rowRenderMargin = 5
 
-// visibleRowWindow returns the [start, end) range of data-row indices
+// tableInnerHeight returns the inner height available to the Ping Monitor
+// table, consulting tablePane when the inner table primitive has not yet been
+// laid out by Flex.Draw.
+func (tr *tableRenderer) tableInnerHeight() int {
+	_, _, _, h := tr.table.GetInnerRect()
+	if tr.tablePane != nil {
+		if _, _, _, paneH := tr.tablePane.GetInnerRect(); paneH > h {
+			h = paneH
+		}
+	}
+	return h
+}
+
+// visibleDataRows returns the number of data rows that fit in the table's
+// current inner height, floored at tableMaxRows when the widget has not been
+// sized past the default minimum yet.
+func (tr *tableRenderer) visibleDataRows() int {
+	return max(tableMaxRows, (tr.tableInnerHeight()-2)/2)
+}
+
+func (tr *tableRenderer) visibleRowWindow(offsetRow, totalDataRows int) (start, end int) {
+	return visibleRowWindowForHeight(offsetRow, totalDataRows, tr.visibleDataRows())
+}
+
+// ensureRenderedForSize re-renders the table when the Ping Monitor pane's
+// inner dimensions have changed since the last update() call (e.g. initial
+// layout, terminal resize, pane fold/maximize).
+func (tr *tableRenderer) ensureRenderedForSize() {
+	if tr.tablePane == nil {
+		return
+	}
+	_, _, w, h := tr.tablePane.GetInnerRect()
+	if w != tr.lastRenderWidth || h != tr.lastRenderHeight {
+		tr.update()
+	}
+}
+
+// visibleRowWindowForHeight returns the [start, end) range of data-row indices
 // (0-based — matching indices into tr.targets, tr.groupRowMap, or
 // compactRows depending on layout) that should actually be rendered this
 // tick, given the table's current scroll offset. offsetRow is the table's
@@ -186,12 +225,12 @@ const rowRenderMargin = 5
 // layout is active — tr.rowCount minus 1, i.e. NOT reduced by windowing,
 // so input_handler.go's maxOffset scroll math (which reads tr.rowCount)
 // stays correct regardless of how few rows are actually rendered.
-func visibleRowWindow(offsetRow, totalDataRows int) (start, end int) {
+func visibleRowWindowForHeight(offsetRow, totalDataRows, visibleRows int) (start, end int) {
 	start = offsetRow - rowRenderMargin
 	if start < 0 {
 		start = 0
 	}
-	end = offsetRow + tableMaxRows + 1 + rowRenderMargin
+	end = offsetRow + max(visibleRows, tableMaxRows) + 1 + rowRenderMargin
 	if end > totalDataRows {
 		end = totalDataRows
 	}
@@ -215,6 +254,9 @@ func fetchViews(targets []*stats.TargetStats) []stats.TargetView {
 func (tr *tableRenderer) update() {
 	if tr.beforeUpdate != nil {
 		tr.beforeUpdate()
+	}
+	if tr.tablePane != nil {
+		_, _, tr.lastRenderWidth, tr.lastRenderHeight = tr.tablePane.GetInnerRect()
 	}
 	tr.table.Clear()
 	tr.tablePane.SetTitle(" Ping Monitor ")
@@ -346,7 +388,7 @@ func (tr *tableRenderer) renderCompactRows(rows []compactRow, offsetRow int) {
 		}
 		return left
 	}
-	start, end := visibleRowWindow(offsetRow, len(rows))
+	start, end := tr.visibleRowWindow(offsetRow, len(rows))
 	for i := start; i < end; i++ {
 		r := rows[i]
 		values := []string{pick(r.hostR, r.hostL), pick(r.pathR, r.pathL), pick(r.statR, r.statL), pick(r.errR, r.errL)}
@@ -360,13 +402,13 @@ func (tr *tableRenderer) renderCompactRows(rows []compactRow, offsetRow int) {
 // window must render even if its members don't.
 func (tr *tableRenderer) renderFullRows(rowCtx []columnRowContext, texts [][]string, offsetRow int) {
 	if len(tr.groups) == 0 {
-		start, end := visibleRowWindow(offsetRow, len(tr.targets))
+		start, end := tr.visibleRowWindow(offsetRow, len(tr.targets))
 		for i := start; i < end; i++ {
 			tr.setRow(i+1, renderRowCells(tr.cols, texts[i], tr.widths, tr.fullAligns, rowCtx[i], tr.rowColor))
 		}
 		return
 	}
-	start, end := visibleRowWindow(offsetRow, len(tr.groupRowMap))
+	start, end := tr.visibleRowWindow(offsetRow, len(tr.groupRowMap))
 	for rowIdx := start; rowIdx < end; rowIdx++ {
 		row := tr.groupRowMap[rowIdx]
 		tableRow := rowIdx + 1

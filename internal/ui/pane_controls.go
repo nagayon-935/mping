@@ -28,12 +28,15 @@ type paneControl struct {
 }
 
 type paneControls struct {
-	app       *tview.Application
-	layout    *tview.Flex
-	header    *tview.TextView
-	footer    *tview.Pages
-	panes     []*paneControl
-	maximized *paneControl
+	app           *tview.Application
+	layout        *tview.Flex
+	header        *tview.TextView
+	footer        *tview.Pages
+	table         *tview.Table
+	tablePane     *tview.Flex
+	onTableResize func()
+	panes         []*paneControl
+	maximized     *paneControl
 	// graph and log get special treatment in fit: the Log keeps a fixed
 	// height and grows only into spare rows, and the graph takes whatever
 	// rows remain after that.
@@ -45,7 +48,7 @@ type paneControls struct {
 // layout. tableRows reports the Ping Monitor table's logical row count
 // (header included).
 func newPaneControls(app *tview.Application, layout *tview.Flex, header *tview.TextView, footer *tview.Pages, table *tview.Table, tablePane *tview.Flex, tableRows func() int, monitors []*monitorPane, graph *GraphView, log *tview.TextView) *paneControls {
-	c := &paneControls{app: app, layout: layout, header: header, footer: footer}
+	c := &paneControls{app: app, layout: layout, header: header, footer: footer, table: table, tablePane: tablePane}
 	add := func(title string, content, focus tview.Primitive, weight int, unfocusedColor tcell.Color, border func(tcell.Color), desired func(width int) int) *paneControl {
 		stub := tview.NewTextView().SetText(fmt.Sprintf("[+] %s  (f: Expand, z: Maximize)", title)).SetWrap(false)
 		stub.SetBackgroundColor(tcell.ColorBlack)
@@ -87,12 +90,29 @@ func (c *paneControls) view() tview.Primitive {
 	return &fitFlex{Flex: c.layout, fit: c.fit}
 }
 
+func (c *paneControls) syncTableRect(width, paneHeight int) {
+	if c.tablePane == nil || width <= 0 || paneHeight <= 0 {
+		return
+	}
+	x, y, _, _ := c.tablePane.GetRect()
+	c.tablePane.SetRect(x, y, width, paneHeight)
+	if c.table != nil {
+		c.table.SetRect(x+1, y+1, max(width-2, 0), max(paneHeight-2, 0))
+	}
+	if c.onTableResize != nil {
+		c.onTableResize()
+	}
+}
+
 // fit sizes the unfolded panes for a layout of the given inner size. The
 // Log keeps logLines of content; the other panes share the rest by content
 // and weight (see fitHeights). Rows nobody needs go first to the Log, up to
 // its content, then to the RTT graph. A maximized pane keeps the whole area.
 func (c *paneControls) fit(width, height int) {
 	if c.maximized != nil {
+		if len(c.panes) > 0 && c.maximized == c.panes[0] {
+			c.syncTableRect(width, max(height-headerHeight-footerHeight, 0))
+		}
 		return
 	}
 	avail := height - headerHeight - footerHeight
@@ -108,29 +128,42 @@ func (c *paneControls) fit(width, height int) {
 			others = append(others, pane)
 		}
 	}
-	logSize := 0
+	logBase := 0
 	if logOpen {
-		logSize = min(logLines+2, max(avail, 0))
-		avail -= logSize
+		logBase = min(logLines+2, max(avail, 0))
+		avail -= logBase
 	}
-	demands := make([]paneDemand, len(others))
-	for i, pane := range others {
-		demands[i] = paneDemand{weight: pane.weight, desired: pane.desired(width)}
+	computeSizes := func() ([]int, int) {
+		logSize := logBase
+		demands := make([]paneDemand, len(others))
+		for i, pane := range others {
+			demands[i] = paneDemand{weight: pane.weight, desired: pane.desired(width)}
+		}
+		sizes, spare := fitHeights(avail, demands)
+		if logOpen {
+			grow := min(spare, max(c.log.desired(width)-logSize, 0))
+			logSize += grow
+			spare -= grow
+		}
+		if spare > 0 {
+			switch i := indexOfPane(others, c.graph); {
+			case i >= 0:
+				sizes[i] += spare
+			case logOpen:
+				logSize += spare
+			case len(others) > 0:
+				sizes[len(others)-1] += spare
+			}
+		}
+		return sizes, logSize
 	}
-	sizes, spare := fitHeights(avail, demands)
-	if logOpen {
-		grow := min(spare, max(c.log.desired(width)-logSize, 0))
-		logSize += grow
-		spare -= grow
-	}
-	if spare > 0 {
-		switch i := indexOfPane(others, c.graph); {
-		case i >= 0:
-			sizes[i] += spare
-		case logOpen:
-			logSize += spare
-		case len(others) > 0:
-			sizes[len(others)-1] += spare
+	sizes, logSize := computeSizes()
+	if len(others) > 0 && len(c.panes) > 0 && others[0] == c.panes[0] {
+		desiredBefore := c.panes[0].desired(width)
+		c.syncTableRect(width, sizes[0])
+		if c.panes[0].desired(width) != desiredBefore {
+			sizes, logSize = computeSizes()
+			c.syncTableRect(width, sizes[0])
 		}
 	}
 	for i, size := range sizes {

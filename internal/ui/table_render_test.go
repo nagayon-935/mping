@@ -243,6 +243,79 @@ func TestTableRendererUpdate_VirtualizesOffscreenRows(t *testing.T) {
 	}
 }
 
+func TestTableRendererUpdate_TallPaneRendersAllVisibleRows(t *testing.T) {
+	const numTargets = 72
+	targets := make([]*stats.TargetStats, numTargets)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats(fmt.Sprintf("10.70.70.%d", i+1))
+		targets[i].SetIP(fmt.Sprintf("10.70.70.%d", i+1))
+		targets[i].IncSent()
+		targets[i].OnSuccess(10*time.Millisecond, 64)
+	}
+
+	app := tview.NewApplication()
+	table := newPingTable()
+	tablePane := newTablePane(table)
+	vs := newViewState(newLogView())
+	tr := newTableRenderer(targets, "10.0.0.1", "", 56, false, false, false, nil, table, tablePane, nil, vs)
+	tr.selectionEnabled = true
+
+	graph := newGraphPane(targets, time.Second)
+	header := newHeader(time.Second)
+	footer := tview.NewPages().AddPage("footer", newFooter(), true, true)
+	layout := tview.NewFlex().SetDirection(tview.FlexRow)
+	controls := newPaneControls(app, layout, header, footer, table, tablePane, func() int { return tr.rowCount }, nil, graph, vs.errorView)
+	controls.onTableResize = tr.ensureRenderedForSize
+	controls.rebuild()
+	app.SetFocus(table)
+
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer screen.Fini()
+	screen.SetSize(200, 100)
+
+	view := controls.view()
+	view.SetRect(0, 0, 200, 100)
+	view.Draw(screen)
+
+	// On a 200x100 screen with 72 targets, Ping Monitor gets ~55 lines (inner height 53 -> 25 visible rows).
+	// Rows well beyond the old 16-row cap (e.g. row 25) must be populated on the initial draw.
+	visible := tr.visibleDataRows()
+	if visible <= 20 {
+		t.Fatalf("visibleDataRows() = %d, want > 20 on a 100-line screen", visible)
+	}
+	for row := 1; row <= visible; row++ {
+		if got := tr.table.GetCell(row, 1).Text; got == "" {
+			t.Fatalf("row %d (within visible %d rows) was not rendered", row, visible)
+		}
+	}
+
+	// Maximize Ping Monitor with 'z' and verify even more rows are populated immediately on Draw.
+	if !controls.handle(tcell.NewEventKey(tcell.KeyRune, 'z', tcell.ModNone)) {
+		t.Fatal("expected 'z' to be handled")
+	}
+	view.Draw(screen)
+	maxVisible := tr.visibleDataRows()
+	if maxVisible <= visible {
+		t.Fatalf("maximized visibleDataRows() = %d, want > %d", maxVisible, visible)
+	}
+	for row := 1; row <= maxVisible; row++ {
+		if got := tr.table.GetCell(row, 1).Text; got == "" {
+			t.Fatalf("maximized row %d (within visible %d rows) was not rendered", row, maxVisible)
+		}
+	}
+
+	// Scroll selection to the very last target (#72) and verify the bottom visible rows and selection render.
+	tr.selectedID = targets[numTargets-1].ID
+	tr.scrollToSelection = true
+	tr.update()
+	if got := tr.table.GetCell(numTargets, 1).Text; got == "" {
+		t.Fatalf("last row %d was not rendered when scrolled to bottom", numTargets)
+	}
+}
+
 // BenchmarkTableRendererUpdate_500Targets_Scrolled is the P1 fix's
 // windowed-rendering proof. Pass 1 (GetView, alert/log tracking) still
 // necessarily scans every target regardless of scroll position — that
