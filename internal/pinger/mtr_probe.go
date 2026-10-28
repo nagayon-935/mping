@@ -139,7 +139,7 @@ func (p *Pinger) openHopSocketAddr(dstAddr *net.IPAddr) (*HopSocket, error) {
 		// Non-fatal: hop limit control message may not be available on all platforms.
 		_ = v6conn.SetControlMessage(ipv6.FlagHopLimit, true)
 		// Same kernel-side filter as the main receiver socket (see
-		// applyICMPv6Filter in pinger.go). This conn is used for both the
+		// applyICMPv6Filter in receiver.go). This conn is used for both the
 		// standalone read path (receiveViaSocket, when no Pinger.connV6 is
 		// running) and the send-only path when a Pinger is running
 		// (replies are read via the shared trace channel instead) - the

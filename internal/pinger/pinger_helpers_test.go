@@ -30,37 +30,8 @@ func (p *Pinger) sendProbe(t *stats.TargetStats, id, seq int, payload []byte, ds
 	return p.sendProbeWithStats(t, t.NewProbe(), id, seq, payload, dstAddr)
 }
 
-// runWorker drives one target's probe traffic with a single select loop
-// that decouples sending from waiting on replies (see Apple ping.c's
-// select()-based main loop, which never blocks sending on a reply):
-//
-//   - sendTimer fires immediately for the first probe (matching the prior
-//     stop-and-wait runWorker, which never gated its first send on a
-//     tick), then rearms itself for `interval` after every subsequent
-//     fire. Unlike a stop-and-wait design, later sends are never gated on
-//     a prior probe's reply, so a target that never answers is still
-//     probed once per `interval`, not once per `timeout`.
-//   - ch delivers replies from the receiver goroutine; a reply is matched
-//     against `unacked` by its (16-bit-masked) seq and, if found, recorded
-//     as a success or ICMP error and removed. A reply with no matching
-//     entry — a duplicate of an already-resolved seq, or one that arrived
-//     after its entry was already swept as a timeout — is silently
-//     discarded, exactly as the prior stop-and-wait waitForReply did for
-//     any non-matching reply.
-//   - sweepTimer fires at the earliest deadline among `unacked` and
-//     records every entry that has aged past `timeout` as a loss.
-//   - dnsTicker re-resolves the target on the same cadence as before.
-//   - p.done ends the loop immediately, matching Stop()/Close().
-//
-// `unacked` is owned exclusively by this goroutine, so it needs no mutex.
-//
-// Count still means "stop after sending Count probes", but since probes can
-// now be in flight concurrently, reaching Count no longer implies the most
-// recent probe (or any earlier one) has already been resolved: once the
-// Count-th probe is sent, the loop stops sending but keeps servicing
-// replies/sweeps — draining `unacked` — until every outstanding probe has
-// been resolved, then returns. This is the same "wait out the stragglers
-// before reporting the final tally" idea as ping.c's almost_done.
+// runWorker is a test helper that runs runTargetWorker (the production worker
+// loop; see its doc) with a background context.
 func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.Duration) {
 	p.runTargetWorker(t, id, interval, timeout, context.Background())
 }

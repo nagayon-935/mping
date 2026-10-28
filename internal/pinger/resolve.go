@@ -129,7 +129,7 @@ func (p *Pinger) resolveTargetContext(ctx context.Context, t *stats.TargetStats)
 		//
 		// Everything else collapses to a generic "DNS Error" on purpose:
 		// LastError is surfaced in a narrow TUI column, so the detail
-		// resolveIPAddrBounded formats (which host, which timeout) is
+		// resolveIPAddrContext formats (which host, which timeout) is
 		// deliberately dropped here rather than truncated on screen.
 		if !errors.Is(err, errPingerStopped) {
 			probe.OnFailure("DNS Error")
