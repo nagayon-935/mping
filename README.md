@@ -6,7 +6,9 @@
 
 **mping** is a terminal-based multi-target ping tool written in Go. It pings multiple hosts simultaneously and displays real-time statistics — packet loss, RTT, TTL, and more — in a clean TUI (Text User Interface).
 
-![Go Version1.26](https://img.shields.io/badge/go-v1.26-blue "Go Version1.26")![MIT License](https://img.shields.io/badge/license-MIT-blue "MIT License")[![Coverage Status](https://coveralls.io/repos/github/nagayon-935/mping/badge.svg?branch=main)](https://coveralls.io/github/nagayon-935/mping?branch=main)
+![Go Version1.26](https://img.shields.io/badge/go-v1.26-blue "Go Version1.26")
+![MIT License](https://img.shields.io/badge/license-MIT-blue "MIT License")[![Coverage Status](https://coveralls.io/repos/github/nagayon-935/mping/badge.svg?branch=main)](https://coveralls.io/github/nagayon-935/mping?branch=main)
+[![Release](https://img.shields.io/github/v/release/nagayon-935/mping)](https://github.com/nagayon-935/mping/releases)
 
 [日本語](./README.ja.md)
 
