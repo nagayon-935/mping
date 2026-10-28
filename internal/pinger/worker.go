@@ -17,10 +17,7 @@ import (
 func (p *Pinger) dscpFor(t *stats.TargetStats) (int, bool) {
 	p.mapMu.RLock()
 	defer p.mapMu.RUnlock()
-	if p.TargetDSCP == nil {
-		return 0, false
-	}
-	v, ok := p.TargetDSCP[t]
+	v, ok := p.TargetDSCP[t] // a nil map yields (0, false)
 	return v, ok
 }
 
@@ -209,17 +206,14 @@ func nextExpiry(unacked map[int]pendingProbe, timeout time.Duration) (time.Time,
 	return earliest, found
 }
 
-// rearmSweepTimer stops/drains sweepTimer and reschedules it for the
-// earliest still-outstanding deadline in unacked, or leaves it stopped when
-// unacked is empty. Only ever called from runWorker's own goroutine, so no
-// synchronization is needed around the Stop/drain/Reset sequence.
+// rearmSweepTimer stops sweepTimer and reschedules it for the earliest
+// still-outstanding deadline in unacked, or leaves it stopped when unacked is
+// empty. Only ever called from runTargetWorker's own goroutine, so no
+// synchronization is needed around the Stop/Reset sequence. Timer channels
+// are synchronous (Go 1.23+, per go.mod), so Stop/Reset never leave a stale
+// tick behind and no manual drain is needed.
 func rearmSweepTimer(sweepTimer *time.Timer, unacked map[int]pendingProbe, timeout time.Duration) {
-	if !sweepTimer.Stop() {
-		select {
-		case <-sweepTimer.C:
-		default:
-		}
-	}
+	sweepTimer.Stop()
 	if d, ok := nextExpiry(unacked, timeout); ok {
 		wait := max(time.Until(d), 0)
 		sweepTimer.Reset(wait)
@@ -248,9 +242,7 @@ func (p *Pinger) runTargetWorker(t *stats.TargetStats, id int, interval, timeout
 	// sweepTimer is created stopped: it's only armed once the first probe
 	// is sent (rearmSweepTimer no-ops while unacked is empty).
 	sweepTimer := time.NewTimer(timeout)
-	if !sweepTimer.Stop() {
-		<-sweepTimer.C
-	}
+	sweepTimer.Stop()
 	defer sweepTimer.Stop()
 
 	p.mapMu.RLock()

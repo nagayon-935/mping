@@ -161,10 +161,8 @@ func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloa
 		_ = rc.SetReadDeadline(deadline)
 		hdr, pld, _, err := rc.ReadFrom(buf)
 		if err != nil {
-			if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
-				return false, "", nil
-			}
-			// Non-timeout read errors (e.g. socket closed) are treated as no reply.
+			// A read timeout or any other read error (e.g. socket closed) is
+			// treated as no reply.
 			return false, "", nil
 		}
 		parsed, err := icmp.ParseMessage(1, pld)
