@@ -38,7 +38,6 @@ type HTTPChecker struct {
 	client   *http.Client
 	ctx      context.Context
 	cancel   context.CancelFunc
-	stopOnce sync.Once
 	wg       sync.WaitGroup
 	options  HTTPOptions
 }
@@ -88,7 +87,7 @@ func NewHTTPCheckerWithOptions(urls []string, interval, timeout time.Duration, b
 		client:   client,
 		ctx:      ctx,
 		cancel:   cancel,
-		options:  options.Clone(),
+		options:  options,
 	}
 }
 
@@ -111,7 +110,7 @@ func (hc *HTTPChecker) Start() {
 
 // Stop signals all goroutines to exit. Safe to call multiple times.
 func (hc *HTTPChecker) Stop() {
-	hc.stopOnce.Do(func() { hc.cancel() })
+	hc.cancel()
 }
 
 // Wait blocks until all check goroutines have exited. Call Stop first.

@@ -56,7 +56,6 @@ type PortChecker struct {
 	udpDialer  *net.Dialer
 	ctx        context.Context
 	cancel     context.CancelFunc
-	stopOnce   sync.Once
 	targetMu   sync.Mutex
 	targetRuns map[*stats.TargetStats]*portTargetRun
 	wg         sync.WaitGroup
@@ -101,7 +100,7 @@ func (pc *PortChecker) Start() {
 
 // Stop signals all goroutines to exit. Safe to call multiple times.
 func (pc *PortChecker) Stop() {
-	pc.stopOnce.Do(func() { pc.cancel() })
+	pc.cancel()
 }
 
 // Wait blocks until all check goroutines have exited. Call Stop first.
@@ -219,10 +218,6 @@ type portTargetRun struct {
 
 func (pc *PortChecker) launchTarget(t *stats.TargetStats, results []*stats.PortCheckResult) {
 	pc.targetMu.Lock()
-	if pc.ctx == nil {
-		pc.targetMu.Unlock()
-		return
-	}
 	if _, exists := pc.targetRuns[t]; exists {
 		pc.targetMu.Unlock()
 		return
