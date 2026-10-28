@@ -50,8 +50,9 @@ func boxBorder(widths []int, kind borderKind) string {
 	return sb.String()
 }
 
-// boxColumn is one column of a box-drawn monitor table. Cells are centred
-// (paddedCell) unless leftAlign is set (rightPaddedCell).
+// boxColumn is one column of a box-drawn monitor table. Cells are left-aligned
+// with a leading space (paddedCell) unless leftAlign is set, which right-aligns
+// them with a trailing space (rightPaddedCell).
 type boxColumn struct {
 	header    string
 	width     int
@@ -143,28 +144,22 @@ func writeLabelledBoxTable(sb *strings.Builder, cols []boxColumn, label string, 
 		fmt.Fprintln(sb, boxSpanRow(" "+label, innerW, "[yellow::b]"))
 	}
 	fmt.Fprintln(sb, boxBorder(widths, borderIntro))
-	fmt.Fprintln(sb, boxHeaderRow(cols))
-	fmt.Fprintln(sb, boxBorder(widths, borderMid))
-	for i, rows := range groups {
-		for _, cells := range rows {
-			fmt.Fprintln(sb, boxRow(cols, cells))
-		}
-		if i < len(groups)-1 {
-			fmt.Fprintln(sb, boxBorder(widths, borderMid))
-		}
-	}
-	if len(groups) == 0 {
-		fmt.Fprintln(sb, boxSpanRow(empty, innerW, "[darkgray]"))
-	}
-	fmt.Fprintln(sb, boxBorder(widths, borderBottom))
+	writeBoxBody(sb, cols, groups, empty)
 }
 
 // writeBoxTable writes a table with a plain top border: header, rows (a
 // rule between groups of rows) and the bottom border. A table with no
-// groups shows empty instead.
+// groups shows empty instead, unless empty is "".
 func writeBoxTable(sb *strings.Builder, cols []boxColumn, groups [][][]boxCell, empty string) {
+	fmt.Fprintln(sb, boxBorder(boxWidths(cols), borderTop))
+	writeBoxBody(sb, cols, groups, empty)
+}
+
+// writeBoxBody writes what follows a table's top edge: the header, the rows
+// (a rule between groups of rows), the empty-table placeholder when there are
+// no groups and empty is not "", and the bottom border.
+func writeBoxBody(sb *strings.Builder, cols []boxColumn, groups [][][]boxCell, empty string) {
 	widths := boxWidths(cols)
-	fmt.Fprintln(sb, boxBorder(widths, borderTop))
 	fmt.Fprintln(sb, boxHeaderRow(cols))
 	fmt.Fprintln(sb, boxBorder(widths, borderMid))
 	for i, rows := range groups {
