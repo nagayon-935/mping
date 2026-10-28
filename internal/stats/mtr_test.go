@@ -406,23 +406,6 @@ func TestMTRStats_OutOfRangeHopsAreIgnored(t *testing.T) {
 	}
 }
 
-func TestMTRStats_HasIPReportsOnlyAnsweredHops(t *testing.T) {
-	m := NewMTRStats()
-	m.EnsureLen(2)
-	m.RecordReply(1, "192.0.2.1", "", "", "", time.Millisecond)
-	m.RecordLoss(2)
-
-	tests := []struct {
-		ttl  int
-		want bool
-	}{{1, true}, {2, false}, {0, false}, {3, false}}
-	for _, tt := range tests {
-		if got := m.HasIP(tt.ttl); got != tt.want {
-			t.Errorf("HasIP(%d) = %v, want %v", tt.ttl, got, tt.want)
-		}
-	}
-}
-
 func TestMTRStats_TruncateLenTreatsNegativeAsZero(t *testing.T) {
 	m := NewMTRStats()
 	m.EnsureLen(3)

@@ -11,7 +11,7 @@ const (
 	jitterDivisor = 16   // RFC 1889 §A.8 smoothing factor: J = J + (|D| - J) / 16
 )
 
-// TargetStats holds the statistics for a single ping target.
+// targetIDs allocates TargetStats.ID values.
 var targetIDs atomic.Uint64
 
 type IPChange struct {
@@ -19,6 +19,7 @@ type IPChange struct {
 	IP string    `json:"ip"`
 }
 
+// TargetStats holds the statistics for a single ping target.
 type TargetStats struct {
 	ID              uint64 // Immutable identity; never reused within this process.
 	StartedAt       time.Time
@@ -219,17 +220,6 @@ func (t *TargetStats) onSuccessLocked(rtt time.Duration, ttl int) {
 	t.recordOutcomeLocked(now, true)
 
 	t.LastError = ""
-}
-
-// SetLastDSCP records the DSCP-derived TOS/TrafficClass byte observed on the
-// most recent successful reply. Called separately from OnSuccess (rather
-// than as an extra OnSuccess parameter) to avoid touching OnSuccess's
-// existing call sites across cmd/main and internal/ui's test suites.
-func (t *TargetStats) SetLastDSCP(dscp int) {
-	defer bumpGeneration()
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.LastDSCP = dscp
 }
 
 // OnDuplicate records a reply that repeats a seq already resolved. See the
