@@ -351,9 +351,7 @@ type runOptionsParams struct {
 	packetSize    int
 	preLogs       []string
 	cfg           config
-	portCount     int
 	sup           *supervisor
-	thresholds    ui.Thresholds
 	sig           *reloadSignal
 	logCh         chan string
 	currentHosts  []targetSpec
@@ -395,13 +393,13 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 		TraceEnabled:     p.cfg.trace,
 		MTUEnabled:       p.cfg.mtuEnabled,
 		MTREnabled:       p.cfg.mtr,
-		PortEnabled:      p.portCount > 0,
+		PortEnabled:      len(p.cfg.portSpecs) > 0,
 		HTTPEnabled:      len(p.cfg.httpURLs) > 0,
 		HTTPResults:      p.sup.httpResults,
 		ASNEnabled:       p.cfg.asnEnabled,
 		PTREnabled:       p.cfg.ptrEnabled,
 		DSCPEnabled:      dscpColumnEnabled(p.cfg, p.currentHosts),
-		Thresholds:       &p.thresholds,
+		Thresholds:       &p.cfg.thresholds,
 		MeasurementState: p.sup.measurementState,
 		ExternalCloseCh:  p.sig.ch,
 		ExternalLogCh:    p.logCh,
@@ -423,7 +421,7 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 	if len(p.cfg.httpURLs) > 0 {
 		opts.OnResetHTTP = p.sup.resetHTTP
 	}
-	if p.portCount > 0 {
+	if len(p.cfg.portSpecs) > 0 {
 		opts.OnResetPort = p.sup.resetPort
 	}
 	return opts

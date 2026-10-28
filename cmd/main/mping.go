@@ -227,8 +227,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			targets: targets, interval: interval, timeout: timeout, doneCh: doneCh,
 			dispV4: displaySourceIPv4, dispV6: displaySourceIPv6,
 			packetSize: packetSizeToUse, preLogs: preLogs, cfg: currentCfg,
-			portCount: len(portSpecs), sup: sup,
-			thresholds: currentCfg.thresholds, sig: sig, logCh: logCh,
+			sup: sup, sig: sig, logCh: logCh,
 			currentHosts: currentHosts, currentGroups: currentGroups,
 		})
 		if webSrv != nil && !cfg.noTUI {
