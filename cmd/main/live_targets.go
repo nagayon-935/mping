@@ -245,7 +245,7 @@ func (s *supervisor) startTargetTrace(p tracer, t *stats.TargetStats) {
 		if wg != nil {
 			defer wg.Done()
 		}
-		runTraceroutes(ctx, p, []*stats.TargetStats{t})
+		runTraceroutes(ctx, p, t)
 	}()
 }
 

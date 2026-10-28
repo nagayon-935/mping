@@ -49,17 +49,10 @@ func trimLeadingCommentsAndBlanks(data []byte) ([]byte, int) {
 	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	skippedLines := 0
 	for len(data) > 0 {
-		line := data
-		var rest []byte
-		hasNewline := false
-		if i := bytes.IndexByte(data, '\n'); i >= 0 {
-			line = data[:i]
-			rest = data[i+1:]
-			hasNewline = true
-		}
+		line, rest, found := bytes.Cut(data, []byte{'\n'})
 		trimmed := bytes.TrimSpace(line)
 		if len(trimmed) == 0 || trimmed[0] == '#' {
-			if !hasNewline {
+			if !found {
 				return nil, skippedLines
 			}
 			data = rest
