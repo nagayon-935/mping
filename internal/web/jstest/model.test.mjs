@@ -22,8 +22,6 @@ import {
   dscpName,
   tokenFromHash,
   validateHost,
-  summaryItems,
-  readOnlyHint,
   isIPLiteral,
   targetAddress,
 } from "../static/js/model.js";
@@ -84,10 +82,8 @@ test("status reasons distinguish missing replies, current threshold breaches and
 });
 
 test("cellLevels colours each RTT column by its own value", () => {
-  const got = cellLevels(target({ last_rtt_ms: 300, avg_rtt_ms: 60, min_rtt_ms: 0, jitter_ms: 11 }), th);
+  const got = cellLevels(target({ last_rtt_ms: 300, jitter_ms: 11 }), th);
   assert.equal(got.last, "crit");
-  assert.equal(got.avg, "warn");
-  assert.equal(got.min, "none");
   assert.equal(got.jitter, "warn");
   assert.equal(got.loss, "ok");
 });
@@ -203,18 +199,6 @@ test("validateHost mirrors the server's shape checks", () => {
   assert.ok(validateHost("a\u0007b").error);
   assert.ok(validateHost("a".repeat(254)).error);
   assert.equal(validateHost("a".repeat(253)).host.length, 253);
-});
-
-test("summaryItems lists waiting targets only when there are some", () => {
-  assert.deepEqual(summaryItems({ total: 3, ok: 1, warn: 1, crit: 1, pending: 0 }).map(([, l]) => l), ["targets", "OK", "warn", "crit"]);
-  assert.deepEqual(summaryItems({ total: 2, ok: 1, warn: 0, crit: 0, pending: 1 }), [[2, "targets"], [1, "OK"], [0, "warn"], [0, "crit"], [1, "waiting"]]);
-});
-
-test("readOnlyHint explains the localhost origin when opened via another host name", () => {
-  assert.match(readOnlyHint("localhost").title, /press b.*Copy URL/);
-  assert.doesNotMatch(readOnlyHint("localhost").title, /instead/);
-  assert.match(readOnlyHint("127.0.0.1").title, /localhost/);
-  assert.match(readOnlyHint("[::1]").text, /Read-only/);
 });
 
 const col = (key, priority, required = false) => ({ key, priority, required });

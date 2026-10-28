@@ -36,6 +36,5 @@ export function createConfirmation(dom) {
       dom.dialog.showModal();
       dom.cancel.focus();
     },
-    close,
   };
 }

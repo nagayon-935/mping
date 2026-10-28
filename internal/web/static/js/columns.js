@@ -1,3 +1,5 @@
+import { el } from "./dom.js";
+
 // Shared width contracts. Numeric columns reserve the entire formatted value,
 // including its unit; the identity column receives the remaining table width.
 const widths = {
@@ -23,25 +25,17 @@ export function setColumns(table, columns, flexibleKey) {
   table.insertBefore(group, table.tHead);
   const total = columns.map((c) => widths[c.key]).join(" + ");
   table.style.minWidth = `calc(${total})`;
-  const row = document.createElement("tr");
-  for (const c of columns) {
-    const th = document.createElement("th");
-    th.className = `${c.num ? "num " : ""}col-${c.key}`;
-    th.textContent = c.label;
-    th.scope = "col";
-    if (c.title) th.title = c.title;
-    row.append(th);
-  }
-  table.tHead.replaceChildren(row);
+  table.tHead.replaceChildren(el("tr", {}, ...columns.map((c) => el("th", {
+    className: `${c.num ? "num " : ""}col-${c.key}`,
+    text: c.label,
+    attrs: { scope: "col", ...(c.title ? { title: c.title } : {}) },
+  }))));
 }
 
 function elGroup(columns, flexibleKey) {
-  const group = document.createElement("colgroup");
-  for (const c of columns) {
-    const col = document.createElement("col");
-    col.className = `col-${c.key}`;
+  return el("colgroup", {}, ...columns.map((c) => {
+    const col = el("col", { className: `col-${c.key}` });
     if (c.key !== flexibleKey) col.style.width = widths[c.key];
-    group.append(col);
-  }
-  return group;
+    return col;
+  }));
 }

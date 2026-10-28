@@ -102,7 +102,6 @@ body {
 .badge-icon { font-size: 11px; }
 .badge.lvl-ok .badge-icon { color: var(--series); }
 .badge.lvl-warn .badge-icon { color: var(--warning); }
-.badge.lvl-crit .badge-icon { color: var(--critical); }
 .badge.lvl-pending .badge-icon, .badge.lvl-stopped .badge-icon { color: var(--muted); }
 
 .summary { display: flex; flex-wrap: nowrap; gap: 5px; overflow-x: auto; margin: 0; padding: 0; list-style: none; font-size: 13px; }
@@ -177,7 +176,6 @@ body {
 .trace-target-head strong { font-size: 13px; }
 .trace-target-address { grid-column: 2 / -1; color: var(--ink-2); font: 500 12px/1.4 var(--mono); }
 #mtr-scroll { flex: 1; overflow: hidden; scrollbar-gutter: auto; }
-#pane-mtr #mtr-scroll { overflow-y: hidden; }
 #mtr-table-wrap { height: 100%; overflow: auto; scrollbar-gutter: stable; }
 #mtr { border-collapse: separate; border-spacing: 0; }
 #mtr thead th { z-index: 3; height: 36px; }
@@ -258,7 +256,6 @@ body {
 }
 .grid tr.target-row { cursor: pointer; }
 .grid tr.target-row td { height: 52px; }
-.grid tr.target-row:hover td { background: var(--surface-2); }
 .grid tr.target-row[aria-current="true"] td { background: var(--surface-2); box-shadow: inset 0 1px 0 var(--border), inset 0 -1px 0 var(--border); }
 .grid tr.target-row[aria-current="true"] td:first-child { box-shadow: inset 3px 0 0 var(--series); }
 
@@ -306,17 +303,6 @@ td.lvl-crit { background: var(--crit-tint); font-weight: 600; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; overflow-wrap: anywhere; }
 
-.chart-wrap { position: relative; }
-canvas.chart { display: block; width: 100%; height: 200px; }
-.tooltip {
-  position: absolute; pointer-events: none;
-  padding: 6px 8px; border-radius: 6px;
-  background: var(--surface); border: 1px solid var(--border);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  font-size: 12px; white-space: nowrap;
-}
-.tooltip strong { display: block; font-size: 13px; color: var(--ink); }
-.tooltip span { color: var(--muted); }
 .chart-caption { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
 
 
@@ -346,7 +332,6 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
 #inspect-target { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 20px; }
 #close-inspect { flex: none; }
 .inspect-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 16px 16px; overflow-anchor: none; }
-.inspect-body > .btn { margin-top: 12px; }
 .summary-columns { display: grid; gap: 0 32px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
 .trace-summary { margin: 12px 0 4px; color: var(--muted); font-size: 12px; }
 .trace-path { list-style: none; margin: 0; padding: 0; }
@@ -363,9 +348,6 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
 .trace-message { padding: 20px 0; font-size: 13px; color: var(--ink-2); }
 .trace-message p { margin: 8px 0 0; overflow-wrap: anywhere; }
 .grid.log td { height: 36px; }
-.grid.log .log-message { white-space: normal; }
-.grid.log tr.is-selected td { background: var(--surface-2); }
-.link { border: 0; padding: 0; background: none; color: var(--series); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 
 /* All desktop panes occupy stable grid cells and scroll internally. */
 @media (min-width: 1100px) {

@@ -1,5 +1,5 @@
 // One SSE stream drives the monitoring workspace and independent global pages.
-import { el, fetchJSON, readSession, selectionWithin, writeSession } from "./dom.js";
+import { $, el, fetchJSON, readSession, selectionWithin, writeSession } from "./dom.js";
 import { createGraphs } from "./graphs.js";
 import { createInspect } from "./inspect.js";
 import { createLog } from "./log.js";
@@ -20,8 +20,6 @@ import { createGraphTools } from "./graph_tools.js";
 
 const HISTORY_EVERY_MS = 2000;
 const SHORTCUTS_KEY = "mping.shortcuts";
-
-const $ = (id) => document.getElementById(id);
 
 // Must run before anything reads location.hash: it consumes "#token=".
 const control = createControl();

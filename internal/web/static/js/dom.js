@@ -2,6 +2,9 @@
 // host names, PTR records, AS org names and event messages can come from DNS
 // or remote systems and must never be parsed as HTML.
 
+/** Element by id. */
+export const $ = (id) => document.getElementById(id);
+
 /**
  * @param {string} tag
  * @param {{className?: string, text?: string, attrs?: Record<string, string>}} [opts]

@@ -84,10 +84,9 @@ export function renderTargets(table, view, onOpen, onSort) {
   const available = table.parentElement.clientWidth;
   const columns = selectColumns(targetColumns(meta.features, snapshot.targets), (c) => columnWidthPx(table, c.key), available);
   const active = document.activeElement;
-  const focusedSortBefore = table.contains(active) ? active?.dataset?.sort : null;
+  const focusedSort = table.contains(active) ? active?.dataset?.sort : null;
   setColumns(table, columns, "host");
   const focusedId = table.contains(active) ? active?.dataset?.targetId : null;
-  const focusedSort = focusedSortBefore;
   const visible = view.visibleTargets ?? snapshot.targets.filter((t) => matchesFilter(t, filter, meta.features));
   const focusId = visible.some(t => String(t.id) === focusedId) ? Number(focusedId)
     : visible.some(t => t.id === view.focusedId) ? view.focusedId
@@ -103,8 +102,9 @@ export function renderTargets(table, view, onOpen, onSort) {
     th.replaceChildren(button);
   }
   const groupsById = new Map(meta.groups?.flatMap(g => g.target_ids.map(id => [id, g.name])) ?? []);
+  const sortedFlat = view.sort?.key && view.sort.key !== "config";
   const rows = [];
-  for (const section of buildSections(visible, view.sort?.key && view.sort.key !== "config" ? [] : meta.groups)) {
+  for (const section of buildSections(visible, sortedFlat ? [] : meta.groups)) {
     if (section.name != null) {
       rows.push(el("tr", { className: "group-row" },
         el("td", { text: `${section.name} (${section.targets.length})`, attrs: { colspan: String(columns.length) } })));
@@ -121,7 +121,7 @@ export function renderTargets(table, view, onOpen, onSort) {
         },
       });
       for (const c of columns) {
-        const cell = targetCell(c, t, th, cells, meta.features, view.sort?.key && view.sort.key !== "config" ? groupsById.get(t.id) : null, t.id === focusId);
+        const cell = targetCell(c, t, th, cells, meta.features, sortedFlat ? groupsById.get(t.id) : null, t.id === focusId);
         cell.classList.add(`col-${c.key}`);
         tr.append(cell);
       }
