@@ -172,7 +172,7 @@ func TestRunTabWithTraceAndPort(t *testing.T) {
 	screen := <-screenCh
 	time.Sleep(20 * time.Millisecond)
 	// Tab multiple times to cycle through: table→trace→port→graph→error→table
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -294,11 +294,11 @@ func TestRunTableScrollKeys_ManyTargets_Virtualized(t *testing.T) {
 	screen := <-screenCh
 	time.Sleep(20 * time.Millisecond)
 	// Scroll all the way to the bottom, then back to the top.
-	for i := 0; i < numTargets/tableMaxRows+2; i++ {
+	for range numTargets/tableMaxRows + 2 {
 		screen.InjectKey(tcell.KeyPgDn, 0, tcell.ModNone)
 	}
 	time.Sleep(10 * time.Millisecond)
-	for i := 0; i < numTargets/tableMaxRows+2; i++ {
+	for range numTargets/tableMaxRows + 2 {
 		screen.InjectKey(tcell.KeyPgUp, 0, tcell.ModNone)
 	}
 	time.Sleep(10 * time.Millisecond)
@@ -370,7 +370,7 @@ func TestRunTabTraceOnly(t *testing.T) {
 	screen := <-screenCh
 	time.Sleep(20 * time.Millisecond)
 	// Tab cycles: table→traceView→graphView→errorView→table
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -407,7 +407,7 @@ func TestRunTabPortOnly(t *testing.T) {
 	screen := <-screenCh
 	time.Sleep(20 * time.Millisecond)
 	// Tab cycles: table→portView→graphView→errorView→table
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
 		time.Sleep(10 * time.Millisecond)
 	}

@@ -16,7 +16,7 @@ func TestResetClearsJitterHistory(t *testing.T) {
 	if got := target.GetView().Jitter; got != 0 {
 		t.Fatalf("jitter after Reset=%v", got)
 	}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		target.OnSuccess(5*time.Millisecond, 64)
 	}
 	if got := target.GetView().Jitter; got != 0 {

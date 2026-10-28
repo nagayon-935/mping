@@ -359,7 +359,7 @@ func BenchmarkTableRendererUpdate_100Targets(b *testing.B) {
 	for i := range targets {
 		targets[i] = stats.NewTargetStats("host")
 		targets[i].SetIP("10.0.0.1")
-		for j := 0; j < 500; j++ {
+		for j := range 500 {
 			targets[i].IncSent()
 			targets[i].OnSuccess(time.Duration(j)*time.Millisecond, 64)
 		}

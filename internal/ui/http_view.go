@@ -33,10 +33,7 @@ func httpURLColW(results []*stats.HTTPCheckResult, availW int, compact bool) int
 		fixedW = httpStatusColW + httpCodeColW + httpLatColW*4 + httpCountColW*2 + httpSinceColW + 9
 	}
 	// -2 accounts for the outer left/right border chars (┌─┐ / └─┘).
-	cap := availW - fixedW - 2
-	if cap < minHTTPURLW {
-		cap = minHTTPURLW
-	}
+	cap := max(availW-fixedW-2, minHTTPURLW)
 
 	// Fit to the longest URL (+ 2 padding spaces) to avoid wasting space.
 	contentW := minHTTPURLW

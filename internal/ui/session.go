@@ -37,8 +37,7 @@ func newUISession() *uiSession {
 
 // start is used only during Run construction, before Wait is possible.
 func (s *uiSession) start(f func()) {
-	s.wg.Add(1)
-	go func() { defer s.wg.Done(); f() }()
+	s.wg.Go(f)
 }
 
 func (s *uiSession) Stop() { s.once.Do(func() { close(s.done) }) }

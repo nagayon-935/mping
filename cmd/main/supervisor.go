@@ -398,9 +398,7 @@ func (s *supervisor) startAll() error {
 }
 
 func (s *supervisor) startCountObserver(next pingerController) {
-	s.observers.Add(1)
-	go func() {
-		defer s.observers.Done()
+	s.observers.Go(func() {
 		notify := func() bool {
 			select {
 			case s.cmds <- command{kind: cmdProbesFinished, pinger: next}:
@@ -426,7 +424,7 @@ func (s *supervisor) startCountObserver(next pingerController) {
 			next.WaitWorkers()
 			notify()
 		}
-	}()
+	})
 }
 
 func (s *supervisor) configureTarget(t *stats.TargetStats) {

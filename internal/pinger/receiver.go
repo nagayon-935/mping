@@ -3,6 +3,7 @@ package pinger
 import (
 	"errors"
 	"net"
+	"slices"
 	"time"
 
 	"golang.org/x/net/icmp"
@@ -208,12 +209,7 @@ func (p *Pinger) runReceiver(
 }
 
 func isErrorType(t icmp.Type, errorTypes []icmp.Type) bool {
-	for _, et := range errorTypes {
-		if t == et {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(errorTypes, t)
 }
 
 func (p *Pinger) handleEchoReply(msg *icmp.Message, ttl, dscp int) {

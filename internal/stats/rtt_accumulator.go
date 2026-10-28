@@ -149,10 +149,7 @@ func reconstructHistoryWindow(buf []time.Duration, idx, length, n int) []time.Du
 		return nil
 	}
 	size := len(buf)
-	effLen := length
-	if n < effLen {
-		effLen = n
-	}
+	effLen := min(n, length)
 	if length < size {
 		// No wraparound yet: buf[:length] is already chronological order.
 		out := make([]time.Duration, effLen)

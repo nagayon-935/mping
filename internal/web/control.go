@@ -173,8 +173,7 @@ func handleAddHost(w http.ResponseWriter, r *http.Request, c Controller) {
 	dec.DisallowUnknownFields()
 	var body addHostRequest
 	if err := dec.Decode(&body); err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 			return
 		}

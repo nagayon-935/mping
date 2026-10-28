@@ -36,7 +36,7 @@ func (a *IDAllocator) traceID() int {
 	if a.traces == nil {
 		a.traces = make(map[int]bool)
 	}
-	for n := 0; n < 32768; n++ {
+	for range 32768 {
 		id := 32768 + a.trace%32768
 		a.trace++
 		if !a.traces[id] {

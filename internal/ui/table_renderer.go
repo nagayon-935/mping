@@ -226,14 +226,8 @@ func (tr *tableRenderer) ensureRenderedForSize() {
 // so input_handler.go's maxOffset scroll math (which reads tr.rowCount)
 // stays correct regardless of how few rows are actually rendered.
 func visibleRowWindowForHeight(offsetRow, totalDataRows, visibleRows int) (start, end int) {
-	start = offsetRow - rowRenderMargin
-	if start < 0 {
-		start = 0
-	}
-	end = offsetRow + max(visibleRows, tableMaxRows) + 1 + rowRenderMargin
-	if end > totalDataRows {
-		end = totalDataRows
-	}
+	start = max(offsetRow-rowRenderMargin, 0)
+	end = min(offsetRow+max(visibleRows, tableMaxRows)+1+rowRenderMargin, totalDataRows)
 	return start, end
 }
 

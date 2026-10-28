@@ -244,9 +244,7 @@ func (pc *PortChecker) launchTarget(t *stats.TargetStats, results []*stats.PortC
 	run := &portTargetRun{cancel: cancel, done: make(chan struct{})}
 	pc.targetRuns[t] = run
 	pc.targetMu.Unlock()
-	pc.wg.Add(1)
-	go func() {
-		defer pc.wg.Done()
+	pc.wg.Go(func() {
 		defer close(run.done)
 		var wg sync.WaitGroup
 		for j, spec := range pc.specs {
@@ -257,7 +255,7 @@ func (pc *PortChecker) launchTarget(t *stats.TargetStats, results []*stats.PortC
 			}(spec, results[j])
 		}
 		wg.Wait()
-	}()
+	})
 }
 func (pc *PortChecker) AddTarget(t *stats.TargetStats) {
 	results := newPortResults(pc.specs)

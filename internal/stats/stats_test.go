@@ -514,12 +514,12 @@ func TestPortCheckResult_ConcurrentAccess(t *testing.T) {
 	r := &PortCheckResult{Port: 80, Protocol: "tcp", Status: "Checking..."}
 	done := make(chan struct{})
 	go func() {
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			r.SetResult("Open", time.Duration(i)*time.Millisecond)
 		}
 		close(done)
 	}()
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		_ = r.GetView()
 	}
 	<-done

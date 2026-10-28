@@ -23,7 +23,7 @@ func TestWebAccessSurvivesLogRotationAndCopiesFullURL(t *testing.T) {
 		app.SetAfterDrawFunc(func(screen tcell.Screen) {
 			var frame strings.Builder
 			w, h := screen.Size()
-			for y := 0; y < h; y++ {
+			for y := range h {
 				frame.WriteString(screenVisibleRow(screen, y, w))
 				frame.WriteByte('\n')
 			}

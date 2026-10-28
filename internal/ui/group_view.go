@@ -128,7 +128,7 @@ func setGroupHeaderRow(table *tview.Table, tableRow int, colCount int,
 // the visual gap between the ungrouped section / previous group and the
 // next group's banner.
 func setGroupSpacerRow(table *tview.Table, tableRow int, colCount int) {
-	for c := 0; c < colCount; c++ {
+	for c := range colCount {
 		cell := tview.NewTableCell("").
 			SetBackgroundColor(tcell.ColorBlack).
 			SetSelectable(false)

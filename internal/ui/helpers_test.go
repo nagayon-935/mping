@@ -226,7 +226,7 @@ func TestAppendErrorLog_Truncation(t *testing.T) {
 	view := tview.NewTextView()
 	logs := make([]string, 0)
 	// Fill to exactly 1000 entries
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		logs = append(logs, "entry")
 	}
 	// Adding one more should trigger truncation (remove oldest entry)

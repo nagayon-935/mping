@@ -158,7 +158,7 @@ func TestProbeHop_ViaTraceChan_TimeExceeded(t *testing.T) {
 	msg, _ := icmp.ParseMessage(1, raw)
 	go func() {
 		var ch chan traceMsg
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			p.traceChansMu.RLock()
 			ch = p.traceChans[traceID]
 			p.traceChansMu.RUnlock()
@@ -247,7 +247,7 @@ func TestProbeHop_CtxCancel(t *testing.T) {
 func TestNextTraceID_Unique(t *testing.T) {
 	p := &Pinger{baseID: 0}
 	ids := make(map[int]bool)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		id := p.NextTraceID()
 		if ids[id] {
 			t.Errorf("duplicate traceID %d at iteration %d", id, i)

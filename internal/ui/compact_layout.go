@@ -51,10 +51,7 @@ func formatTableError(err string) string {
 }
 
 func calcInitialTableErrorWidth(targets []*stats.TargetStats, header string, minWidth int) int {
-	maxWidth := runewidth.StringWidth(header)
-	if minWidth > maxWidth {
-		maxWidth = minWidth
-	}
+	maxWidth := max(minWidth, runewidth.StringWidth(header))
 	for _, s := range tableErrorCandidates {
 		if w := runewidth.StringWidth(s); w > maxWidth {
 			maxWidth = w

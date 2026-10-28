@@ -16,7 +16,7 @@ import (
 // the resulting config differs from the zero value. A field that
 // applyDocToCfg forgot to read would leave cfg unchanged and fail this test.
 func TestApplyDocToCfg_EveryFieldHasEffect(t *testing.T) {
-	docType := reflect.TypeOf(hostsFileYAML{})
+	docType := reflect.TypeFor[hostsFileYAML]()
 	skip := map[string]bool{
 		"Hosts":      true, // returned directly, not merged into cfg
 		"Groups":     true, // returned directly, not merged into cfg
@@ -24,8 +24,8 @@ func TestApplyDocToCfg_EveryFieldHasEffect(t *testing.T) {
 		"Thresholds": true, // covered by TestApplyThresholdsDoc_EveryFieldHasEffect
 	}
 
-	for i := 0; i < docType.NumField(); i++ {
-		field := docType.Field(i)
+	for field := range docType.Fields() {
+		field := field
 		if skip[field.Name] {
 			continue
 		}
@@ -52,10 +52,10 @@ func TestApplyDocToCfg_EveryFieldHasEffect(t *testing.T) {
 // TestOverlayThresholdsDoc_EveryFieldHasEffect is TestApplyDocToCfg_EveryFieldHasEffect's
 // counterpart for thresholdsYAML, which overlayThresholdsDoc merges separately.
 func TestOverlayThresholdsDoc_EveryFieldHasEffect(t *testing.T) {
-	thType := reflect.TypeOf(thresholdsYAML{})
+	thType := reflect.TypeFor[thresholdsYAML]()
 
-	for i := 0; i < thType.NumField(); i++ {
-		field := thType.Field(i)
+	for field := range thType.Fields() {
+		field := field
 		t.Run(field.Name, func(t *testing.T) {
 			th := thresholdsYAML{}
 			thVal := reflect.ValueOf(&th).Elem()

@@ -101,7 +101,7 @@ func TestReportBoundsArchiveAndRejectsActiveWriterPaths(t *testing.T) {
 	s.Start()
 	t.Cleanup(s.Shutdown)
 	if err := s.editTargets(func(s *supervisor) error {
-		for i := 0; i < maxRemovedTargets+3; i++ {
+		for range maxRemovedTargets + 3 {
 			s.archiveTarget(stats.NewTargetStats("removed"))
 		}
 		return nil
@@ -156,7 +156,7 @@ func TestReportsSerializeWithLiveEditsAndReset(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 15; i++ {
+		for range 15 {
 			if err := s.addHost("192.0.2.5"); err != nil {
 				errors <- err
 				return
@@ -170,7 +170,7 @@ func TestReportsSerializeWithLiveEditsAndReset(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 15; i++ {
+		for range 15 {
 			file, err := os.CreateTemp(dir, "snapshot-*.json")
 			if err != nil {
 				errors <- err

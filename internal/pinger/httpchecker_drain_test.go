@@ -22,10 +22,7 @@ func (r *countingReader) Read(p []byte) (int, error) {
 		r.sawEOF = true
 		return 0, io.EOF
 	}
-	n := len(p)
-	if n > r.remaining {
-		n = r.remaining
-	}
+	n := min(len(p), r.remaining)
 	r.remaining -= n
 	r.read += n
 	return n, nil

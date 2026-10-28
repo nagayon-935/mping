@@ -205,7 +205,7 @@ func TestMTRStats_ConcurrentAccess(t *testing.T) {
 	m.EnsureLen(5)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
@@ -218,12 +218,10 @@ func TestMTRStats_ConcurrentAccess(t *testing.T) {
 		}(i)
 	}
 	// Concurrent reads
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
 			_ = m.View()
-		}()
+		})
 	}
 	wg.Wait()
 }

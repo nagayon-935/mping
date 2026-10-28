@@ -1413,17 +1413,15 @@ func TestPingerStopConcurrent(t *testing.T) {
 	const iterations = 200
 	const goroutines = 4
 
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		p := NewPinger(nil)
 		start := make(chan struct{})
 		var wg sync.WaitGroup
-		for g := 0; g < goroutines; g++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range goroutines {
+			wg.Go(func() {
 				<-start
 				p.Stop()
-			}()
+			})
 		}
 		close(start)
 		wg.Wait()
@@ -2526,7 +2524,7 @@ func TestTraceRouteWithTraceCh_TimeExceeded(t *testing.T) {
 
 	// Wait for traceCh to be registered.
 	var ch chan traceMsg
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		p.traceChansMu.RLock()
 		if len(p.traceChans) > 0 {
 			for _, val := range p.traceChans {

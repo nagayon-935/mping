@@ -176,7 +176,7 @@ func TestRenderMTRTable_HopNumberNeverTruncated(t *testing.T) {
 
 	if strings.Contains(out, "...") {
 		// Find the offending line
-		for _, line := range strings.Split(out, "\n") {
+		for line := range strings.SplitSeq(out, "\n") {
 			if strings.Contains(line, "...") {
 				t.Errorf("truncation found in line: %q", line)
 			}

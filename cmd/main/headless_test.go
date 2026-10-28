@@ -274,7 +274,7 @@ func TestHeadlessRunnerOnlyRequestsQuitOnSignals(t *testing.T) {
 // so that, without draining, at least one run would almost surely return
 // with lines still queued (select picks ready cases at random).
 func TestHeadlessRunnerFlushesQueuedLogLinesBeforeReturning(t *testing.T) {
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		logCh := make(chan string, 3)
 		for _, l := range []string{"one", "two", "three"} {
 			logCh <- l

@@ -510,12 +510,10 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 
 	// Start Receivers
 	if p.connV4 != nil {
-		p.wg.Add(1)
-		go func() { defer p.wg.Done(); p.runReceiverV4() }()
+		p.wg.Go(p.runReceiverV4)
 	}
 	if p.connV6 != nil {
-		p.wg.Add(1)
-		go func() { defer p.wg.Done(); p.runReceiverV6() }()
+		p.wg.Go(p.runReceiverV6)
 	}
 
 	return nil

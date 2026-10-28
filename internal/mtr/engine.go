@@ -338,8 +338,7 @@ func (e *Engine) AddTarget(t *stats.TargetStats) {
 	ctx, cancel := context.WithCancel(e.ctx)
 	r := &targetRun{cancel: cancel, done: make(chan struct{})}
 	e.targetRuns[t] = r
-	e.wg.Add(1)
-	go func() { defer e.wg.Done(); defer close(r.done); runTarget(ctx, e.prober, t, e.cfg, e.sem) }()
+	e.wg.Go(func() { defer close(r.done); runTarget(ctx, e.prober, t, e.cfg, e.sem) })
 }
 func (e *Engine) RemoveTarget(t *stats.TargetStats) {
 	e.mu.Lock()

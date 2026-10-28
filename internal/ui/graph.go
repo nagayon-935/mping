@@ -175,10 +175,7 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 	// Compute time-based window width first so buildSeries can fetch
 	// exactly this many trailing history points per target via
 	// GetViewWindow, instead of the full history ring.
-	timeBasedWidth := int(graphWindowSeconds * time.Second / g.interval)
-	if timeBasedWidth < 1 {
-		timeBasedWidth = 1
-	}
+	timeBasedWidth := max(int(graphWindowSeconds*time.Second/g.interval), 1)
 
 	series := g.buildSeries(timeBasedWidth)
 	if len(series) == 0 {
@@ -196,22 +193,19 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 	g.clampScroll(numRowsTotal, visibleRows)
 
 	// Draw loop
-	for r := 0; r < visibleRows; r++ {
+	for r := range visibleRows {
 		rowIndex := g.scrollRow + r
 		baseY := y + (r * rowHeight)
 		if baseY >= y+height {
 			break
 		}
 
-		graphHeight := rowHeight - 2
-		if graphHeight < 1 {
-			graphHeight = 1
-		}
+		graphHeight := max(rowHeight-2, 1)
 		if baseY+1+graphHeight > y+height {
 			graphHeight = (y + height) - (baseY + 1)
 		}
 
-		for c := 0; c < numCols; c++ {
+		for c := range numCols {
 			idx := rowIndex*numCols + c
 			if idx >= len(series) {
 				break
@@ -256,7 +250,7 @@ func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell,
 		py := plotY + (plotHeight - 1 - gy)
 		if py >= plotY && py < plotY+plotHeight {
 			gridYPos[gy] = true
-			for gx := 0; gx < graphWidth; gx++ {
+			for gx := range graphWidth {
 				screen.SetContent(graphX+gx, py, '·', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
 			}
 			tview.Print(screen, fmt.Sprintf("%dms", val), graphX+graphWidth+1, py, labelWidth, tview.AlignLeft, tcell.ColorGray)
@@ -295,7 +289,7 @@ func (g *GraphView) drawBar(screen tcell.Screen, px, plotY, plotHeight int, v ti
 	if v > 0 && totalLevels == 0 {
 		totalLevels = 1
 	}
-	for gy := 0; gy < plotHeight; gy++ {
+	for gy := range plotHeight {
 		py := plotY + (plotHeight - 1 - gy)
 		level := totalLevels - (gy * 8)
 		switch {

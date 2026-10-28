@@ -55,10 +55,7 @@ func mtrHostColW(availW int, compact bool) int {
 		// Hop + Loss% + Snt + Recv + Last + Avg + Min + Max + Jitter + 10 separators
 		fixedW = mtrHopColW + mtrLossColW + mtrSntColW + mtrRecvColW + mtrLatColW*5 + 10
 	}
-	w := availW - fixedW
-	if w < minMTRHostW {
-		w = minMTRHostW
-	}
+	w := max(availW-fixedW, minMTRHostW)
 	return w
 }
 

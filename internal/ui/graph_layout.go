@@ -27,10 +27,7 @@ func projectDurationsToGraph(data []time.Duration, windowPoints, graphWidth int)
 
 	for i, v := range data {
 		windowIdx := offset + i
-		x := int(float64(windowIdx)*float64(graphWidth-1)/float64(windowPoints-1) + 0.5)
-		if x < 0 {
-			x = 0
-		}
+		x := max(int(float64(windowIdx)*float64(graphWidth-1)/float64(windowPoints-1)+0.5), 0)
 		if x >= graphWidth {
 			x = graphWidth - 1
 		}
@@ -67,10 +64,7 @@ func projectDurationsToGraph(data []time.Duration, windowPoints, graphWidth int)
 }
 
 func (g *GraphView) clampScroll(numRowsTotal, visibleRows int) {
-	maxScroll := numRowsTotal - visibleRows
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
+	maxScroll := max(numRowsTotal-visibleRows, 0)
 	if g.scrollRow < 0 {
 		g.scrollRow = 0
 	} else if g.scrollRow > maxScroll {
@@ -83,10 +77,7 @@ func adjustPlotArea(graphY, graphHeight int) (plotY, plotHeight int) {
 	plotY = graphY
 	if plotHeight > 1 {
 		// Ensure equal spacing by making (plotHeight-1) divisible by 4.
-		desiredSteps := ((plotHeight - 1) / 4) * 4
-		if desiredSteps < 1 {
-			desiredSteps = 1
-		}
+		desiredSteps := max(((plotHeight-1)/4)*4, 1)
 		plotHeight = desiredSteps + 1
 		plotY = graphY + (graphHeight - plotHeight)
 	}
@@ -104,14 +95,11 @@ func adjustPlotArea(graphY, graphHeight int) (plotY, plotHeight int) {
 }
 
 func gridStepsForHeight(plotHeight int) (gy25, gy50, gy75, gy100 int) {
-	totalSteps := plotHeight - 1
-	if totalSteps < 1 {
-		totalSteps = 1
-	}
+	totalSteps := max(plotHeight-1, 1)
 	baseStep := totalSteps / 4
 	rem := totalSteps % 4
 	seg := [4]int{baseStep, baseStep, baseStep, baseStep}
-	for i := 0; i < rem; i++ {
+	for i := range rem {
 		seg[i]++
 	}
 	gy25 = seg[0]
@@ -150,19 +138,13 @@ func (g *GraphView) layout(width, height int) (numCols, numRowsTotal, visibleRow
 
 	numRowsTotal = (numTargets + numCols - 1) / numCols
 
-	visibleRows = numRowsTotal
-	if visibleRows > graphMaxVisibleRows {
-		visibleRows = graphMaxVisibleRows
-	}
+	visibleRows = min(numRowsTotal, graphMaxVisibleRows)
 	if visibleRows < 1 {
 		visibleRows = 1
 	}
 
 	colWidth = width / numCols
-	rowHeight = height / visibleRows
-	if rowHeight < 2 {
-		rowHeight = 2
-	}
+	rowHeight = max(height/visibleRows, 2)
 	for visibleRows > 1 {
 		graphHeight := rowHeight - 2
 		if graphHeight >= 5 {
@@ -173,10 +155,7 @@ func (g *GraphView) layout(width, height int) (numCols, numRowsTotal, visibleRow
 			visibleRows = 1
 			break
 		}
-		rowHeight = height / visibleRows
-		if rowHeight < 2 {
-			rowHeight = 2
-		}
+		rowHeight = max(height/visibleRows, 2)
 	}
 
 	return numCols, numRowsTotal, visibleRows, colWidth, rowHeight

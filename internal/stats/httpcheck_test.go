@@ -150,7 +150,7 @@ func TestHTTPCheckResult_LastChange(t *testing.T) {
 func TestHTTPCheckResult_ConcurrentSafe(t *testing.T) {
 	r := NewHTTPCheckResult("https://example.com")
 	done := make(chan struct{})
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		go func() {
 			for {
 				select {

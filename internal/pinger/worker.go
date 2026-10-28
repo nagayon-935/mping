@@ -221,10 +221,7 @@ func rearmSweepTimer(sweepTimer *time.Timer, unacked map[int]pendingProbe, timeo
 		}
 	}
 	if d, ok := nextExpiry(unacked, timeout); ok {
-		wait := time.Until(d)
-		if wait < 0 {
-			wait = 0
-		}
+		wait := max(time.Until(d), 0)
 		sweepTimer.Reset(wait)
 	}
 }
