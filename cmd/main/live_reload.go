@@ -23,9 +23,6 @@ func probeConfig(cfg config) config {
 
 func diffProbeConfig(oldCfg, newCfg config) []string {
 	a, b := reflect.ValueOf(probeConfig(oldCfg)), reflect.ValueOf(probeConfig(newCfg))
-	if reflect.DeepEqual(a.Interface(), b.Interface()) {
-		return nil
-	}
 	var changed []string
 	for i := 0; i < a.NumField(); i++ {
 		if !reflect.DeepEqual(reflectValue(a.Field(i)), reflectValue(b.Field(i))) {

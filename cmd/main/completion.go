@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 
 	"github.com/spf13/pflag"
@@ -51,7 +50,8 @@ func newCompletionFlagSet() *pflag.FlagSet {
 }
 
 // collectFlags extracts a flagInfo per flag from fs in a deterministic
-// (lexicographic, matching pflag's default VisitAll order) sequence.
+// sequence: pflag's VisitAll walks flags sorted by name while SortFlags (the
+// default, never disabled for these flag sets) is true.
 func collectFlags(fs *pflag.FlagSet) []flagInfo {
 	var flags []flagInfo
 	fs.VisitAll(func(f *pflag.Flag) {
@@ -63,7 +63,6 @@ func collectFlags(fs *pflag.FlagSet) []flagInfo {
 			repeat:   f.Value.Type() == "stringSlice" || f.Value.Type() == "stringArray",
 		})
 	})
-	sort.Slice(flags, func(i, j int) bool { return flags[i].long < flags[j].long })
 	return flags
 }
 
@@ -100,6 +99,15 @@ func valueHint(f flagInfo) string {
 	}
 }
 
+// bashFlagPattern returns the bash `case` pattern matching a flag's names,
+// e.g. "-i|--interval" (or just "--interval" when there is no short form).
+func bashFlagPattern(f flagInfo) string {
+	if f.short != "" {
+		return "-" + f.short + "|--" + f.long
+	}
+	return "--" + f.long
+}
+
 func bashCompletion(flags []flagInfo) string {
 	var b strings.Builder
 	b.WriteString("# bash completion for mping\n")
@@ -125,11 +133,7 @@ func bashCompletion(flags []flagInfo) string {
 	b.WriteString("    case \"$prev\" in\n")
 	for _, f := range flags {
 		if f.takesArg {
-			names := "--" + f.long
-			if f.short != "" {
-				names = "-" + f.short + "|" + names
-			}
-			fmt.Fprintf(&b, "        %s) value_expected=1 ;;\n", names)
+			fmt.Fprintf(&b, "        %s) value_expected=1 ;;\n", bashFlagPattern(f))
 		}
 	}
 	b.WriteString("    esac\n")
@@ -174,10 +178,7 @@ func bashCompletion(flags []flagInfo) string {
 		if hint == "" {
 			continue
 		}
-		names := "--" + f.long
-		if f.short != "" {
-			names = "-" + f.short + "|" + names
-		}
+		names := bashFlagPattern(f)
 		switch hint {
 		case "file":
 			b.WriteString("        " + names + ")\n")

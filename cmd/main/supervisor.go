@@ -47,7 +47,7 @@ type supervisorConfig struct {
 	mtrEnabled   bool
 	countLimited bool
 	logCh        chan string
-	eventSink    func(uint64, string, stats.Event)
+	eventSink    func(string, stats.Event)
 }
 
 // supervisorState tracks whether this supervisor's components are running.
@@ -431,11 +431,11 @@ func (s *supervisor) startCountObserver(next pingerController) {
 
 func (s *supervisor) configureTarget(t *stats.TargetStats) {
 	t.ConfigureHealth(healthPolicy(s.cfg.config))
-	id, host := t.ID, t.DisplayName()
+	host := t.DisplayName()
 	sink, logCh := s.cfg.eventSink, s.cfg.logCh
 	t.SetEventSink(func(e stats.Event) {
 		if sink != nil {
-			sink(id, host, e)
+			sink(host, e)
 		}
 		if e.Kind == "health" {
 			postLog(logCh, fmt.Sprintf("[%s] %s: %s", e.At.Format("15:04:05"), tview.Escape(host), tview.Escape(e.Message)))

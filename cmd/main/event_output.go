@@ -11,7 +11,7 @@ import (
 
 // Probe callbacks never wait for disk. Overflow is reported explicitly instead
 // of hiding lost records or holding a target lock during a slow write.
-func startEventOutput(path string, errOut io.Writer) (func(uint64, string, stats.Event), func(), error) {
+func startEventOutput(path string, errOut io.Writer) (func(string, stats.Event), func(), error) {
 	if path == "" {
 		return nil, func() {}, nil
 	}
@@ -43,7 +43,7 @@ func startEventOutput(path string, errOut io.Writer) (func(uint64, string, stats
 			fmt.Fprintf(errOut, "event-output: %v\n", err)
 		}
 	}()
-	sink := func(_ uint64, host string, e stats.Event) {
+	sink := func(host string, e stats.Event) {
 		select {
 		case queue <- record{e, host}:
 		default:

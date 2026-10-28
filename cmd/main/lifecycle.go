@@ -61,13 +61,11 @@ func parseAndLoadHosts(args []string, out, errOut io.Writer) (p startupParams, e
 		fmt.Fprintf(errOut, "Error reading hosts file: %v\n", err)
 		return startupParams{}, 1, false
 	}
-	expandedHosts, expandedGroups, err := expandTargets(hosts, groups, cfg)
+	hosts, groups, err = expandTargets(hosts, groups, cfg)
 	if err != nil {
 		fmt.Fprintf(errOut, "Error expanding targets: %v\n", err)
 		return startupParams{}, 1, false
 	}
-	hosts = expandedHosts
-	groups = expandedGroups
 	if len(hosts) == 0 {
 		fmt.Fprint(errOut, usage)
 		return startupParams{}, 1, false
