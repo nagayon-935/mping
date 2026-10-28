@@ -18,29 +18,17 @@ const (
 	graphScaleHoldSecs  = 5     // seconds before scale is allowed to shrink
 )
 
-// graphSeries abstracts a single RTT data series for the graph.
-// Both ICMP targets and TCP/UDP port checks implement this interface.
-type graphSeries interface {
-	seriesLabel() string
-	seriesSnapshot() (history []time.Duration, lastRTT time.Duration)
-}
-
-// icmpSeries holds a pre-fetched snapshot rather than a live
-// *stats.TargetStats reference: buildSeries takes exactly one
-// GetViewWindow() call per target, and seriesLabel/seriesSnapshot below
-// just read the already-fetched fields instead of each re-fetching from
-// TargetStats (previously 3 separate GetView() calls per target per Draw —
-// one for the label, one directly, one via windowMax's own snapshot call).
-type icmpSeries struct {
+// graphSeries is a single RTT data series for the graph: an ICMP target or
+// one of its TCP/UDP port checks. It holds a pre-fetched snapshot rather than
+// a live *stats.TargetStats reference: buildSeries takes exactly one
+// GetViewWindow() call per target, and the draw code just reads the
+// already-fetched fields instead of each re-fetching from TargetStats
+// (previously 3 separate GetView() calls per target per Draw — one for the
+// label, one directly, one via windowMax's own snapshot call).
+type graphSeries struct {
 	label   string
 	history []time.Duration
 	lastRTT time.Duration
-}
-
-func (s icmpSeries) seriesLabel() string { return s.label }
-
-func (s icmpSeries) seriesSnapshot() ([]time.Duration, time.Duration) {
-	return s.history, s.lastRTT
 }
 
 // GraphView is a custom primitive for rendering RTT graphs
@@ -48,7 +36,6 @@ type GraphView struct {
 	*tview.Box
 	targets      []*stats.TargetStats
 	interval     time.Duration
-	vividCyan    tcell.Color
 	scrollRow    int
 	includePorts bool
 
@@ -66,7 +53,6 @@ func NewGraphView(targets []*stats.TargetStats, interval time.Duration) *GraphVi
 		Box:          tview.NewBox(),
 		targets:      targets,
 		interval:     interval,
-		vividCyan:    vividCyan,
 		currentScale: computeYScale(0, graphScaleFloorMs),
 	}
 }
@@ -82,10 +68,10 @@ func (g *GraphView) buildSeries(historyWindow int) []graphSeries {
 	var out []graphSeries
 	for _, t := range g.targets {
 		v := t.GetViewWindow(historyWindow)
-		out = append(out, icmpSeries{label: v.Host, history: v.History, lastRTT: v.LastRTT})
+		out = append(out, graphSeries{label: v.Host, history: v.History, lastRTT: v.LastRTT})
 		if g.includePorts {
 			for _, port := range v.PortResults {
-				out = append(out, icmpSeries{label: fmt.Sprintf("%s %d/%s", v.Host, port.Port, port.Protocol), history: port.History, lastRTT: port.RTT})
+				out = append(out, graphSeries{label: fmt.Sprintf("%s %d/%s", v.Host, port.Port, port.Protocol), history: port.History, lastRTT: port.RTT})
 			}
 		}
 	}
@@ -94,34 +80,24 @@ func (g *GraphView) buildSeries(historyWindow int) []graphSeries {
 
 // windowMax returns the largest RTT value across all series within the current window.
 func windowMax(series []graphSeries, windowPoints int) time.Duration {
-	var max time.Duration
+	var maxRTT time.Duration
 	for _, s := range series {
-		hist, _ := s.seriesSnapshot()
-		if len(hist) == 0 {
-			continue
-		}
-		data := hist
+		data := s.history
 		if len(data) > windowPoints {
 			data = data[len(data)-windowPoints:]
 		}
 		for _, v := range data {
-			if v > max {
-				max = v
-			}
+			maxRTT = max(maxRTT, v)
 		}
 	}
-	return max
+	return maxRTT
 }
 
 // updateScale recalculates the auto-scale, applying hysteresis on shrink.
 func (g *GraphView) updateScale(dataMax time.Duration, now time.Time) {
 	newScale := computeYScale(dataMax, graphScaleFloorMs)
-	if newScale.maxMs > g.currentScale.maxMs {
-		// Expand immediately.
-		g.currentScale = newScale
-		g.scaleHoldUntil = now.Add(graphScaleHoldSecs * time.Second)
-	} else if newScale.maxMs < g.currentScale.maxMs && now.After(g.scaleHoldUntil) {
-		// Shrink only after hold period.
+	// Expand immediately; shrink only after the hold period.
+	if newScale.maxMs > g.currentScale.maxMs || (newScale.maxMs < g.currentScale.maxMs && now.After(g.scaleHoldUntil)) {
 		g.currentScale = newScale
 		g.scaleHoldUntil = now.Add(graphScaleHoldSecs * time.Second)
 	}
@@ -227,10 +203,8 @@ type graphCell struct {
 }
 
 func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell, windowPoints int, yMax time.Duration) {
-	hist, lastRTT := s.seriesSnapshot()
-
 	// Header: label + last RTT
-	headerStr := fmt.Sprintf("% -20s %s", s.seriesLabel(), formatRTT(lastRTT))
+	headerStr := fmt.Sprintf("% -20s %s", s.label, formatRTT(s.lastRTT))
 	headerStr = truncateToDisplayWidth(headerStr, cell.width-2)
 	tview.Print(screen, headerStr, cell.x, cell.y, cell.width-2, tview.AlignLeft, tcell.ColorYellow)
 
@@ -239,7 +213,7 @@ func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell,
 	labelWidth := graphLabelWidth
 	graphWidth := max(cell.width-labelWidth-2, graphMinWidth)
 
-	data, hasData := projectDurationsToGraph(hist, windowPoints, graphWidth)
+	data, hasData := projectDurationsToGraph(s.history, windowPoints, graphWidth)
 	plotY, plotHeight := adjustPlotArea(graphY, cell.graphHeight)
 
 	gy25, gy50, gy75, gy100 := gridStepsForHeight(plotHeight)
@@ -294,9 +268,9 @@ func (g *GraphView) drawBar(screen tcell.Screen, px, plotY, plotHeight int, v ti
 		level := totalLevels - (gy * 8)
 		switch {
 		case level >= 8:
-			screen.SetContent(px, py, '█', nil, tcell.StyleDefault.Foreground(g.vividCyan))
+			screen.SetContent(px, py, '█', nil, tcell.StyleDefault.Foreground(vividCyan))
 		case level > 0:
-			screen.SetContent(px, py, barRunes[level], nil, tcell.StyleDefault.Foreground(g.vividCyan))
+			screen.SetContent(px, py, barRunes[level], nil, tcell.StyleDefault.Foreground(vividCyan))
 		case gridYPos[gy]:
 			screen.SetContent(px, py, '·', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
 		}

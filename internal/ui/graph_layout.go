@@ -138,10 +138,8 @@ func (g *GraphView) layout(width, height int) (numCols, numRowsTotal, visibleRow
 
 	numRowsTotal = (numTargets + numCols - 1) / numCols
 
+	// numTargets >= 1 here, so numRowsTotal >= 1 and so is visibleRows.
 	visibleRows = min(numRowsTotal, graphMaxVisibleRows)
-	if visibleRows < 1 {
-		visibleRows = 1
-	}
 
 	colWidth = width / numCols
 	rowHeight = max(height/visibleRows, 2)
@@ -150,11 +148,7 @@ func (g *GraphView) layout(width, height int) (numCols, numRowsTotal, visibleRow
 		if graphHeight >= 5 {
 			break
 		}
-		visibleRows--
-		if visibleRows < 1 {
-			visibleRows = 1
-			break
-		}
+		visibleRows-- // stays >= 1: the loop only runs while it is > 1
 		rowHeight = max(height/visibleRows, 2)
 	}
 
