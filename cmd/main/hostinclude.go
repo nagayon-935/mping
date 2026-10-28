@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -44,8 +45,14 @@ func (l *includeList) UnmarshalYAML(value *yaml.Node) error {
 }
 
 // resolveIncludePath resolves an include path relative to the directory of
-// the hosts file that names it.
+// the hosts file that names it, expanding a leading "~" or "~/" to the user's
+// home directory when available.
 func resolveIncludePath(baseDir, path string) string {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			return filepath.Join(home, strings.TrimPrefix(path, "~"))
+		}
+	}
 	if filepath.IsAbs(path) {
 		return filepath.Clean(path)
 	}
@@ -80,18 +87,24 @@ func readIncludeFileUnprivileged(path string) ([]hostEntry, error) {
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("include %q: not a regular file", path)
 	}
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("include %q: %w", path, err)
 	}
-	defer f.Close()
+	return parseIncludeData(path, "include", data)
+}
 
+func parseIncludeData(path, kind string, data []byte) ([]hostEntry, error) {
+	if isNetBoxCSVData(data) {
+		return parseNetBoxCSV(path, kind, data)
+	}
+	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	out := []hostEntry{}
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(bytes.NewReader(data))
 	for lineNo, sawData := 1, false; sc.Scan(); lineNo++ {
 		entry, ok, err := parseIncludeLine(sc.Text())
 		if err != nil {
-			return nil, fmt.Errorf("include %q line %d: %w", path, lineNo, err)
+			return nil, fmt.Errorf("%s %q line %d: %w", kind, path, lineNo, err)
 		}
 		if !ok {
 			continue
@@ -104,25 +117,25 @@ func readIncludeFileUnprivileged(path string) ([]hostEntry, error) {
 		}
 		if entry.DSCP != "" {
 			if _, err := pinger.ParseDSCP(entry.DSCP); err != nil {
-				return nil, fmt.Errorf("include %q line %d: invalid dscp (expected a DSCP name such as EF or a number 0-63)", path, lineNo)
+				return nil, fmt.Errorf("%s %q line %d: invalid dscp (expected a DSCP name such as EF or a number 0-63)", kind, path, lineNo)
 			}
 		}
 		expanded, err := expandHostEntry(entry)
 		if err != nil {
-			return nil, fmt.Errorf("include %q line %d: %w", path, lineNo, err)
+			return nil, fmt.Errorf("%s %q line %d: %w", kind, path, lineNo, err)
 		}
 		for _, e := range expanded {
 			if !isHostSyntax(e.Host) {
-				return nil, fmt.Errorf("include %q line %d: host is not a valid IP address or hostname", path, lineNo)
+				return nil, fmt.Errorf("%s %q line %d: host is not a valid IP address or hostname", kind, path, lineNo)
 			}
 		}
 		if len(out)+len(expanded) > maxHostsFileTargets {
-			return nil, fmt.Errorf("include %q: expands to more than %d targets", path, maxHostsFileTargets)
+			return nil, fmt.Errorf("%s %q: expands to more than %d targets", kind, path, maxHostsFileTargets)
 		}
 		out = append(out, expanded...)
 	}
 	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("include %q: %w", path, err)
+		return nil, fmt.Errorf("%s %q: %w", kind, path, err)
 	}
 	return out, nil
 }
