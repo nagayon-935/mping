@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"sync/atomic"
 
 	"github.com/nagayon-935/mping/internal/stats"
@@ -16,12 +15,7 @@ func startEventOutput(path string, errOut io.Writer) (func(uint64, string, stats
 	if path == "" {
 		return nil, func() {}, nil
 	}
-	var file *os.File
-	err := asRealUser(func() error {
-		var err error
-		file, err = os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-		return err
-	})
+	file, err := openAppendAsRealUser(path)
 	if err != nil {
 		return nil, nil, fmt.Errorf("event-output: %w", err)
 	}
