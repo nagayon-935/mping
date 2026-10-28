@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	tableMaxRows  = 10                     // max ping targets shown without scrolling; keeps UI readable at typical terminal heights
+	tableMaxRows  = 10                     // floor for the visible Ping Monitor rows and the PgUp/PgDn page step; taller panes show more
 	minUIRefresh  = 200 * time.Millisecond // minimum refresh to avoid flicker at very short ping intervals
 	fastUIRefresh = 100 * time.Millisecond // UI refresh rate when ping interval < minUIRefresh
 )
