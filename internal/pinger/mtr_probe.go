@@ -2,6 +2,7 @@ package pinger
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"sync"
@@ -177,22 +178,16 @@ func (p *Pinger) ProbeHop(ctx context.Context, sock *HopSocket, dest string, ttl
 func (p *Pinger) probeHopAddr(ctx context.Context, sock *HopSocket, dstAddr *net.IPAddr, ttl, traceID int, timeout time.Duration) (HopReply, error) {
 	payload := make([]byte, 8)
 	copy(payload[0:4], traceSignature)
-	payload[4] = byte(traceID >> 8)
-	payload[5] = byte(traceID & 0xff)
-	payload[6] = byte(ttl >> 8)
-	payload[7] = byte(ttl & 0xff)
+	binary.BigEndian.PutUint16(payload[4:6], uint16(traceID))
+	binary.BigEndian.PutUint16(payload[6:8], uint16(ttl))
 
-	var probeMsg icmp.Message
-	if sock.isV4 {
-		probeMsg = icmp.Message{
-			Type: ipv4.ICMPTypeEcho, Code: 0,
-			Body: &icmp.Echo{ID: traceID, Seq: ttl, Data: payload},
-		}
-	} else {
-		probeMsg = icmp.Message{
-			Type: ipv6.ICMPTypeEchoRequest, Code: 0,
-			Body: &icmp.Echo{ID: traceID, Seq: ttl, Data: payload},
-		}
+	var echoType icmp.Type = ipv4.ICMPTypeEcho
+	if !sock.isV4 {
+		echoType = ipv6.ICMPTypeEchoRequest
+	}
+	probeMsg := icmp.Message{
+		Type: echoType, Code: 0,
+		Body: &icmp.Echo{ID: traceID, Seq: ttl, Data: payload},
 	}
 	b, err := probeMsg.Marshal(nil)
 	if err != nil {
@@ -281,10 +276,7 @@ func receiveViaTraceChan(ctx context.Context, traceCh chan traceMsg, accept func
 		select {
 		case <-ctx.Done():
 			return HopReply{}, ctx.Err()
-		case tm, ok := <-traceCh:
-			if !ok {
-				return HopReply{Responded: false}, nil
-			}
+		case tm := <-traceCh:
 			if r, matched := accept(tm.parsed, tm.src); matched {
 				r.RTT = time.Since(sent)
 				return r, nil
