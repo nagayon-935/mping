@@ -17,33 +17,26 @@ type alertFlags struct {
 	jitterRed bool
 }
 
+// displaySourceIPForDst returns the source address shown for dstIP: the IPv4
+// or IPv6 source matching the destination's family, or "Auto" when that
+// source is unset. A destination that is not an IP literal (a hostname) is
+// taken to be IPv6 only if it contains a colon.
 func displaySourceIPForDst(dstIP, sourceIPv4, sourceIPv6 string) string {
-	dst := dstIP
-	if i := strings.Index(dst, "%"); i >= 0 {
-		dst = dst[:i]
-	}
+	dst, _, _ := strings.Cut(dstIP, "%") // drop any IPv6 zone
+	var isIPv6 bool
 	if ip := net.ParseIP(dst); ip != nil {
-		if ip.To4() != nil {
-			if sourceIPv4 != "" {
-				return sourceIPv4
-			}
-			return "Auto"
-		}
-		if sourceIPv6 != "" {
-			return sourceIPv6
-		}
+		isIPv6 = ip.To4() == nil
+	} else {
+		isIPv6 = strings.Contains(dstIP, ":")
+	}
+	src := sourceIPv4
+	if isIPv6 {
+		src = sourceIPv6
+	}
+	if src == "" {
 		return "Auto"
 	}
-	if strings.Contains(dstIP, ":") {
-		if sourceIPv6 != "" {
-			return sourceIPv6
-		}
-		return "Auto"
-	}
-	if sourceIPv4 != "" {
-		return sourceIPv4
-	}
-	return "Auto"
+	return src
 }
 
 // normalizeWriteIP substitutes the display source IP into raw-socket write
@@ -73,32 +66,17 @@ func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, 
 	} // backend events are delivered through ExternalLogCh
 	th := getActiveThresholds()
 	var msgs []string
-	if lossRate > th.LossCrit {
-		if !state.lossRed {
-			msgs = append(msgs, fmt.Sprintf("[red][%s] %s (%s): Loss Ratio %.1f%%[-]", now.Format("15:04:05"), view.Host, sourceIP, lossRate))
+	// edge logs a message when a metric newly crosses its critical threshold
+	// (red was false, over is true) and records whether it is over.
+	edge := func(red *bool, over bool, detail func() string) {
+		if over && !*red {
+			msgs = append(msgs, fmt.Sprintf("[red][%s] %s (%s): %s[-]", now.Format("15:04:05"), view.Host, sourceIP, detail()))
 		}
-		state.lossRed = true
-	} else {
-		state.lossRed = false
+		*red = over
 	}
-
-	if view.LastRTT > th.RTTCrit {
-		if !state.rttRed {
-			msgs = append(msgs, fmt.Sprintf("[red][%s] %s (%s): RTT %v[-]", now.Format("15:04:05"), view.Host, sourceIP, view.LastRTT.Round(time.Microsecond)))
-		}
-		state.rttRed = true
-	} else {
-		state.rttRed = false
-	}
-
-	if view.Jitter > th.JitterCrit {
-		if !state.jitterRed {
-			msgs = append(msgs, fmt.Sprintf("[red][%s] %s (%s): Jitter %v[-]", now.Format("15:04:05"), view.Host, sourceIP, view.Jitter.Round(time.Microsecond)))
-		}
-		state.jitterRed = true
-	} else {
-		state.jitterRed = false
-	}
+	edge(&state.lossRed, lossRate > th.LossCrit, func() string { return fmt.Sprintf("Loss Ratio %.1f%%", lossRate) })
+	edge(&state.rttRed, view.LastRTT > th.RTTCrit, func() string { return fmt.Sprintf("RTT %v", view.LastRTT.Round(time.Microsecond)) })
+	edge(&state.jitterRed, view.Jitter > th.JitterCrit, func() string { return fmt.Sprintf("Jitter %v", view.Jitter.Round(time.Microsecond)) })
 
 	return state, msgs
 }
