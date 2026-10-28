@@ -120,11 +120,7 @@ func (p *Pinger) openHopSocketAddr(dstAddr *net.IPAddr) (*HopSocket, error) {
 	sock := &HopSocket{isV4: isV4}
 
 	if isV4 {
-		bindAddr := "0.0.0.0"
-		if p.Source != "" {
-			bindAddr = p.Source
-		}
-		c, err := p.listenPacket("ip4:icmp", bindAddr)
+		c, err := p.listenICMP(false)
 		if err != nil {
 			return nil, fmt.Errorf("open MTR send socket (v4): %w", err)
 		}
@@ -132,11 +128,7 @@ func (p *Pinger) openHopSocketAddr(dstAddr *net.IPAddr) (*HopSocket, error) {
 		bindToInterfaceFn(c, p.Interface, false)
 		sock.sendV4 = ipv4.NewPacketConn(c)
 	} else {
-		bindAddr := "::"
-		if p.Source != "" {
-			bindAddr = p.Source
-		}
-		c, err := p.listenPacket("ip6:ipv6-icmp", bindAddr)
+		c, err := p.listenICMP(true)
 		if err != nil {
 			return nil, fmt.Errorf("open MTR send socket (v6): %w", err)
 		}

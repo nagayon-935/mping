@@ -437,6 +437,20 @@ func (p *Pinger) Stop() {
 	})
 }
 
+// listenICMP opens a raw ICMP (v4) or ICMPv6 (v6) socket bound to the
+// configured Source address, or to the wildcard address when none is set.
+// Interface binding is left to the caller via bindToInterfaceFn.
+func (p *Pinger) listenICMP(v6 bool) (net.PacketConn, error) {
+	network, bindAddr := "ip4:icmp", "0.0.0.0"
+	if v6 {
+		network, bindAddr = "ip6:ipv6-icmp", "::"
+	}
+	if p.Source != "" {
+		bindAddr = p.Source
+	}
+	return p.listenPacket(network, bindAddr)
+}
+
 func (p *Pinger) Start(interval, timeout time.Duration) error {
 	p.probeTimeout = timeout
 	p.interval = interval
@@ -445,13 +459,7 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 
 	// Initialize IPv4
 	if p.Source == "" || isIPv4(p.Source) {
-		network := "ip4:icmp"
-		bindAddr := "0.0.0.0"
-		if p.Source != "" {
-			bindAddr = p.Source
-		}
-
-		c, err := p.listenPacket(network, bindAddr)
+		c, err := p.listenICMP(false)
 		if err == nil {
 			// Non-fatal: true interface binding may be unsupported on this
 			// platform, or fail (e.g. missing privileges); the source-IP
@@ -467,13 +475,7 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 
 	// Initialize IPv6
 	if p.Source == "" || !isIPv4(p.Source) {
-		network := "ip6:ipv6-icmp"
-		bindAddr := "::"
-		if p.Source != "" {
-			bindAddr = p.Source
-		}
-
-		c, err := p.listenPacket(network, bindAddr)
+		c, err := p.listenICMP(true)
 		if err == nil {
 			// Non-fatal, same rationale as the IPv4 block above.
 			bindToInterfaceFn(c, p.Interface, true)

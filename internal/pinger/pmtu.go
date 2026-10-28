@@ -111,12 +111,9 @@ func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloa
 		return false, "", err
 	}
 
-	bindAddr := "0.0.0.0"
-	if p.Source != "" {
-		bindAddr = p.Source
-	}
-
-	c, err := p.listenPacket("ip4:icmp", bindAddr)
+	// Unlike the pinger and MTR sockets, this one deliberately does not bind
+	// to the interface.
+	c, err := p.listenICMP(false)
 	if err != nil {
 		return false, "", err
 	}
