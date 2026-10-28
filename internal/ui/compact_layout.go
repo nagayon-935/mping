@@ -43,9 +43,6 @@ var tableErrorCandidates = []string{
 }
 
 func formatTableError(err string) string {
-	if err == "" {
-		return ""
-	}
 	parts := strings.Split(err, ": ")
 	return parts[len(parts)-1]
 }
@@ -65,16 +62,9 @@ func calcInitialTableErrorWidth(targets []*stats.TargetStats, header string, min
 	return maxWidth
 }
 
-type compactRow struct {
-	hostL string
-	pathL string
-	statL string
-	errL  string
-	hostR string
-	pathR string
-	statR string
-	errR  string
-}
+// compactRow is one line of the compact layout: one string per column
+// (Host, Path, Stats, Error).
+type compactRow [4]string
 
 type compactLayout struct {
 	rows    []compactRow
@@ -83,19 +73,31 @@ type compactLayout struct {
 	aligns  []int
 	min     []int
 	max     []int
+	shrink  []int // shrink priority per column
+	grow    []int // grow priority per column
 }
 
 func buildCompactLayout(views []stats.TargetView, packetSize int, sourceIPv4, sourceIPv6 string, errorMaxWidth int) compactLayout {
-	headers := []string{"Host", "Path", "Stats", "Error"}
-	aligns := []int{tview.AlignLeft, tview.AlignLeft, tview.AlignLeft, tview.AlignLeft}
-	desired := []int{
-		runewidth.StringWidth(headers[0]),
-		runewidth.StringWidth(headers[1]),
-		runewidth.StringWidth(headers[2]),
-		runewidth.StringWidth(headers[3]),
+	cols := compactTableColumns()
+	cols[len(cols)-1].max = errorMaxWidth // the Error column's max is data-derived
+	layout := compactLayout{
+		desired: make([]int, len(cols)),
+		headers: make([]string, len(cols)),
+		aligns:  make([]int, len(cols)),
+		min:     make([]int, len(cols)),
+		max:     make([]int, len(cols)),
+		shrink:  make([]int, len(cols)),
+		grow:    make([]int, len(cols)),
 	}
-	min := []int{8, 16, 18, 8}
-	max := []int{40, 80, 80, errorMaxWidth}
+	for i, c := range cols {
+		layout.desired[i] = runewidth.StringWidth(c.name)
+		layout.headers[i] = c.name
+		layout.aligns[i] = c.align
+		layout.min[i] = c.min
+		layout.max[i] = c.max
+		layout.shrink[i] = c.shrinkPriority
+		layout.grow[i] = c.growPriority
+	}
 
 	rows := make([]compactRow, 0, len(views)*2)
 	for _, view := range views {
@@ -104,41 +106,34 @@ func buildCompactLayout(views []stats.TargetView, packetSize int, sourceIPv4, so
 		rttStr := formatRTT(view.LastRTT)
 		avgStr := formatRTT(view.AvgRTT)
 		jitterStr := formatRTT(view.Jitter)
-		mtuStr := mtuString(view.IfaceMTU)
-		ttlStr := ttlString(view.LastTTL)
+		mtuStr := intOrDash(view.IfaceMTU)
+		ttlStr := intOrDash(view.LastTTL)
 		rowSourceIP := displaySourceIPForDst(view.IP, sourceIPv4, sourceIPv6)
 		errText := formatTableError(view.LastError)
 
 		r1 := compactRow{
-			hostL: view.Host,
-			pathL: fmt.Sprintf("%s -> %s", rowSourceIP, view.IP),
-			statL: fmt.Sprintf("S:%d L:%d Loss:%0.1f%% RTT:%s", view.Recv, view.Loss, lossRate, rttStr),
-			errL:  errText,
+			view.Host,
+			fmt.Sprintf("%s -> %s", rowSourceIP, view.IP),
+			fmt.Sprintf("S:%d L:%d Loss:%0.1f%% RTT:%s", view.Recv, view.Loss, lossRate, rttStr),
+			errText,
 		}
 		r2 := compactRow{
-			hostR: "Avg/Jit",
-			pathR: "",
-			statR: fmt.Sprintf("Avg:%s Jit:%s TTL:%s Sz:%d MTU:%s Last:%s", avgStr, jitterStr, ttlStr, packetSize, mtuStr, lossStr),
-			errR:  "",
+			"Avg/Jit",
+			"",
+			fmt.Sprintf("Avg:%s Jit:%s TTL:%s Sz:%d MTU:%s Last:%s", avgStr, jitterStr, ttlStr, packetSize, mtuStr, lossStr),
+			"",
 		}
 		rows = append(rows, r1, r2)
 
-		for i, v := range []string{r1.hostL, r1.pathL, r1.statL, r1.errL, r2.hostR, r2.pathR, r2.statR, r2.errR} {
-			col := i % 4
-			if w := runewidth.StringWidth(v); w > desired[col] {
-				desired[col] = w
+		for _, r := range [...]compactRow{r1, r2} {
+			for col, v := range r {
+				layout.desired[col] = max(layout.desired[col], runewidth.StringWidth(v))
 			}
 		}
 	}
 
-	return compactLayout{
-		rows:    rows,
-		desired: desired,
-		headers: headers,
-		aligns:  aligns,
-		min:     min,
-		max:     max,
-	}
+	layout.rows = rows
+	return layout
 }
 
 func buildCompactRowCells(values []string, widths []int, aligns []int, rowColor tcell.Color) []*tview.TableCell {

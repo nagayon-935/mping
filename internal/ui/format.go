@@ -35,15 +35,17 @@ func formatLossAgo(lastLossTime time.Time) string {
 	return fmt.Sprintf("%s ago", ago)
 }
 
-func ttlString(ttl int) string {
-	if ttl <= 0 {
+// intOrDash formats n, or "-" when it is unknown (<= 0). Used for the TTL and
+// MTU cells.
+func intOrDash(n int) string {
+	if n <= 0 {
 		return "-"
 	}
-	return fmt.Sprintf("%d", ttl)
+	return fmt.Sprintf("%d", n)
 }
 
 // dscpDisplayString formats the DSCP column cell for a target's most recent
-// reply. Mirrors ttlString's "<=0 means unknown" convention: 0 is both the
+// reply. Mirrors intOrDash's "<=0 means unknown" convention: 0 is both the
 // pre-first-reply default and IPv4's permanent value (x/net has no
 // receive-side DSCP support — see pinger.Reply.DSCP), so it reads as "-"
 // rather than the misleading "CS0".
@@ -114,13 +116,6 @@ func wrapHops(hops []string, maxWidth int) []string {
 	return lines
 }
 
-func mtuString(mtu int) string {
-	if mtu <= 0 {
-		return "-"
-	}
-	return fmt.Sprintf("%d", mtu)
-}
-
 func truncateToDisplayWidth(s string, width int) string {
 	if width <= 0 {
 		return ""
@@ -149,9 +144,6 @@ func truncateToDisplayWidth(s string, width int) string {
 }
 
 func formatCellText(text string, width int, align int) string {
-	if width <= 0 {
-		return ""
-	}
 	text = truncateToDisplayWidth(text, width)
 	textWidth := runewidth.StringWidth(text)
 	if textWidth >= width {
@@ -171,8 +163,5 @@ func paddedCell(text string, colW int) string {
 
 // rightPaddedCell returns text with a trailing space, left-padded to fill colW.
 func rightPaddedCell(text string, colW int) string {
-	if text == "" {
-		return formatCellText("", colW, tview.AlignRight)
-	}
 	return formatCellText(text+" ", colW, tview.AlignRight)
 }

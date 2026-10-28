@@ -649,17 +649,17 @@ func TestBuildCompactRowCells(t *testing.T) {
 	}
 }
 
-func TestTTLAndMTUString(t *testing.T) {
-	if ttlString(0) != "-" {
-		t.Fatal("expected '-' for ttl 0")
+func TestIntOrDash(t *testing.T) {
+	if intOrDash(0) != "-" {
+		t.Fatal("expected '-' for 0")
 	}
-	if ttlString(64) != "64" {
+	if intOrDash(-1) != "-" {
+		t.Fatal("expected '-' for a negative value")
+	}
+	if intOrDash(64) != "64" {
 		t.Fatal("expected ttl string")
 	}
-	if mtuString(0) != "-" {
-		t.Fatal("expected '-' for mtu 0")
-	}
-	if mtuString(1500) != "1500" {
+	if intOrDash(1500) != "1500" {
 		t.Fatal("expected mtu string")
 	}
 }

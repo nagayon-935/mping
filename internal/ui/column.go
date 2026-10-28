@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
@@ -159,12 +160,12 @@ func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled, dscpEnabled bool) []co
 		column{
 			name: "MTU", align: tview.AlignRight, base: 6, min: 4, max: 8,
 			shrinkPriority: 100, growPriority: 110,
-			render: func(ctx columnRowContext) string { return mtuString(ctx.view.IfaceMTU) },
+			render: func(ctx columnRowContext) string { return intOrDash(ctx.view.IfaceMTU) },
 		},
 		column{
 			name: "TTL", align: tview.AlignRight, base: 5, min: 3, max: 6,
 			shrinkPriority: 110, growPriority: 120,
-			render: func(ctx columnRowContext) string { return ttlString(ctx.view.LastTTL) },
+			render: func(ctx columnRowContext) string { return intOrDash(ctx.view.LastTTL) },
 		},
 		column{
 			name: "Error", align: tview.AlignLeft, base: 30, min: 8, max: 30,
@@ -187,17 +188,19 @@ func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled, dscpEnabled bool) []co
 }
 
 // compactTableColumns returns the narrow-terminal fallback table's column
-// schema (Host/Path/Stats/Error). Priorities reproduce the legacy behavior
-// exactly: the old shrinkOrder/growOrder arrays were shared with the 13+
-// column main table and filtered by bounds-checking, which happened to
-// yield the effective order Path, Host, Stats, Error for both shrinking and
-// growing this 4-column layout.
+// schema (Host/Path/Stats/Error), the single source of buildCompactLayout's
+// headers, aligns, min/max widths and priorities. The slice is fresh on every
+// call because the width fitting adjusts max in place. Priorities reproduce
+// the legacy behavior exactly: the old shrinkOrder/growOrder arrays were
+// shared with the 13+ column main table and filtered by bounds-checking,
+// which happened to yield the effective order Path, Host, Stats, Error for
+// both shrinking and growing this 4-column layout.
 func compactTableColumns() []column {
 	return []column{
 		{name: "Host", align: tview.AlignLeft, min: 8, max: 40, shrinkPriority: 1, growPriority: 1},
 		{name: "Path", align: tview.AlignLeft, min: 16, max: 80, shrinkPriority: 0, growPriority: 0},
 		{name: "Stats", align: tview.AlignLeft, min: 18, max: 80, shrinkPriority: 2, growPriority: 2},
-		{name: "Error", align: tview.AlignLeft, min: 8, shrinkPriority: 3, growPriority: 3}, // max set per-run from calcInitialTableErrorWidth
+		{name: "Error", align: tview.AlignLeft, min: 8, shrinkPriority: 3, growPriority: 3}, // max set per-run by buildCompactLayout from calcInitialTableErrorWidth
 	}
 }
 
@@ -205,12 +208,7 @@ func compactTableColumns() []column {
 // patch a single column after construction (e.g. the Error column's
 // data-derived max width).
 func columnsByName(cols []column, name string) int {
-	for i, c := range cols {
-		if c.name == name {
-			return i
-		}
-	}
-	return -1
+	return slices.IndexFunc(cols, func(c column) bool { return c.name == name })
 }
 
 // renderRowTexts renders every column's cell text for one row from a single
