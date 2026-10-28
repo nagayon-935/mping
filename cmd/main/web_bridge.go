@@ -80,7 +80,7 @@ func webAnnouncement(srv *web.Server, showToken bool) string {
 	if showToken {
 		text = "Web UI: " + srv.ControlURL()
 	}
-	return fmt.Sprintf("[blue][%s] %s[-]", time.Now().Format("15:04:05"), tview.Escape(text))
+	return fmt.Sprintf("[blue][%s] %s[-]", clock(), tview.Escape(text))
 }
 
 // closeWebUI stops srv (nil-safe). A shutdown error only means a stream
@@ -103,7 +103,7 @@ func checkWebReloadDrift(active, reloaded config) string {
 		return ""
 	}
 	return fmt.Sprintf("[yellow][%s] web: change detected in the reloaded config — the web UI requires a full restart of mping to take effect[-]",
-		time.Now().Format("15:04:05"))
+		clock())
 }
 
 // webProvider adapts one run-loop iteration's supervisor to web.Provider
@@ -184,11 +184,7 @@ func (c webController) CaptureReport() (snapshot report.Report, err error) {
 // busy terminal; a dropped line only loses the notice, not the edit. Values
 // are escaped so a host like "[red]x" cannot inject tview colour tags.
 func (c webController) logf(format string, args ...any) {
-	line := fmt.Sprintf("[blue][%s] web: %s[-]", time.Now().Format("15:04:05"), tview.Escape(fmt.Sprintf(format, args...)))
-	select {
-	case c.logCh <- line:
-	default:
-	}
+	postLog(c.logCh, fmt.Sprintf("[blue][%s] web: %s[-]", clock(), tview.Escape(fmt.Sprintf(format, args...))))
 }
 
 func (p webProvider) Targets() []*stats.TargetStats         { return p.targets().Targets }

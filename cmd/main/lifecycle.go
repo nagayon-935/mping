@@ -248,7 +248,7 @@ func checkPortReloadDrift(activeRaw, reloadedRaw []string) string {
 		return ""
 	}
 	return fmt.Sprintf("[yellow][%s] port: change detected in the reloaded config — port checks restarted with updated configuration[-]",
-		time.Now().Format("15:04:05"))
+		clock())
 }
 
 // startWatcher launches the YAML file watcher goroutine when hostsFile is
@@ -269,11 +269,8 @@ func startWatcher(hostsFile string, onFileChange func(), logCh chan<- string) (c
 		defer close(innerDone)
 		paths := func() []string { return hostsFileWatchPaths(hostsFile) }
 		if err := watcher.WatchPaths(watchCtx, paths, onFileChange); err != nil {
-			select {
-			case logCh <- fmt.Sprintf("[red][%s] Watcher error: %v — auto-reload disabled, restart mping to re-enable[-]",
-				time.Now().Format("15:04:05"), err):
-			default:
-			}
+			postLog(logCh, fmt.Sprintf("[red][%s] Watcher error: %v — auto-reload disabled, restart mping to re-enable[-]",
+				clock(), err))
 		}
 	}()
 	return cancelFn, innerDone
@@ -331,11 +328,7 @@ func watchDurationLimit(durationCtx context.Context, sig *reloadSignal, logCh ch
 		defer close(exited)
 		select {
 		case <-durationCtx.Done():
-			select {
-			case logCh <- fmt.Sprintf("[green][%s] Duration limit reached, shutting down...[-]",
-				time.Now().Format("15:04:05")):
-			default:
-			}
+			postLog(logCh, fmt.Sprintf("[green][%s] Duration limit reached, shutting down...[-]", clock()))
 			sig.fire()
 		case <-done:
 		}

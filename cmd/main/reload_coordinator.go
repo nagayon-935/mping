@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"sync"
-	"time"
 
 	ui "github.com/nagayon-935/mping/internal/ui"
 	"github.com/spf13/pflag"
@@ -52,11 +51,7 @@ func newReloadCoordinator(fs *pflag.FlagSet, cliCfg config, cliHosts []string) *
 func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile string, logCh chan<- string) {
 	doc, err := parseHostsFile(hostsFile)
 	if err != nil {
-		select {
-		case logCh <- fmt.Sprintf("[red][%s] Reload error: %v[-]",
-			time.Now().Format("15:04:05"), err):
-		default:
-		}
+		postLog(logCh, fmt.Sprintf("[red][%s] Reload error: %v[-]", clock(), err))
 		return
 	}
 	docHosts, docGroups, cfg, err := applyDocToCfg(rc.cliCfg, rc.fs, doc)
@@ -64,11 +59,7 @@ func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile stri
 		err = validateMergedHosts(cfg, docHosts, docGroups, rc.cliHosts)
 	}
 	if err != nil {
-		select {
-		case logCh <- fmt.Sprintf("[red][%s] Reload validation error: %v[-]",
-			time.Now().Format("15:04:05"), err):
-		default:
-		}
+		postLog(logCh, fmt.Sprintf("[red][%s] Reload validation error: %v[-]", clock(), err))
 		return
 	}
 	if rc.tryLive != nil {
@@ -133,7 +124,7 @@ func (rc *reloadCoordinator) apply(currentCfg config, currentHosts []targetSpec,
 			// host list here means resolve-all silently shrinks to one entry
 			// per host unless the user is told (TD-47).
 			warning = fmt.Sprintf("[yellow][%s] resolve-all: failed to re-expand hosts after reload (%v) — keeping previous resolution[-]",
-				time.Now().Format("15:04:05"), expandErr)
+				clock(), expandErr)
 		}
 	}
 

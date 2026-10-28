@@ -221,11 +221,7 @@ func (s *supervisor) startTraceroutes(pr tracer) {
 
 // onFlap is the shared callback for MTR route-flap events.
 func (s *supervisor) onFlap(host, desc string) {
-	select {
-	case s.cfg.logCh <- fmt.Sprintf("[yellow][%s] Route flap %s: %s[-]",
-		time.Now().Format("15:04:05"), host, desc):
-	default:
-	}
+	postLog(s.cfg.logCh, fmt.Sprintf("[yellow][%s] Route flap %s: %s[-]", clock(), host, desc))
 }
 
 // handle executes one command against the current state. It is the single
@@ -436,10 +432,7 @@ func (s *supervisor) configureTarget(t *stats.TargetStats) {
 			sink(id, host, e)
 		}
 		if e.Kind == "health" {
-			select {
-			case logCh <- fmt.Sprintf("[%s] %s: %s", e.At.Format("15:04:05"), tview.Escape(host), tview.Escape(e.Message)):
-			default:
-			}
+			postLog(logCh, fmt.Sprintf("[%s] %s: %s", e.At.Format("15:04:05"), tview.Escape(host), tview.Escape(e.Message)))
 		}
 	})
 }

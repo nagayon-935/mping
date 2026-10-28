@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"time"
 
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/nagayon-935/mping/internal/ui"
@@ -170,10 +169,7 @@ func reflectValue(v reflect.Value) any {
 }
 
 func reloadNotice(logCh chan<- string, message string) {
-	select {
-	case logCh <- fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), message):
-	default:
-	}
+	postLog(logCh, fmt.Sprintf("[%s] %s", clock(), message))
 }
 
 func settingName(field string) string {
