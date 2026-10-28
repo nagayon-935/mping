@@ -52,11 +52,7 @@ func (s *supervisor) reconcileTargets(cfg config, specs []targetSpec) (targets [
 			old[identity(spec)] = entries[1:]
 			reused[targets[i]] = true
 		} else {
-			targets[i] = buildTargetsForIteration([]targetSpec{spec}, cfg)[0]
-			s.configureTarget(targets[i])
-			if len(s.cfg.targets) > 0 {
-				targets[i].SetIfaceMTU(s.cfg.targets[0].GetViewWindow(0).IfaceMTU)
-			}
+			targets[i] = s.newLiveTargets(cfg, []targetSpec{spec})[0]
 			added = append(added, i)
 		}
 	}
@@ -115,10 +111,7 @@ func (s *supervisor) reloadLive(cfg config, specs []targetSpec, groups []ui.Targ
 		}
 		applied = true
 		if len(added) > 0 {
-			select {
-			case <-s.finished:
-			default:
-			}
+			s.clearFinished()
 		}
 		for _, change := range []struct {
 			changed bool

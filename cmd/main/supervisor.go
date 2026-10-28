@@ -354,13 +354,19 @@ func (s *supervisor) handle(c command) error {
 	return fmt.Errorf("supervisor: unknown command %d", c.kind)
 }
 
-// startAll runs only in stateStopped, after the previous measurement has
-// been joined. A failed Start is released here and leaves the state stopped.
-func (s *supervisor) startAll() error {
+// clearFinished drops a pending count-completion notification so a membership
+// or restart change is not mistaken for a run that just finished.
+func (s *supervisor) clearFinished() {
 	select {
 	case <-s.finished:
 	default:
 	}
+}
+
+// startAll runs only in stateStopped, after the previous measurement has
+// been joined. A failed Start is released here and leaves the state stopped.
+func (s *supervisor) startAll() error {
+	s.clearFinished()
 	var next pingerController
 	if s.cfg.makeTargetPinger != nil {
 		next = s.cfg.makeTargetPinger(s.cfg.packetSize, s.cfg.targets, s.cfg.specs)

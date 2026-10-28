@@ -68,10 +68,6 @@ func (p *pingerAdapter) SetLogWriter(w io.Writer) {
 	p.LogWriter = w
 }
 
-func (p *pingerAdapter) Close() {
-	p.Pinger.Close()
-}
-
 func (p *pingerAdapter) MTRProber() mtr.HopProber {
 	return &pingerMTRAdapter{p: p.Pinger}
 }

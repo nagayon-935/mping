@@ -37,10 +37,7 @@ func (s *supervisor) publishTargets() {
 // This runs on the command loop. A completed target does not make a newly
 // added target's active worker disappear from the session state.
 func (s *supervisor) currentMeasurementState() string {
-	if s.state == stateTerminated {
-		return "stopped"
-	}
-	if s.state == stateStopped {
+	if s.state == stateTerminated || s.state == stateStopped {
 		return "stopped"
 	}
 	for _, t := range s.cfg.targets {
@@ -111,6 +108,20 @@ func (s *supervisor) detachTargetMonitors(p dynamicPinger, t *stats.TargetStats,
 	s.archiveTarget(t)
 }
 
+// newLiveTargets builds and wires the targets for specs joining a running
+// session. New targets use the running session's actual interface MTU,
+// inherited from the first existing target.
+func (s *supervisor) newLiveTargets(cfg config, specs []targetSpec) []*stats.TargetStats {
+	added := buildTargetsForIteration(specs, cfg)
+	for _, t := range added {
+		s.configureTarget(t)
+		if len(s.cfg.targets) > 0 {
+			t.SetIfaceMTU(s.cfg.targets[0].GetViewWindow(0).IfaceMTU)
+		}
+	}
+	return added
+}
+
 func (s *supervisor) addHost(host string) error {
 	host = strings.TrimSpace(host)
 	if host == "" {
@@ -126,15 +137,7 @@ func (s *supervisor) addHost(host string) error {
 		if err != nil {
 			return err
 		}
-		added := buildTargetsForIteration(specs, s.cfg.config)
-		for _, t := range added {
-			s.configureTarget(t)
-			// New targets use the running session's actual payload and interface MTU.
-			if len(s.cfg.targets) > 0 {
-				v := s.cfg.targets[0].GetViewWindow(0)
-				t.SetIfaceMTU(v.IfaceMTU)
-			}
-		}
+		added := s.newLiveTargets(s.cfg.config, specs)
 		if s.state == stateRunning {
 			p, ok := s.p.(dynamicPinger)
 			if !ok {
@@ -155,10 +158,7 @@ func (s *supervisor) addHost(host string) error {
 		}
 		s.cfg.targets = append(append([]*stats.TargetStats(nil), s.cfg.targets...), added...)
 		s.cfg.specs = append(append([]targetSpec(nil), s.cfg.specs...), specs...)
-		select {
-		case <-s.finished:
-		default:
-		}
+		s.clearFinished()
 		return nil
 	})
 }
