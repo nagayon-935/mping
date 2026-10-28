@@ -81,8 +81,8 @@ func NewPortChecker(targets []*stats.TargetStats, specs []PortSpec, interval, ti
 		interval:   interval,
 		timeout:    timeout,
 		bind:       bind,
-		tcpDialer:  newBoundDialer("tcp", timeout, bind),
-		udpDialer:  newBoundDialer("udp", timeout, bind),
+		tcpDialer:  NewBoundDialer("tcp", timeout, bind),
+		udpDialer:  NewBoundDialer("udp", timeout, bind),
 		ctx:        ctx,
 		cancel:     cancel,
 	}

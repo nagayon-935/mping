@@ -10,7 +10,7 @@ import (
 // bindRawConnToInterfaceFn is a seam over the platform-specific
 // bindRawConnToInterface (see bindif_darwin.go / bindif_linux.go /
 // bindif_other.go). Tests replace it to assert that the net.Dialer.Control
-// hooks built by newBoundDialer dispatch with the right interface name and
+// hooks built by NewBoundDialer dispatch with the right interface name and
 // address family, without needing privileges, real interfaces, or a real
 // connection. It mirrors bindToInterfaceFn, the equivalent seam for the ICMP
 // net.PacketConn path.
