@@ -29,10 +29,9 @@ coverage:
 # Two things stop this from being an exact stand-in for the CI job, both in
 # the direction of failing locally where CI passes:
 #
-#   - govulncheck reports against the toolchain that built the code, while
-#     CI resolves `go-version: '1.26'` to the newest patch release. An older
-#     local Go turns up standard-library advisories CI will never show —
-#     upgrade the toolchain rather than ignoring the output.
+#   - CI selects its Go toolchain from go.mod. Match that version locally
+#     when reproducing govulncheck results; standard-library advisories
+#     depend on the toolchain used to build the code.
 #   - gofmt is pointed at the module's own package directories instead of
 #     `.`, because plain `gofmt -l .` descends into dot-directories that the
 #     other three checks skip (`./...` ignores them). Locally that means
