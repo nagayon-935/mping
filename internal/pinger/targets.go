@@ -54,10 +54,9 @@ func (a *IDAllocator) releaseTrace(id int) {
 }
 
 type targetWorker struct {
-	id      int
-	removed <-chan struct{}
-	cancel  context.CancelFunc
-	done    chan struct{}
+	id     int
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 func (p *Pinger) allocateWorkerID() (int, error) {
@@ -74,10 +73,9 @@ func (p *Pinger) allocateWorkerID() (int, error) {
 
 func (p *Pinger) launchTarget(t *stats.TargetStats, id int) {
 	ctx, cancel := context.WithCancel(context.Background())
-	w := &targetWorker{id: id, removed: ctx.Done(), cancel: cancel, done: make(chan struct{})}
+	w := &targetWorker{id: id, cancel: cancel, done: make(chan struct{})}
 	p.mapMu.Lock()
 	p.workerStates[t] = w
-	p.targetMap[id] = t
 	p.targetChans[id] = make(chan Reply, replyChanBuffer)
 	p.activeWorkers++
 	p.mapMu.Unlock()
@@ -139,7 +137,6 @@ func (p *Pinger) RemoveTarget(t *stats.TargetStats) {
 	p.mapMu.Lock()
 	w := p.workerStates[t]
 	if w != nil {
-		delete(p.targetMap, w.id)
 		delete(p.targetChans, w.id)
 	}
 	p.mapMu.Unlock()

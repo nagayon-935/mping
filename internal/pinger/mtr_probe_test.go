@@ -147,7 +147,6 @@ func TestProbeHop_ViaTraceChan_TimeExceeded(t *testing.T) {
 	sock := &HopSocket{
 		sendV4: &fakeHopConn{},
 		isV4:   true,
-		pinger: p,
 	}
 	defer sock.Close()
 
@@ -200,7 +199,6 @@ func TestProbeHop_Timeout(t *testing.T) {
 	sock := &HopSocket{
 		sendV4: &fakeHopConn{},
 		isV4:   true,
-		pinger: p,
 	}
 	defer sock.Close()
 
@@ -228,7 +226,6 @@ func TestProbeHop_CtxCancel(t *testing.T) {
 	sock := &HopSocket{
 		sendV4: &fakeHopConn{},
 		isV4:   true,
-		pinger: p,
 	}
 	defer sock.Close()
 

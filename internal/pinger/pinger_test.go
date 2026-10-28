@@ -286,7 +286,6 @@ func TestRunReceiverDispatchesReply(t *testing.T) {
 		},
 	}
 	p.connV4 = fake
-	p.targetMap[id] = target
 	p.targetChans[id] = make(chan Reply, 1)
 
 	done := make(chan struct{})
@@ -351,7 +350,6 @@ func TestRunReceiverDispatchesICMPError(t *testing.T) {
 		},
 	}
 	p.connV4 = fake
-	p.targetMap[id] = target
 	p.targetChans[id] = make(chan Reply, 1)
 
 	done := make(chan struct{})
@@ -405,7 +403,6 @@ func TestRunReceiverDispatchesReplyV6(t *testing.T) {
 		},
 	}
 	p.connV6 = fake
-	p.targetMap[id] = target
 	p.targetChans[id] = make(chan Reply, 1)
 
 	done := make(chan struct{})
@@ -470,7 +467,6 @@ func TestRunReceiverDispatchesICMPErrorV6(t *testing.T) {
 		},
 	}
 	p.connV6 = fake
-	p.targetMap[id] = target
 	p.targetChans[id] = make(chan Reply, 1)
 
 	done := make(chan struct{})
@@ -546,7 +542,6 @@ func TestRunReceiverDispatchesPacketTooBigV6(t *testing.T) {
 		},
 	}
 	p.connV6 = fake
-	p.targetMap[id] = target
 	p.targetChans[id] = make(chan Reply, 1)
 
 	done := make(chan struct{})
@@ -1875,7 +1870,6 @@ func TestHandleEchoReply(t *testing.T) {
 		target := stats.NewTargetStats("example.com")
 		p := NewPinger([]*stats.TargetStats{target})
 		id := p.baseID & 0xffff
-		p.targetMap[id] = target
 		ch := make(chan Reply, 1)
 		p.targetChans[id] = ch
 
@@ -1923,7 +1917,6 @@ func TestHandleICMPError(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	p := NewPinger([]*stats.TargetStats{target})
 	id := p.baseID & 0xffff
-	p.targetMap[id] = target
 	ch := make(chan Reply, 1)
 	p.targetChans[id] = ch
 
@@ -1970,7 +1963,6 @@ func TestHandleICMPErrorPacketTooBigV6(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	p := NewPinger([]*stats.TargetStats{target})
 	id := p.baseID & 0xffff
-	p.targetMap[id] = target
 	ch := make(chan Reply, 1)
 	p.targetChans[id] = ch
 

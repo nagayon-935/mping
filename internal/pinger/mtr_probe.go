@@ -45,7 +45,6 @@ type HopSocket struct {
 	sendV4 hopSendConnV4
 	sendV6 hopSendConnV6
 	isV4   bool
-	pinger *Pinger
 
 	// sendMu serializes IPv4 SetTTL+WriteTo pairs. Unlike IPv6 (which sets
 	// HopLimit per packet via an ipv6.ControlMessage), IPv4's TTL can only be
@@ -118,7 +117,7 @@ func (p *Pinger) OpenHopSocketContext(ctx context.Context, dest string) (*HopSoc
 func (p *Pinger) openHopSocketAddr(dstAddr *net.IPAddr) (*HopSocket, error) {
 	isV4 := dstAddr.IP.To4() != nil
 
-	sock := &HopSocket{isV4: isV4, pinger: p}
+	sock := &HopSocket{isV4: isV4}
 
 	if isV4 {
 		bindAddr := "0.0.0.0"

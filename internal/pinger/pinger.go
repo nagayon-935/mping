@@ -181,7 +181,6 @@ type Pinger struct {
 
 	connV4           PacketConnV4
 	connV6           PacketConnV6
-	targetMap        map[int]*stats.TargetStats
 	targetChans      map[int]chan Reply
 	mapMu            sync.RWMutex
 	baseID           int
@@ -365,7 +364,6 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		workerStates:       make(map[*stats.TargetStats]*targetWorker),
 		workerEvents:       make(chan struct{}, 1),
 		resolveAddresses:   make(map[*stats.TargetStats]string),
-		targetMap:          make(map[int]*stats.TargetStats),
 		targetChans:        make(map[int]chan Reply),
 		asnCache:           make(map[string]ASNInfo),
 		ptrCache:           make(map[string]string),
