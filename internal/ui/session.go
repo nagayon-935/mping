@@ -9,6 +9,10 @@ import (
 
 const sessionQueueSize = 32
 
+// queueFullLog is the Log line shown when a submitted operation is rejected
+// because the session's queue is full.
+const queueFullLog = "[yellow]Operation queue full; please try again[-]"
+
 // uiSession owns the callback worker and refresh goroutine for one Run.
 // Operations execute in input order. UI updates are asynchronous, cancellable
 // mailbox messages: producers never wait for an application that has stopped.

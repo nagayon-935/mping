@@ -225,7 +225,7 @@ func (h *inputHandler) showState() {
 	}
 	switch h.state {
 	case monitorRunning:
-		h.footer.SetText("Enter Detail | Tab Pane | f Fold | z Max | w Save | a Add | d Del | s Stop | q Quit")
+		h.footer.SetText(footerHelpText)
 	case monitorStopping:
 		h.footer.SetText("Stopping... Press 'S' to restart after stop, 'q' to quit")
 	case monitorStopped:
@@ -240,7 +240,7 @@ func (h *inputHandler) submit(f func()) bool {
 	if h.session.Submit(f) {
 		return true
 	}
-	h.vs.appendLog("[yellow]Operation queue full; please try again[-]")
+	h.vs.appendLog(queueFullLog)
 	return false
 }
 

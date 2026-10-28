@@ -217,7 +217,7 @@ func Run(opts RunOptions) error {
 				}
 			})
 		}) {
-			vs.appendLog("[yellow]Operation queue full; please try again[-]")
+			vs.appendLog(queueFullLog)
 		}
 	}, restoreFocus)
 	deleteConfirmation.quit = func() { session.Stop(); app.Stop() }
