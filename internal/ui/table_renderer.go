@@ -216,7 +216,7 @@ func (tr *tableRenderer) ensureRenderedForSize() {
 	}
 }
 
-// visibleRowWindow returns the [start, end) range of data-row indices
+// visibleRowWindowForHeight returns the [start, end) range of data-row indices
 // (0-based — matching indices into tr.targets, tr.groupRowMap, or
 // compactRows depending on layout) that should actually be rendered this
 // tick, given the table's current scroll offset. offsetRow is the table's
@@ -225,10 +225,6 @@ func (tr *tableRenderer) ensureRenderedForSize() {
 // layout is active — tr.rowCount minus 1, i.e. NOT reduced by windowing,
 // so input_handler.go's maxOffset scroll math (which reads tr.rowCount)
 // stays correct regardless of how few rows are actually rendered.
-func visibleRowWindow(offsetRow, totalDataRows int) (start, end int) {
-	return visibleRowWindowForHeight(offsetRow, totalDataRows, tableMaxRows)
-}
-
 func visibleRowWindowForHeight(offsetRow, totalDataRows, visibleRows int) (start, end int) {
 	start = offsetRow - rowRenderMargin
 	if start < 0 {

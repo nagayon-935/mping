@@ -30,6 +30,8 @@ type hostEntry struct {
 	// bare number), or "" when absent — parsed lazily, same rationale as
 	// config.dscp.
 	DSCP string
+	// netBox retains source naming data until all includes have been loaded.
+	netBox *netBoxRow
 }
 
 // UnmarshalYAML implements yaml.Unmarshaler. Field names are checked
@@ -140,7 +142,9 @@ func parseHostsFile(path string) (hostsFileYAML, error) {
 		if err != nil {
 			return hostsFileYAML{}, err
 		}
-		return hostsFileYAML{Hosts: entries}, nil
+		doc := hostsFileYAML{Hosts: entries}
+		resolveNetBoxDocNames(&doc)
+		return doc, nil
 	}
 
 	var doc hostsFileYAML

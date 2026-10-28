@@ -192,7 +192,11 @@ func parseNetBoxCSV(path, kind string, data []byte) ([]hostEntry, error) {
 			iface:    iface,
 		})
 	}
-	return resolveNetBoxNames(rows), nil
+	out := resolveNetBoxNames(rows, nil)
+	for i := range out {
+		out[i].netBox = &rows[i]
+	}
+	return out, nil
 }
 
 func csvCol(rec []string, idx int) string {
@@ -228,25 +232,32 @@ func formatCSVError(path, kind string, lineOffset int, err error) error {
 // resolveNetBoxNames assigns display names to NetBox rows, preferring DNS name
 // over Parent and disambiguating duplicates with the interface name and/or IP
 // address so every non-empty Name is unique and never collides with another
-// row's Host.
-func resolveNetBoxNames(rows []netBoxRow) []hostEntry {
+// row's Host or an explicitly reserved name or host.
+func resolveNetBoxNames(rows []netBoxRow, reserved []hostEntry) []hostEntry {
 	if len(rows) == 0 {
 		return []hostEntry{}
 	}
 	hostCount := make(map[string]int, len(rows))
 	baseCount := make(map[string]int, len(rows))
+	reservedNames := make(map[string]bool, len(reserved))
+	for _, h := range reserved {
+		hostCount[h.Host]++
+		if h.Name != "" {
+			reservedNames[h.Name] = true
+		}
+	}
 	for _, r := range rows {
 		hostCount[r.host]++
 		if r.baseName != "" {
 			baseCount[r.baseName]++
 		}
 	}
-	collidesWithOtherHost := func(name, ownHost string) bool {
+	collidesWithIdentity := func(name, ownHost string) bool {
 		n := hostCount[name]
 		if name == ownHost {
 			n--
 		}
-		return n > 0
+		return n > 0 || reservedNames[name]
 	}
 
 	cand := make([]string, len(rows))
@@ -254,7 +265,7 @@ func resolveNetBoxNames(rows []netBoxRow) []hostEntry {
 		if r.baseName == "" {
 			continue
 		}
-		if baseCount[r.baseName] == 1 && !collidesWithOtherHost(r.baseName, r.host) {
+		if baseCount[r.baseName] == 1 && !collidesWithIdentity(r.baseName, r.host) {
 			cand[i] = r.baseName
 			continue
 		}
@@ -276,7 +287,7 @@ func resolveNetBoxNames(rows []netBoxRow) []hostEntry {
 	seen := make(map[string]int, len(rows))
 	for i, r := range rows {
 		name := cand[i]
-		if name != "" && (candCount[name] > 1 || collidesWithOtherHost(name, r.host)) {
+		if name != "" && (candCount[name] > 1 || collidesWithIdentity(name, r.host)) {
 			if r.iface != "" {
 				name = fmt.Sprintf("%s (%s %s)", r.baseName, r.iface, r.host)
 			} else {
@@ -285,11 +296,11 @@ func resolveNetBoxNames(rows []netBoxRow) []hostEntry {
 		}
 		if name != "" {
 			seen[name]++
-			if seen[name] > 1 || collidesWithOtherHost(name, r.host) {
+			if seen[name] > 1 || collidesWithIdentity(name, r.host) {
 				base := name
 				for k := max(2, seen[name]); ; k++ {
 					try := fmt.Sprintf("%s #%d", base, k)
-					if seen[try] == 0 && !collidesWithOtherHost(try, r.host) {
+					if seen[try] == 0 && !collidesWithIdentity(try, r.host) {
 						name = try
 						seen[name] = 1
 						break
@@ -300,4 +311,31 @@ func resolveNetBoxNames(rows []netBoxRow) []hostEntry {
 		out[i] = hostEntry{Host: r.host, Name: name}
 	}
 	return out
+}
+
+// resolveNetBoxDocNames resolves generated names across all lists, reserving
+// explicit names and hosts without changing user-supplied display names.
+func resolveNetBoxDocNames(doc *hostsFileYAML) {
+	var entries []*hostEntry
+	var rows []netBoxRow
+	var reserved []hostEntry
+	collect := func(hosts []hostEntry) {
+		for i := range hosts {
+			h := &hosts[i]
+			if h.netBox == nil {
+				reserved = append(reserved, *h)
+				continue
+			}
+			entries = append(entries, h)
+			rows = append(rows, *h.netBox)
+		}
+	}
+	collect(doc.Hosts)
+	for _, g := range doc.Groups {
+		collect(g.Hosts)
+	}
+	for i, h := range resolveNetBoxNames(rows, reserved) {
+		entries[i].Name = h.Name
+		entries[i].netBox = nil
+	}
 }

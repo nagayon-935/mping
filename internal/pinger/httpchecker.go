@@ -121,17 +121,7 @@ func (hc *HTTPChecker) Wait() {
 
 func (hc *HTTPChecker) loop(r *stats.HTTPCheckResult) {
 	defer hc.wg.Done()
-	hc.check(r)
-	ticker := time.NewTicker(hc.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-hc.ctx.Done():
-			return
-		case <-ticker.C:
-			hc.check(r)
-		}
-	}
+	runPeriodic(hc.ctx, hc.interval, func() { hc.check(r) })
 }
 
 func (hc *HTTPChecker) check(r *stats.HTTPCheckResult) {

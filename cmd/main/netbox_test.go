@@ -300,3 +300,50 @@ func TestNetBoxCSV_StopsAtTotalLimit(t *testing.T) {
 		t.Fatalf("err = %v, want total-limit error", err)
 	}
 }
+
+func TestNetBoxCSV_NamesAcrossIncludes(t *testing.T) {
+	for _, field := range []string{"DNS name", "Parent"} {
+		t.Run(field, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTestFile(t, dir, "first.csv", "IP Address,"+field+",Interface\n10.0.0.1/24,router,eth0\n")
+			writeTestFile(t, dir, "second.csv", "IP Address,"+field+",Interface\n10.0.0.2/24,router,eth0\n")
+			path := writeTestFile(t, dir, "hosts.yaml", "include: first.csv\ngroups:\n  - name: site\n    include: second.csv\n")
+			for i := 0; i < 2; i++ { // Startup and reload use the same deterministic names.
+				doc, err := parseHostsFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := validateHostsDoc(doc); err != nil {
+					t.Fatal(err)
+				}
+				if doc.Hosts[0].Name != "router (eth0 10.0.0.1)" || doc.Groups[0].Hosts[0].Name != "router (eth0 10.0.0.2)" {
+					t.Fatalf("unexpected names: %+v / %+v", doc.Hosts, doc.Groups[0].Hosts)
+				}
+			}
+		})
+	}
+}
+
+func TestNetBoxCSV_ReservesExplicitNamesAndHosts(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "netbox.csv", "IP Address,DNS name,Interface\n10.0.0.1/24,router,eth0\n10.0.0.2/24,other-host,eth1\n")
+	writeTestFile(t, dir, "manual.csv", "10.0.0.9,router (eth0)\n")
+	path := writeTestFile(t, dir, "hosts.yaml", "hosts:\n  - host: 10.0.0.8\n    name: router\n  - other-host\ninclude: [manual.csv, netbox.csv]\n")
+	doc, err := parseHostsFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateHostsDoc(doc); err != nil {
+		t.Fatal(err)
+	}
+	want := []hostEntry{
+		{Host: "10.0.0.8", Name: "router"},
+		{Host: "other-host"},
+		{Host: "10.0.0.9", Name: "router (eth0)"},
+		{Host: "10.0.0.1", Name: "router (eth0 10.0.0.1)"},
+		{Host: "10.0.0.2", Name: "other-host (eth1)"},
+	}
+	if !reflect.DeepEqual(doc.Hosts, want) {
+		t.Fatalf("got %#v, want %#v", doc.Hosts, want)
+	}
+}

@@ -213,6 +213,7 @@ func expandHostsDoc(doc hostsFileYAML, baseDir string) (hostsFileYAML, error) {
 		return hostsFileYAML{}, fmt.Errorf("hosts file expands to %d targets, more than %d targets allowed", total, maxHostsFileTargets)
 	}
 	doc.Hosts, doc.Groups, doc.Include = hosts, groups, nil
+	resolveNetBoxDocNames(&doc)
 	return doc, nil
 }
 
