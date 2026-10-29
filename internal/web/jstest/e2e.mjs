@@ -71,6 +71,8 @@ try {
   // Extra-wide windows also exercise the workspace maximum width.
   // Narrower layouts are checked separately below.
   const WIDE = { width: 4200, height: 1000 };
+  // The narrowest supported window (style.css: body min-width).
+  const NARROWEST = { width: 720, height: 900 };
   const page = await open({ viewport: WIDE });
 
   await check("live badge and grouped rows", async () => {
@@ -254,7 +256,7 @@ try {
   });
 
   await check("HTTP horizontal scroll survives live measurements and navigation", async () => {
-    await page.setViewportSize({width:390,height:844});
+    await page.setViewportSize(NARROWEST);
     const left=await page.$eval("#http-body .table-wrap",n=>{n.scrollLeft=120;window.savedHTTP=n;return n.scrollLeft;});
     assert.ok(left>0);
     await page.waitForTimeout(2500);
@@ -281,18 +283,16 @@ try {
     }
   });
 
-  await check("MTR preserves horizontal scroll, column widths and selected text during live updates", async () => {
-    // Wider panes drop optional columns until the table fits; a phone still
-    // needs more than the required columns' width, so both axes scroll.
-    await page.setViewportSize({width:390,height:900});
+  await check("MTR preserves scroll, column widths and selected text during live updates", async () => {
+    await page.setViewportSize(NARROWEST);
     await page.click("tr.target-row >> nth=2");
     await page.waitForSelector("#mtr tbody tr");
     // The resize re-selects columns for the narrower pane; measure once laid out.
     await page.waitForFunction(()=>[...document.querySelectorAll("#mtr thead th")].every(n=>n.getBoundingClientRect().width>0));
     const geometry=()=>page.$$eval("#mtr thead th",ns=>ns.map(n=>n.getBoundingClientRect().width));
     const before=await geometry();
-    const position=await page.$eval("#mtr-table-wrap",n=>{n.scrollLeft=120;n.scrollTop=80;return {left:n.scrollLeft,top:n.scrollTop,height:n.clientHeight}});
-    assert.ok(position.left>0 && position.top>0, "both axes scroll within the MTR pane");
+    const position=await page.$eval("#mtr-table-wrap",n=>{n.scrollTop=80;return {top:n.scrollTop,height:n.clientHeight}});
+    assert.ok(position.top>0, "the MTR pane scrolls internally");
     const picked=await page.evaluate(()=>{
       const range=document.createRange();range.selectNodeContents(document.querySelector("#mtr td.col-ip"));
       getSelection().removeAllRanges();getSelection().addRange(range);return getSelection().toString();
@@ -301,14 +301,14 @@ try {
     assert.equal(await page.evaluate(()=>getSelection().toString()),picked);
     await page.evaluate(()=>getSelection().removeAllRanges());
     await page.waitForTimeout(1500);
-    assert.deepEqual(await page.$eval("#mtr-table-wrap",n=>({left:n.scrollLeft,top:n.scrollTop,height:n.clientHeight})),position);
+    assert.deepEqual(await page.$eval("#mtr-table-wrap",n=>({top:n.scrollTop,height:n.clientHeight})),position);
     assert.deepEqual(await geometry(),before);
     await page.setViewportSize(WIDE);
   });
 
   await check("Summary stays stable on live updates and global-page round trips", async () => {
     const geometry=()=>page.evaluate(()=>["pane-inspect","pane-mtr","pane-graphs"].map(id=>{const r=document.getElementById(id).getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height};}));
-    for(const viewport of [{width:1400,height:900},{width:390,height:844}]) {
+    for(const viewport of [{width:1400,height:900},NARROWEST]) {
       await page.setViewportSize(viewport);
       await page.waitForTimeout(200);
       const before=await geometry();
@@ -348,15 +348,6 @@ try {
     });
     assert.ok(Math.abs(sticky.top - 36) <= 1, "target heading stays beneath the column headings");
     assert.match(sticky.text, /Targetmtr-0.example30 hops/);
-    await many.setViewportSize({width:390,height:844});
-    await many.$eval("#mtr-table-wrap", n => { n.scrollLeft = 200; });
-    const identity = await many.$eval("#mtr-table-wrap", n => {
-      const label = n.querySelector(".mtr-target-label").getBoundingClientRect(), r = n.getBoundingClientRect();
-      return {left:label.left-r.left,right:label.right-r.left,width:n.clientWidth};
-    });
-    assert.ok(identity.left >= 0 && identity.right <= identity.width, "host identity stays readable when scrolling numeric columns");
-    await shot(many, "mtr-sticky-mobile");
-    await many.setViewportSize({width:1400,height:900});
     await many.fill("#filter","mtr-0");
     await many.waitForFunction(()=>document.querySelectorAll("#mtr tbody").length===1);
     assert.equal((await geometry()).height,full.height);
@@ -388,7 +379,7 @@ try {
     assert.match(result.states[3].text,/Traceroute failed/);
   });
 
-  await check("Traceroute remains readable on phones and disabled MTR stays hidden with cached hops", async () => {
+  await check("Traceroute stays readable at the narrowest width and disabled MTR stays hidden with cached hops", async () => {
     const body=await (await fetch(`${base}api/v1/snapshot`)).json();
     const target={...body.snapshot.targets[2],host:"route.example",ip:"2001:db8::10",
       trace_hops:["192.0.2.1(AS64500 Example Networks (Tokyo)) router.lab.example","*","2001:db8:ffff:ffff:ffff:ffff:192.0.2.10","2001:db8::10(AS64501 Destination Network) destination.example"]};
@@ -398,11 +389,11 @@ try {
     assert.ok(await route.isHidden("#pane-mtr"));
     assert.equal(await route.locator("#traceroute-scroll .trace-hop").count(),4);
     await shot(route,"traceroute");
-    await route.setViewportSize({width:390,height:844});
+    await route.setViewportSize(NARROWEST);
     await route.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
     assert.equal(await route.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     assert.ok(await route.$eval("#traceroute-scroll",n=>n.scrollWidth<=n.clientWidth+1));
-    await shot(route,"traceroute-mobile");
+    await shot(route,"traceroute-narrow");
     await route.close();
   });
 
@@ -652,12 +643,11 @@ try {
     await ctl.keyboard.press("Escape");
     await ctl.waitForSelector("#report-dialog",{state:"hidden"});
     assert.equal(await ctl.evaluate(()=>document.activeElement.id),"open-report");
-    await ctl.setViewportSize({width:390,height:844});
-    await ctl.click("#toggle-actions");
+    await ctl.setViewportSize(NARROWEST);
     await ctl.click("#open-report");
     await ctl.waitForSelector("#report-dialog[open]");
     assert.ok(await ctl.$eval("#report-dialog",n=>{const r=n.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&n.scrollWidth<=n.clientWidth;}));
-    await shot(ctl,"report-dialog-mobile");
+    await shot(ctl,"report-dialog-narrow");
     await ctl.click("#cancel-report");
     await ctl.waitForSelector("#report-dialog",{state:"hidden"});
     await ctl.setViewportSize(WIDE);
@@ -831,47 +821,43 @@ try {
     await stale.close();
   });
 
-  const mobile = await open({ viewport: { width: 390, height: 844 } }, ctx);
-  await check("phone width keeps status, host and the highest-priority columns without page overflow", async () => {
-    assert.ok(await mobile.isVisible("#toggle-actions"));
-    assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-    const headers = await mobile.$$eval("#targets th", (h) => h.map((x) => x.textContent));
+  const narrow = await open({ viewport: NARROWEST }, ctx);
+  await check("the narrowest width keeps status, host and the highest-priority columns without page overflow", async () => {
+    assert.ok(await narrow.isVisible("#open-report"));
+    assert.equal(await narrow.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    const headers = await narrow.$$eval("#targets th", (h) => h.map((x) => x.textContent));
     assert.deepEqual(headers.slice(0, 2), ["Status", "Host"]);
-    for (const kept of ["Loss %", "RTT"]) assert.ok(headers.includes(kept), `${kept} must stay on a phone: ${headers}`);
-    for (const dropped of ["IP", "AS", "Sent", "Recv", "TTL"]) assert.ok(!headers.includes(dropped), `${dropped} should be dropped: ${headers}`);
-    assert.ok(await mobile.$eval("#targets", (n) => n.getBoundingClientRect().width <= n.parentElement.clientWidth + 1));
-    await shot(mobile, "mobile");
+    for (const kept of ["Loss %", "RTT"]) assert.ok(headers.includes(kept), `${kept} must stay: ${headers}`);
+    assert.ok(await narrow.$eval("#targets", (n) => n.getBoundingClientRect().width <= n.parentElement.clientWidth + 1));
+    await shot(narrow, "narrowest");
   });
 
-  await check("MTR shows all hosts on phones and stays open when selection is cleared", async () => {
-    assert.ok(await mobile.isHidden("#pane-inspect"));
-    assert.ok(await mobile.isVisible("#pane-mtr"));
-    const hosts=()=>mobile.$$eval("#mtr .mtr-target-row",ns=>ns.map(n=>n.textContent));
+  await check("MTR shows all hosts in the stacked layout and stays open when selection is cleared", async () => {
+    assert.ok(await narrow.isHidden("#pane-inspect"));
+    assert.ok(await narrow.isVisible("#pane-mtr"));
+    const hosts=()=>narrow.$$eval("#mtr .mtr-target-row",ns=>ns.map(n=>n.textContent));
     const before=await hosts();
     assert.equal(before.length,6);
-    assert.equal((await mobile.locator("#pane-mtr").boundingBox()).height,360);
-    const position=await mobile.$eval("#mtr-table-wrap",n=>{n.scrollTop=100;n.scrollLeft=120;return {left:n.scrollLeft,top:n.scrollTop}});
-    assert.ok(position.left>0 && position.top>0);
-    await mobile.locator("tr.target-row",{hasText:"cdn.example"}).click();
-    await mobile.waitForSelector("#pane-inspect:not([hidden])");
+    assert.equal((await narrow.locator("#pane-mtr").boundingBox()).height,420);
+    const position=await narrow.$eval("#mtr-table-wrap",n=>{n.scrollTop=100;return n.scrollTop});
+    assert.ok(position>0);
+    await narrow.locator("tr.target-row",{hasText:"cdn.example"}).click();
+    await narrow.waitForSelector("#pane-inspect:not([hidden])");
     assert.deepEqual(await hosts(),before);
-    assert.equal(await mobile.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-    await mobile.locator("#close-inspect").click();
-    await mobile.waitForSelector("#pane-inspect", {state:"hidden"});
-    assert.ok(await mobile.isVisible("#pane-mtr"));
+    assert.equal(await narrow.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    await narrow.locator("#close-inspect").click();
+    await narrow.waitForSelector("#pane-inspect", {state:"hidden"});
+    assert.ok(await narrow.isVisible("#pane-mtr"));
     assert.deepEqual(await hosts(),before);
-    assert.deepEqual(await mobile.$eval("#mtr-table-wrap",n=>({left:n.scrollLeft,top:n.scrollTop})),position);
-    await shot(mobile,"mtr-mobile");
+    assert.equal(await narrow.$eval("#mtr-table-wrap",n=>n.scrollTop),position);
+    await shot(narrow,"mtr-stacked");
   });
 
-  await check("minimum fields fit small phone widths", async () => {
-    for (const width of [320,360,390]) {
-      await mobile.setViewportSize({width,height:844});
-      await mobile.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
-      const geometry=await mobile.$eval("#targets",n=>({width:n.getBoundingClientRect().width,available:n.parentElement.clientWidth,headers:[...n.querySelectorAll("th")].map(n=>n.textContent)}));
-      for (const field of ["Status","Host","Loss %","RTT"]) assert.ok(geometry.headers.includes(field),`${width}px missing ${field}`);
-      assert.ok(geometry.width<=geometry.available+1,`${width}px: ${geometry.width} > ${geometry.available}`);
-    }
+  await check("a window narrower than supported scrolls the page instead of compressing it", async () => {
+    await narrow.setViewportSize({width:390,height:844});
+    await narrow.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    assert.ok(await narrow.evaluate(()=>document.documentElement.scrollWidth>=720));
+    assert.ok(await narrow.$eval("#workspace",n=>n.getBoundingClientRect().width>=720-1));
   });
 
   await check("no console errors", async () => assert.deepEqual(problems, []));

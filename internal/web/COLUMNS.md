@@ -10,7 +10,7 @@ The page reserves scrollbar space so filtering a long list cannot shift the
 columns when the vertical scrollbar disappears. Detail panes do the same.
 
 Widths include cell padding. Numeric text uses a 13px monospace font, with
-10px padding on each side; compact mobile cells use 12px text and 4px padding.
+10px padding on each side.
 
 | Field | Input range / length | Display budget | Standard width |
 | --- | --- | --- | --- |
@@ -43,11 +43,11 @@ depend on live values.
 
 The MTR table follows the same rule. It always keeps **Hop, Address, Loss %,
 RTT and Avg**, then adds Worst, Best, AS (when enabled), Jitter, Sent and Recv
-as the pane widens. Only a pane narrower than the required columns (phones)
-scrolls horizontally.
+as the pane widens. Only a pane narrower than the required columns scrolls
+horizontally.
 
-There is no table-size selector or automatic zoom. CSS uses compact cell and
-font sizes on phones; column selection uses the actual available width. The
+There is no table-size selector or automatic zoom; column selection uses the
+actual available width. The
 panes reserve scrollbar space, so filtering or receiving measurements cannot
 change column widths. Summary and HTTP tables keep all enabled columns and scroll
 horizontally when needed.
@@ -61,10 +61,9 @@ The upper row contains the monitor and, after selection, Summary (7:5 widths).
 The lower row contains the route pane and graphs (7:5), or full-width graphs
 when no route option is enabled. Summary selection does not move the lower row.
 Every desktop pane takes its grid cell's height and scrolls internally. Narrower
-screens stack the panes. Phones use compact status/host/loss/RTT widths of
-72/94/46/80px, reduced to 72/66/44/80px up to 360px.
-Status, host, loss and latest RTT need 292px (72 + 94 + 46 + 80), so a phone
-keeps these four fields. AS is omitted unless enabled, including in
+windows stack the panes. Phone widths are not supported: below 720px the page
+scrolls horizontally instead of compressing the layout. AS is omitted unless
+enabled, including in
 the selected target's details; PTR annotations and PMTU details follow their
 respective options as well.
 
@@ -90,7 +89,7 @@ scroll positions. Log and HTTP preserve selected text and scroll during updates.
 - Neither enabled: no route pane.
 
 Both route views show all filtered hosts without requiring selection. Desktop
-route panes fill their grid cell; stacked panes reserve 420px (360px on phones).
+route panes fill their grid cell; stacked panes reserve 420px.
 MTR has one two-axis scroll viewport with 36px sticky column headings and 64px
 sticky target headings showing host, address and hop count. Target identity stays
 visible when the numeric columns are scrolled horizontally. Numeric widths
@@ -120,5 +119,3 @@ sample descriptions reserve their height even when idle. Route and graph
 Selected host buttons scroll only their own pane. Graph sample inspection
 works with pointer or keyboard and announces only explicit keyboard actions.
 Destructive actions use native modal dialogs with Cancel focused initially.
-On phones, global controls are a dropdown anchored below the header; opening
-it does not resize panes. Filters use a bounded grid with full-width search.

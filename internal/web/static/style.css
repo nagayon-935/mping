@@ -47,7 +47,10 @@ html { scrollbar-gutter: stable; }
 /* Component display rules must not resurrect elements marked hidden. */
 [hidden] { display: none !important; }
 
+/* Phone widths are not supported: a narrower window scrolls the page
+   horizontally instead of compressing the layout. */
 body {
+  min-width: 720px;
   margin: 0;
   background: var(--page);
   color: var(--ink);
@@ -346,33 +349,6 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
   .page-view > .pane { flex: 1; min-height: 0; }
 }
 
-@media (max-width: 640px) {
-  #pane-mtr, #pane-traceroute { height: 360px; }
-  .workspace { padding: 8px; gap: 8px; }
-  .filter { width: 100%; }
-  .spacer { display: none; }
-  .pane-head { padding: 10px 12px; }
-  .graph-grid { padding: 8px 12px 12px; grid-template-columns: minmax(0, 1fr); }
-  canvas.graph-canvas { height: 160px; }
-  .inspect-body { padding: 4px 12px 12px; }
-  #targets {
-    --col-status: 72px; --col-host: 94px; --col-loss: 46px; --col-rtt: 80px;
-    font-size: 13px;
-  }
-  #targets th { font-size: 10px; letter-spacing: 0; }
-  #targets th,
-  #targets td { padding: 10px 4px; }
-  #targets td.num { font-size: 12px; }
-  #targets .host-open { gap: 4px; }
-  #targets .status { font-size: 11px; gap: 3px; }
-  #targets .status-icon { width: 10px; }
-  #targets .status-reason { font-size: 11px; }
-}
-
-@media (max-width: 360px) {
-  #targets { --col-status: 72px; --col-host: 66px; --col-loss: 44px; --col-rtt: 80px; }
-}
-
 @media (forced-colors: active) {
   .status-icon, .badge-icon { forced-color-adjust: none; }
 }
@@ -439,29 +415,3 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
 #pane-graphs .pane-tools { min-height: 32px; flex-wrap: nowrap; }
 #pane-graphs .pane-head > div:first-child { flex: 1; min-width: 0; }
 #graphs-cursor { min-width: 0; }
-#toggle-actions { display: none; }
-@media (max-width: 800px) {
-  .header-row:first-child { flex-wrap: wrap; }
-  .header-status { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 0 8px; font-size: 11px; }
-  .header-status .badge { width: max-content; max-width: 100%; padding: 2px 6px; font-size: 11px; }
-  #measurement-state { min-width: 0; }
-  #connection-note { grid-column: 1 / -1; min-height: 16px; line-height: 16px; }
-  #open-auth { min-width: 0; }
-  .summary { gap: 4px; }
-  .health-filter { padding: 4px 6px; font-size: 11px; }
-  .monitor-filters { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); }
-  .monitor-filters .filter { grid-column: 1 / -1; width: 100%; }
-  .monitor-filters select { grid-column: span 3; width: 100%; min-width: 0; max-width: none; }
-  #refresh-sort { grid-column: span 3; min-width: 0; }
-  #clear-filter { grid-column: span 1; padding: 6px 2px; }
-  #shown-count { grid-column: span 2; min-width: 0; margin-left: auto; }
-  #toggle-actions:not([hidden]) { display: inline-block; }
-  #measurement-controls { display: none; position: absolute; top: 100%; right: 8px; width: 185px;
-    padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
-    box-shadow: 0 4px 16px rgba(0,0,0,.15); z-index: 6; }
-  #measurement-controls.actions-open { display: flex; flex-direction: column; }
-  #measurement-controls .btn, #reset-slot { width: 100%; }
-  #pane-graphs .pane-tools { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
-  #pane-graphs .segmented { grid-column: span 2; width: max-content; }
-  .shortcut-list { grid-template-columns: 90px minmax(0,1fr); }
-}
