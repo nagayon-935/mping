@@ -18,6 +18,13 @@ const testTimeout = 3 * time.Second
 
 // pollUntil re-checks cond until it holds or testTimeout passes. Use it for
 // state that has no completion signal to wait on.
+// portResult returns a port check result that has recorded status once.
+func portResult(port int, protocol, status string) *stats.PortCheckResult {
+	r := stats.NewPortCheckResult(port, protocol)
+	r.SetResult(status, 5*time.Millisecond)
+	return r
+}
+
 func pollUntil(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(testTimeout)

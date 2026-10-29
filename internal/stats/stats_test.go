@@ -134,7 +134,7 @@ func TestTargetStatsHistoryRing(t *testing.T) {
 }
 
 func TestPortCheckResult_SetAndGetResult(t *testing.T) {
-	r := &PortCheckResult{Port: 443, Protocol: "tcp", Status: "Checking..."}
+	r := &PortCheckResult{port: 443, protocol: "tcp", status: "Checking..."}
 
 	r.SetResult("Open", 10*time.Millisecond)
 	v := r.GetView()
@@ -171,10 +171,10 @@ func TestPortCheckResult_SetAndGetResult(t *testing.T) {
 }
 
 func TestPortCheckResult_SetResult_LastChange(t *testing.T) {
-	r := &PortCheckResult{Port: 80, Protocol: "tcp", Status: "Open"}
+	r := &PortCheckResult{port: 80, protocol: "tcp", status: "Open"}
 
 	// Same status: LastChange should not be updated
-	before := r.LastChange
+	before := r.lastChange
 	r.SetResult("Open", 5*time.Millisecond)
 	lastChange := r.GetView().LastChange
 	if lastChange != before {
@@ -203,7 +203,7 @@ func TestPortCheckResult_SetResult_AllStatuses(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.status, func(t *testing.T) {
-			r := &PortCheckResult{Status: "Checking..."}
+			r := &PortCheckResult{status: "Checking..."}
 			r.SetResult(tt.status, 0)
 			v := r.GetView()
 			if v.OpenCount != tt.wantOpenCount || v.ClosedCount != tt.wantClosedCount {
@@ -381,7 +381,7 @@ func TestPortCheckResult_RTTStats(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := &PortCheckResult{Port: 443, Protocol: "tcp", Status: "Checking..."}
+			r := &PortCheckResult{port: 443, protocol: "tcp", status: "Checking..."}
 			for _, inp := range tt.inputs {
 				r.SetResult(inp.status, inp.rtt)
 			}
@@ -404,7 +404,7 @@ func TestPortCheckResult_RTTStats(t *testing.T) {
 
 func TestPortCheckResult_GetView_History(t *testing.T) {
 	t.Run("history under capacity", func(t *testing.T) {
-		r := &PortCheckResult{Port: 80, Protocol: "tcp", Status: "Checking..."}
+		r := &PortCheckResult{port: 80, protocol: "tcp", status: "Checking..."}
 		rtts := []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 30 * time.Millisecond}
 		for _, rtt := range rtts {
 			r.SetResult("Open", rtt)
@@ -421,7 +421,7 @@ func TestPortCheckResult_GetView_History(t *testing.T) {
 	})
 
 	t.Run("history wraps at historySize", func(t *testing.T) {
-		r := &PortCheckResult{Port: 80, Protocol: "tcp", Status: "Checking..."}
+		r := &PortCheckResult{port: 80, protocol: "tcp", status: "Checking..."}
 		for i := 1; i <= historySize+1; i++ {
 			r.SetResult("Open", time.Duration(i)*time.Millisecond)
 		}
@@ -438,7 +438,7 @@ func TestPortCheckResult_GetView_History(t *testing.T) {
 	})
 
 	t.Run("non-open results not added to history", func(t *testing.T) {
-		r := &PortCheckResult{Port: 443, Protocol: "tcp", Status: "Checking..."}
+		r := &PortCheckResult{port: 443, protocol: "tcp", status: "Checking..."}
 		r.SetResult("Closed", 5*time.Millisecond)
 		r.SetResult("Filtered", 5*time.Millisecond)
 		view := r.GetView()
@@ -449,7 +449,7 @@ func TestPortCheckResult_GetView_History(t *testing.T) {
 }
 
 func TestPortCheckResult_ConcurrentAccess(t *testing.T) {
-	r := &PortCheckResult{Port: 80, Protocol: "tcp", Status: "Checking..."}
+	r := &PortCheckResult{port: 80, protocol: "tcp", status: "Checking..."}
 	done := make(chan struct{})
 	go func() {
 		for i := range 1000 {
@@ -470,8 +470,8 @@ func TestPortCheckResult_ConcurrentAccess(t *testing.T) {
 func TestTargetStats_SetPortResults(t *testing.T) {
 	tgt := NewTargetStats("example.com")
 	results := []*PortCheckResult{
-		{Port: 80, Protocol: "tcp", Status: "Open"},
-		{Port: 443, Protocol: "tcp", Status: "Closed"},
+		{port: 80, protocol: "tcp", status: "Open"},
+		{port: 443, protocol: "tcp", status: "Closed"},
 	}
 	tgt.SetPortResults(results)
 	view := tgt.GetView()
@@ -512,7 +512,7 @@ func TestLightweightReadAccessors(t *testing.T) {
 		t.Fatalf("EffectiveAddress() after SetIP = %q, want %q", got, "93.184.216.34")
 	}
 
-	r := &PortCheckResult{Port: 443, Protocol: "tcp", Status: "Checking..."}
+	r := &PortCheckResult{port: 443, protocol: "tcp", status: "Checking..."}
 	if got := r.CurrentStatus(); got != "Checking..." {
 		t.Fatalf("CurrentStatus() = %q, want %q", got, "Checking...")
 	}

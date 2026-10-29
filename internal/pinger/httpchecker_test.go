@@ -24,7 +24,7 @@ func statusServer(t *testing.T, code int) *httptest.Server {
 // awaitHTTPCheck blocks until r has recorded at least one check outcome.
 func awaitHTTPCheck(t *testing.T, r *stats.HTTPCheckResult) {
 	t.Helper()
-	eventually(t, 5*time.Second, "first HTTP check outcome for "+r.URL, func() bool {
+	eventually(t, 5*time.Second, "first HTTP check outcome for "+r.URL(), func() bool {
 		v := r.GetView()
 		return v.UpCount+v.DownCount >= 1
 	})

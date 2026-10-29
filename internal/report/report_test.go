@@ -17,7 +17,7 @@ func TestTargetSnapshotRemainsImmutableAcrossResetAndUpdates(t *testing.T) {
 	target.SetIP("192.0.2.1")
 	target.IncSent()
 	target.OnSuccess(2500*time.Microsecond, 64)
-	port := &stats.PortCheckResult{Port: 443, Protocol: "tcp"}
+	port := stats.NewPortCheckResult(443, "tcp")
 	port.SetResult("Open", 3500*time.Microsecond)
 	target.SetPortResults([]*stats.PortCheckResult{port})
 	target.RecordEvent("test", "before capture")

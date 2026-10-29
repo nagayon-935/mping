@@ -368,7 +368,7 @@ func TestPortChecker_CheckWithIP(t *testing.T) {
 	tgt := stats.NewTargetStats("localhost")
 	tgt.SetIP("127.0.0.1")
 	spec := PortSpec{Port: port, Protocol: "tcp"}
-	result := &stats.PortCheckResult{Port: port, Protocol: "tcp", Status: "Checking..."}
+	result := stats.NewPortCheckResult(port, "tcp")
 
 	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Second, time.Second, BindConfig{})
 	pc.check(tgt, spec, result)
@@ -383,7 +383,7 @@ func TestPortChecker_CheckSkipsEmptyIP(t *testing.T) {
 	tgt := stats.NewTargetStats("no-ip-host")
 	// IP not set (empty string)
 	spec := PortSpec{Port: 80, Protocol: "tcp"}
-	result := &stats.PortCheckResult{Port: 80, Protocol: "tcp", Status: "Checking..."}
+	result := stats.NewPortCheckResult(80, "tcp")
 
 	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Second, time.Second, BindConfig{})
 	pc.check(tgt, spec, result)

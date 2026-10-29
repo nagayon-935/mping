@@ -124,7 +124,7 @@ func (hc *HTTPChecker) check(r *stats.HTTPCheckResult) {
 		return
 	}
 	start := time.Now()
-	req, err := http.NewRequestWithContext(hc.ctx, "GET", r.URL, nil)
+	req, err := http.NewRequestWithContext(hc.ctx, "GET", r.URL(), nil)
 	if err != nil {
 		r.SetResult(0, 0, err)
 		return

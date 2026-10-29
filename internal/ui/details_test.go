@@ -118,7 +118,7 @@ func TestDetailsOptionalSectionsFollowOptionsEvenWithCachedData(t *testing.T) {
 	target.SetPMTU(1400)
 	target.SetTraceHops([]string{"192.0.2.1"})
 	target.MTR().EnsureLen(1)
-	target.SetPortResults([]*stats.PortCheckResult{{Port: 443, Protocol: "tcp"}})
+	target.SetPortResults([]*stats.PortCheckResult{stats.NewPortCheckResult(443, "tcp")})
 	off := renderHostDetails(target, RunOptions{})
 	on := renderHostDetails(target, RunOptions{ASNEnabled: true, PTREnabled: true, DSCPEnabled: true, MTUEnabled: true, TraceEnabled: true, MTREnabled: true, PortEnabled: true})
 	for _, label := range []string{"ASN:", "PTR:", "DSCP:", "PMTU payload:", "[yellow]Route", "[yellow]MTR", "[yellow]Ports"} {

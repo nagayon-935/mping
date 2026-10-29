@@ -102,7 +102,7 @@ func TestRenderPortMonitorTable(t *testing.T) {
 	t.Run("with data full mode", func(t *testing.T) {
 		target := stats.NewTargetStats("example.com")
 		target.SetIP("1.1.1.1")
-		result := &stats.PortCheckResult{Port: 443, Protocol: "tcp"}
+		result := stats.NewPortCheckResult(443, "tcp")
 		result.SetResult("Open", 5*time.Millisecond)
 		target.SetPortResults([]*stats.PortCheckResult{result})
 
@@ -121,7 +121,7 @@ func TestRenderPortMonitorTable(t *testing.T) {
 	t.Run("compact mode narrow width", func(t *testing.T) {
 		target := stats.NewTargetStats("example.com")
 		target.SetIP("1.1.1.1")
-		result := &stats.PortCheckResult{Port: 80, Protocol: "tcp"}
+		result := stats.NewPortCheckResult(80, "tcp")
 		result.SetResult("Closed", 0)
 		target.SetPortResults([]*stats.PortCheckResult{result})
 
@@ -140,7 +140,7 @@ func TestRenderPortMonitorTable(t *testing.T) {
 	t.Run("status change logs", func(t *testing.T) {
 		target := stats.NewTargetStats("example.com")
 		target.SetIP("1.1.1.1")
-		result := &stats.PortCheckResult{Port: 443, Protocol: "tcp"}
+		result := stats.NewPortCheckResult(443, "tcp")
 		result.SetResult("Open", 5*time.Millisecond)
 		target.SetPortResults([]*stats.PortCheckResult{result})
 

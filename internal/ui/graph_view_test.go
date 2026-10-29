@@ -322,7 +322,7 @@ func TestGraphViewDrawsPortSeries(t *testing.T) {
 	target.OnSuccess(10*time.Millisecond, 64)
 	ports := make([]*stats.PortCheckResult, 4)
 	for i := range ports {
-		ports[i] = &stats.PortCheckResult{Port: 8000 + i, Protocol: "tcp"}
+		ports[i] = stats.NewPortCheckResult(8000+i, "tcp")
 		ports[i].SetResult("Open", time.Duration(20+i)*time.Millisecond)
 	}
 	target.SetPortResults(ports)

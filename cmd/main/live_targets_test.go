@@ -15,7 +15,7 @@ func TestLiveEditsKeepStatisticsAndStoppedState(t *testing.T) {
 	a.OnSuccess(5*time.Millisecond, 64)
 	a.MTR().EnsureLen(1)
 	a.MTR().RecordReply(1, "1.1.1.1", "", "", "", time.Millisecond)
-	port := &stats.PortCheckResult{Port: 443, Protocol: "tcp"}
+	port := stats.NewPortCheckResult(443, "tcp")
 	port.SetResult("Open", time.Millisecond)
 	a.SetPortResults([]*stats.PortCheckResult{port})
 	s := newSupervisor(supervisorConfig{targets: []*stats.TargetStats{a, b}, specs: []targetSpec{{Host: "a"}, {Host: "b"}}, groups: []ui.TargetGroup{{Name: "group", Indices: []int{0, 1}}}})

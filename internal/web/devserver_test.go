@@ -123,10 +123,11 @@ func newSimulation(includeUntrusted, longValues bool) *simulation {
 	sim.targets[2].ts.SetTraceHops(hops)
 	m := sim.targets[2].ts.MTR()
 	m.EnsureLen(len(hops))
-	ports := []*stats.PortCheckResult{{Port: 443, Protocol: "tcp"}, {Port: 53, Protocol: "udp"}}
+	firstPort := 443
 	if longValues {
-		ports[0].Port = 65535
+		firstPort = 65535
 	}
+	ports := []*stats.PortCheckResult{stats.NewPortCheckResult(firstPort, "tcp"), stats.NewPortCheckResult(53, "udp")}
 	ports[0].SetResult("Open", 4*time.Millisecond)
 	ports[1].SetResult("Filtered", 0)
 	sim.targets[0].ts.SetPortResults(ports)

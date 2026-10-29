@@ -5,15 +5,16 @@ import (
 	"time"
 )
 
-// PortCheckResult holds the result of a single TCP/UDP port check.
+// PortCheckResult holds the result of a single TCP/UDP port check. Its fields
+// are guarded by mu; read them through GetView.
 type PortCheckResult struct {
-	Port        int
-	Protocol    string // "tcp" or "udp"
-	Status      string // "Open", "Closed", "Filtered", "Open|Filtered", "Error"
-	RTT         time.Duration
-	OpenCount   int
-	ClosedCount int
-	LastChange  time.Time
+	port        int
+	protocol    string // "tcp" or "udp"
+	status      string // "Open", "Closed", "Filtered", "Open|Filtered", "Error"
+	lastRTT     time.Duration
+	openCount   int
+	closedCount int
+	lastChange  time.Time
 
 	// RTT statistics and ring buffer for Open responses only.
 	rtt rttAccumulator
@@ -37,21 +38,26 @@ type PortCheckView struct {
 	LastChange  time.Time
 }
 
+// NewPortCheckResult returns the result of a port check that has not run yet.
+func NewPortCheckResult(port int, protocol string) *PortCheckResult {
+	return &PortCheckResult{port: port, protocol: protocol, status: "Checking..."}
+}
+
 func (r *PortCheckResult) SetResult(status string, rtt time.Duration) {
 	defer bumpGeneration()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if status != r.Status {
-		r.LastChange = time.Now()
+	if status != r.status {
+		r.lastChange = time.Now()
 	}
-	r.Status = status
-	r.RTT = rtt
+	r.status = status
+	r.lastRTT = rtt
 	switch status {
 	case "Open":
-		r.OpenCount++
+		r.openCount++
 		r.recordRTT(rtt)
 	case "Closed", "Filtered", "Open|Filtered":
-		r.ClosedCount++
+		r.closedCount++
 	}
 }
 
@@ -69,7 +75,7 @@ func (r *PortCheckResult) recordRTT(rtt time.Duration) {
 func (r *PortCheckResult) CurrentStatus() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.Status
+	return r.status
 }
 
 // GetView returns a thread-safe snapshot including RTT statistics and history.
@@ -77,17 +83,17 @@ func (r *PortCheckResult) GetView() PortCheckView {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return PortCheckView{
-		Port:        r.Port,
-		Protocol:    r.Protocol,
-		Status:      r.Status,
-		RTT:         r.RTT,
+		Port:        r.port,
+		Protocol:    r.protocol,
+		Status:      r.status,
+		RTT:         r.lastRTT,
 		MinRTT:      r.rtt.min,
 		AvgRTT:      r.rtt.avg(),
 		MaxRTT:      r.rtt.max,
 		StdDev:      r.rtt.stddev(),
 		History:     r.rtt.historySnapshot(),
-		OpenCount:   r.OpenCount,
-		ClosedCount: r.ClosedCount,
-		LastChange:  r.LastChange,
+		OpenCount:   r.openCount,
+		ClosedCount: r.closedCount,
+		LastChange:  r.lastChange,
 	}
 }

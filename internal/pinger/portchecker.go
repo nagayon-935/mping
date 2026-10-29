@@ -259,7 +259,7 @@ func (pc *PortChecker) RemoveTarget(t *stats.TargetStats) {
 func newPortResults(specs []PortSpec) []*stats.PortCheckResult {
 	results := make([]*stats.PortCheckResult, len(specs))
 	for i, spec := range specs {
-		results[i] = &stats.PortCheckResult{Port: spec.Port, Protocol: spec.Protocol, Status: "Checking..."}
+		results[i] = stats.NewPortCheckResult(spec.Port, spec.Protocol)
 	}
 	return results
 }

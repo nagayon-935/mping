@@ -37,7 +37,7 @@ func TestGeneration_AdvancesOnMutation(t *testing.T) {
 	mustAdvance("SetPortResults", func() { tgt.SetPortResults(nil) })
 	mustAdvance("TargetStats.Reset", func() { tgt.Reset() })
 
-	port := &PortCheckResult{Port: 443, Protocol: "tcp"}
+	port := &PortCheckResult{port: 443, protocol: "tcp"}
 	mustAdvance("PortCheckResult.SetResult", func() { port.SetResult("Open", 5*time.Millisecond) })
 
 	http := NewHTTPCheckResult("https://example.com")
