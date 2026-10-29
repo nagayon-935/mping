@@ -124,8 +124,8 @@ func TestRunReceiver_DispatchesToTargetChannel(t *testing.T) {
 }
 
 // TestRunReceiverV4_KeepsRunningAfterUnparseablePacket feeds a 1-byte packet
-// that neither icmp.ParseMessage nor the IP-header fallback can parse; the
-// receiver must skip it and keep polling rather than exit.
+// that icmp.ParseMessage cannot parse; the receiver must skip it and keep
+// polling rather than exit.
 func TestRunReceiverV4_KeepsRunningAfterUnparseablePacket(t *testing.T) {
 	p := NewPingerWithOptions(nil, Options{})
 	conn := &fakePacketConn{

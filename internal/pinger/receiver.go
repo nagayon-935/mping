@@ -132,16 +132,6 @@ func (p *Pinger) runReceiverV4() {
 		return n, ttl, 0, src, err
 	}, func(t time.Time) error {
 		return p.connV4.SetReadDeadline(t)
-	}, func(buf []byte, n int) *icmp.Message {
-		// Try parsing as IP packet with header. 0x45 is IPv4 with a 5-word
-		// (20-byte) header, so the ICMP message starts at offset 20.
-		const ihl = 20
-		if n > 0 && buf[0] == 0x45 && n > ihl {
-			if msg, err := icmp.ParseMessage(1, buf[ihl:n]); err == nil {
-				return msg
-			}
-		}
-		return nil
 	})
 }
 
@@ -156,19 +146,19 @@ func (p *Pinger) runReceiverV6() {
 		return n, hopLimit, dscp, src, err
 	}, func(t time.Time) error {
 		return p.connV6.SetReadDeadline(t)
-	}, nil)
+	})
 }
 
 // runReceiver is the unified receiver loop for both IPv4 and IPv6.
 // readFrom returns (bytesRead, ttlOrHopLimit, dscp, srcAddr, error).
-// fallbackParse is an optional fallback parser for raw IP packets (used by
-// IPv4), tried when buf[:n] does not parse as a bare ICMP message; it returns
-// nil when it cannot parse the packet either.
+//
+// buf[:n] is always a bare ICMP message: ipv4.PacketConn.ReadFrom on a raw
+// *net.IPConn reads the IPv4 header into a buffer of its own and strips it
+// on every platform, and raw IPv6 sockets never deliver the IPv6 header.
 func (p *Pinger) runReceiver(
 	cfg receiverConfig,
 	readFrom func(buf []byte) (int, int, int, net.Addr, error),
 	setDeadline func(time.Time) error,
-	fallbackParse func(buf []byte, n int) *icmp.Message,
 ) {
 	buf := make([]byte, receiverBufferSize)
 	for {
@@ -190,12 +180,7 @@ func (p *Pinger) runReceiver(
 
 			msg, err := icmp.ParseMessage(cfg.protocol, buf[:n])
 			if err != nil {
-				if fallbackParse != nil {
-					msg = fallbackParse(buf, n)
-				}
-				if msg == nil {
-					continue
-				}
+				continue
 			}
 
 			p.broadcastTrace(msg, src)
