@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {mtrColumns} from "../static/js/mtr.js";
 import {selectColumns} from "../static/js/model.js";
 import {parseSort} from "../static/js/toolbar.js";
+import {targetColumns} from "../static/js/table.js";
 
 // Mirrors the CSS width contract in style.css (.grid custom properties).
 const px={ttl:60,ip:196,asn:200,hopLoss:96,sent:88,recv:88,last:100,avg:100,min:100,max:100,jitter:100};
@@ -20,6 +21,14 @@ test("MTR shows every column, in display order, once the pane is wide enough",()
 });
 test("MTR omits the AS column when AS lookup is disabled",()=>{
  assert.ok(!keys(4000,{asn:false}).includes("asn"));
+});
+
+test("overview retains minimum fields, feature flags and current RTT only",()=>{
+ const columns=targetColumns({asn:false,dscp:false});
+ assert.deepEqual(columns.filter(c=>c.required).map(c=>c.key),["status","host","loss","last"]);
+ assert.ok(!columns.some(c=>["asn","dscp","avg","min","max","spark"].includes(c.key)));
+ assert.ok(targetColumns({asn:true,dscp:true}).some(c=>c.key==="asn"));
+ assert.ok(targetColumns({asn:true,dscp:true}).some(c=>c.key==="dscp"));
 });
 
 test("a stored sort is restored only when its key and direction are still offered",()=>{

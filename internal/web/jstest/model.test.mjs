@@ -71,6 +71,12 @@ test("rowLevel is crit when every probe was lost", () => {
   assert.equal(rowLevel(target({ recv: 0, loss: 5, last_rtt_ms: 0, jitter_ms: 0 }), th), "crit");
 });
 
+test("backend health wins over a healthy lifetime average", () => {
+  const target = {recv: 10000, loss: 3, last_rtt_ms: 1, jitter_ms: 1, health: {configured: true, status: "crit", reason: "3 consecutive failures"}};
+  assert.equal(rowLevel(target, th), "crit");
+  assert.deepEqual(statusReasons(target, th), ["3 consecutive failures"]);
+});
+
 test("status reasons distinguish missing replies, current threshold breaches and historical peaks", () => {
   assert.deepEqual(statusReasons(target({ recv: 0, loss: 0 }), th), ["Waiting for a completed probe"]);
   assert.deepEqual(statusReasons(target({ recv: 0, loss: 5 }), th), ["No replies received"]);
@@ -168,6 +174,14 @@ test("matchesFilter searches host, IP, PTR and AS fields case-insensitively", ()
   assert.ok(!matchesFilter(t, "google"));
 });
 
+test("disabled optional data does not match an invisible AS or PTR field", () => {
+  const t={host:"router",ip:"192.0.2.1",asn:"AS64500",org:"Example Networks",ptr:"edge.example"};
+  assert.equal(matchesFilter(t,"AS64500",{asn:false,ptr:false}),false);
+  assert.equal(matchesFilter(t,"edge.example",{asn:false,ptr:false}),false);
+  assert.equal(matchesFilter(t,"AS64500",{asn:true,ptr:false}),true);
+  assert.equal(matchesFilter(t,"edge.example",{asn:false,ptr:true}),true);
+});
+
 test("badgeFor keeps a final stopped state when the stream drops", () => {
   assert.equal(badgeFor("running", true).label, "Online");
   assert.equal(badgeFor("reloading", true).label, "Reloading");
@@ -233,20 +247,6 @@ test("selectColumns always keeps required columns, even when they overflow", () 
 test("selectColumns ignores columns the caller left out", () => {
   const some = cols.filter((c) => c.key !== "avg");
   assert.deepEqual(keys(selectColumns(some, widthOf, 10000)), keys(some));
-});
-
-test("backend health wins over a healthy lifetime average", () => {
-  const target = {recv: 10000, loss: 3, last_rtt_ms: 1, jitter_ms: 1, health: {configured: true, status: "crit", reason: "3 consecutive failures"}};
-  assert.equal(rowLevel(target, th), "crit");
-  assert.deepEqual(statusReasons(target, th), ["3 consecutive failures"]);
-});
-
-test("disabled optional data does not match an invisible AS or PTR field", () => {
-  const t={host:"router",ip:"192.0.2.1",asn:"AS64500",org:"Example Networks",ptr:"edge.example"};
-  assert.equal(matchesFilter(t,"AS64500",{asn:false,ptr:false}),false);
-  assert.equal(matchesFilter(t,"edge.example",{asn:false,ptr:false}),false);
-  assert.equal(matchesFilter(t,"AS64500",{asn:true,ptr:false}),true);
-  assert.equal(matchesFilter(t,"edge.example",{asn:false,ptr:true}),true);
 });
 
 test("targetAddress omits redundant IP when target is already an IP or pinned label", () => {
