@@ -3,36 +3,9 @@ package main
 import (
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/nagayon-935/mping/internal/pinger"
-	"github.com/nagayon-935/mping/internal/stats"
 )
-
-// newStateTestSupervisor builds a supervisor whose pinger factory records
-// every pinger it hands out, so a test can assert lifecycle effects without
-// opening a real raw socket.
-func newStateTestSupervisor(t *testing.T) (*supervisor, *[]*lifecycleFakePinger) {
-	t.Helper()
-	var created []*lifecycleFakePinger
-	sup := newSupervisor(supervisorConfig{
-		makePinger: func(size int) pingerController {
-			fp := &lifecycleFakePinger{}
-			created = append(created, fp)
-			return fp
-		},
-		targets:  []*stats.TargetStats{stats.NewTargetStats("example.com")},
-		interval: time.Second,
-		timeout:  time.Second,
-		logCh:    make(chan string, 8),
-	})
-	return sup, &created
-}
-
-func doCmd(t *testing.T, s *supervisor, k cmdKind) error {
-	t.Helper()
-	return s.handle(command{kind: k})
-}
 
 // TestHandle_CommandTable walks every (state, command) cell of the design's
 // command table. The old code expressed these rules four different ways
@@ -186,7 +159,7 @@ func TestHandle_RestartReleasesPreviousPinger(t *testing.T) {
 		t.Fatalf("expected 2 pingers created, got %d", len(all))
 	}
 	if !all[0].isReleased() {
-		t.Errorf("superseded pinger not released (stopped=%v closed=%v)", all[0].stopped, all[0].closed)
+		t.Error("superseded pinger not released (stop and close were not both called)")
 	}
 	if pingerController(all[1]) != sup.p {
 		t.Error("expected the second pinger to be the live one")

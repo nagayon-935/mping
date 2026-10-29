@@ -11,141 +11,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/nagayon-935/mping/internal/mtr"
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/nagayon-935/mping/internal/ui"
 	"github.com/spf13/pflag"
 )
-
-// hostEntries builds a []hostEntry from bare hostnames, for tests written
-// before hostsFileYAML.Hosts/groupYAML.Hosts gained per-target DSCP
-// overrides (hostEntry) and still want the old "just a list of strings"
-// shorthand.
-func hostEntries(hosts ...string) []hostEntry {
-	entries := make([]hostEntry, len(hosts))
-	for i, h := range hosts {
-		entries[i] = hostEntry{Host: h}
-	}
-	return entries
-}
-
-type fakePinger struct {
-	startErr             error
-	started              bool
-	closed               bool
-	discoverMTU          int
-	discoverBottleneckIP string
-	discoverErr          error
-	discoverLogs         []string
-	traceErr             error
-	logWriterSet         bool
-
-	// waited is written by Wait(), which — like the real *pinger.Pinger.Wait()
-	// it stands in for (a thin sync.WaitGroup.Wait() wrapper, safe for
-	// concurrent callers by design) — can legitimately be called from two
-	// goroutines at once: run()'s doneCh watcher (waitPinger(), count-limited
-	// mode) and the supervisor's tearDownAll(), racing during shutdown. An
-	// atomic.Bool keeps that concurrency safe here the same way the real
-	// WaitGroup already is.
-	waited atomic.Bool
-
-	// stopCalled/closeCalled track Stop() and Close() independently (unlike
-	// the single "closed" flag both also set, kept for backward
-	// compatibility with existing assertions), so tests can verify Close()
-	// specifically ran — e.g. after tearDownAll() — rather than merely that
-	// either of the two happened.
-	stopCalled  bool
-	closeCalled bool
-
-	// blockTraceUntilCtxDone, when set, makes TraceRoute block on ctx.Done()
-	// (simulating a slow/in-flight network trace) instead of returning
-	// immediately. traceRouteReturned, if non-nil, is closed right before
-	// TraceRoute returns, letting a test observe when it actually exited.
-	blockTraceUntilCtxDone bool
-	traceRouteStarted      chan struct{}
-	traceRouteReturned     chan struct{}
-
-	// interfaceSet records the last value passed to SetInterface, so tests
-	// can verify makePingerFactory wires cfg.ifaceName through without
-	// needing a real *pinger.Pinger.
-	interfaceSet string
-}
-
-func (f *fakePinger) Start(interval, timeout time.Duration) error {
-	if f.startErr != nil {
-		return f.startErr
-	}
-	f.started = true
-	return nil
-}
-
-func (f *fakePinger) Close() {
-	f.closed = true
-	f.closeCalled = true
-}
-
-func (f *fakePinger) WaitWorkers() { f.Wait() }
-
-func (f *fakePinger) Wait() {
-	f.waited.Store(true)
-}
-
-// Waited reports whether Wait() has been called, safe to read concurrently
-// with a still-in-flight Wait() call (see the waited field's doc comment).
-func (f *fakePinger) Waited() bool {
-	return f.waited.Load()
-}
-
-func (f *fakePinger) DiscoverMaxPayload(ctx context.Context, dest string, start int, min int, logf func(string)) (int, string, error) {
-	if f.discoverErr != nil {
-		return 0, "", f.discoverErr
-	}
-	for _, line := range f.discoverLogs {
-		logf(line)
-	}
-	if f.discoverMTU == 0 {
-		return start, "", nil
-	}
-	return f.discoverMTU, f.discoverBottleneckIP, nil
-}
-
-func (f *fakePinger) TraceRoute(ctx context.Context, dest string, maxHops int, timeout time.Duration) ([]string, error) {
-	if f.blockTraceUntilCtxDone {
-		if f.traceRouteStarted != nil {
-			close(f.traceRouteStarted)
-		}
-		<-ctx.Done()
-		if f.traceRouteReturned != nil {
-			close(f.traceRouteReturned)
-		}
-		return nil, ctx.Err()
-	}
-	if f.traceErr != nil {
-		return nil, f.traceErr
-	}
-	return []string{"hop1", "hop2"}, nil
-}
-
-func (f *fakePinger) SetSource(ip string)                       {}
-func (f *fakePinger) SetInterface(name string)                  { f.interfaceSet = name }
-func (f *fakePinger) SetSize(size int)                          {}
-func (f *fakePinger) SetCount(count int)                        {}
-func (f *fakePinger) SetResolveInterval(interval time.Duration) {}
-func (f *fakePinger) Stop() {
-	f.closed = true
-	f.stopCalled = true
-}
-func (f *fakePinger) SetLogWriter(w io.Writer) { f.logWriterSet = true }
-
-// MTRProber returns nil: none of the tests using fakePinger enable MTR
-// through it (mtrEnabled gates every call site of MTRProber), so a real
-// HopProber is never required here.
-func (f *fakePinger) MTRProber() mtr.HopProber { return nil }
 
 func TestGetPreferredOutboundIP_Localhost(t *testing.T) {
 	ip := getPreferredOutboundIP("127.0.0.1", "udp4")
@@ -439,8 +312,8 @@ func TestRunStopRestart(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected 0, got %d", code)
 	}
-	if !fp.started || !fp.closed || !fp.Waited() {
-		t.Fatalf("expected pinger lifecycle, started=%v closed=%v waited=%v", fp.started, fp.closed, fp.Waited())
+	if !fp.isStarted() || !fp.isReleased() || !fp.Waited() {
+		t.Fatalf("expected pinger lifecycle, started=%v released=%v waited=%v", fp.isStarted(), fp.isReleased(), fp.Waited())
 	}
 }
 

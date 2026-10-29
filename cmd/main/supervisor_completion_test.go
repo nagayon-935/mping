@@ -1,25 +1,22 @@
 package main
 
 import (
-	"sync"
 	"testing"
 	"time"
 )
 
-type completingPinger struct {
-	lifecycleFakePinger
-	workersDone chan struct{}
-	once        sync.Once
+// newCompletingPinger returns a fakePinger whose probes complete only when
+// finish() is called or the pinger is stopped, like a count-limited run.
+func newCompletingPinger() *fakePinger {
+	p := &fakePinger{workersDone: make(chan struct{})}
+	p.onStop = p.finish
+	return p
 }
 
-func (p *completingPinger) finish()      { p.once.Do(func() { close(p.workersDone) }) }
-func (p *completingPinger) WaitWorkers() { <-p.workersDone }
-func (p *completingPinger) Stop()        { p.lifecycleFakePinger.Stop(); p.finish() }
-
 func TestSupervisorNotifiesEachCountCompletion(t *testing.T) {
-	var created []*completingPinger
+	var created []*fakePinger
 	sup := newSupervisor(supervisorConfig{countLimited: true, makePinger: func(int) pingerController {
-		p := &completingPinger{workersDone: make(chan struct{})}
+		p := newCompletingPinger()
 		created = append(created, p)
 		return p
 	}})

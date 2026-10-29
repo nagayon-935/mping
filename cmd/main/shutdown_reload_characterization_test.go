@@ -23,27 +23,6 @@ import (
 	"github.com/nagayon-935/mping/internal/ui"
 )
 
-// orderTrackingPinger wraps fakePinger and records whether Stop() was ever
-// invoked before the blocking TraceRoute call had returned. Because
-// tearDownAll() waits on <-s.traceDone before calling s.p.Stop(), this is a
-// deterministic ordering check (not timing-based): a violation can only be
-// observed if a future refactor calls Stop() without first joining the
-// traceroute goroutine.
-type orderTrackingPinger struct {
-	*fakePinger
-	stopViolation bool
-}
-
-func (o *orderTrackingPinger) Stop() {
-	select {
-	case <-o.traceRouteReturned:
-		// ok: the traceroute goroutine had already joined.
-	default:
-		o.stopViolation = true
-	}
-	o.fakePinger.Stop()
-}
-
 func TestRunStopOrder_TraceJoinsBeforePingerStop(t *testing.T) {
 	origPinger := newPinger
 	origUI := uiRun
@@ -54,8 +33,21 @@ func TestRunStopOrder_TraceJoinsBeforePingerStop(t *testing.T) {
 
 	returned := make(chan struct{})
 	started := make(chan struct{})
-	base := &fakePinger{blockTraceUntilCtxDone: true, traceRouteStarted: started, traceRouteReturned: returned}
-	tracker := &orderTrackingPinger{fakePinger: base}
+	// The onStop hook records whether Stop() was ever invoked before the
+	// blocking TraceRoute call had returned. Because tearDownAll() waits on
+	// <-s.traceDone before calling s.p.Stop(), this is a deterministic ordering
+	// check (not timing-based): a violation can only be observed if a future
+	// refactor calls Stop() without first joining the traceroute goroutine.
+	stopViolation := false
+	tracker := &fakePinger{blockTraceUntilCtxDone: true, traceRouteStarted: started, traceRouteReturned: returned}
+	tracker.onStop = func() {
+		select {
+		case <-returned:
+			// ok: the traceroute goroutine had already joined.
+		default:
+			stopViolation = true
+		}
+	}
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return tracker
 	}
@@ -66,7 +58,7 @@ func TestRunStopOrder_TraceJoinsBeforePingerStop(t *testing.T) {
 			t.Fatal("traceroute did not start")
 		}
 		opts.OnStop()
-		if tracker.stopViolation {
+		if stopViolation {
 			t.Error("pinger.Stop() was called before the traceroute goroutine had joined (shutdown order violation)")
 		}
 		return nil

@@ -10,23 +10,6 @@ import (
 	"github.com/nagayon-935/mping/internal/ui"
 )
 
-// closeOrderPinger wraps fakePinger and records whether Close() was ever
-// invoked before Wait() had returned. tearDownAll() is expected to call
-// Stop() → Wait() → Close() in that order (the F1 fix); this is a
-// deterministic check, not timing-based, since fakePinger's Wait()/Close()
-// just set flags synchronously.
-type closeOrderPinger struct {
-	*fakePinger
-	closeBeforeWaitViolation bool
-}
-
-func (o *closeOrderPinger) Close() {
-	if !o.Waited() {
-		o.closeBeforeWaitViolation = true
-	}
-	o.fakePinger.Close()
-}
-
 // TestRunStop_ClosesPingerAfterWait verifies the F1 fix end-to-end: OnStop
 // (→ stopAll → tearDownAll) must call Close() on the pinger, and only after
 // Wait() has already returned. Before the fix, the stop path never called
@@ -41,8 +24,12 @@ func TestRunStop_ClosesPingerAfterWait(t *testing.T) {
 		uiRun = origUI
 	})
 
-	base := &fakePinger{}
-	tracker := &closeOrderPinger{fakePinger: base}
+	// tearDownAll() is expected to call Stop() -> Wait() -> Close() in that
+	// order (the F1 fix). The onClose hook makes the ordering check
+	// deterministic: it fires before Close() is recorded.
+	tracker := &fakePinger{}
+	closeBeforeWait := false
+	tracker.onClose = func() { closeBeforeWait = closeBeforeWait || !tracker.Waited() }
 	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 		return tracker
 	}
@@ -57,16 +44,13 @@ func TestRunStop_ClosesPingerAfterWait(t *testing.T) {
 		t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
 	}
 
-	if !tracker.stopCalled {
-		t.Error("expected Stop() to be called")
+	if !tracker.isReleased() {
+		t.Error("expected Stop() and Close() to be called — Close() is the F1 fix")
 	}
 	if !tracker.Waited() {
 		t.Error("expected Wait() to be called")
 	}
-	if !tracker.closeCalled {
-		t.Error("expected Close() to be called — the F1 fix")
-	}
-	if tracker.closeBeforeWaitViolation {
+	if closeBeforeWait {
 		t.Error("Close() was called before Wait() returned (expected Stop → Wait → Close ordering)")
 	}
 }

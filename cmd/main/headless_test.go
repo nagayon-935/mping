@@ -314,7 +314,7 @@ func TestRunNoTUIQuitWinsOverAReloadPendingDuringTeardown(t *testing.T) {
 			builtAfterHook++
 		}
 		mu.Unlock()
-		return &stopProbePinger{liveFakePinger: newLiveFakePinger(), onStop: func() {
+		return newStopProbePinger(func() {
 			// Startup (PMTU probing) also stops pingers; only act once the
 			// runner has consumed the signal, i.e. during real teardown.
 			if len(sigs) != 0 {
@@ -333,7 +333,7 @@ func TestRunNoTUIQuitWinsOverAReloadPendingDuringTeardown(t *testing.T) {
 				hookDone = true
 				mu.Unlock()
 			})
-		}}
+		})
 	}
 	sigs <- syscall.SIGTERM
 

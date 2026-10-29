@@ -82,7 +82,7 @@ func TestSetupHTTPChecker_PassesBindConfig(t *testing.T) {
 // periodic check fires during the test.
 func newBindTestSupervisor() *supervisor {
 	return newSupervisor(supervisorConfig{
-		makePinger: func(size int) pingerController { return &lifecycleFakePinger{} },
+		makePinger: func(size int) pingerController { return &fakePinger{} },
 		targets:    []*stats.TargetStats{stats.NewTargetStats("example.com")},
 		interval:   time.Hour,
 		timeout:    100 * time.Millisecond,

@@ -77,18 +77,14 @@ func TestCancelledTraceKeepsPreviousRoute(t *testing.T) {
 	}
 }
 
-type joiningResultPinger struct {
-	lifecycleFakePinger
-	target *stats.TargetStats
-	once   sync.Once
-}
-
-func (p *joiningResultPinger) Wait() { p.once.Do(func() { p.target.OnSuccess(time.Millisecond, 64) }) }
-
 func TestFinalJSONMatchesJoinedStats(t *testing.T) {
 	target := stats.NewTargetStats("127.0.0.1")
 	target.IncSent()
-	sup := newSupervisor(supervisorConfig{makePinger: func(int) pingerController { return &joiningResultPinger{target: target} }, targets: []*stats.TargetStats{target}})
+	// The pinger records a reply only when it is joined (Wait), as a worker
+	// finishing its last probe would; the snapshot must include it.
+	var joinOnce sync.Once
+	joining := &fakePinger{onWait: func() { joinOnce.Do(func() { target.OnSuccess(time.Millisecond, 64) }) }}
+	sup := newSupervisor(supervisorConfig{makePinger: func(int) pingerController { return joining }, targets: []*stats.TargetStats{target}})
 	sup.Start()
 	if err := sup.startPinger(); err != nil {
 		t.Fatal(err)
@@ -174,7 +170,7 @@ func TestSupervisorStopResetRestartPreservesStateAndOwnership(t *testing.T) {
 }
 
 func TestSupervisorShutdownJoinsCompletionObservers(t *testing.T) {
-	p := &completingPinger{workersDone: make(chan struct{})}
+	p := newCompletingPinger()
 	sup := newSupervisor(supervisorConfig{countLimited: true, makePinger: func(int) pingerController { return p }})
 	sup.Start()
 	if err := sup.startPinger(); err != nil {

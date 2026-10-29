@@ -471,16 +471,13 @@ func TestWebLogNeverBlocksWhenTUILogIsFull(t *testing.T) {
 	}
 }
 
-// stopProbePinger runs onStop when the supervisor tears measurements down,
-// which only happens after uiRun has returned (finishIteration).
-type stopProbePinger struct {
-	*liveFakePinger
-	onStop func()
-}
-
-func (p *stopProbePinger) Stop() {
-	p.onStop()
-	p.liveFakePinger.Stop()
+// newStopProbePinger returns a pinger that runs onStop when the supervisor
+// tears measurements down, which only happens after uiRun has returned
+// (finishIteration).
+func newStopProbePinger(onStop func()) *liveFakePinger {
+	p := newLiveFakePinger()
+	p.onStop = onStop
+	return p
 }
 
 // TestRunWebStopsAcceptingEditsOnceTheUIIterationEnds covers the window
@@ -497,11 +494,11 @@ func TestRunWebStopsAcceptingEditsOnceTheUIIterationEnds(t *testing.T) {
 		return web.Start(opts)
 	}
 	newPinger = func([]*stats.TargetStats, pinger.Options) pingerController {
-		return &stopProbePinger{liveFakePinger: newLiveFakePinger(), onStop: func() {
+		return newStopProbePinger(func() {
 			if src != nil {
 				atTeardown = append(atTeardown, src.State())
 			}
-		}}
+		})
 	}
 
 	var out, errOut bytes.Buffer
