@@ -7,92 +7,107 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/nagayon-935/mping/internal/stats"
 )
 
-func TestHTTPChecker_Up(t *testing.T) {
+// statusServer serves a fixed status code.
+func statusServer(t *testing.T, code int) *httptest.Server {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(code)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// awaitHTTPCheck blocks until r has recorded at least one check outcome.
+func awaitHTTPCheck(t *testing.T, r *stats.HTTPCheckResult) {
+	t.Helper()
+	eventually(t, 5*time.Second, "first HTTP check outcome for "+r.URL, func() bool {
+		v := r.GetView()
+		return v.UpCount+v.DownCount >= 1
+	})
+}
+
+// checkOnce runs a checker (one-hour interval, so exactly one check per URL)
+// until every URL has an outcome, then stops it and returns the results.
+func checkOnce(t *testing.T, timeout time.Duration, urls ...string) []*stats.HTTPCheckResult {
+	t.Helper()
+	hc := NewHTTPChecker(urls, time.Hour, timeout, BindConfig{})
+	hc.Start()
+	for _, r := range hc.Results() {
+		awaitHTTPCheck(t, r)
+	}
+	hc.Stop()
+	hc.Wait()
+	return hc.Results()
+}
+
+func TestHTTPChecker_ClassifiesResponses(t *testing.T) {
+	redirectTarget := statusServer(t, http.StatusOK)
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirectTarget.URL, http.StatusFound)
+	}))
+	defer redirect.Close()
+	// Redirects forever, so the checker has to give up after maxRedirects.
+	endless := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := 0
+		fmt.Sscanf(r.URL.Query().Get("c"), "%d", &count)
+		if count < maxRedirects+1 {
+			http.Redirect(w, r, fmt.Sprintf("/?c=%d", count+1), http.StatusFound)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
+	defer endless.Close()
 
-	hc := NewHTTPChecker([]string{srv.URL}, time.Hour, 5*time.Second, BindConfig{})
-	hc.Start()
-	time.Sleep(200 * time.Millisecond)
-	hc.Stop()
+	tests := []struct {
+		name       string
+		url        string
+		wantStatus string
+		wantCode   int
+		wantUp     bool // UpCount >= 1 (otherwise DownCount >= 1)
+	}{
+		{"200 is Up", statusServer(t, http.StatusOK).URL, "Up", http.StatusOK, true},
+		{"503 is Down", statusServer(t, http.StatusServiceUnavailable).URL, "Down", http.StatusServiceUnavailable, false},
+		{"redirects are followed", redirect.URL, "Up", http.StatusOK, true},
+		// The last redirect response is reported once maxRedirects is exceeded.
+		{"redirect loop stops at the last redirect", endless.URL, "Up", http.StatusFound, true},
+		// Port 1 is privileged and not listening: the connection fails.
+		{"connection failure is an Error", "http://127.0.0.1:1", "Error", 0, false},
+		{"invalid URL is an Error", "http://[::1", "Error", 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := checkOnce(t, 5*time.Second, tt.url)[0].GetView()
 
-	v := hc.Results()[0].GetView()
-	if v.Status != "Up" {
-		t.Errorf("Status = %q, want Up", v.Status)
-	}
-	if v.StatusCode != 200 {
-		t.Errorf("StatusCode = %d, want 200", v.StatusCode)
-	}
-	if v.UpCount < 1 {
-		t.Errorf("UpCount = %d, want >= 1", v.UpCount)
-	}
-	if v.RTT <= 0 {
-		t.Errorf("RTT = %v, want > 0", v.RTT)
-	}
-}
-
-func TestHTTPChecker_Down(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	defer srv.Close()
-
-	hc := NewHTTPChecker([]string{srv.URL}, time.Hour, 5*time.Second, BindConfig{})
-	hc.Start()
-	time.Sleep(200 * time.Millisecond)
-	hc.Stop()
-
-	v := hc.Results()[0].GetView()
-	if v.Status != "Down" {
-		t.Errorf("Status = %q, want Down", v.Status)
-	}
-	if v.DownCount < 1 {
-		t.Errorf("DownCount = %d, want >= 1", v.DownCount)
-	}
-}
-
-func TestHTTPChecker_Error(t *testing.T) {
-	// Port 1 is privileged and not listening: connection should fail.
-	hc := NewHTTPChecker([]string{"http://127.0.0.1:1"}, time.Hour, 200*time.Millisecond, BindConfig{})
-	hc.Start()
-	time.Sleep(500 * time.Millisecond)
-	hc.Stop()
-
-	v := hc.Results()[0].GetView()
-	if v.Status != "Error" {
-		t.Errorf("Status = %q, want Error", v.Status)
-	}
-	if v.DownCount < 1 {
-		t.Errorf("DownCount = %d, want >= 1", v.DownCount)
+			if v.Status != tt.wantStatus || v.StatusCode != tt.wantCode {
+				t.Fatalf("Status=%q StatusCode=%d, want %q / %d", v.Status, v.StatusCode, tt.wantStatus, tt.wantCode)
+			}
+			if tt.wantUp && (v.UpCount < 1 || v.RTT <= 0) {
+				t.Errorf("UpCount=%d RTT=%v, want a counted success with a positive RTT", v.UpCount, v.RTT)
+			}
+			if !tt.wantUp && v.DownCount < 1 {
+				t.Errorf("DownCount=%d, want >= 1", v.DownCount)
+			}
+		})
 	}
 }
 
 func TestHTTPChecker_MultipleURLs(t *testing.T) {
-	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ok.Close()
-	fail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer fail.Close()
+	ok := statusServer(t, http.StatusOK)
+	fail := statusServer(t, http.StatusInternalServerError)
 
-	hc := NewHTTPChecker([]string{ok.URL, fail.URL}, time.Hour, 5*time.Second, BindConfig{})
-	hc.Start()
-	time.Sleep(200 * time.Millisecond)
-	hc.Stop()
+	results := checkOnce(t, 5*time.Second, ok.URL, fail.URL)
 
-	if len(hc.Results()) != 2 {
-		t.Fatalf("len(Results) = %d, want 2", len(hc.Results()))
+	if len(results) != 2 {
+		t.Fatalf("len(Results) = %d, want 2", len(results))
 	}
-	if v := hc.Results()[0].GetView(); v.Status != "Up" {
+	if v := results[0].GetView(); v.Status != "Up" {
 		t.Errorf("[0] Status = %q, want Up", v.Status)
 	}
-	if v := hc.Results()[1].GetView(); v.Status != "Down" {
+	if v := results[1].GetView(); v.Status != "Down" {
 		t.Errorf("[1] Status = %q, want Down", v.Status)
 	}
 }
@@ -107,21 +122,21 @@ func TestHTTPChecker_StopPreventsFurtherChecks(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
+	calls := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return callCount
+	}
 
-	hc := NewHTTPChecker([]string{srv.URL}, 50*time.Millisecond, 5*time.Second, BindConfig{})
+	hc := NewHTTPChecker([]string{srv.URL}, 20*time.Millisecond, 5*time.Second, BindConfig{})
 	hc.Start()
-	time.Sleep(120 * time.Millisecond)
+	eventually(t, 5*time.Second, "the checker polled more than once", func() bool { return calls() >= 2 })
 	hc.Stop()
 	hc.Wait() // once this returns, the loop goroutine cannot make further requests
 
-	mu.Lock()
-	countAtStop := callCount
-	mu.Unlock()
-	time.Sleep(200 * time.Millisecond)
-	mu.Lock()
-	final := callCount
-	mu.Unlock()
-	if final != countAtStop {
+	countAtStop := calls()
+	time.Sleep(100 * time.Millisecond) // several intervals' worth of chances to misbehave
+	if final := calls(); final != countAtStop {
 		t.Errorf("callCount changed after Stop+Wait: %d → %d (loop goroutine outlived Wait)", countAtStop, final)
 	}
 }
@@ -129,14 +144,11 @@ func TestHTTPChecker_StopPreventsFurtherChecks(t *testing.T) {
 // TestHTTPChecker_Wait verifies that Wait() actually joins the per-URL loop
 // goroutines spawned by Start(), rather than just cancelling their context.
 func TestHTTPChecker_Wait(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
+	srv := statusServer(t, http.StatusOK)
 
 	hc := NewHTTPChecker([]string{srv.URL}, 5*time.Millisecond, 5*time.Second, BindConfig{})
 	hc.Start()
-	time.Sleep(20 * time.Millisecond) // let the loop run at least once
+	awaitHTTPCheck(t, hc.Results()[0])
 	hc.Stop()
 
 	done := make(chan struct{})
@@ -151,56 +163,23 @@ func TestHTTPChecker_Wait(t *testing.T) {
 	}
 
 	before := hc.Results()[0].GetView().UpCount
-	time.Sleep(50 * time.Millisecond)
-	after := hc.Results()[0].GetView().UpCount
-	if before != after {
+	time.Sleep(50 * time.Millisecond) // ten intervals' worth of chances to misbehave
+	if after := hc.Results()[0].GetView().UpCount; before != after {
 		t.Errorf("UpCount changed after Wait() returned: %d -> %d (loop goroutine outlived Wait)", before, after)
 	}
 }
 
-func TestHTTPChecker_FollowsRedirect(t *testing.T) {
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer target.Close()
-
-	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL, http.StatusFound)
-	}))
-	defer redirect.Close()
-
-	hc := NewHTTPChecker([]string{redirect.URL}, time.Hour, 5*time.Second, BindConfig{})
-	hc.Start()
-	time.Sleep(200 * time.Millisecond)
-	hc.Stop()
-
-	v := hc.Results()[0].GetView()
-	if v.Status != "Up" {
-		t.Errorf("Status = %q, want Up (redirect should be followed)", v.Status)
-	}
-}
-
-// TestHTTPChecker_MaxRedirects verifies that the checker stops following
-// redirects after maxRedirects and returns the last redirect response.
-func TestHTTPChecker_MaxRedirects(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		count := 0
-		fmt.Sscanf(r.URL.Query().Get("c"), "%d", &count)
-		if count < maxRedirects+1 {
-			http.Redirect(w, r, fmt.Sprintf("/?c=%d", count+1), http.StatusFound)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
+// TestHTTPChecker_CheckAfterStopRecordsNothing: a check that starts after
+// shutdown must not overwrite the last measurement.
+func TestHTTPChecker_CheckAfterStopRecordsNothing(t *testing.T) {
+	srv := statusServer(t, http.StatusOK)
 	hc := NewHTTPChecker([]string{srv.URL}, time.Hour, 5*time.Second, BindConfig{})
-	hc.Start()
-	time.Sleep(200 * time.Millisecond)
+	r := hc.Results()[0]
 	hc.Stop()
 
-	v := hc.Results()[0].GetView()
-	if v.StatusCode != http.StatusFound {
-		t.Errorf("StatusCode = %d, want %d (last redirect response)", v.StatusCode, http.StatusFound)
+	hc.check(r)
+
+	if v := r.GetView(); v.UpCount+v.DownCount != 0 || v.Status != "Checking..." {
+		t.Fatalf("a check after Stop changed the result: %+v", v)
 	}
 }
