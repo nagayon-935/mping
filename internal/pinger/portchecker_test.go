@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"reflect"
 	"testing"
 	"time"
 
@@ -484,5 +485,36 @@ func TestPortChecker_AddTargetTwiceKeepsOneRun(t *testing.T) {
 
 	if len(pc.targetRuns) != 1 || pc.targetRuns[tgt] != first {
 		t.Fatalf("a second AddTarget replaced the running checks: %d runs", len(pc.targetRuns))
+	}
+}
+
+// TestPortChecker_StopDuringCheckKeepsLastResult: shutting down while a check
+// is in flight must not turn the interrupted check into a recorded result.
+func TestPortChecker_StopDuringCheckKeepsLastResult(t *testing.T) {
+	srv := udpListener(t) // receives the probe but never answers
+	port := srv.LocalAddr().(*net.UDPAddr).Port
+	tgt := stats.NewTargetStats("127.0.0.1")
+	tgt.SetIP("127.0.0.1")
+	spec := PortSpec{Port: port, Protocol: "udp"}
+	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Hour, time.Minute, BindConfig{})
+	r := tgt.PortResults[0]
+	before := r.GetView()
+
+	go func() {
+		buf := make([]byte, 16)
+		if _, _, err := srv.ReadFrom(buf); err == nil {
+			pc.Stop() // the probe is on the wire: interrupt the pending read
+		}
+	}()
+	done := make(chan struct{})
+	go func() { pc.check(tgt, spec, r); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("check stayed blocked after Stop")
+	}
+
+	if got := r.GetView(); !reflect.DeepEqual(got, before) {
+		t.Fatalf("interrupted check changed the result: %+v -> %+v", before, got)
 	}
 }
