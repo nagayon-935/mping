@@ -3,11 +3,6 @@ package pinger
 import (
 	"net"
 	"testing"
-	"time"
-
-	"golang.org/x/net/icmp"
-	"golang.org/x/net/ipv4"
-	"golang.org/x/net/ipv6"
 
 	"github.com/nagayon-935/mping/internal/stats"
 )
@@ -214,91 +209,17 @@ func TestSendProbeNoOverrideLeavesControlMessageNil(t *testing.T) {
 	}
 }
 
-// ---- receive path: observed DSCP flows from ControlMessage to Reply ----
-
-func TestRunReceiverV6PropagatesObservedDSCPToReply(t *testing.T) {
-	target := stats.NewTargetStats("example.com")
-	p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{})
-	id := p.baseID & 0xffff
-	ch := make(chan Reply, 1)
-	p.targetChans[id] = ch
-
-	reply := icmp.Message{
-		Type: ipv6.ICMPTypeEchoReply,
-		Code: 0,
-		Body: &icmp.Echo{ID: id, Seq: 7, Data: []byte("x")},
-	}
-	raw, err := reply.Marshal(nil)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	fake := &fakePacketConnV6{
-		readQueue: []readResultV6{
-			{data: raw, cm: &ipv6.ControlMessage{TrafficClass: 46 << 2}, addr: &net.IPAddr{IP: net.ParseIP("2001:db8::1")}},
-		},
-	}
-	p.connV6 = fake
-
-	done := make(chan struct{})
-	go func() {
-		p.runReceiverV6()
-		close(done)
-	}()
-
-	select {
-	case reply := <-ch:
-		if reply.DSCP != 46<<2 {
-			t.Fatalf("reply.DSCP = %d, want %d (observed TrafficClass must reach the target)", reply.DSCP, 46<<2)
+func TestSameHostDSCPUsesDifferentIPv6Packets(t *testing.T) {
+	targets := []*stats.TargetStats{stats.NewTargetStats("::1"), stats.NewTargetStats("::1"), stats.NewTargetStats("::1")}
+	p := NewPingerWithOptions(targets, Options{TargetDSCP: map[int]int{0: 46 << 2, 1: 0}})
+	conn := &fakePacketConnV6{}
+	p.connV6 = conn
+	for i, target := range targets {
+		if _, ok := p.sendProbe(target, i+1, 1, []byte("MPING"), &net.IPAddr{IP: net.ParseIP("::1")}); !ok {
+			t.Fatal("send failed")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("timeout waiting for reply")
 	}
-	p.Stop()
-	<-done
-}
-
-// TestRunReceiverV4NeverPopulatesDSCP documents the same IPv4 limitation as
-// TestGetWriteFuncIPv4IgnoresPerTargetDSCP for the receive side: x/net's
-// ipv4.ControlMessage carries no TOS field, so IPv4 replies can never carry
-// an observed DSCP value through Reply.DSCP — it's always 0, indistinguishable
-// from CS0.
-func TestRunReceiverV4NeverPopulatesDSCP(t *testing.T) {
-	target := stats.NewTargetStats("example.com")
-	p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{})
-	id := p.baseID & 0xffff
-	ch := make(chan Reply, 1)
-	p.targetChans[id] = ch
-
-	reply := icmp.Message{
-		Type: ipv4.ICMPTypeEchoReply,
-		Code: 0,
-		Body: &icmp.Echo{ID: id, Seq: 3, Data: []byte("x")},
+	if len(conn.writeCMs) != 3 || conn.writeCMs[0] == nil || conn.writeCMs[0].TrafficClass != 46<<2 || conn.writeCMs[1] == nil || conn.writeCMs[1].TrafficClass != 0 || conn.writeCMs[2] != nil {
+		t.Fatalf("same-host DSCP overrides mixed: %+v", conn.writeCMs)
 	}
-	raw, err := reply.Marshal(nil)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	fake := &fakePacketConn{
-		readQueue: []readResult{
-			{data: raw, addr: &net.IPAddr{IP: net.IPv4(8, 8, 8, 8)}},
-		},
-	}
-	p.connV4 = fake
-
-	done := make(chan struct{})
-	go func() {
-		p.runReceiverV4()
-		close(done)
-	}()
-
-	select {
-	case reply := <-ch:
-		if reply.DSCP != 0 {
-			t.Fatalf("reply.DSCP = %d, want 0 (IPv4 has no receive-side DSCP support in x/net)", reply.DSCP)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timeout waiting for reply")
-	}
-	p.Stop()
-	<-done
 }

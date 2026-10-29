@@ -5,11 +5,10 @@ package pinger
 // resolved (a second reply for an already-acked seq -> DUP) or already swept
 // as a timeout (a reply that shows up after loss was recorded -> late
 // arrival). Before this feature, both cases were silently discarded
-// (TestCharacterization_RunWorker_MismatchedReplyDiscarded pins that this
-// stays true for a seq runWorker never even sent).
+// (TestRunWorker_MismatchedReplyDiscarded pins that this stays true for a
+// seq the worker never even sent).
 
 import (
-	"net"
 	"strings"
 	"testing"
 	"time"
@@ -22,51 +21,23 @@ import (
 // not as a second Recv -- double-counting a DUP as Recv would understate the
 // real loss rate, exactly the bug ping.c's `--nreceived` on a dup avoids.
 func TestRunWorker_DuplicateReply_NotDoubleCountedAsRecv(t *testing.T) {
-	target := stats.NewTargetStats("example.com")
-	resolve := func(network, address string) (*net.IPAddr, error) {
-		return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
+	r := newWorkerRig(t, 0) // unlimited: keep the worker alive to receive the dup
+	// The first reply resolves seq 1 normally; the second, for the same seq,
+	// is a genuine duplicate delivery (routing loop / L2 duplication), not a
+	// new probe.
+	r.replyOnWrite(1, Reply{TTL: 64, Seq: 1}, Reply{TTL: 64, Seq: 1})
+
+	done := r.runAsync(time.Hour, 200*time.Millisecond)
+	awaitTarget(t, r.target, func(v stats.TargetView) bool { return v.Duplicates == 1 })
+	r.stopAndJoin(done)
+
+	view := r.target.GetView()
+	if view.Recv != 1 || view.Duplicates != 1 || view.Loss != 0 {
+		t.Fatalf("Recv=%d Duplicates=%d Loss=%d, want 1 1 0 (dup must not be double-counted as Recv)",
+			view.Recv, view.Duplicates, view.Loss)
 	}
-	p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{ResolveIPAddr: resolve})
-	p.connV4 = &fakePacketConn{}
-	p.Count = 0 // unlimited: keep the worker alive to receive the injected dup
-
-	var logBuf strings.Builder
-	p.LogWriter = &logBuf
-
-	id := p.baseID & 0xffff
-	ch := make(chan Reply, 2)
-	p.targetChans[id] = ch
-
-	done := make(chan struct{})
-	go func() {
-		p.runWorker(target, id, 50*time.Millisecond, 200*time.Millisecond)
-		close(done)
-	}()
-
-	// First reply resolves seq 1 normally.
-	time.Sleep(5 * time.Millisecond)
-	ch <- Reply{TTL: 64, Seq: 1}
-	// Second reply for the same seq arrives shortly after: a genuine
-	// duplicate delivery (routing loop / L2 duplication), not a new probe.
-	time.Sleep(5 * time.Millisecond)
-	ch <- Reply{TTL: 64, Seq: 1}
-
-	time.Sleep(10 * time.Millisecond)
-	p.Close()
-	<-done
-
-	view := target.GetView()
-	if view.Recv != 1 {
-		t.Fatalf("Recv = %d, want 1 (dup must not be double-counted as Recv)", view.Recv)
-	}
-	if view.Duplicates != 1 {
-		t.Fatalf("Duplicates = %d, want 1", view.Duplicates)
-	}
-	if view.Loss != 0 {
-		t.Fatalf("Loss = %d, want 0", view.Loss)
-	}
-	if !strings.Contains(logBuf.String(), ",DUP,") {
-		t.Errorf("expected a DUP status line in the CSV log, got: %q", logBuf.String())
+	if !strings.Contains(r.logs.String(), ",DUP,") {
+		t.Errorf("expected a DUP status line in the CSV log, got: %q", r.logs.String())
 	}
 }
 
@@ -76,50 +47,25 @@ func TestRunWorker_DuplicateReply_NotDoubleCountedAsRecv(t *testing.T) {
 // but reachable" target must stay distinguishable from a genuinely dropping
 // one -- see ping.c's -W/nrcvtimeout).
 func TestRunWorker_LateReply_DoesNotChangeLoss(t *testing.T) {
-	target := stats.NewTargetStats("example.com")
-	resolve := func(network, address string) (*net.IPAddr, error) {
-		return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
+	r := newWorkerRig(t, 0)
+
+	// Long interval so no second probe is sent before the assertions below;
+	// short timeout so the sweep fires quickly and predictably.
+	done := r.runAsync(time.Hour, 15*time.Millisecond)
+	// Seq 1 times out (no reply is injected before the sweep)...
+	awaitTarget(t, r.target, func(v stats.TargetView) bool { return v.Loss == 1 })
+	// ...and only then does its reply show up.
+	r.ch <- Reply{TTL: 64, Seq: 1}
+	awaitTarget(t, r.target, func(v stats.TargetView) bool { return v.LateReplies == 1 })
+	r.stopAndJoin(done)
+
+	view := r.target.GetView()
+	if view.Loss != 1 || view.Recv != 0 || view.LateReplies != 1 {
+		t.Fatalf("Loss=%d Recv=%d LateReplies=%d, want 1 0 1 (the timeout stands; a late reply is not a Recv)",
+			view.Loss, view.Recv, view.LateReplies)
 	}
-	p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{ResolveIPAddr: resolve})
-	p.connV4 = &fakePacketConn{}
-	p.Count = 0
-
-	var logBuf strings.Builder
-	p.LogWriter = &logBuf
-
-	id := p.baseID & 0xffff
-	ch := make(chan Reply, 1)
-	p.targetChans[id] = ch
-
-	done := make(chan struct{})
-	go func() {
-		// Long interval so no second probe is sent before the assertions
-		// below; short timeout so the sweep fires quickly and predictably.
-		p.runWorker(target, id, 300*time.Millisecond, 15*time.Millisecond)
-		close(done)
-	}()
-
-	// Let seq 1 time out (no reply injected before the 15ms timeout).
-	time.Sleep(40 * time.Millisecond)
-	// Now the reply shows up, long after the sweep already recorded a loss.
-	ch <- Reply{TTL: 64, Seq: 1}
-
-	time.Sleep(20 * time.Millisecond)
-	p.Close()
-	<-done
-
-	view := target.GetView()
-	if view.Loss != 1 {
-		t.Fatalf("Loss = %d, want 1 (the timeout stands)", view.Loss)
-	}
-	if view.Recv != 0 {
-		t.Fatalf("Recv = %d, want 0 (a late reply is not a Recv)", view.Recv)
-	}
-	if view.LateReplies != 1 {
-		t.Fatalf("LateReplies = %d, want 1", view.LateReplies)
-	}
-	if !strings.Contains(logBuf.String(), ",LateReply,") {
-		t.Errorf("expected a LateReply status line in the CSV log, got: %q", logBuf.String())
+	if !strings.Contains(r.logs.String(), ",LateReply,") {
+		t.Errorf("expected a LateReply status line in the CSV log, got: %q", r.logs.String())
 	}
 }
 
@@ -174,44 +120,25 @@ func TestRecentSeqHistory_WraparoundSafety(t *testing.T) {
 	}
 }
 
-// TestRunWorker_UnknownSeq_StillSilentlyDiscarded guards against the DUP/
-// late feature accidentally widening what counts as "recognized" history: a
-// reply for a seq runWorker never sent and never resolved must remain
-// silently discarded, exactly as
-// TestCharacterization_RunWorker_MismatchedReplyDiscarded already pins for
-// the pre-unacked-history behavior.
-func TestRunWorker_UnknownSeq_StillSilentlyDiscarded(t *testing.T) {
-	target := stats.NewTargetStats("example.com")
-	resolve := func(network, address string) (*net.IPAddr, error) {
-		return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
+// TestRecentSeqHistory_ReRecordReplacesAndRefreshesEntry pins that recording
+// an already-present wire seq replaces its entry and moves it to the back as
+// the newest, rather than leaving a stale duplicate node behind.
+func TestRecentSeqHistory_ReRecordReplacesAndRefreshesEntry(t *testing.T) {
+	h := newRecentSeqHistory()
+	now := time.Now()
+	h.record(7, 7, resolvedAcked, now, stats.Probe{})
+	h.record(9, 9, resolvedAcked, now, stats.Probe{})
+
+	h.record(7, 71, resolvedTimeout, now, stats.Probe{})
+
+	if got := h.order.Len(); got != 2 {
+		t.Fatalf("history has %d entries, want 2 (re-recording must not add a duplicate)", got)
 	}
-	p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{ResolveIPAddr: resolve})
-	p.connV4 = &fakePacketConn{}
-	p.Count = 1
-
-	var logBuf strings.Builder
-	p.LogWriter = &logBuf
-
-	id := p.baseID & 0xffff
-	ch := make(chan Reply, 2)
-	p.targetChans[id] = ch
-
-	go func() {
-		time.Sleep(5 * time.Millisecond)
-		ch <- Reply{TTL: 1, Seq: 99} // never sent, never resolved
-		ch <- Reply{TTL: 64, Seq: 1} // the real match
-	}()
-
-	p.runWorker(target, id, 10*time.Millisecond, 200*time.Millisecond)
-
-	view := target.GetView()
-	if view.Recv != 1 {
-		t.Fatalf("Recv = %d, want 1", view.Recv)
+	entry, ok := h.lookup(7)
+	if !ok || entry.logicalSeq != 71 || entry.kind != resolvedTimeout {
+		t.Fatalf("lookup(7) = %+v, %v; want the replaced timeout entry for logical seq 71", entry, ok)
 	}
-	if view.Duplicates != 0 {
-		t.Fatalf("Duplicates = %d, want 0 (seq 99 was never resolved before)", view.Duplicates)
-	}
-	if view.LateReplies != 0 {
-		t.Fatalf("LateReplies = %d, want 0 (seq 99 was never swept as a timeout)", view.LateReplies)
+	if newest := h.order.Back().Value.(recentEntry); newest.wireSeq != 7 {
+		t.Fatalf("newest entry is wire seq %d, want 7 (re-recorded entry moves to the back)", newest.wireSeq)
 	}
 }

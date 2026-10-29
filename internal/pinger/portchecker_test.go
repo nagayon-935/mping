@@ -416,3 +416,11 @@ func TestPortTargetEditsKeepSurvivingResult(t *testing.T) {
 		t.Fatal("surviving port statistics were reset")
 	}
 }
+
+func TestParsePortSpecRejectsTrailingCharacters(t *testing.T) {
+	for _, raw := range []string{"443garbage/tcp", "443.5", "443:80", "80 90/tcp", "53x/udp"} {
+		if spec, err := ParsePortSpec(raw); err == nil {
+			t.Errorf("accepted %q as %+v", raw, spec)
+		}
+	}
+}
