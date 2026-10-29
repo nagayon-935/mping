@@ -7,83 +7,43 @@ package ui
 // and after introducing the column struct.
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/gdamore/tcell/v2"
-	"github.com/rivo/tview"
 
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
 // captureTableRows runs Run() against a fixed-size SimulationScreen, waits
-// for at least one render tick, quits, and returns headerMarker's row plus
-// extraRows rows below it, each right-trimmed of padding. The header row is
-// located by content rather than a hardcoded y-offset so the helper survives
-// unrelated layout changes above the table pane.
+// for the first frame that shows headerMarker, quits, and returns that
+// frame's headerMarker row plus extraRows rows below it, each right-trimmed
+// of padding. The header row is located by content rather than a hardcoded
+// y-offset so the helper survives unrelated layout changes above the table
+// pane.
 //
 // SetBorders(true) draws a border line between every table row, so the
 // sequence returned is header, border, row1, border, row2, ... — callers
 // pick out actual content at even offsets (rows[0], rows[2], rows[4], ...).
 func captureTableRows(t *testing.T, opts RunOptions, width, height int, headerMarker string, extraRows int) []string {
 	t.Helper()
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	screenCh := make(chan tcell.SimulationScreen, 1)
-	captured := make(chan []string, 1)
-	newApplication = func() *tview.Application {
-		app := tview.NewApplication()
-		screen := tcell.NewSimulationScreen("UTF-8")
-		if err := screen.Init(); err != nil {
-			t.Fatalf("screen init: %v", err)
-		}
-		app.SetScreen(screen)
-		screen.SetSize(width, height)
-		app.SetAfterDrawFunc(func(screen tcell.Screen) {
-			for y := 0; y+extraRows < height; y++ {
-				if !strings.Contains(screenRowString(screen, y, width), headerMarker) {
-					continue
-				}
-				rows := make([]string, extraRows+1)
-				for i := range rows {
-					rows[i] = strings.TrimRight(screenRowString(screen, y+i, width), " ")
-				}
-				select {
-				case captured <- rows:
-				default:
-				}
-				return
-			}
-		})
-		screenCh <- screen
-		return app
-	}
-
-	errCh := make(chan error, 1)
-	go func() { errCh <- Run(opts) }()
-
-	screen := <-screenCh
+	h := startTUI(t, opts, width, height)
 	var rows []string
-	select {
-	case rows = <-captured:
-	case <-time.After(3 * time.Second):
-		screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-		<-errCh
-		t.Fatalf("could not locate header row containing %q", headerMarker)
-	}
-
-	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Run error: %v", err)
+	h.waitFrame(fmt.Sprintf("a header row containing %q", headerMarker), func(frame string) bool {
+		lines := strings.Split(frame, "\n")
+		for y := 0; y+extraRows < height; y++ {
+			if !strings.Contains(lines[y], headerMarker) {
+				continue
+			}
+			rows = make([]string, extraRows+1)
+			for i := range rows {
+				rows[i] = strings.TrimRight(lines[y+i], " ")
+			}
+			return true
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not stop")
-	}
-
+		return false
+	})
+	h.quit()
 	return rows
 }
 

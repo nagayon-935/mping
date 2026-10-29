@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { formatTime, formatDateTime } from "../static/js/time.js";
-import { targetColumns } from "../static/js/table.js";
 
 for (const [zone, time, date] of [
   ["Asia/Tokyo", "00:05:06", "2026-10-17"],
@@ -18,12 +17,4 @@ for (const [zone, time, date] of [
 test("missing times do not turn into an epoch timestamp", () => {
   assert.equal(formatTime(null), "–");
   assert.equal(formatDateTime("invalid"), "–");
-});
-
-test("overview retains minimum fields, feature flags and current RTT only", () => {
-  const columns = targetColumns({asn:false,dscp:false});
-  assert.deepEqual(columns.filter(c=>c.required).map(c=>c.key), ["status","host","loss","last"]);
-  assert.ok(!columns.some(c=>["asn","dscp","avg","min","max","spark"].includes(c.key)));
-  assert.ok(targetColumns({asn:true,dscp:true}).some(c=>c.key==="asn"));
-  assert.ok(targetColumns({asn:true,dscp:true}).some(c=>c.key==="dscp"));
 });

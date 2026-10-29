@@ -36,58 +36,37 @@ func TestRenderHTTPMonitorTable_Empty(t *testing.T) {
 	}
 }
 
-func TestRenderHTTPMonitorTable_UpRow(t *testing.T) {
-	r := makeHTTPResult("https://example.com/health", "Up", 200, 5*time.Millisecond)
-	out := renderHTTPMonitorTable([]*stats.HTTPCheckResult{r}, 160, nil, nil, nil)
-	if !strings.Contains(out, "https://example.com/health") {
-		t.Errorf("URL not found in output:\n%s", out)
+func TestRenderHTTPMonitorTable_Rows(t *testing.T) {
+	ms := time.Millisecond
+	tests := []struct {
+		name    string
+		results []*stats.HTTPCheckResult
+		wants   []string
+	}{
+		{"up row", []*stats.HTTPCheckResult{makeHTTPResult("https://example.com/health", "Up", 200, 5*ms)},
+			[]string{"https://example.com/health", "Up", "200"}},
+		{"down row", []*stats.HTTPCheckResult{makeHTTPResult("https://example.com", "Down", 503, 10*ms)},
+			[]string{"Down", "503"}},
+		{"error row", []*stats.HTTPCheckResult{makeHTTPResult("https://unreachable.example.com", "Error", 0, 0)},
+			[]string{"Error"}},
+		{"checking row", []*stats.HTTPCheckResult{stats.NewHTTPCheckResult("https://example.com")},
+			[]string{"Checking"}},
+		{"multiple rows", []*stats.HTTPCheckResult{
+			makeHTTPResult("https://a.example.com", "Up", 200, 5*ms),
+			makeHTTPResult("https://b.example.com", "Down", 500, 8*ms),
+		}, []string{"https://a.example.com", "https://b.example.com"}},
+		{"headers", []*stats.HTTPCheckResult{makeHTTPResult("https://example.com", "Up", 200, 5*ms)},
+			[]string{"URL", "Status", "Code", "Last", "Up", "Down"}},
 	}
-	if !strings.Contains(out, "Up") {
-		t.Errorf("Status 'Up' not found in output:\n%s", out)
-	}
-	if !strings.Contains(out, "200") {
-		t.Errorf("Code '200' not found in output:\n%s", out)
-	}
-}
-
-func TestRenderHTTPMonitorTable_DownRow(t *testing.T) {
-	r := makeHTTPResult("https://example.com", "Down", 503, 10*time.Millisecond)
-	out := renderHTTPMonitorTable([]*stats.HTTPCheckResult{r}, 160, nil, nil, nil)
-	if !strings.Contains(out, "Down") {
-		t.Errorf("Status 'Down' not found in output:\n%s", out)
-	}
-	if !strings.Contains(out, "503") {
-		t.Errorf("Code '503' not found in output:\n%s", out)
-	}
-}
-
-func TestRenderHTTPMonitorTable_ErrorRow(t *testing.T) {
-	r := makeHTTPResult("https://unreachable.example.com", "Error", 0, 0)
-	out := renderHTTPMonitorTable([]*stats.HTTPCheckResult{r}, 160, nil, nil, nil)
-	if !strings.Contains(out, "Error") {
-		t.Errorf("Status 'Error' not found in output:\n%s", out)
-	}
-}
-
-func TestRenderHTTPMonitorTable_CheckingRow(t *testing.T) {
-	r := stats.NewHTTPCheckResult("https://example.com")
-	out := renderHTTPMonitorTable([]*stats.HTTPCheckResult{r}, 160, nil, nil, nil)
-	if !strings.Contains(out, "Checking") {
-		t.Errorf("'Checking...' status not found in output:\n%s", out)
-	}
-}
-
-func TestRenderHTTPMonitorTable_MultipleRows(t *testing.T) {
-	results := []*stats.HTTPCheckResult{
-		makeHTTPResult("https://a.example.com", "Up", 200, 5*time.Millisecond),
-		makeHTTPResult("https://b.example.com", "Down", 500, 8*time.Millisecond),
-	}
-	out := renderHTTPMonitorTable(results, 160, nil, nil, nil)
-	if !strings.Contains(out, "https://a.example.com") {
-		t.Errorf("First URL not found:\n%s", out)
-	}
-	if !strings.Contains(out, "https://b.example.com") {
-		t.Errorf("Second URL not found:\n%s", out)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := renderHTTPMonitorTable(tt.results, 160, nil, nil, nil)
+			for _, want := range tt.wants {
+				if !strings.Contains(out, want) {
+					t.Errorf("%q not found in output:\n%s", want, out)
+				}
+			}
+		})
 	}
 }
 
@@ -99,16 +78,6 @@ func TestRenderHTTPMonitorTable_NarrowTerminalCompact(t *testing.T) {
 	// Wide output should be longer
 	if len(outWide) <= len(outNarrow) {
 		t.Errorf("Wide output (%d chars) should be longer than narrow (%d chars)", len(outWide), len(outNarrow))
-	}
-}
-
-func TestRenderHTTPMonitorTable_HeadersPresent(t *testing.T) {
-	r := makeHTTPResult("https://example.com", "Up", 200, 5*time.Millisecond)
-	out := renderHTTPMonitorTable([]*stats.HTTPCheckResult{r}, 160, nil, nil, nil)
-	for _, hdr := range []string{"URL", "Status", "Code", "Last", "Up", "Down"} {
-		if !strings.Contains(out, hdr) {
-			t.Errorf("Header %q not found in output:\n%s", hdr, out)
-		}
 	}
 }
 

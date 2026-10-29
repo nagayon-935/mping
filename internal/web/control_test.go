@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/nagayon-935/mping/internal/report"
 	"io"
 	"maps"
 	"net/http"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/nagayon-935/mping/internal/report"
 )
 
 const testToken = "test-token-0123456789abcdef"
@@ -52,15 +53,32 @@ func (c *controlProvider) ResetStats() {
 	c.resets++
 }
 
-func newControlServer(t *testing.T) (*controlProvider, *Source, string) {
+// newTokenServer serves p with the control token configured.
+func newTokenServer(t *testing.T, p Provider) (*Source, string) {
 	t.Helper()
-	base, _ := providerWithTarget("a.example")
-	p := &controlProvider{fakeProvider: base}
 	src := NewSource()
 	src.Set(p)
 	cfg := defaultTestConfig()
 	cfg.token = testToken
-	return p, src, newTestServer(t, src, cfg).URL
+	return src, newTestServer(t, src, cfg).URL
+}
+
+func newControlServer(t *testing.T) (*controlProvider, *Source, string) {
+	t.Helper()
+	base, _ := providerWithTarget("a.example")
+	p := &controlProvider{fakeProvider: base}
+	src, url := newTokenServer(t, p)
+	return p, src, url
+}
+
+// newMonitoringServer serves a provider that also supports stop, restart
+// and reports.
+func newMonitoringServer(t *testing.T, err error) (*monitoringProvider, *Source, string) {
+	t.Helper()
+	base, _ := providerWithTarget("router")
+	p := &monitoringProvider{controlProvider: &controlProvider{fakeProvider: base, err: err}}
+	src, url := newTokenServer(t, p)
+	return p, src, url
 }
 
 type req struct {
@@ -69,6 +87,12 @@ type req struct {
 }
 
 func send(t *testing.T, base string, r req) (int, string) {
+	t.Helper()
+	status, _, body := do(t, base, r)
+	return status, body
+}
+
+func do(t *testing.T, base string, r req) (int, http.Header, string) {
 	t.Helper()
 	var body io.Reader
 	if r.body != "" {
@@ -87,7 +111,7 @@ func send(t *testing.T, base string, r req) (int, string) {
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
-	return resp.StatusCode, string(b)
+	return resp.StatusCode, resp.Header, string(b)
 }
 
 func authed(extra map[string]string) map[string]string {
@@ -97,20 +121,25 @@ func authed(extra map[string]string) map[string]string {
 }
 
 func TestSessionReportsControlOnlyWithTheRightToken(t *testing.T) {
-	_, _, base := newControlServer(t)
+	_, _, controllable := newControlServer(t)
+	readOnlyProvider, _ := providerWithTarget("a.example")
+	_, readOnly := newTokenServer(t, readOnlyProvider)
+	right := map[string]string{"X-Mping-Token": testToken}
 
 	tests := []struct {
 		name    string
+		base    string
 		headers map[string]string
 		want    bool
 	}{
-		{"no token", nil, false},
-		{"wrong token", map[string]string{"X-Mping-Token": "nope"}, false},
-		{"right token", map[string]string{"X-Mping-Token": testToken}, true},
+		{"no token", controllable, nil, false},
+		{"wrong token", controllable, map[string]string{"X-Mping-Token": "nope"}, false},
+		{"right token", controllable, right, true},
+		{"right token but a provider that cannot control", readOnly, right, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			status, body := send(t, base, req{method: http.MethodGet, path: "/api/v1/session", headers: tt.headers})
+			status, body := send(t, tt.base, req{method: http.MethodGet, path: "/api/v1/session", headers: tt.headers})
 
 			var got SessionResponse
 			if err := json.Unmarshal([]byte(body), &got); err != nil || status != http.StatusOK {
@@ -120,21 +149,6 @@ func TestSessionReportsControlOnlyWithTheRightToken(t *testing.T) {
 				t.Fatalf("control = %v, want %v", got.Control, tt.want)
 			}
 		})
-	}
-}
-
-func TestSessionReportsNoControlWhenProviderCannotControl(t *testing.T) {
-	src := NewSource()
-	p, _ := providerWithTarget("a.example")
-	src.Set(p)
-	cfg := defaultTestConfig()
-	cfg.token = testToken
-	base := newTestServer(t, src, cfg).URL
-
-	_, body := send(t, base, req{method: http.MethodGet, path: "/api/v1/session", headers: map[string]string{"X-Mping-Token": testToken}})
-
-	if strings.Contains(body, `"control":true`) {
-		t.Fatalf("body = %s, want control=false for a read-only provider", body)
 	}
 }
 
@@ -210,58 +224,39 @@ func TestControlRequestsAreRejectedWithoutAuthority(t *testing.T) {
 	}
 }
 
-func TestAddHostValidatesInput(t *testing.T) {
+func TestControlInputIsValidated(t *testing.T) {
 	p, _, base := newControlServer(t)
 
+	add := func(body string) req {
+		return req{method: http.MethodPost, path: "/api/v1/targets", body: body, headers: authed(nil)}
+	}
 	tests := []struct {
-		name, body string
-		want       int
+		name string
+		r    req
+		want int
 	}{
-		{"malformed json", `{"host":`, http.StatusBadRequest},
-		{"unknown field", `{"host":"a.example","extra":1}`, http.StatusBadRequest},
-		{"empty", `{"host":"   "}`, http.StatusBadRequest},
-		{"inner whitespace", `{"host":"a b"}`, http.StatusBadRequest},
-		{"control character", `{"host":"a\u0000b"}`, http.StatusBadRequest},
-		{"too long", fmt.Sprintf(`{"host":%q}`, strings.Repeat("a", maxHostLen+1)), http.StatusBadRequest},
-		{"trailing data", `{"host":"a.example"} {"host":"b.example"}`, http.StatusBadRequest},
-		{"byte order mark", "{\"host\":\"a\ufeffb\"}", http.StatusBadRequest},
-		{"body too large", fmt.Sprintf(`{"host":"a.example","pad":%q}`, strings.Repeat("x", maxControlBody)), http.StatusRequestEntityTooLarge},
+		{"delete with a non-numeric id", req{method: http.MethodDelete, path: "/api/v1/targets/abc", headers: authed(nil)}, http.StatusBadRequest},
+		{"malformed json", add(`{"host":`), http.StatusBadRequest},
+		{"unknown field", add(`{"host":"a.example","extra":1}`), http.StatusBadRequest},
+		{"empty", add(`{"host":"   "}`), http.StatusBadRequest},
+		{"inner whitespace", add(`{"host":"a b"}`), http.StatusBadRequest},
+		{"control character", add(`{"host":"a\u0000b"}`), http.StatusBadRequest},
+		{"too long", add(fmt.Sprintf(`{"host":%q}`, strings.Repeat("a", maxHostLen+1))), http.StatusBadRequest},
+		{"trailing data", add(`{"host":"a.example"} {"host":"b.example"}`), http.StatusBadRequest},
+		{"byte order mark", add("{\"host\":\"a\ufeffb\"}"), http.StatusBadRequest},
+		{"body too large", add(fmt.Sprintf(`{"host":"a.example","pad":%q}`, strings.Repeat("x", maxControlBody))), http.StatusRequestEntityTooLarge},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			status, _ := send(t, base, req{method: http.MethodPost, path: "/api/v1/targets", body: tt.body, headers: authed(nil)})
+			status, _ := send(t, base, tt.r)
 
 			if status != tt.want {
 				t.Fatalf("status = %d, want %d", status, tt.want)
 			}
 		})
 	}
-	if len(p.added) != 0 {
-		t.Fatalf("added = %v, want none", p.added)
-	}
-}
-
-func TestDeleteTargetRejectsNonNumericID(t *testing.T) {
-	_, _, base := newControlServer(t)
-
-	status, _ := send(t, base, req{method: http.MethodDelete, path: "/api/v1/targets/abc", headers: authed(nil)})
-
-	if status != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", status)
-	}
-}
-
-func TestControllerErrorsAreReportedAsConflict(t *testing.T) {
-	p, _, base := newControlServer(t)
-	p.err = errors.New(`host "a.example" is already in the list`)
-
-	status, body := send(t, base, req{method: http.MethodPost, path: "/api/v1/targets", body: `{"host":"a.example"}`, headers: authed(nil)})
-
-	if status != http.StatusConflict {
-		t.Fatalf("status = %d, want 409", status)
-	}
-	if !strings.Contains(body, "already in the list") {
-		t.Fatalf("body = %s, want the controller's message", body)
+	if len(p.added)+len(p.deleted) != 0 {
+		t.Fatalf("controller was called: added=%v deleted=%v", p.added, p.deleted)
 	}
 }
 
@@ -281,21 +276,6 @@ func TestControlIsUnavailableUnlessRunning(t *testing.T) {
 	}
 }
 
-func TestControlIsUnavailableForReadOnlyProvider(t *testing.T) {
-	src := NewSource()
-	p, _ := providerWithTarget("a.example")
-	src.Set(p)
-	cfg := defaultTestConfig()
-	cfg.token = testToken
-	base := newTestServer(t, src, cfg).URL
-
-	status, _ := send(t, base, req{method: http.MethodPost, path: "/api/v1/reset", headers: authed(nil)})
-
-	if status != http.StatusNotImplemented {
-		t.Fatalf("status = %d, want 501", status)
-	}
-}
-
 func TestControlIsDisabledWithoutConfiguredToken(t *testing.T) {
 	base, _ := providerWithTarget("a.example")
 	p := &controlProvider{fakeProvider: base}
@@ -311,16 +291,7 @@ func TestControlIsDisabledWithoutConfiguredToken(t *testing.T) {
 }
 
 func TestStartGeneratesAControlToken(t *testing.T) {
-	a, err := Start(Options{Port: 0, Source: NewSource()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { a.Close() })
-	b, err := Start(Options{Port: 0, Source: NewSource()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { b.Close() })
+	a, b := startServer(t), startServer(t)
 
 	ua, ub := a.ControlURL(), b.ControlURL()
 
@@ -395,98 +366,60 @@ func (p *monitoringProvider) CaptureReport() (report.Report, error) {
 	return report.Report{SchemaVersion: 1, Scope: "session"}, p.err
 }
 
-func TestMonitoringControlsAuthorizationStopAndDownloads(t *testing.T) {
-	baseProvider, _ := providerWithTarget("router")
-	p := &monitoringProvider{controlProvider: &controlProvider{fakeProvider: baseProvider}}
-	src := NewSource()
-	src.Set(p)
-	cfg := defaultTestConfig()
-	cfg.token = testToken
-	base := newTestServer(t, src, cfg).URL
-	for _, route := range []struct{ method, path string }{
+func TestMonitoringControls(t *testing.T) {
+	p, src, base := newMonitoringServer(t, nil)
+	routes := []struct{ method, path string }{
 		{"POST", "/api/v1/stop"}, {"POST", "/api/v1/restart"}, {"GET", "/api/v1/report?format=json"},
-	} {
-		if status, _ := send(t, base, req{method: route.method, path: route.path}); status != http.StatusForbidden {
-			t.Fatalf("unauthorized %s: %d", route.path, status)
+	}
+
+	t.Run("unauthorized and cross-origin requests are forbidden", func(t *testing.T) {
+		for _, route := range routes {
+			if status, _ := send(t, base, req{method: route.method, path: route.path}); status != http.StatusForbidden {
+				t.Fatalf("unauthorized %s: %d", route.path, status)
+			}
+			if status, _ := send(t, base, req{method: route.method, path: route.path, headers: authed(map[string]string{"Origin": "https://elsewhere.example"})}); status != http.StatusForbidden {
+				t.Fatalf("cross-origin %s: %d", route.path, status)
+			}
 		}
-		if status, _ := send(t, base, req{method: route.method, path: route.path, headers: authed(map[string]string{"Origin": "https://elsewhere.example"})}); status != http.StatusForbidden {
-			t.Fatalf("cross-origin %s: %d", route.path, status)
+		if p.reports != 0 || p.stopped {
+			t.Fatal("unauthorized request changed provider")
 		}
-	}
-	if p.reports != 0 || p.stopped {
-		t.Fatal("unauthorized request changed provider")
-	}
-	if status, _ := send(t, base, req{method: "POST", path: "/api/v1/stop", headers: authed(nil)}); status != 204 || !p.stopped {
-		t.Fatalf("stop=%d", status)
-	}
-	if status, _ := send(t, base, req{method: "POST", path: "/api/v1/restart", headers: authed(nil)}); status != 204 || p.stopped {
-		t.Fatalf("restart=%d", status)
-	}
-	for _, format := range []string{"json", "text"} {
-		request, _ := http.NewRequest("GET", base+"/api/v1/report?format="+format, nil)
-		request.Header.Set(tokenHeader, testToken)
-		response, err := http.DefaultClient.Do(request)
-		if err != nil {
-			t.Fatal(err)
+	})
+
+	t.Run("stop then restart toggle measurements", func(t *testing.T) {
+		if status, _ := send(t, base, req{method: "POST", path: "/api/v1/stop", headers: authed(nil)}); status != 204 || !p.stopped {
+			t.Fatalf("stop=%d stopped=%v", status, p.stopped)
 		}
-		data, _ := io.ReadAll(response.Body)
-		response.Body.Close()
-		if response.StatusCode != 200 || !strings.Contains(response.Header.Get("Content-Disposition"), "attachment") || len(data) == 0 {
-			t.Fatalf("report %s: %d %s", format, response.StatusCode, data)
+		if status, _ := send(t, base, req{method: "POST", path: "/api/v1/restart", headers: authed(nil)}); status != 204 || p.stopped {
+			t.Fatalf("restart=%d stopped=%v", status, p.stopped)
 		}
-	}
-	if status, _ := send(t, base, req{method: "GET", path: "/api/v1/report?format=csv", headers: authed(nil)}); status != 400 {
-		t.Fatalf("invalid format=%d", status)
-	}
-	src.MarkReloading()
-	if status, _ := send(t, base, req{method: "POST", path: "/api/v1/stop", headers: authed(nil)}); status != 409 {
-		t.Fatalf("reload control=%d", status)
-	}
-}
+	})
 
-func newMonitoringServer(t *testing.T, p Provider) string {
-	t.Helper()
-	src := NewSource()
-	src.Set(p)
-	cfg := defaultTestConfig()
-	cfg.token = testToken
-	return newTestServer(t, src, cfg).URL
-}
-
-func TestMeasurementAndReportControlsNeedACapableProvider(t *testing.T) {
-	base, _ := providerWithTarget("router")
-	url := newMonitoringServer(t, &controlProvider{fakeProvider: base})
-
-	for _, route := range []struct{ method, path string }{
-		{"POST", "/api/v1/stop"}, {"POST", "/api/v1/restart"}, {"GET", "/api/v1/report"},
-	} {
-		status, body := send(t, url, req{method: route.method, path: route.path, headers: authed(nil)})
-
-		if status != http.StatusNotImplemented || !strings.Contains(body, "unavailable") {
-			t.Errorf("%s %s = %d %s, want 501 unavailable", route.method, route.path, status, body)
+	t.Run("reports download as attachments", func(t *testing.T) {
+		for _, format := range []string{"json", "text"} {
+			status, header, data := do(t, base, req{method: "GET", path: "/api/v1/report?format=" + format, headers: map[string]string{tokenHeader: testToken}})
+			if status != 200 || !strings.Contains(header.Get("Content-Disposition"), "attachment") || len(data) == 0 {
+				t.Fatalf("report %s: %d %s", format, status, data)
+			}
 		}
-	}
-}
+	})
 
-func TestMeasurementAndReportErrorsAreReportedAsConflict(t *testing.T) {
-	base, _ := providerWithTarget("router")
-	p := &monitoringProvider{controlProvider: &controlProvider{fakeProvider: base, err: errors.New("supervisor is busy")}}
-	url := newMonitoringServer(t, p)
-
-	for _, route := range []struct{ method, path string }{
-		{"POST", "/api/v1/stop"}, {"POST", "/api/v1/restart"}, {"GET", "/api/v1/report"},
-	} {
-		status, body := send(t, url, req{method: route.method, path: route.path, headers: authed(nil)})
-
-		if status != http.StatusConflict || !strings.Contains(body, "supervisor is busy") {
-			t.Errorf("%s %s = %d %s, want 409 with the provider's message", route.method, route.path, status, body)
+	t.Run("unknown report format is rejected", func(t *testing.T) {
+		if status, _ := send(t, base, req{method: "GET", path: "/api/v1/report?format=csv", headers: authed(nil)}); status != 400 {
+			t.Fatalf("invalid format=%d", status)
 		}
-	}
+	})
+
+	t.Run("controls are a conflict while reloading", func(t *testing.T) {
+		src.MarkReloading()
+		if status, _ := send(t, base, req{method: "POST", path: "/api/v1/stop", headers: authed(nil)}); status != 409 {
+			t.Fatalf("reload control=%d", status)
+		}
+	})
 }
 
 func TestReportDefaultsToJSON(t *testing.T) {
-	base, _ := providerWithTarget("router")
-	url := newMonitoringServer(t, &monitoringProvider{controlProvider: &controlProvider{fakeProvider: base}})
+	_, _, url := newMonitoringServer(t, nil)
 
 	status, body := send(t, url, req{method: "GET", path: "/api/v1/report", headers: authed(nil)})
 
@@ -496,13 +429,58 @@ func TestReportDefaultsToJSON(t *testing.T) {
 	}
 }
 
-func TestDeleteTargetErrorsAreReportedAsConflict(t *testing.T) {
-	p, _, base := newControlServer(t)
-	p.err = errors.New("no such target")
+// TestControllerErrorsAreReportedAsConflict verifies that an error from the
+// provider on any control route becomes a 409 carrying its message.
+func TestControllerErrorsAreReportedAsConflict(t *testing.T) {
+	_, _, base := newMonitoringServer(t, errors.New("supervisor is busy"))
 
-	status, body := send(t, base, req{method: http.MethodDelete, path: "/api/v1/targets/7", headers: authed(nil)})
+	tests := []struct {
+		name string
+		r    req
+	}{
+		{"add host", req{method: http.MethodPost, path: "/api/v1/targets", body: `{"host":"a.example"}`, headers: authed(nil)}},
+		{"delete target", req{method: http.MethodDelete, path: "/api/v1/targets/7", headers: authed(nil)}},
+		{"stop", req{method: http.MethodPost, path: "/api/v1/stop", headers: authed(nil)}},
+		{"restart", req{method: http.MethodPost, path: "/api/v1/restart", headers: authed(nil)}},
+		{"report", req{method: http.MethodGet, path: "/api/v1/report", headers: authed(nil)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status, body := send(t, base, tt.r)
 
-	if status != http.StatusConflict || !strings.Contains(body, "no such target") {
-		t.Fatalf("delete = %d %s, want 409 with the controller's message", status, body)
+			if status != http.StatusConflict || !strings.Contains(body, "supervisor is busy") {
+				t.Fatalf("%s %s = %d %s, want 409 with the provider's message", tt.r.method, tt.r.path, status, body)
+			}
+		})
+	}
+}
+
+// TestControlIsUnavailableWithoutTheCapability verifies the 501 for a route
+// whose provider does not implement it: reset on a read-only provider, and
+// stop/restart/report on one that only edits targets.
+func TestControlIsUnavailableWithoutTheCapability(t *testing.T) {
+	readOnly, _ := providerWithTarget("a.example")
+	_, readOnlyURL := newTokenServer(t, readOnly)
+	editBase, _ := providerWithTarget("router")
+	_, editURL := newTokenServer(t, &controlProvider{fakeProvider: editBase})
+
+	tests := []struct {
+		name string
+		base string
+		r    req
+	}{
+		{"reset on a read-only provider", readOnlyURL, req{method: http.MethodPost, path: "/api/v1/reset", headers: authed(nil)}},
+		{"stop", editURL, req{method: http.MethodPost, path: "/api/v1/stop", headers: authed(nil)}},
+		{"restart", editURL, req{method: http.MethodPost, path: "/api/v1/restart", headers: authed(nil)}},
+		{"report", editURL, req{method: http.MethodGet, path: "/api/v1/report", headers: authed(nil)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status, body := send(t, tt.base, tt.r)
+
+			if status != http.StatusNotImplemented {
+				t.Fatalf("%s %s = %d %s, want 501", tt.r.method, tt.r.path, status, body)
+			}
+		})
 	}
 }

@@ -77,95 +77,84 @@ func TestMTRStats_StarHop(t *testing.T) {
 	}
 }
 
-func TestMTRStats_EnsureLenGrowsAndPreserves(t *testing.T) {
-	m := NewMTRStats()
-	m.EnsureLen(2)
-	m.RecordReply(1, "10.0.0.1", "AS1234", "", "", 5*time.Millisecond)
-
-	// Grow: existing hop data must be preserved
-	m.EnsureLen(4)
-	hops := m.View()
-	if len(hops) != 4 {
-		t.Fatalf("want 4 hops after grow, got %d", len(hops))
-	}
-	if hops[0].IP != "10.0.0.1" {
-		t.Errorf("hop 0 IP lost after grow: got %q", hops[0].IP)
-	}
-	if hops[0].ASN != "AS1234" {
-		t.Errorf("hop 0 ASN lost after grow: got %q", hops[0].ASN)
+// fillHops sizes m to n hops and records a reply for each, so a test can
+// check which hops survive a resize.
+func fillHops(m *MTRStats, n int) {
+	m.EnsureLen(n)
+	for ttl := 1; ttl <= n; ttl++ {
+		m.RecordReply(ttl, fmt.Sprintf("10.0.0.%d", ttl), "AS1234", "", "", time.Duration(ttl)*time.Millisecond)
 	}
 }
 
-func TestMTRStats_EnsureLenShrinks(t *testing.T) {
-	m := NewMTRStats()
-	m.EnsureLen(5)
-	m.RecordReply(5, "10.0.0.5", "", "", "", 50*time.Millisecond)
-
-	// Shrink: EnsureLen with smaller n is a no-op (don't discard data)
-	m.EnsureLen(3)
-	hops := m.View()
-	if len(hops) != 5 {
-		t.Errorf("EnsureLen shrink should be no-op; want 5, got %d", len(hops))
+// assertHopsKept checks that the first n hops still hold what fillHops recorded.
+func assertHopsKept(t *testing.T, hops []HopView, n int) {
+	t.Helper()
+	for i := range n {
+		if want := fmt.Sprintf("10.0.0.%d", i+1); hops[i].IP != want || hops[i].ASN != "AS1234" {
+			t.Errorf("hop %d lost its data: IP=%q ASN=%q, want IP=%q ASN=AS1234", i, hops[i].IP, hops[i].ASN, want)
+		}
 	}
 }
 
-func TestMTRStats_TruncateLenShrinks(t *testing.T) {
-	m := NewMTRStats()
-	m.EnsureLen(5)
-	m.RecordReply(1, "10.0.0.1", "", "", "", 10*time.Millisecond)
-	m.RecordReply(5, "10.0.0.5", "", "", "", 50*time.Millisecond)
-
-	m.TruncateLen(2)
-	hops := m.View()
-	if len(hops) != 2 {
-		t.Fatalf("want 2 hops after truncate, got %d", len(hops))
+func TestMTRStats_EnsureLen(t *testing.T) {
+	tests := []struct {
+		name    string
+		start   int
+		n       int
+		wantLen int
+	}{
+		{"grows and preserves existing hops", 2, 4, 4},
+		// A smaller n is a no-op: don't discard data.
+		{"smaller n is a no-op", 5, 3, 5},
 	}
-	if hops[0].IP != "10.0.0.1" {
-		t.Errorf("hop 0 IP lost after truncate: got %q", hops[0].IP)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewMTRStats()
+			fillHops(m, tt.start)
 
-func TestMTRStats_TruncateLenNoOpWhenNotShorter(t *testing.T) {
-	m := NewMTRStats()
-	m.EnsureLen(3)
-	m.RecordReply(3, "10.0.0.3", "", "", "", 10*time.Millisecond)
+			m.EnsureLen(tt.n)
 
-	m.TruncateLen(5) // n > current length: no-op
-	if hops := m.View(); len(hops) != 3 {
-		t.Errorf("TruncateLen(5) on len-3 slice should be a no-op; want 3, got %d", len(hops))
-	}
-
-	m.TruncateLen(3) // n == current length: no-op
-	if hops := m.View(); len(hops) != 3 {
-		t.Errorf("TruncateLen(3) on len-3 slice should be a no-op; want 3, got %d", len(hops))
+			hops := m.View()
+			if len(hops) != tt.wantLen {
+				t.Fatalf("len = %d, want %d", len(hops), tt.wantLen)
+			}
+			assertHopsKept(t, hops, tt.start)
+		})
 	}
 }
 
-func TestMTRStats_TruncateLenToZero(t *testing.T) {
-	m := NewMTRStats()
-	m.EnsureLen(3)
+func TestMTRStats_TruncateLen(t *testing.T) {
+	tests := []struct {
+		name    string
+		start   int
+		n       int
+		wantLen int
+	}{
+		{"shrinks and keeps the leading hops", 5, 2, 2},
+		{"longer n is a no-op", 3, 5, 3},
+		{"equal n is a no-op", 3, 3, 3},
+		{"zero empties the list", 3, 0, 0},
+		{"negative n is treated as zero", 3, -1, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewMTRStats()
+			fillHops(m, tt.start)
 
-	m.TruncateLen(0)
-	if hops := m.View(); len(hops) != 0 {
-		t.Errorf("TruncateLen(0) want 0 hops, got %d", len(hops))
+			m.TruncateLen(tt.n)
+
+			hops := m.View()
+			if len(hops) != tt.wantLen {
+				t.Fatalf("len = %d, want %d", len(hops), tt.wantLen)
+			}
+			assertHopsKept(t, hops, tt.wantLen)
+		})
 	}
 }
 
-func TestMTRStats_SetIP(t *testing.T) {
-	m := NewMTRStats()
-	m.EnsureLen(1)
-	m.SetIP(1, "192.168.1.1", "AS64512", "", "")
-
-	hops := m.View()
-	if hops[0].IP != "192.168.1.1" {
-		t.Errorf("IP: want 192.168.1.1, got %q", hops[0].IP)
-	}
-	if hops[0].ASN != "AS64512" {
-		t.Errorf("ASN: want AS64512, got %q", hops[0].ASN)
-	}
-}
-
-func TestMTRStats_CountryOrgStored(t *testing.T) {
+// TestMTRStats_HopIdentityStored verifies that both RecordReply and SetIP
+// store a hop's IP, ASN, country, and org.
+func TestMTRStats_HopIdentityStored(t *testing.T) {
 	m := NewMTRStats()
 	m.EnsureLen(2)
 
@@ -174,6 +163,12 @@ func TestMTRStats_CountryOrgStored(t *testing.T) {
 
 	hops := m.View()
 
+	if hops[0].IP != "8.8.8.8" || hops[0].ASN != "AS15169" {
+		t.Errorf("hop1 IP/ASN: want 8.8.8.8/AS15169, got %q/%q", hops[0].IP, hops[0].ASN)
+	}
+	if hops[1].IP != "1.1.1.1" || hops[1].ASN != "AS13335" {
+		t.Errorf("hop2 IP/ASN: want 1.1.1.1/AS13335, got %q/%q", hops[1].IP, hops[1].ASN)
+	}
 	if hops[0].Country != "US" {
 		t.Errorf("hop1 Country: want US, got %q", hops[0].Country)
 	}
@@ -224,6 +219,16 @@ func TestMTRStats_ConcurrentAccess(t *testing.T) {
 		})
 	}
 	wg.Wait()
+
+	// 50 probes, of which n = 0, 3, ..., 48 (17 of them) were losses.
+	sent, recv := 0, 0
+	for _, h := range m.View() {
+		sent += h.Sent
+		recv += h.Recv
+	}
+	if sent != 50 || recv != 33 {
+		t.Errorf("total sent/recv = %d/%d, want 50/33 (concurrent updates were lost)", sent, recv)
+	}
 }
 
 func TestTargetStats_MTRIntegration(t *testing.T) {
@@ -403,17 +408,6 @@ func TestMTRStats_OutOfRangeHopsAreIgnored(t *testing.T) {
 		if hop.Sent != 0 || hop.IP != "" {
 			t.Fatalf("hop %d changed by an out-of-range ttl: %+v", hop.TTL, hop)
 		}
-	}
-}
-
-func TestMTRStats_TruncateLenTreatsNegativeAsZero(t *testing.T) {
-	m := NewMTRStats()
-	m.EnsureLen(3)
-
-	m.TruncateLen(-1)
-
-	if n := len(m.View()); n != 0 {
-		t.Fatalf("hops = %d, want 0", n)
 	}
 }
 

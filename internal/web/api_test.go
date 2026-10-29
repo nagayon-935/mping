@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -20,16 +21,6 @@ func decode[T any](t *testing.T, resp *http.Response) T {
 		t.Fatalf("decode %T: %v", v, err)
 	}
 	return v
-}
-
-func TestSnapshotReturns503BeforeProviderIsSet(t *testing.T) {
-	srv := newTestServer(t, NewSource(), defaultTestConfig())
-
-	resp := get(t, srv.URL+"/api/v1/snapshot")
-
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503", resp.StatusCode)
-	}
 }
 
 func TestSnapshotReturnsTargetsMetaAndState(t *testing.T) {
@@ -134,45 +125,52 @@ func TestHistoryLimitsToTrailingNPoints(t *testing.T) {
 	}
 }
 
-func TestTargetEndpointsRejectBadInput(t *testing.T) {
+// TestEndpointsRejectBadInputAndMissingProvider covers request validation
+// of every read endpoint, and the 503 each returns before a provider is set.
+// {id} stands for the id of the one target the provider holds.
+func TestEndpointsRejectBadInputAndMissingProvider(t *testing.T) {
+	empty := newTestServer(t, NewSource(), defaultTestConfig())
 	src := NewSource()
 	p, ts := providerWithTarget("a.example")
 	src.Set(p)
-	srv := newTestServer(t, src, defaultTestConfig())
+	loaded := newTestServer(t, src, defaultTestConfig())
 
 	tests := []struct {
 		name string
+		srv  *httptest.Server
 		path string
 		want int
 	}{
-		{"non-numeric id", "/api/v1/targets/abc/history", http.StatusBadRequest},
-		{"unknown id", "/api/v1/targets/999999999/history", http.StatusNotFound},
-		{"non-numeric n", fmt.Sprintf("/api/v1/targets/%d/history?n=x", ts.ID), http.StatusBadRequest},
-		{"zero n", fmt.Sprintf("/api/v1/targets/%d/history?n=0", ts.ID), http.StatusBadRequest},
-		{"n above cap", fmt.Sprintf("/api/v1/targets/%d/history?n=%d", ts.ID, maxHistoryPoints+1), http.StatusBadRequest},
-		{"events unknown id", "/api/v1/targets/999999999/events", http.StatusNotFound},
-		{"events non-numeric id", "/api/v1/targets/abc/events", http.StatusBadRequest},
+		{"snapshot without provider", empty, "/api/v1/snapshot", http.StatusServiceUnavailable},
+		{"target history without provider", empty, "/api/v1/targets/1/history", http.StatusServiceUnavailable},
+		{"target events without provider", empty, "/api/v1/targets/1/events", http.StatusServiceUnavailable},
+		{"bulk history without provider", empty, "/api/v1/history", http.StatusServiceUnavailable},
+		{"bulk events without provider", empty, "/api/v1/events", http.StatusServiceUnavailable},
+		{"history non-numeric id", loaded, "/api/v1/targets/abc/history", http.StatusBadRequest},
+		{"history unknown id", loaded, "/api/v1/targets/999999999/history", http.StatusNotFound},
+		{"history non-numeric n", loaded, "/api/v1/targets/{id}/history?n=x", http.StatusBadRequest},
+		{"history zero n", loaded, "/api/v1/targets/{id}/history?n=0", http.StatusBadRequest},
+		{"history n above cap", loaded, fmt.Sprintf("/api/v1/targets/{id}/history?n=%d", maxHistoryPoints+1), http.StatusBadRequest},
+		{"events unknown id", loaded, "/api/v1/targets/999999999/events", http.StatusNotFound},
+		{"events non-numeric id", loaded, "/api/v1/targets/abc/events", http.StatusBadRequest},
+		{"bulk history default n", loaded, "/api/v1/history", http.StatusOK},
+		{"bulk history bad n", loaded, "/api/v1/history?n=abc", http.StatusBadRequest},
+		{"bulk history n above cap", loaded, fmt.Sprintf("/api/v1/history?n=%d", maxHistoryPoints+1), http.StatusBadRequest},
+		{"bulk events default limit", loaded, "/api/v1/events", http.StatusOK},
+		{"bulk events bad limit", loaded, "/api/v1/events?limit=x", http.StatusBadRequest},
+		{"bulk events zero limit", loaded, "/api/v1/events?limit=0", http.StatusBadRequest},
+		{"bulk events limit above cap", loaded, fmt.Sprintf("/api/v1/events?limit=%d", maxEvents+1), http.StatusBadRequest},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp := get(t, srv.URL+tt.path)
+			path := strings.ReplaceAll(tt.path, "{id}", fmt.Sprint(ts.ID))
+
+			resp := get(t, tt.srv.URL+path)
 
 			if resp.StatusCode != tt.want {
 				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.want)
 			}
 		})
-	}
-}
-
-func TestTargetEndpointsReturn503BeforeProviderIsSet(t *testing.T) {
-	srv := newTestServer(t, NewSource(), defaultTestConfig())
-
-	for _, path := range []string{"/api/v1/targets/1/history", "/api/v1/targets/1/events"} {
-		resp := get(t, srv.URL+path)
-
-		if resp.StatusCode != http.StatusServiceUnavailable {
-			t.Errorf("%s: status = %d, want 503", path, resp.StatusCode)
-		}
 	}
 }
 
@@ -238,22 +236,9 @@ func TestUnknownPathReturns404(t *testing.T) {
 	}
 }
 
-// countingProvider counts Targets calls so tests can tell whether a
-// snapshot was rebuilt or served from cache.
-type countingProvider struct {
-	*fakeProvider
-	calls atomic.Int64
-}
-
-func (c *countingProvider) Targets() []*stats.TargetStats {
-	c.calls.Add(1)
-	return c.fakeProvider.Targets()
-}
-
 func TestSnapshotIsReusedUntilGenerationOrSourceChanges(t *testing.T) {
 	src := NewSource()
-	base, _ := providerWithTarget("a.example")
-	p := &countingProvider{fakeProvider: base}
+	p, _ := providerWithTarget("a.example")
 	src.Set(p)
 	var gen atomic.Uint64
 	cfg := defaultTestConfig()
@@ -262,10 +247,10 @@ func TestSnapshotIsReusedUntilGenerationOrSourceChanges(t *testing.T) {
 
 	get(t, srv.URL+"/api/v1/snapshot")
 	get(t, srv.URL+"/api/v1/snapshot")
-	unchanged := p.calls.Load()
+	unchanged := p.targetCalls.Load()
 	gen.Add(1)
 	get(t, srv.URL+"/api/v1/snapshot")
-	afterGen := p.calls.Load()
+	afterGen := p.targetCalls.Load()
 	src.MarkReloading()
 	reloaded := decode[SnapshotResponse](t, get(t, srv.URL+"/api/v1/snapshot"))
 
@@ -309,38 +294,12 @@ func TestBulkHistoryReturnsEveryTargetsTrailingSeries(t *testing.T) {
 	}
 }
 
-func TestBulkHistoryValidatesInputAndProvider(t *testing.T) {
-	empty := newTestServer(t, NewSource(), defaultTestConfig())
-	src := NewSource()
-	p, _ := providerWithTarget("a.example")
-	src.Set(p)
-	srv := newTestServer(t, src, defaultTestConfig())
-
-	tests := []struct {
-		name, url string
-		want      int
-	}{
-		{"no provider", empty.URL + "/api/v1/history", http.StatusServiceUnavailable},
-		{"default n", srv.URL + "/api/v1/history", http.StatusOK},
-		{"bad n", srv.URL + "/api/v1/history?n=abc", http.StatusBadRequest},
-		{"n above cap", srv.URL + fmt.Sprintf("/api/v1/history?n=%d", maxHistoryPoints+1), http.StatusBadRequest},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			resp := get(t, tt.url)
-
-			if resp.StatusCode != tt.want {
-				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.want)
-			}
-		})
-	}
-}
-
 func TestBulkEventsMergesTargetsNewestFirstWithHosts(t *testing.T) {
 	src := NewSource()
 	p, a := providerWithTarget("a.example") // SetIP records a "dns" event on a
 	b := stats.NewTargetStats("b.example")
 	p.targets = append(p.targets, b)
+	// The sleeps give each event a distinct timestamp to sort by.
 	a.RecordEvent("route", "a first")
 	time.Sleep(2 * time.Millisecond)
 	b.RecordEvent("port", "b second")
@@ -383,34 +342,6 @@ func TestBulkEventsLimitKeepsTheNewest(t *testing.T) {
 
 	if len(body.Events) != 2 || body.Events[0].Message != "event 4" || body.Events[1].Message != "event 3" {
 		t.Fatalf("events = %+v, want [event 4, event 3]", body.Events)
-	}
-}
-
-func TestBulkEventsValidatesInputAndProvider(t *testing.T) {
-	empty := newTestServer(t, NewSource(), defaultTestConfig())
-	src := NewSource()
-	p, _ := providerWithTarget("a.example")
-	src.Set(p)
-	srv := newTestServer(t, src, defaultTestConfig())
-
-	tests := []struct {
-		name, url string
-		want      int
-	}{
-		{"no provider", empty.URL + "/api/v1/events", http.StatusServiceUnavailable},
-		{"default limit", srv.URL + "/api/v1/events", http.StatusOK},
-		{"bad limit", srv.URL + "/api/v1/events?limit=x", http.StatusBadRequest},
-		{"zero limit", srv.URL + "/api/v1/events?limit=0", http.StatusBadRequest},
-		{"limit above cap", srv.URL + fmt.Sprintf("/api/v1/events?limit=%d", maxEvents+1), http.StatusBadRequest},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			resp := get(t, tt.url)
-
-			if resp.StatusCode != tt.want {
-				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.want)
-			}
-		})
 	}
 }
 

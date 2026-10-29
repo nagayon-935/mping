@@ -121,3 +121,48 @@ func TestContextDNSAfterStopDoesNotStartLookup(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestLookupContext(t *testing.T) {
+	t.Run("a hand-built pinger without a lifetime still gets the operation deadline", func(t *testing.T) {
+		ctx, cancel := (&Pinger{}).lookupContext(context.Background(), time.Minute)
+		defer cancel()
+		if _, hasDeadline := ctx.Deadline(); !hasDeadline || ctx.Err() != nil {
+			t.Fatalf("ctx deadline set=%v err=%v, want a live context with a deadline", hasDeadline, ctx.Err())
+		}
+	})
+
+	t.Run("a stopped pinger hands out an already cancelled context", func(t *testing.T) {
+		p := NewPinger(nil)
+		p.Stop()
+		ctx, cancel := p.lookupContext(context.Background(), time.Minute)
+		defer cancel()
+		if ctx.Err() == nil {
+			t.Fatal("expected a cancelled context after Stop")
+		}
+	})
+
+	t.Run("Stop cancels a lookup that is already running", func(t *testing.T) {
+		p := NewPinger(nil)
+		ctx, cancel := p.lookupContext(context.Background(), time.Minute)
+		defer cancel()
+		p.Stop()
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+			t.Fatal("Stop did not cancel the in-flight lookup context")
+		}
+	})
+}
+
+func TestLookupBounded_AfterStopDoesNotStartLookup(t *testing.T) {
+	p := NewPinger(nil)
+	p.Stop()
+	_, err := lookupBounded(p, time.Second, "TXT", "example.com",
+		func(context.Context, string) (string, error) {
+			t.Error("context-aware lookup started after Stop")
+			return "", nil
+		}, nil)
+	if !errors.Is(err, errPingerStopped) {
+		t.Fatalf("err = %v, want errPingerStopped", err)
+	}
+}

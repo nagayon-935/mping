@@ -104,6 +104,30 @@ func TestRttAccumulator_HistorySnapshotWindow_FewerSamplesThanWindow(t *testing.
 	assertDurationsEqual(t, got, durs(1, 2))
 }
 
+// TestUpdateJitter pins the RFC 1889 §A.8 step J += (|D| - J) / 16,
+// including the |D| of an RTT that went down. TargetStats and MTRStats only
+// reach that branch when a sample is faster than the previous one.
+func TestUpdateJitter(t *testing.T) {
+	tests := []struct {
+		name         string
+		jitter       int64 // ns
+		rtt, lastRTT time.Duration
+		wantJitterNs int64
+	}{
+		{"slower sample pulls jitter up", 0, 30 * time.Millisecond, 10 * time.Millisecond, 20_000_000 / 16},
+		{"faster sample counts the same distance", 0, 10 * time.Millisecond, 30 * time.Millisecond, 20_000_000 / 16},
+		{"steady RTT decays jitter", 16_000, 5 * time.Millisecond, 5 * time.Millisecond, 15_000},
+		{"jitter already at |D| is unchanged", 4_000_000, 14 * time.Millisecond, 10 * time.Millisecond, 4_000_000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := updateJitter(tt.jitter, tt.rtt, tt.lastRTT); got != tt.wantJitterNs {
+				t.Errorf("updateJitter(%d, %v, %v) = %d, want %d", tt.jitter, tt.rtt, tt.lastRTT, got, tt.wantJitterNs)
+			}
+		})
+	}
+}
+
 // ---- stddev (Welford's online algorithm) ----
 
 func TestRttAccumulator_StdDev_KnownDataset(t *testing.T) {
@@ -121,18 +145,25 @@ func TestRttAccumulator_StdDev_KnownDataset(t *testing.T) {
 	}
 }
 
-func TestRttAccumulator_StdDev_ZeroSamples(t *testing.T) {
-	var a rttAccumulator
-	if got := a.stddev(); got != 0 {
-		t.Errorf("stddev() with 0 samples = %v, want 0", got)
+func TestRttAccumulator_StdDev_NeedsTwoSamples(t *testing.T) {
+	tests := []struct {
+		name string
+		rtts []time.Duration
+	}{
+		{"zero samples", nil},
+		{"one sample", durs(50)},
 	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var a rttAccumulator
+			for _, rtt := range tt.rtts {
+				a.record(rtt)
+			}
 
-func TestRttAccumulator_StdDev_OneSample(t *testing.T) {
-	var a rttAccumulator
-	a.record(50 * time.Millisecond)
-	if got := a.stddev(); got != 0 {
-		t.Errorf("stddev() with 1 sample = %v, want 0", got)
+			if got := a.stddev(); got != 0 {
+				t.Errorf("stddev() = %v, want 0", got)
+			}
+		})
 	}
 }
 

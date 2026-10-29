@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/nagayon-935/mping/internal/stats"
-	"golang.org/x/net/ipv4"
 )
 
 func TestResetRejectsOutstandingProbeResults(t *testing.T) {
@@ -27,13 +26,7 @@ func TestResetRejectsOutstandingProbeResults(t *testing.T) {
 			done := make(chan struct{})
 			go func() { p.runWorker(target, p.baseID, time.Second, 200*time.Millisecond); close(done) }()
 			t.Cleanup(func() { p.Stop(); <-done })
-			deadline := time.Now().Add(time.Second)
-			for target.GetView().Sent != 1 {
-				if time.Now().After(deadline) {
-					t.Fatal("probe not sent")
-				}
-				time.Sleep(time.Millisecond)
-			}
+			awaitTarget(t, target, func(v stats.TargetView) bool { return v.Sent == 1 })
 			target.Reset()
 			switch outcome {
 			case "success":
@@ -47,14 +40,6 @@ func TestResetRejectsOutstandingProbeResults(t *testing.T) {
 				t.Fatalf("pre-reset result counted: %+v", v)
 			}
 		})
-	}
-}
-
-func TestParsePortSpecRejectsTrailingCharacters(t *testing.T) {
-	for _, raw := range []string{"443garbage/tcp", "443.5", "443:80", "80 90/tcp", "53x/udp"} {
-		if spec, err := ParsePortSpec(raw); err == nil {
-			t.Errorf("accepted %q as %+v", raw, spec)
-		}
 	}
 }
 
@@ -72,10 +57,10 @@ func TestResetKeepsRemainingCountBudget(t *testing.T) {
 	done := make(chan struct{})
 	go func() { p.runWorker(target, p.baseID, 50*time.Millisecond, time.Second); close(done) }()
 	t.Cleanup(func() { p.Stop(); <-done })
-	waitResetView(t, target, func(v stats.TargetView) bool { return v.Sent == 1 })
+	awaitTarget(t, target, func(v stats.TargetView) bool { return v.Sent == 1 })
 	target.Reset()
 	ch <- Reply{Seq: 1, TTL: 64}
-	waitResetView(t, target, func(v stats.TargetView) bool { return v.Sent == 1 })
+	awaitTarget(t, target, func(v stats.TargetView) bool { return v.Sent == 1 })
 	ch <- Reply{Seq: 2, TTL: 64}
 	select {
 	case <-done:
@@ -85,17 +70,6 @@ func TestResetKeepsRemainingCountBudget(t *testing.T) {
 	v := target.GetView()
 	if v.Sent != 1 || v.Recv != 1 || v.Loss != 0 {
 		t.Fatalf("wrong post-reset count: %+v", v)
-	}
-}
-
-func waitResetView(t *testing.T, target *stats.TargetStats, ready func(stats.TargetView) bool) {
-	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for !ready(target.GetView()) {
-		if time.Now().After(deadline) {
-			t.Fatal("worker did not reach expected statistics")
-		}
-		time.Sleep(time.Millisecond)
 	}
 }
 
@@ -116,14 +90,14 @@ func TestResetRejectsPreviousDuplicateAndLateReply(t *testing.T) {
 			done := make(chan struct{})
 			go func() { p.runWorker(target, p.baseID, time.Hour, 30*time.Millisecond); close(done) }()
 			t.Cleanup(func() { p.Stop(); <-done })
-			waitResetView(t, target, func(v stats.TargetView) bool { return v.Sent == 1 })
+			awaitTarget(t, target, func(v stats.TargetView) bool { return v.Sent == 1 })
 			want := ",DUP,"
 			if late {
-				waitResetView(t, target, func(v stats.TargetView) bool { return v.Loss == 1 })
+				awaitTarget(t, target, func(v stats.TargetView) bool { return v.Loss == 1 })
 				want = ",LateReply,"
 			} else {
 				ch <- Reply{Seq: 1, TTL: 64}
-				waitResetView(t, target, func(v stats.TargetView) bool { return v.Recv == 1 })
+				awaitTarget(t, target, func(v stats.TargetView) bool { return v.Recv == 1 })
 			}
 			target.Reset()
 			ch <- Reply{Seq: 1, TTL: 64}
@@ -147,33 +121,27 @@ func TestResetRejectsPreviousDuplicateAndLateReply(t *testing.T) {
 	}
 }
 
-type resetWriteConn struct {
-	fakePacketConn
-	entered, release chan struct{}
-	err              error
-}
-
-func (c *resetWriteConn) WriteTo(data []byte, _ *ipv4.ControlMessage, _ net.Addr) (int, error) {
-	close(c.entered)
-	<-c.release
-	return len(data), c.err
-}
-
 func TestResetDuringSendDoesNotRecordOldSendOrFailure(t *testing.T) {
 	for _, writeErr := range []error{nil, errors.New("write failed")} {
 		t.Run(fmt.Sprint(writeErr), func(t *testing.T) {
 			target := stats.NewTargetStats("127.0.0.1")
 			p := NewPinger([]*stats.TargetStats{target})
-			conn := &resetWriteConn{entered: make(chan struct{}), release: make(chan struct{}), err: writeErr}
-			p.connV4 = conn
+			entered, release := make(chan struct{}), make(chan struct{})
+			// The write blocks until the test has reset the target, then
+			// completes (successfully or not) as a send that was in flight.
+			p.connV4 = &fakePacketConn{onWrite: func([]byte, net.Addr) error {
+				close(entered)
+				<-release
+				return writeErr
+			}}
 			done := make(chan struct{})
 			go func() {
 				p.sendProbe(target, p.baseID, 1, buildPayload(56), &net.IPAddr{IP: net.IPv4(127, 0, 0, 1)})
 				close(done)
 			}()
-			<-conn.entered
+			<-entered
 			target.Reset()
-			close(conn.release)
+			close(release)
 			<-done
 			if v := target.GetView(); v.Sent != 0 || v.Loss != 0 {
 				t.Fatalf("old send counted after reset: %+v", v)

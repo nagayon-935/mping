@@ -3,9 +3,13 @@ package pinger
 import (
 	"context"
 	"net"
+	"testing"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/stats"
+	"golang.org/x/net/icmp"
+	"golang.org/x/net/ipv4"
+	"golang.org/x/net/ipv6"
 )
 
 // resolveIPAddrBounded applies resolveTimeout and aborts when Stop closes
@@ -42,4 +46,71 @@ func (pc *PortChecker) check(t *stats.TargetStats, spec PortSpec, result *stats.
 
 func (p *Pinger) OpenHopSocket(dest string) (*HopSocket, error) {
 	return p.OpenHopSocketContext(context.Background(), dest)
+}
+
+// resolveTo returns an Options.ResolveIPAddr hook that resolves every host to ip.
+func resolveTo(ip string) func(network, address string) (*net.IPAddr, error) {
+	return func(network, address string) (*net.IPAddr, error) {
+		return &net.IPAddr{IP: net.ParseIP(ip)}, nil
+	}
+}
+
+// listenWith returns an Options.ListenPacket hook that always hands out conn.
+func listenWith(conn net.PacketConn) func(network, address string) (net.PacketConn, error) {
+	return func(network, address string) (net.PacketConn, error) { return conn, nil }
+}
+
+// ipPacketWithEcho returns what an ICMP error message carries back: the
+// original IP header followed by the echo request that triggered the error.
+func ipPacketWithEcho(v6 bool, id, seq int) []byte {
+	var echo icmp.Message
+	hdr := make([]byte, 20)
+	hdr[0], hdr[9] = 0x45, 1 // IPv4, IHL=5, protocol ICMP
+	echo.Type = ipv4.ICMPTypeEcho
+	if v6 {
+		hdr = make([]byte, 40)
+		hdr[0], hdr[6] = 0x60, 58 // IPv6, next header ICMPv6
+		echo.Type = ipv6.ICMPTypeEchoRequest
+	}
+	echo.Body = &icmp.Echo{ID: id, Seq: seq, Data: []byte("x")}
+	inner, err := echo.Marshal(nil)
+	if err != nil {
+		panic(err)
+	}
+	return append(hdr, inner...)
+}
+
+// eventually polls cond until it holds or timeout elapses, failing the test
+// in the latter case. It replaces fixed sleeps that merely hope a goroutine
+// has made progress.
+func eventually(t *testing.T, timeout time.Duration, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("condition not met within %v: %s", timeout, what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// startReceiver runs a receiver loop (runReceiverV4/V6) in the background.
+// The returned stop func closes the pinger and fails the test unless the loop
+// exits promptly; done is closed once the loop has returned.
+func startReceiver(t *testing.T, p *Pinger, run func()) (stop func(), done <-chan struct{}) {
+	t.Helper()
+	d := make(chan struct{})
+	go func() {
+		run()
+		close(d)
+	}()
+	return func() {
+		t.Helper()
+		p.Close()
+		select {
+		case <-d:
+		case <-time.After(time.Second):
+			t.Fatal("receiver did not stop")
+		}
+	}, d
 }

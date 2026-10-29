@@ -27,6 +27,13 @@ func newFakeProber(replies map[int]pinger.HopReply) *fakeProber {
 	return &fakeProber{replies: replies}
 }
 
+// setReplies swaps the reply table, simulating a route change.
+func (f *fakeProber) setReplies(replies map[int]pinger.HopReply) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.replies = replies
+}
+
 func (f *fakeProber) OpenHopSocket(ctx context.Context, dest string) (HopSocket, error) {
 	return &fakeHopSocket{}, nil
 }
@@ -49,40 +56,52 @@ func (f *fakeProber) NextTraceID() int {
 
 func (f *fakeProber) ASNInfoFor(ip string) pinger.ASNInfo { return pinger.ASNInfo{} }
 
+// newTestTarget returns TargetStats for host with its IP already resolved.
+func newTestTarget(host string) *stats.TargetStats {
+	ts := stats.NewTargetStats(host)
+	ts.SetIP(host)
+	return ts
+}
+
+// waitUntil polls cond every 5ms until it holds or timeout elapses, and
+// reports whether it held.
+func waitUntil(timeout time.Duration, cond func() bool) bool {
+	for deadline := time.Now().Add(timeout); ; time.Sleep(5 * time.Millisecond) {
+		if cond() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+	}
+}
+
 // waitForHops blocks until MTRStats has at least n hops or timeout.
 func waitForHops(t *testing.T, ts *stats.TargetStats, n int, timeout time.Duration) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if len(ts.MTR().View()) >= n {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
+	if !waitUntil(timeout, func() bool { return len(ts.MTR().View()) >= n }) {
+		t.Errorf("timed out waiting for %d hops; got %d", n, len(ts.MTR().View()))
 	}
-	t.Errorf("timed out waiting for %d hops; got %d", n, len(ts.MTR().View()))
 }
 
+// firstHopSent returns how many probes the first hop has sent so far.
+func firstHopSent(ts *stats.TargetStats) int {
+	if hops := ts.MTR().View(); len(hops) > 0 {
+		return hops[0].Sent
+	}
+	return 0
+}
+
+// waitForSent blocks until the first hop has sent at least minSent probes or timeout.
 func waitForSent(t *testing.T, ts *stats.TargetStats, minSent int, timeout time.Duration) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		hops := ts.MTR().View()
-		if len(hops) > 0 && hops[0].Sent >= minSent {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
+	if !waitUntil(timeout, func() bool { return firstHopSent(ts) >= minSent }) {
+		t.Errorf("timed out waiting for sent>=%d; got %d", minSent, firstHopSent(ts))
 	}
-	hops := ts.MTR().View()
-	sent := 0
-	if len(hops) > 0 {
-		sent = hops[0].Sent
-	}
-	t.Errorf("timed out waiting for sent>=%d; got %d", minSent, sent)
 }
 
 func TestEngine_CleanPath(t *testing.T) {
-	target := stats.NewTargetStats("8.8.8.8")
-	target.SetIP("8.8.8.8")
+	target := newTestTarget("8.8.8.8")
 
 	prober := newFakeProber(map[int]pinger.HopReply{
 		1: {SrcIP: "10.0.0.1", Responded: true, ReachedDest: false},
@@ -116,44 +135,11 @@ func TestEngine_CleanPath(t *testing.T) {
 	}
 }
 
-func TestEngine_StarHopInMiddle(t *testing.T) {
-	target := stats.NewTargetStats("8.8.8.8")
-	target.SetIP("8.8.8.8")
-
-	prober := newFakeProber(map[int]pinger.HopReply{
-		1: {SrcIP: "10.0.0.1", Responded: true},
-		// hop 2 never responds (stays as *)
-		3: {SrcIP: "8.8.8.8", Responded: true, ReachedDest: true},
-	})
-
-	cfg := Config{
-		ProbeInterval:   20 * time.Millisecond,
-		HopTimeout:      30 * time.Millisecond,
-		RediscoverEvery: 10 * time.Minute,
-		MaxHops:         5,
-	}
-	eng := NewEngine(prober, []*stats.TargetStats{target}, cfg)
-	eng.Start()
-
-	waitForHops(t, target, 3, 500*time.Millisecond)
-	waitForSent(t, target, 3, 500*time.Millisecond)
-	eng.Stop()
-
-	hops := target.MTR().View()
-	if len(hops) < 3 {
-		t.Fatalf("want at least 3 hops, got %d", len(hops))
-	}
-	if hops[1].IP != "" {
-		t.Errorf("hop2 IP: want empty (* hop), got %q", hops[1].IP)
-	}
-	if hops[1].Recv != 0 {
-		t.Errorf("hop2 Recv: want 0, got %d", hops[1].Recv)
-	}
-}
-
+// TestEngine_ProbesUnknownHops verifies that a hop that never responds
+// (a "*" in the middle of the path) stays in the table with no IP, keeps
+// being probed, and accumulates full loss while its neighbors respond.
 func TestEngine_ProbesUnknownHops(t *testing.T) {
-	target := stats.NewTargetStats("8.8.8.8")
-	target.SetIP("8.8.8.8")
+	target := newTestTarget("8.8.8.8")
 
 	prober := newFakeProber(map[int]pinger.HopReply{
 		1: {SrcIP: "10.0.0.1", Responded: true},
@@ -181,6 +167,9 @@ func TestEngine_ProbesUnknownHops(t *testing.T) {
 	}
 	if hops[1].IP != "" {
 		t.Fatalf("hop2 IP: want empty (* hop), got %q", hops[1].IP)
+	}
+	if hops[1].Recv != 0 {
+		t.Errorf("hop2 Recv: want 0, got %d", hops[1].Recv)
 	}
 	if hops[1].Sent == 0 || hops[1].LossPct != 100 {
 		t.Errorf("unknown hop must accumulate attempts and loss: %+v", hops[1])
@@ -229,49 +218,10 @@ func TestDiscover_SendErrorsLeaveProbeableSlots(t *testing.T) {
 	}
 }
 
-func TestEngine_LossAccumulation(t *testing.T) {
-	target := stats.NewTargetStats("1.1.1.1")
-	target.SetIP("1.1.1.1")
-
-	callCount := 0
-	var callMu sync.Mutex
-
-	// hop1 responds alternately
-	origProber := &callCountingProber{
-		calls: &callCount,
-		mu:    &callMu,
-		delegate: newFakeProber(map[int]pinger.HopReply{
-			1: {SrcIP: "192.168.1.1", Responded: true, ReachedDest: true},
-		}),
-	}
-
-	cfg := Config{
-		ProbeInterval:   15 * time.Millisecond,
-		HopTimeout:      30 * time.Millisecond,
-		RediscoverEvery: 10 * time.Minute,
-		MaxHops:         3,
-	}
-	eng := NewEngine(origProber, []*stats.TargetStats{target}, cfg)
-	eng.Start()
-
-	waitForSent(t, target, 5, 500*time.Millisecond)
-	eng.Stop()
-
-	hops := target.MTR().View()
-	if len(hops) == 0 {
-		t.Fatal("no hops after probing")
-	}
-	if hops[0].Sent == 0 {
-		t.Error("sent should be > 0")
-	}
-	if hops[0].LossPct < 0 || hops[0].LossPct > 100 {
-		t.Errorf("LossPct out of range: %v", hops[0].LossPct)
-	}
-}
-
-func TestEngine_CtxCancelStops(t *testing.T) {
-	target := stats.NewTargetStats("1.1.1.1")
-	target.SetIP("1.1.1.1")
+// TestEngine_StopFreezesStats verifies that no further probes are recorded
+// once Stop has returned.
+func TestEngine_StopFreezesStats(t *testing.T) {
+	target := newTestTarget("1.1.1.1")
 
 	prober := newFakeProber(map[int]pinger.HopReply{
 		1: {SrcIP: "10.0.0.1", Responded: true, ReachedDest: true},
@@ -285,27 +235,23 @@ func TestEngine_CtxCancelStops(t *testing.T) {
 	}
 	eng := NewEngine(prober, []*stats.TargetStats{target}, cfg)
 	eng.Start()
-	time.Sleep(50 * time.Millisecond)
+	waitForSent(t, target, 1, 2*time.Second)
 	eng.Stop()
 
-	// After Stop(), stats should be frozen
-	hops1 := target.MTR().View()
-	time.Sleep(30 * time.Millisecond)
-	hops2 := target.MTR().View()
-
-	if len(hops1) == 0 {
-		t.Skip("engine stopped before first probe (slow CI)")
+	sentAtStop := firstHopSent(target)
+	if sentAtStop == 0 {
+		t.Fatal("no probe was recorded before Stop")
 	}
-	if hops1[0].Sent != hops2[0].Sent {
-		t.Errorf("engine still running after Stop: sent changed from %d to %d", hops1[0].Sent, hops2[0].Sent)
+	// Several probe intervals: a still-running engine would send more.
+	time.Sleep(30 * time.Millisecond)
+	if sentNow := firstHopSent(target); sentNow != sentAtStop {
+		t.Errorf("engine still running after Stop: sent changed from %d to %d", sentAtStop, sentNow)
 	}
 }
 
 func TestEngine_MultipleTargets(t *testing.T) {
-	t1 := stats.NewTargetStats("8.8.8.8")
-	t1.SetIP("8.8.8.8")
-	t2 := stats.NewTargetStats("1.1.1.1")
-	t2.SetIP("1.1.1.1")
+	t1 := newTestTarget("8.8.8.8")
+	t2 := newTestTarget("1.1.1.1")
 
 	prober := newFakeProber(map[int]pinger.HopReply{
 		1: {SrcIP: "10.0.0.1", Responded: true, ReachedDest: true},
@@ -332,59 +278,10 @@ func TestEngine_MultipleTargets(t *testing.T) {
 	}
 }
 
-// callCountingProber wraps a fakeProber for counting.
-type callCountingProber struct {
-	calls    *int
-	mu       *sync.Mutex
-	delegate *fakeProber
-}
-
-func (c *callCountingProber) OpenHopSocket(ctx context.Context, dest string) (HopSocket, error) {
-	return c.delegate.OpenHopSocket(ctx, dest)
-}
-func (c *callCountingProber) ProbeHop(ctx context.Context, sock HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error) {
-	c.mu.Lock()
-	*c.calls++
-	c.mu.Unlock()
-	return c.delegate.ProbeHop(ctx, sock, dest, ttl, traceID, timeout)
-}
-func (c *callCountingProber) NextTraceID() int                    { return c.delegate.NextTraceID() }
-func (c *callCountingProber) ASNInfoFor(ip string) pinger.ASNInfo { return pinger.ASNInfo{} }
-
-// switchingProber returns different hop IPs on the Nth call group to simulate route change.
-type switchingProber struct {
-	mu         sync.Mutex
-	callGroups int // incremented each time setReplies is called
-	inner      *fakeProber
-}
-
-func newSwitchingProber(initial map[int]pinger.HopReply) *switchingProber {
-	return &switchingProber{inner: newFakeProber(initial)}
-}
-
-func (s *switchingProber) setReplies(r map[int]pinger.HopReply) {
-	s.mu.Lock()
-	s.inner.mu.Lock()
-	s.inner.replies = r
-	s.inner.mu.Unlock()
-	s.callGroups++
-	s.mu.Unlock()
-}
-
-func (s *switchingProber) OpenHopSocket(ctx context.Context, dest string) (HopSocket, error) {
-	return s.inner.OpenHopSocket(ctx, dest)
-}
-func (s *switchingProber) ProbeHop(ctx context.Context, sock HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error) {
-	return s.inner.ProbeHop(ctx, sock, dest, ttl, traceID, timeout)
-}
-func (s *switchingProber) NextTraceID() int                    { return s.inner.NextTraceID() }
-func (s *switchingProber) ASNInfoFor(ip string) pinger.ASNInfo { return pinger.ASNInfo{} }
-
 func TestEngine_OnFlap_CalledOnRouteChange(t *testing.T) {
-	target := stats.NewTargetStats("8.8.8.8")
-	target.SetIP("8.8.8.8")
+	target := newTestTarget("8.8.8.8")
 
-	prober := newSwitchingProber(map[int]pinger.HopReply{
+	prober := newFakeProber(map[int]pinger.HopReply{
 		1: {SrcIP: "10.0.0.1", Responded: true, ReachedDest: true},
 	})
 
@@ -442,10 +339,9 @@ func TestEngine_OnFlap_CalledOnRouteChange(t *testing.T) {
 // rediscovery finds a shorter path than before, the trailing hops from the
 // old (longer) path are dropped rather than left frozen in MTRStats forever.
 func TestEngine_RediscoverShortensPath_DropsStaleHops(t *testing.T) {
-	target := stats.NewTargetStats("8.8.8.8")
-	target.SetIP("8.8.8.8")
+	target := newTestTarget("8.8.8.8")
 
-	prober := newSwitchingProber(map[int]pinger.HopReply{
+	prober := newFakeProber(map[int]pinger.HopReply{
 		1: {SrcIP: "10.0.0.1", Responded: true, ReachedDest: false},
 		2: {SrcIP: "8.8.8.8", Responded: true, ReachedDest: true},
 	})
@@ -468,10 +364,7 @@ func TestEngine_RediscoverShortensPath_DropsStaleHops(t *testing.T) {
 	})
 
 	// Wait for a rediscover cycle to pick up the shorter path.
-	deadline := time.Now().Add(500 * time.Millisecond)
-	for time.Now().Before(deadline) && len(target.MTR().View()) != 1 {
-		time.Sleep(5 * time.Millisecond)
-	}
+	waitUntil(500*time.Millisecond, func() bool { return len(target.MTR().View()) == 1 })
 
 	eng.Stop()
 
@@ -485,19 +378,22 @@ func TestEngine_RediscoverShortensPath_DropsStaleHops(t *testing.T) {
 }
 
 func TestEngine_OnFlap_NotCalledOnSameRoute(t *testing.T) {
-	target := stats.NewTargetStats("1.1.1.1")
-	target.SetIP("1.1.1.1")
+	target := newTestTarget("1.1.1.1")
 
-	prober := newFakeProber(map[int]pinger.HopReply{
+	// Steady probe ticks are off, so every ProbeHop call comes from a
+	// discovery round (MaxHops calls each) and the call count says how many
+	// rediscoveries have run.
+	const maxHops = 3
+	prober := &trackingProber{fakeProber: newFakeProber(map[int]pinger.HopReply{
 		1: {SrcIP: "10.0.0.1", Responded: true, ReachedDest: true},
-	})
+	})}
 
 	flapCalled := false
 	cfg := Config{
-		ProbeInterval:   10 * time.Millisecond,
+		ProbeInterval:   time.Hour,
 		HopTimeout:      20 * time.Millisecond,
 		RediscoverEvery: 30 * time.Millisecond,
-		MaxHops:         3,
+		MaxHops:         maxHops,
 		OnFlap: func(host, desc string) {
 			flapCalled = true
 		},
@@ -505,8 +401,11 @@ func TestEngine_OnFlap_NotCalledOnSameRoute(t *testing.T) {
 	eng := NewEngine(prober, []*stats.TargetStats{target}, cfg)
 	eng.Start()
 
-	// Wait for at least two re-discovers to happen
-	time.Sleep(120 * time.Millisecond)
+	// Initial discovery plus three rediscoveries: at least two of them have
+	// completed and compared their route with the previous one.
+	if !waitUntil(2*time.Second, func() bool { return prober.calls.Load() >= 4*maxHops }) {
+		t.Fatalf("only %d ProbeHop calls; rediscovery is not running", prober.calls.Load())
+	}
 	eng.Stop()
 
 	if flapCalled {
