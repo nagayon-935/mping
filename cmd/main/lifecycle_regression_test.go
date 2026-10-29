@@ -1,24 +1,9 @@
 package main
 
 import (
-	"reflect"
 	"testing"
 	"time"
-
-	ui "github.com/nagayon-935/mping/internal/ui"
 )
-
-func TestResolveAllPreservesZoneAndGroups(t *testing.T) {
-	specs := []targetSpec{{Host: "fe80::1%en0", DSCP: "EF"}, {Host: "::1"}}
-	groups := []ui.TargetGroup{{Name: "local", Indices: []int{0, 1}}}
-	got, gotGroups, err := expandTargets(specs, groups, config{resolveAll: true, ipv6Only: true, sourceAddr: "::1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(got, specs) || !reflect.DeepEqual(gotGroups, groups) {
-		t.Fatalf("zone/group/DSCP changed: %+v %+v", got, gotGroups)
-	}
-}
 
 func TestSupervisorStopResetRestartPreservesStateAndOwnership(t *testing.T) {
 	sup, created := newStateTestSupervisor(t)

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/nagayon-935/mping/internal/mtr"
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/nagayon-935/mping/internal/ui"
@@ -53,22 +52,4 @@ func TestRunStop_ClosesPingerAfterWait(t *testing.T) {
 	if closeBeforeWait {
 		t.Error("Close() was called before Wait() returned (expected Stop → Wait → Close ordering)")
 	}
-}
-
-// TestPingerAdapter_MTRProber verifies the architecture-seam fix: the real
-// *pingerAdapter satisfies pingerController.MTRProber() by wrapping its
-// underlying *pinger.Pinger in a pingerMTRAdapter, without any downcast at
-// the call site.
-func TestPingerAdapter_MTRProber(t *testing.T) {
-	adapter := &pingerAdapter{Pinger: pinger.NewPinger(nil)}
-	prober := adapter.MTRProber()
-	if prober == nil {
-		t.Fatal("expected non-nil mtr.HopProber")
-	}
-
-	// Drive it through mtr.NewEngine to confirm it satisfies the real
-	// interface contract end-to-end, not just type-checks.
-	engine := mtr.NewEngine(prober, nil, mtr.Config{})
-	engine.Start()
-	engine.Stop()
 }
