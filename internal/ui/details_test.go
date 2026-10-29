@@ -66,100 +66,48 @@ func TestDetailsOnlyShowsSelectedTargetEvents(t *testing.T) {
 }
 
 func TestDetailsSimulationSelectsDuplicateAndReturnsAfterDeletion(t *testing.T) {
-	previous := newApplication
-	t.Cleanup(func() { newApplication = previous })
-	frames := make(chan string, 32)
-	screens := make(chan tcell.SimulationScreen, 1)
-	newApplication = func() *tview.Application {
-		app := tview.NewApplication()
-		screen := tcell.NewSimulationScreen("UTF-8")
-		app.SetScreen(screen)
-		screen.SetSize(140, 45)
-		app.SetAfterDrawFunc(func(screen tcell.Screen) {
-			var b strings.Builder
-			w, h := screen.Size()
-			for y := range h {
-				b.WriteString(screenVisibleRow(screen, y, w))
-				b.WriteByte('\n')
-			}
-			select {
-			case frames <- b.String():
-			default:
-			}
-		})
-		screens <- screen
-		return app
-	}
 	a, b := stats.NewTargetStats("same"), stats.NewTargetStats("same")
 	b.RecordEvent("ping", "Selected B event")
 	type set struct{ targets []*stats.TargetStats }
 	var source atomic.Pointer[set]
 	source.Store(&set{[]*stats.TargetStats{a, b}})
 	deleted := make(chan uint64, 1)
-	done := make(chan error, 1)
-	go func() {
-		done <- Run(RunOptions{Targets: []*stats.TargetStats{a, b}, Interval: 50 * time.Millisecond, Timeout: time.Second, PacketSize: 56, TargetSource: func() TargetSet { return TargetSet{Targets: source.Load().targets} }, OnDeleteTarget: func(id uint64) error { deleted <- id; source.Store(&set{[]*stats.TargetStats{a}}); return nil }})
-	}()
-	screen := <-screens
-	t.Cleanup(func() {
-		screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
-		screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-	})
-	wait := func(marker string) {
-		t.Helper()
-		timeout := time.NewTimer(3 * time.Second)
-		defer timeout.Stop()
-		for {
-			select {
-			case frame := <-frames:
-				if strings.Contains(frame, marker) {
-					return
-				}
-			case <-timeout.C:
-				t.Fatalf("frame missing %q", marker)
-			}
-		}
-	}
-	wait("same")
-	screen.InjectKey(tcell.KeyDown, 0, tcell.ModNone)
-	screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
-	wait(fmt.Sprintf("Target #%d", b.ID))
-	screen.InjectKey(tcell.KeyPgDn, 0, tcell.ModNone)
-	wait("Selected B event")
-	screen.InjectKey(tcell.KeyRune, 'd', tcell.ModNone)
-	wait("このホストを削除しますか？")
+	h := startTUI(t, RunOptions{
+		Targets:      []*stats.TargetStats{a, b},
+		TargetSource: func() TargetSet { return TargetSet{Targets: source.Load().targets} },
+		OnDeleteTarget: func(id uint64) error {
+			deleted <- id
+			source.Store(&set{[]*stats.TargetStats{a}})
+			return nil
+		},
+	}, 140, 45)
+	h.wait("same")
+	h.key(tcell.KeyDown)
+	h.key(tcell.KeyEnter)
+	h.wait(fmt.Sprintf("Target #%d", b.ID))
+	h.key(tcell.KeyPgDn)
+	h.wait("Selected B event")
+	h.press('d')
+	h.wait("このホストを削除しますか？")
 	// Repeated d and Enter on the default Cancel must not delete the target.
-	screen.InjectKey(tcell.KeyRune, 'd', tcell.ModNone)
-	screen.InjectKey(tcell.KeyRune, 'd', tcell.ModNone)
-	screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
-	wait("Selected B event")
+	h.press('d')
+	h.press('d')
+	h.key(tcell.KeyEnter)
+	h.wait("Selected B event")
 	select {
 	case <-deleted:
 		t.Fatal("default cancellation deleted the target")
 	default:
 	}
-	screen.InjectKey(tcell.KeyRune, 'd', tcell.ModNone)
-	wait("このホストを削除しますか？")
-	screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
-	screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
-	select {
-	case id := <-deleted:
-		if id != b.ID {
-			t.Fatal("deleted wrong duplicate")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("delete callback missing")
+	h.press('d')
+	h.wait("このホストを削除しますか？")
+	h.key(tcell.KeyTab)
+	h.key(tcell.KeyEnter)
+	if id := recvWithin(t, deleted, "the delete callback"); id != b.ID {
+		t.Fatal("deleted wrong duplicate")
 	}
-	wait("Ping Monitor")
-	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("UI did not exit")
-	}
+	h.wait("Ping Monitor")
+	h.quit()
 }
 
 func TestDetailsOptionalSectionsFollowOptionsEvenWithCachedData(t *testing.T) {

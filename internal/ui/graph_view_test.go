@@ -258,25 +258,13 @@ func TestGraphViewDraw_HeaderText(t *testing.T) {
 
 	g.Draw(screen)
 
-	row := screenRowString(screen, 0, 80)
+	row := screenVisibleRow(screen, 0, 80)
 	if !strings.Contains(row, "example.com") {
 		t.Fatalf("header missing hostname: %q", row)
 	}
 	if !strings.Contains(row, "10ms") {
 		t.Fatalf("header missing RTT: %q", row)
 	}
-}
-
-func screenRowString(screen tcell.Screen, y, width int) string {
-	var b strings.Builder
-	for x := range width {
-		r, _, _, _ := screen.GetContent(x, y)
-		if r == 0 {
-			r = ' '
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
 }
 
 // ---- InputHandler: PgUp and PgDn ----
