@@ -108,50 +108,50 @@ func TestSessionPrivateWakeDeliversOnlyOnInputLoop(t *testing.T) {
 	}
 }
 
+// TestSessionCallbackLoopDiscardsTaskPickedAfterStop covers runCallbacks
+// receiving a queued task although done is already closed. select chooses
+// randomly between two ready cases, so a stopped session only avoids running
+// queued work because of the stopped() check after the receive. Retrying
+// until the task case is chosen (it drains the queue) makes that branch run
+// deterministically: each attempt picks it with probability 1/2.
+func TestSessionCallbackLoopDiscardsTaskPickedAfterStop(t *testing.T) {
+	for range 1000 {
+		s := &uiSession{done: make(chan struct{}), tasks: make(chan func(), 1)}
+		s.tasks <- func() { t.Error("queued task ran after stop") }
+		s.Stop()
+		s.runCallbacks()
+		if len(s.tasks) == 0 {
+			return
+		}
+	}
+	t.Fatal("runCallbacks never received the queued task in 1000 attempts")
+}
+
 func TestRunJoinsHostCallbackErrorAfterAppStop(t *testing.T) {
 	for _, key := range []rune{'a', 'd'} {
 		t.Run(string(key), func(t *testing.T) {
-			orig := newApplication
-			t.Cleanup(func() { newApplication = orig })
-			ready, entered, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
-			var once sync.Once
-			var app *tview.Application
-			var screen tcell.SimulationScreen
-			newApplication = func() *tview.Application {
-				app, screen = newSimApp(t)
-				app.SetAfterDrawFunc(func(tcell.Screen) { once.Do(func() { close(ready) }) })
-				return app
-			}
+			entered, release := make(chan struct{}), make(chan struct{})
 			callback := func(string) error { close(entered); <-release; return errors.New("late error") }
-			finished := make(chan error, 1)
-			go func() {
-				finished <- Run(RunOptions{
-					Targets: []*stats.TargetStats{stats.NewTargetStats("example.com")}, Interval: time.Second,
-					OnAddHost: callback, OnDeleteHost: callback,
-				})
-			}()
-			awaitSessionSignal(t, ready)
-			screen.InjectKey(tcell.KeyRune, key, tcell.ModNone)
-			for _, r := range "1.2.3.4" {
-				screen.InjectKey(tcell.KeyRune, r, tcell.ModNone)
-			}
-			screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
+			h := startTUI(t, RunOptions{
+				Targets:      []*stats.TargetStats{stats.NewTargetStats("example.com")},
+				Interval:     time.Second,
+				OnAddHost:    callback,
+				OnDeleteHost: callback,
+			}, 120, 40)
+			h.press(key)
+			h.typeText("1.2.3.4")
+			h.key(tcell.KeyEnter)
 			awaitSessionSignal(t, entered)
-			app.Stop()
+			h.app.Stop()
 			select {
-			case <-finished:
+			case <-h.done:
+				h.exited = true
 				t.Error("Run returned before joining its callback")
 			default:
 			}
 			close(release)
-			select {
-			case err := <-finished:
-				if err != nil {
-					t.Fatal(err)
-				}
-			case <-time.After(time.Second):
-				t.Fatal("late callback error blocked after app.Stop")
-			}
+			// A late callback error must not block Run once the app is stopped.
+			h.waitExit()
 		})
 	}
 }

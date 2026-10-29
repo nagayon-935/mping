@@ -3,6 +3,10 @@ package ui
 import (
 	"testing"
 	"time"
+
+	"github.com/rivo/tview"
+
+	"github.com/nagayon-935/mping/internal/stats"
 )
 
 // TestRefreshTickInterval pins the refresh loop's tick period. The gate in
@@ -63,4 +67,37 @@ func TestShouldRedraw(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestStartRefreshLoop_RedrawsOnlyWhenStatsChange runs the real refresh loop
+// against a session nobody drains and counts the table updates it posts: one
+// for the first tick, none while nothing changes (well inside redrawFloor),
+// and another once a statistic changes. shouldRedraw alone is covered by
+// TestShouldRedraw; this pins that the loop honors it.
+func TestStartRefreshLoop_RedrawsOnlyWhenStatsChange(t *testing.T) {
+	target := stats.NewTargetStats("example.com")
+	// Bump the global generation so the first tick differs from the loop's
+	// initial lastGen of 0 whatever ran before.
+	target.IncSent()
+	target.OnSuccess(10*time.Millisecond, 64)
+	tr := newTestTableRenderer([]*stats.TargetStats{target}, 200)
+	session := newUISession()
+	t.Cleanup(func() { session.Stop(); session.Wait() })
+
+	startRefreshLoop(tview.NewApplication(), tr, tview.NewTextView(), 0, nil, nil, nil, tr.vs, session)
+
+	pollUntil(t, "the first redraw", func() bool { return len(session.updates) == 1 })
+	first := time.Now()
+
+	// Nothing changes for two and a half ticks (refreshTickInterval(0) is
+	// fastUIRefresh): the skipped ticks must not post another update. The
+	// elapsed-time guard only tolerates a scheduler stall long enough for
+	// redrawFloor to legitimately force a redraw.
+	time.Sleep(2*fastUIRefresh + fastUIRefresh/2)
+	if n := len(session.updates); n != 1 && time.Since(first) < redrawFloor/2 {
+		t.Fatalf("%d updates posted with no stats change, want 1", n)
+	}
+
+	target.IncSent()
+	pollUntil(t, "a redraw after a stats change", func() bool { return len(session.updates) >= 2 })
 }
