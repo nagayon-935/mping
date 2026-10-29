@@ -51,44 +51,44 @@ func NewHTTPChecker(urls []string, interval, timeout time.Duration, bind BindCon
 }
 
 func NewHTTPCheckerWithOptions(urls []string, interval, timeout time.Duration, bind BindConfig, options HTTPOptions) *HTTPChecker {
-	options = options.Clone()
 	results := make([]*stats.HTTPCheckResult, len(urls))
 	for i, u := range urls {
 		results[i] = stats.NewHTTPCheckResult(u)
 	}
-	client := &http.Client{
-		Timeout: timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if !options.FollowRedirects || len(via) >= maxRedirects {
-				return http.ErrUseLastResponse
-			}
-			// Custom API-key headers are not covered by net/http's built-in
-			// Authorization/Cookie filtering. Keep configured headers on the
-			// original origin only, including across HTTPS -> HTTP redirects.
-			if len(via) > 0 && (req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host) {
-				for name := range options.Headers {
-					req.Header.Del(name)
-				}
-			}
-			return nil
-		},
+	ctx, cancel := context.WithCancel(context.Background())
+	hc := &HTTPChecker{
+		results:  results,
+		interval: interval,
+		bind:     bind,
+		ctx:      ctx,
+		cancel:   cancel,
+		options:  options.Clone(),
 	}
+	hc.client = &http.Client{Timeout: timeout, CheckRedirect: hc.checkRedirect}
 	// Assign only when a bound transport is actually needed: leaving Transport
 	// nil keeps http.DefaultTransport, whereas assigning a nil *http.Transport
 	// would store a non-nil interface holding a nil pointer.
 	if tr := newBoundTransport(timeout, bind); tr != nil {
-		client.Transport = tr
+		hc.client.Transport = tr
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	return &HTTPChecker{
-		results:  results,
-		interval: interval,
-		bind:     bind,
-		client:   client,
-		ctx:      ctx,
-		cancel:   cancel,
-		options:  options,
+	return hc
+}
+
+// checkRedirect is the client's redirect policy. It reads hc.options, the
+// checker's own copy, so it always agrees with the headers check sends.
+func (hc *HTTPChecker) checkRedirect(req *http.Request, via []*http.Request) error {
+	if !hc.options.FollowRedirects || len(via) >= maxRedirects {
+		return http.ErrUseLastResponse
 	}
+	// Custom API-key headers are not covered by net/http's built-in
+	// Authorization/Cookie filtering. Keep configured headers on the
+	// original origin only, including across HTTPS -> HTTP redirects.
+	if len(via) > 0 && (req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host) {
+		for name := range hc.options.Headers {
+			req.Header.Del(name)
+		}
+	}
+	return nil
 }
 
 // BindConfig returns the source/interface binding the checks are dialling
