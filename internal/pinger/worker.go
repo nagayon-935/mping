@@ -17,19 +17,17 @@ import (
 func (p *Pinger) dscpFor(t *stats.TargetStats) (int, bool) {
 	p.mapMu.RLock()
 	defer p.mapMu.RUnlock()
-	if p.TargetDSCP == nil {
-		return 0, false
-	}
-	v, ok := p.TargetDSCP[t]
+	v, ok := p.TargetDSCP[t] // a nil map yields (0, false)
 	return v, ok
 }
 
 // getWriteFunc returns the appropriate ICMP message type and write function
-// for the given destination address. dscp, when ok, is attached as an
-// explicit per-packet ipv4.ControlMessage.TOS / ipv6.ControlMessage.
-// TrafficClass on every WriteTo the returned func makes — overriding, for
-// this target only, the socket-wide default Start() set via SetTOS/
-// SetTrafficClass (or the OS default when that wasn't set either).
+// for the given destination address. For IPv6, dscp (when ok) is attached as
+// an explicit per-packet ipv6.ControlMessage.TrafficClass on every WriteTo
+// the returned func makes — overriding, for this target only, the
+// socket-wide default Start() set via SetTrafficClass (or the OS default
+// when that wasn't set either). IPv4 has no per-packet equivalent, so dscp
+// is ignored there (see below).
 func (p *Pinger) getWriteFunc(dstAddr *net.IPAddr, dscp int, ok bool) (icmp.Type, func([]byte, net.Addr) (int, error), string) {
 	isV4 := dstAddr.IP.To4() != nil
 	if isV4 {
@@ -68,7 +66,7 @@ func (p *Pinger) sendProbeWithStats(t *stats.TargetStats, probe stats.Probe, id,
 	// start is captured before the payload is marshaled (rather than right
 	// before the write, as before) because embedSendTimestamp needs it
 	// embedded in `payload` first. This is the same instant used for both
-	// the embedded timestamp and the pendingProbe fallback in runWorker, so
+	// the embedded timestamp and the pendingProbe fallback in runTargetWorker, so
 	// the two stay consistent with each other.
 	start := time.Now()
 	embedSendTimestamp(payload, start)
@@ -124,7 +122,7 @@ const (
 
 // recentEntry is one record in recentSeqHistory: how wireSeq was resolved,
 // its logical seq (for CSV logging, matching pendingProbe.logicalSeq), and
-// the original send time (for the same RTT fallback runWorker's normal
+// the original send time (for the same RTT fallback runTargetWorker's normal
 // success path uses when no payload-embedded timestamp is available).
 type recentEntry struct {
 	wireSeq    int
@@ -135,14 +133,14 @@ type recentEntry struct {
 }
 
 // recentSeqHistory is a small, size-bounded FIFO cache mapping a
-// just-resolved wire seq to how it was resolved. runWorker consults it only
+// just-resolved wire seq to how it was resolved. runTargetWorker consults it only
 // when a reply doesn't match anything in `unacked`, to tell a duplicate or a
 // late arrival apart from a genuinely unrecognized/bogus seq (which stays
 // silently discarded, exactly as before this feature existed).
 //
 // Capacity, not time, bounds it (see recentSeqHistoryCap's doc for why a
 // bounded size rather than a time window is what keeps this safe across the
-// 16-bit wire seq wraparound). It is owned exclusively by runWorker's own
+// 16-bit wire seq wraparound). It is owned exclusively by runTargetWorker's own
 // goroutine, exactly like `unacked`, so it needs no mutex.
 type recentSeqHistory struct {
 	order *list.List            // front = oldest, back = newest
@@ -192,7 +190,7 @@ func (h *recentSeqHistory) lookup(wireSeq int) (recentEntry, bool) {
 }
 
 // nextExpiry returns the earliest deadline among unacked's entries, and
-// whether unacked is non-empty. Because runWorker only ever inserts entries
+// whether unacked is non-empty. Because runTargetWorker only ever inserts entries
 // with monotonically increasing start times and a single, constant timeout,
 // the earliest deadline is a plain O(n) scan; n is bounded by the number of
 // probes currently in flight (interval/timeout ratio), which stays small in
@@ -209,26 +207,50 @@ func nextExpiry(unacked map[int]pendingProbe, timeout time.Duration) (time.Time,
 	return earliest, found
 }
 
-// rearmSweepTimer stops/drains sweepTimer and reschedules it for the
-// earliest still-outstanding deadline in unacked, or leaves it stopped when
-// unacked is empty. Only ever called from runWorker's own goroutine, so no
-// synchronization is needed around the Stop/drain/Reset sequence.
+// rearmSweepTimer stops sweepTimer and reschedules it for the earliest
+// still-outstanding deadline in unacked, or leaves it stopped when unacked is
+// empty. Only ever called from runTargetWorker's own goroutine, so no
+// synchronization is needed around the Stop/Reset sequence. Timer channels
+// are synchronous (Go 1.23+, per go.mod), so Stop/Reset never leave a stale
+// tick behind and no manual drain is needed.
 func rearmSweepTimer(sweepTimer *time.Timer, unacked map[int]pendingProbe, timeout time.Duration) {
-	if !sweepTimer.Stop() {
-		select {
-		case <-sweepTimer.C:
-		default:
-		}
-	}
+	sweepTimer.Stop()
 	if d, ok := nextExpiry(unacked, timeout); ok {
-		wait := time.Until(d)
-		if wait < 0 {
-			wait = 0
-		}
+		wait := max(time.Until(d), 0)
 		sweepTimer.Reset(wait)
 	}
 }
 
+// runTargetWorker drives one target's probe traffic with a single select loop
+// that decouples sending from waiting on replies (see Apple ping.c's
+// select()-based main loop, which never blocks sending on a reply):
+//
+//   - sendTimer fires immediately for the first probe (the first send is not
+//     gated on a tick), then rearms itself for `interval` after every
+//     subsequent fire. Later sends are never gated on a prior probe's reply,
+//     so a target that never answers is still probed once per `interval`,
+//     not once per `timeout`.
+//   - ch delivers replies from the receiver goroutine; a reply is matched
+//     against `unacked` by its (16-bit-masked) seq and, if found, recorded
+//     as a success or ICMP error and removed. A reply with no matching
+//     entry — a duplicate of an already-resolved seq, or one that arrived
+//     after its entry was already swept as a timeout — is counted as a
+//     duplicate or late reply via recentSeqHistory; any other non-matching
+//     reply is silently discarded.
+//   - sweepTimer fires at the earliest deadline among `unacked` and
+//     records every entry that has aged past `timeout` as a loss.
+//   - dnsTicker re-resolves the target every ResolveInterval.
+//   - p.done ends the loop immediately, matching Stop()/Close().
+//
+// `unacked` is owned exclusively by this goroutine, so it needs no mutex.
+//
+// Count means "stop after sending Count probes", but since probes can be in
+// flight concurrently, reaching Count does not imply the most recent probe
+// (or any earlier one) has already been resolved: once the Count-th probe
+// is sent, the loop stops sending but keeps servicing replies/sweeps —
+// draining `unacked` — until every outstanding probe has been resolved,
+// then returns. This is the same "wait out the stragglers before reporting
+// the final tally" idea as ping.c's almost_done.
 func (p *Pinger) runTargetWorker(t *stats.TargetStats, id int, interval, timeout time.Duration, ctx context.Context) {
 	dstAddr := p.resolveTargetContext(ctx, t)
 
@@ -251,9 +273,7 @@ func (p *Pinger) runTargetWorker(t *stats.TargetStats, id int, interval, timeout
 	// sweepTimer is created stopped: it's only armed once the first probe
 	// is sent (rearmSweepTimer no-ops while unacked is empty).
 	sweepTimer := time.NewTimer(timeout)
-	if !sweepTimer.Stop() {
-		<-sweepTimer.C
-	}
+	sweepTimer.Stop()
 	defer sweepTimer.Stop()
 
 	p.mapMu.RLock()
@@ -408,9 +428,7 @@ func (p *Pinger) settleReply(t *stats.TargetStats, reply Reply, unacked map[int]
 	}
 	// A reply matching neither `unacked` nor recent history is for a
 	// seq this worker never resolved (or resolved so long ago that
-	// recentSeqHistoryCap already evicted it): discard it silently,
-	// matching the prior waitForReply's behavior for any
-	// non-matching reply.
+	// recentSeqHistoryCap already evicted it): discard it silently.
 	return false
 }
 

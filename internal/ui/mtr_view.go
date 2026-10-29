@@ -44,22 +44,21 @@ func mtrRTTColorTag(rtt time.Duration) string {
 	return "[green]"
 }
 
+// mtrFixedW is the width taken by every MTR column but Host, separators
+// included, in the compact or full layout.
+func mtrFixedW(compact bool) int {
+	if compact {
+		// Hop + Loss% + Snt + Last + Avg + 6 separators
+		return mtrHopColW + mtrLossColW + mtrSntColW + mtrLatColW*2 + 6
+	}
+	// Hop + Loss% + Snt + Recv + Last + Avg + Min + Max + Jitter + 10 separators
+	return mtrHopColW + mtrLossColW + mtrSntColW + mtrRecvColW + mtrLatColW*5 + 10
+}
+
 // mtrHostColW computes the Host column width for the MTR table given the
 // total available width and whether compact mode is active.
 func mtrHostColW(availW int, compact bool) int {
-	var fixedW int
-	if compact {
-		// Hop + Loss% + Snt + Last + Avg + 6 separators
-		fixedW = mtrHopColW + mtrLossColW + mtrSntColW + mtrLatColW*2 + 6
-	} else {
-		// Hop + Loss% + Snt + Recv + Last + Avg + Min + Max + Jitter + 10 separators
-		fixedW = mtrHopColW + mtrLossColW + mtrSntColW + mtrRecvColW + mtrLatColW*5 + 10
-	}
-	w := availW - fixedW
-	if w < minMTRHostW {
-		w = minMTRHostW
-	}
-	return w
+	return max(availW-mtrFixedW(compact), minMTRHostW)
 }
 
 // renderMTRTable builds the MTR monitor pane string.
@@ -68,8 +67,7 @@ func mtrHostColW(availW int, compact bool) int {
 func renderMTRTable(targets []*stats.TargetStats, availW int, srcIPv4, srcIPv6 string) string {
 	// Compact mode: drop Recv/Min/Max/Jitter columns when screen is narrow.
 	// Threshold: minimum width to fit all columns with minMTRHostW host column.
-	fullFixed := mtrHopColW + mtrLossColW + mtrSntColW + mtrRecvColW + mtrLatColW*5 + minMTRHostW + 10
-	compact := availW < fullFixed
+	compact := availW < mtrFixedW(false)+minMTRHostW
 
 	hostW := mtrHostColW(availW, compact)
 
@@ -104,50 +102,29 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, 
 
 	// Compact: Hop | Host | Loss% | Snt | Last | Avg
 	// Full:    Hop | Host | Loss% | Snt | Recv | Last | Avg | Min | Max | Jitter
-	type mtrColumn struct {
-		boxColumn
-		cell func(stats.HopView) boxCell
-		full bool // shown only in the full layout
-	}
 	rtt := func(get func(stats.HopView) time.Duration) func(stats.HopView) boxCell {
-		return func(h stats.HopView) boxCell { return boxCell{text: formatRTT(get(h)), tag: mtrRTTColorTag(get(h))} }
+		return rttCell(get, formatRTT)
 	}
-	plain := func(text func(stats.HopView) string) func(stats.HopView) boxCell {
-		return func(h stats.HopView) boxCell { return boxCell{text: text(h)} }
-	}
-	all := []mtrColumn{
-		{boxColumn{header: "Hop", width: mtrHopColW}, plain(func(h stats.HopView) string { return fmt.Sprintf("%3d.", h.TTL) }), false},
-		{boxColumn{header: "Host", width: hostW}, plain(mtrIPStr), false},
+	all := []monitorColumn[stats.HopView]{
+		{boxColumn{header: "Hop", width: mtrHopColW}, plainCell(func(h stats.HopView) string { return fmt.Sprintf("%3d.", h.TTL) }), false},
+		{boxColumn{header: "Host", width: hostW}, plainCell(mtrIPStr), false},
 		{boxColumn{header: "Loss%", width: mtrLossColW}, func(h stats.HopView) boxCell {
 			return boxCell{text: fmt.Sprintf("%.1f%%", h.LossPct), tag: mtrLossColorTag(h.LossPct)}
 		}, false},
-		{boxColumn{header: "Snt", width: mtrSntColW}, plain(func(h stats.HopView) string { return fmt.Sprintf("%d", h.Sent) }), false},
-		{boxColumn{header: "Recv", width: mtrRecvColW}, plain(func(h stats.HopView) string { return fmt.Sprintf("%d", h.Recv) }), true},
+		{boxColumn{header: "Snt", width: mtrSntColW}, plainCell(func(h stats.HopView) string { return fmt.Sprintf("%d", h.Sent) }), false},
+		{boxColumn{header: "Recv", width: mtrRecvColW}, plainCell(func(h stats.HopView) string { return fmt.Sprintf("%d", h.Recv) }), true},
 		{boxColumn{header: "Last", width: mtrLatColW}, rtt(func(h stats.HopView) time.Duration { return h.LastRTT }), false},
 		{boxColumn{header: "Avg", width: mtrLatColW}, rtt(func(h stats.HopView) time.Duration { return h.AvgRTT }), false},
 		{boxColumn{header: "Min", width: mtrLatColW}, rtt(func(h stats.HopView) time.Duration { return h.MinRTT }), true},
 		{boxColumn{header: "Max", width: mtrLatColW}, rtt(func(h stats.HopView) time.Duration { return h.MaxRTT }), true},
 		{boxColumn{header: "Jitter", width: mtrLatColW}, rtt(func(h stats.HopView) time.Duration { return h.Jitter }), true},
 	}
-	var cols []mtrColumn
-	for _, c := range all {
-		if !c.full || !compact {
-			cols = append(cols, c)
-		}
-	}
-	boxCols := make([]boxColumn, len(cols))
-	for i, c := range cols {
-		boxCols[i] = c.boxColumn
-	}
+	cols, boxCols := layoutColumns(all, compact)
 
 	// One row per hop, with no rule between hops.
 	var rows [][]boxCell
 	for _, h := range hops {
-		cells := make([]boxCell, len(cols))
-		for i, c := range cols {
-			cells[i] = c.cell(h)
-		}
-		rows = append(rows, cells)
+		rows = append(rows, rowCells(cols, h))
 	}
 	var groups [][][]boxCell
 	if len(rows) > 0 {

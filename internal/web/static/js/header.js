@@ -1,10 +1,8 @@
 // Global status line: browser connection, measurement state, last probe and
 // the per-health counts on the monitor's filter chips.
-import { badgeIcon } from "./dom.js";
+import { $, badgeIcon } from "./dom.js";
 import { badgeFor, summarize } from "./model.js";
 import { formatTime } from "./time.js";
-
-const $ = (id) => document.getElementById(id);
 
 /** The measurement state, also reported per target by older snapshots. */
 export function measurementState(view) {

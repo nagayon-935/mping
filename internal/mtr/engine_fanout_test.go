@@ -20,8 +20,8 @@ type concurrencyTrackingProber struct {
 	delegate *fakeProber
 	delay    time.Duration
 
-	current int32
-	peak    int32
+	current atomic.Int32
+	peak    atomic.Int32
 }
 
 func (c *concurrencyTrackingProber) OpenHopSocket(ctx context.Context, dest string) (HopSocket, error) {
@@ -29,17 +29,17 @@ func (c *concurrencyTrackingProber) OpenHopSocket(ctx context.Context, dest stri
 }
 
 func (c *concurrencyTrackingProber) ProbeHop(ctx context.Context, sock HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error) {
-	n := atomic.AddInt32(&c.current, 1)
+	n := c.current.Add(1)
 	for {
-		p := atomic.LoadInt32(&c.peak)
-		if n <= p || atomic.CompareAndSwapInt32(&c.peak, p, n) {
+		p := c.peak.Load()
+		if n <= p || c.peak.CompareAndSwap(p, n) {
 			break
 		}
 	}
 	if c.delay > 0 {
 		time.Sleep(c.delay)
 	}
-	defer atomic.AddInt32(&c.current, -1)
+	defer c.current.Add(-1)
 	return c.delegate.ProbeHop(ctx, sock, dest, ttl, traceID, timeout)
 }
 
@@ -76,7 +76,7 @@ func TestDiscover_BoundsConcurrentProbeHopCalls(t *testing.T) {
 
 	waitForHops(t, target, 30, 3*time.Second)
 
-	peak := atomic.LoadInt32(&tracker.peak)
+	peak := tracker.peak.Load()
 	if peak > 4 {
 		t.Errorf("peak concurrent ProbeHop calls = %d, want <= 4 (MaxConcurrentProbes)", peak)
 	}

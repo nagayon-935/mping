@@ -875,12 +875,12 @@ func TestMakePingerFactory_EmptyInterfaceWhenUnset(t *testing.T) {
 
 func TestRunTraceroutes_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	targets := []*stats.TargetStats{stats.NewTargetStats("example.com")}
+	target := stats.NewTargetStats("example.com")
 	fp := &fakePinger{}
 
 	done := make(chan struct{})
 	go func() {
-		runTraceroutes(ctx, fp, targets)
+		runTraceroutes(ctx, fp, target)
 		close(done)
 	}()
 
@@ -894,7 +894,7 @@ func TestRunTraceroutes_ContextCancel(t *testing.T) {
 		t.Fatal("runTraceroutes did not stop after context cancel")
 	}
 
-	view := targets[0].GetView()
+	view := target.GetView()
 	if len(view.TraceHops) == 0 || view.TraceHops[0] != "hop1" {
 		t.Errorf("unexpected hops: %v", view.TraceHops)
 	}
@@ -904,12 +904,12 @@ func TestRunTraceroutes_TraceError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	targets := []*stats.TargetStats{stats.NewTargetStats("example.com")}
+	target := stats.NewTargetStats("example.com")
 	fp := &fakePinger{traceErr: io.ErrUnexpectedEOF}
 
-	runTraceroutes(ctx, fp, targets)
+	runTraceroutes(ctx, fp, target)
 
-	view := targets[0].GetView()
+	view := target.GetView()
 	if len(view.TraceHops) == 0 || !strings.HasPrefix(view.TraceHops[0], "error:") {
 		t.Errorf("expected error hop, got %v", view.TraceHops)
 	}
@@ -921,12 +921,12 @@ func TestRunTraceroutes_EmptyHops(t *testing.T) {
 
 	// Verify "Tracing..." is set initially when hops are empty,
 	// then replaced with the result from TraceRoute
-	targets := []*stats.TargetStats{stats.NewTargetStats("example.com")}
+	target := stats.NewTargetStats("example.com")
 	fp := &fakePinger{}
 
-	runTraceroutes(ctx, fp, targets)
+	runTraceroutes(ctx, fp, target)
 
-	view := targets[0].GetView()
+	view := target.GetView()
 	if len(view.TraceHops) == 0 {
 		t.Errorf("expected hops to be set, got empty")
 	}

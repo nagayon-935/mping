@@ -61,13 +61,11 @@ func parseAndLoadHosts(args []string, out, errOut io.Writer) (p startupParams, e
 		fmt.Fprintf(errOut, "Error reading hosts file: %v\n", err)
 		return startupParams{}, 1, false
 	}
-	expandedHosts, expandedGroups, err := expandTargets(hosts, groups, cfg)
+	hosts, groups, err = expandTargets(hosts, groups, cfg)
 	if err != nil {
 		fmt.Fprintf(errOut, "Error expanding targets: %v\n", err)
 		return startupParams{}, 1, false
 	}
-	hosts = expandedHosts
-	groups = expandedGroups
 	if len(hosts) == 0 {
 		fmt.Fprint(errOut, usage)
 		return startupParams{}, 1, false
@@ -135,15 +133,17 @@ func checkerBindConfig(cfg config, bindIP string) pinger.BindConfig {
 }
 
 // resolverBindConfig is checkerBindConfig for expandTargets' --resolve-all DNS
-// lookups, which run during parseAndLoadHosts — before prepareRunEnv has
-// resolved bindIP via determineSourceIPs. It resolves bindIP itself instead of
-// receiving it as a parameter. A resolution failure (e.g. an unknown -I
-// interface) is swallowed here rather than surfaced: the authoritative error
-// for a bad -I is prepareRunEnv's own determineSourceIPs call, which runs
-// moments later and stops the process before any pinger starts — duplicating
-// that failure here would just add a second, redundant error path for the
-// same misconfiguration, so --resolve-all's DNS lookups simply fall back to
-// unbound in that case.
+// lookups. expandTargets runs at startup (parseAndLoadHosts, before
+// prepareRunEnv has resolved bindIP via determineSourceIPs), on every
+// hosts-file reload (requestFileReload and apply) and when a host is added
+// live, so it resolves bindIP itself instead of receiving it as a parameter.
+// An unknown -I interface never gets this far: validateBinding, reached
+// through mergeHosts' validateMergedHosts, rejects it before expandTargets
+// runs. What is left to fail here is an interface that exists but has no
+// usable address, and that error is surfaced authoritatively by
+// determineSourceIPs in prepareRunEnv (or at the top of a reload iteration)
+// before any pinger starts — duplicating it here would add a second, redundant
+// error path, so --resolve-all's DNS lookups simply fall back to unbound.
 func resolverBindConfig(cfg config, specs []targetSpec) pinger.BindConfig {
 	bindIP, _, _, err := determineSourceIPs(cfg, specs)
 	if err != nil {
@@ -242,13 +242,14 @@ func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resol
 }
 
 // checkPortReloadDrift explains that port checks were rebuilt from the new
-// configuration. It is retained as a single notice shared by reload tests.
+// configuration. reloadWarnings emits it after a successful reload whose port
+// specs differ from the ones the running checkers were built from.
 func checkPortReloadDrift(activeRaw, reloadedRaw []string) string {
 	if slices.Equal(activeRaw, reloadedRaw) {
 		return ""
 	}
 	return fmt.Sprintf("[yellow][%s] port: change detected in the reloaded config — port checks restarted with updated configuration[-]",
-		time.Now().Format("15:04:05"))
+		clock())
 }
 
 // startWatcher launches the YAML file watcher goroutine when hostsFile is
@@ -269,11 +270,8 @@ func startWatcher(hostsFile string, onFileChange func(), logCh chan<- string) (c
 		defer close(innerDone)
 		paths := func() []string { return hostsFileWatchPaths(hostsFile) }
 		if err := watcher.WatchPaths(watchCtx, paths, onFileChange); err != nil {
-			select {
-			case logCh <- fmt.Sprintf("[red][%s] Watcher error: %v — auto-reload disabled, restart mping to re-enable[-]",
-				time.Now().Format("15:04:05"), err):
-			default:
-			}
+			postLog(logCh, fmt.Sprintf("[red][%s] Watcher error: %v — auto-reload disabled, restart mping to re-enable[-]",
+				clock(), err))
 		}
 	}()
 	return cancelFn, innerDone
@@ -310,7 +308,7 @@ func startLiveJSONWriter(path string, targets func() []*stats.TargetStats, httpR
 // watchDurationLimit arms sig to fire once durationCtx's deadline elapses,
 // converging --duration onto the same ExternalCloseCh shutdown path a YAML
 // reload already uses (see reload_coordinator.go): this function never calls
-// rc.requestFileReload/requestHostsChange, so rc.apply() finds no pending
+// rc.requestFileReload, so rc.apply() finds no pending
 // reload afterwards and run()'s main loop breaks out to printExitSummary
 // instead of re-entering — the same outcome as the user pressing 'q'.
 //
@@ -331,11 +329,7 @@ func watchDurationLimit(durationCtx context.Context, sig *reloadSignal, logCh ch
 		defer close(exited)
 		select {
 		case <-durationCtx.Done():
-			select {
-			case logCh <- fmt.Sprintf("[green][%s] Duration limit reached, shutting down...[-]",
-				time.Now().Format("15:04:05")):
-			default:
-			}
+			postLog(logCh, fmt.Sprintf("[green][%s] Duration limit reached, shutting down...[-]", clock()))
 			sig.fire()
 		case <-done:
 		}
@@ -358,9 +352,7 @@ type runOptionsParams struct {
 	packetSize    int
 	preLogs       []string
 	cfg           config
-	portCount     int
 	sup           *supervisor
-	thresholds    ui.Thresholds
 	sig           *reloadSignal
 	logCh         chan string
 	currentHosts  []targetSpec
@@ -402,13 +394,13 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 		TraceEnabled:     p.cfg.trace,
 		MTUEnabled:       p.cfg.mtuEnabled,
 		MTREnabled:       p.cfg.mtr,
-		PortEnabled:      p.portCount > 0,
+		PortEnabled:      len(p.cfg.portSpecs) > 0,
 		HTTPEnabled:      len(p.cfg.httpURLs) > 0,
 		HTTPResults:      p.sup.httpResults,
 		ASNEnabled:       p.cfg.asnEnabled,
 		PTREnabled:       p.cfg.ptrEnabled,
 		DSCPEnabled:      dscpColumnEnabled(p.cfg, p.currentHosts),
-		Thresholds:       &p.thresholds,
+		Thresholds:       &p.cfg.thresholds,
 		MeasurementState: p.sup.measurementState,
 		ExternalCloseCh:  p.sig.ch,
 		ExternalLogCh:    p.logCh,
@@ -430,7 +422,7 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 	if len(p.cfg.httpURLs) > 0 {
 		opts.OnResetHTTP = p.sup.resetHTTP
 	}
-	if p.portCount > 0 {
+	if len(p.cfg.portSpecs) > 0 {
 		opts.OnResetPort = p.sup.resetPort
 	}
 	return opts

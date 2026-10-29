@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"sync"
-	"time"
 
 	ui "github.com/nagayon-935/mping/internal/ui"
 	"github.com/spf13/pflag"
@@ -27,8 +26,18 @@ func (s *reloadSignal) fire() {
 	s.once.Do(func() { close(s.ch) })
 }
 
-// reloadCoordinator owns the pending hosts-file reload (the parsed YAML doc)
-// and applies it once the previous iteration's pinger/watcher have been
+// pendingReload is a hosts-file reload that already passed validation: the
+// merged config and the (not yet --resolve-all expanded) targets it yields.
+// requestFileReload derives it from rc.cliCfg, rc.fs and the parsed document,
+// all fixed by then, so apply never has to repeat that work.
+type pendingReload struct {
+	cfg    config
+	specs  []targetSpec
+	groups []ui.TargetGroup
+}
+
+// reloadCoordinator owns the pending hosts-file reload (the validated result
+// of parsing the YAML doc) and applies it once the previous iteration's pinger/watcher have been
 // fully stopped. Host edits from the TUI or web UI do not go through here:
 // the supervisor applies them live (see live_targets.go).
 type reloadCoordinator struct {
@@ -36,10 +45,9 @@ type reloadCoordinator struct {
 	cliCfg   config
 	cliHosts []string
 
-	mu        sync.Mutex
-	requested bool
-	doc       hostsFileYAML
-	tryLive   func(config, []targetSpec, []ui.TargetGroup) (bool, string, error)
+	mu      sync.Mutex
+	pending *pendingReload
+	tryLive func(config, []targetSpec, []ui.TargetGroup) (bool, string, error)
 }
 
 func newReloadCoordinator(fs *pflag.FlagSet, cliCfg config, cliHosts []string) *reloadCoordinator {
@@ -52,11 +60,7 @@ func newReloadCoordinator(fs *pflag.FlagSet, cliCfg config, cliHosts []string) *
 func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile string, logCh chan<- string) {
 	doc, err := parseHostsFile(hostsFile)
 	if err != nil {
-		select {
-		case logCh <- fmt.Sprintf("[red][%s] Reload error: %v[-]",
-			time.Now().Format("15:04:05"), err):
-		default:
-		}
+		postLog(logCh, fmt.Sprintf("[red][%s] Reload error: %v[-]", clock(), err))
 		return
 	}
 	docHosts, docGroups, cfg, err := applyDocToCfg(rc.cliCfg, rc.fs, doc)
@@ -64,15 +68,11 @@ func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile stri
 		err = validateMergedHosts(cfg, docHosts, docGroups, rc.cliHosts)
 	}
 	if err != nil {
-		select {
-		case logCh <- fmt.Sprintf("[red][%s] Reload validation error: %v[-]",
-			time.Now().Format("15:04:05"), err):
-		default:
-		}
+		postLog(logCh, fmt.Sprintf("[red][%s] Reload validation error: %v[-]", clock(), err))
 		return
 	}
+	specs, groups := buildHostsAndGroups(docHosts, docGroups, rc.cliHosts)
 	if rc.tryLive != nil {
-		specs, groups := buildHostsAndGroups(docHosts, docGroups, rc.cliHosts)
 		expanded, expandedGroups, expandErr := expandTargets(specs, groups, cfg)
 		if expandErr != nil {
 			reloadNotice(logCh, "Reload expansion error: "+expandErr.Error())
@@ -90,8 +90,7 @@ func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile stri
 		reloadNotice(logCh, "Restarting measurements for configuration reload: "+reason)
 	}
 	rc.mu.Lock()
-	rc.requested = true
-	rc.doc = doc
+	rc.pending = &pendingReload{cfg: cfg, specs: specs, groups: groups}
 	rc.mu.Unlock()
 	sig.fire()
 }
@@ -105,42 +104,31 @@ func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile stri
 // stopped and joined.
 func (rc *reloadCoordinator) apply(currentCfg config, currentHosts []targetSpec, currentGroups []ui.TargetGroup) ([]targetSpec, []ui.TargetGroup, config, bool, string) {
 	rc.mu.Lock()
-	reload := rc.requested
-	doc := rc.doc
+	pending := rc.pending
 	rc.mu.Unlock()
 
-	if !reload {
+	if pending == nil {
 		return currentHosts, currentGroups, currentCfg, false, ""
 	}
 
-	docHosts, docGroups, newCfg, applyErr := applyDocToCfg(rc.cliCfg, rc.fs, doc)
-	if applyErr != nil {
-		// Shouldn't happen (validateHostsDoc passed), but be safe.
-		reload = false
-	} else {
-		currentHosts, currentGroups = buildHostsAndGroups(docHosts, docGroups, rc.cliHosts)
-		currentCfg = newCfg
-	}
+	currentHosts, currentGroups, currentCfg = pending.specs, pending.groups, pending.cfg
 
 	var warning string
-	if reload {
-		if expandedHosts, expandedGroups, expandErr := expandTargets(currentHosts, currentGroups, currentCfg); expandErr == nil {
-			currentHosts = expandedHosts
-			currentGroups = expandedGroups
-		} else if currentCfg.resolveAll {
-			// expandTargets only does work (and can fail) when resolve-all is
-			// set; otherwise it's a passthrough. Keeping the pre-expansion
-			// host list here means resolve-all silently shrinks to one entry
-			// per host unless the user is told (TD-47).
-			warning = fmt.Sprintf("[yellow][%s] resolve-all: failed to re-expand hosts after reload (%v) — keeping previous resolution[-]",
-				time.Now().Format("15:04:05"), expandErr)
-		}
+	if expandedHosts, expandedGroups, expandErr := expandTargets(currentHosts, currentGroups, currentCfg); expandErr == nil {
+		currentHosts = expandedHosts
+		currentGroups = expandedGroups
+	} else if currentCfg.resolveAll {
+		// expandTargets only does work (and can fail) when resolve-all is
+		// set; otherwise it's a passthrough. Keeping the pre-expansion
+		// host list here means resolve-all silently shrinks to one entry
+		// per host unless the user is told (TD-47).
+		warning = fmt.Sprintf("[yellow][%s] resolve-all: failed to re-expand hosts after reload (%v) — keeping previous resolution[-]",
+			clock(), expandErr)
 	}
 
 	rc.mu.Lock()
-	rc.requested = false
-	rc.doc = hostsFileYAML{}
+	rc.pending = nil
 	rc.mu.Unlock()
 
-	return currentHosts, currentGroups, currentCfg, reload, warning
+	return currentHosts, currentGroups, currentCfg, true, warning
 }

@@ -240,12 +240,8 @@ func collectHosts(entries []hostEntry, includes includeList, location, baseDir s
 // re-derives the include set.
 func hostsFileWatchPaths(path string) []string {
 	paths := []string{path}
-	var data []byte
-	if err := asRealUser(func() error {
-		var err error
-		data, err = os.ReadFile(path)
-		return err
-	}); err != nil {
+	data, err := readFileAsRealUser(path)
+	if err != nil {
 		return paths
 	}
 	var doc struct {

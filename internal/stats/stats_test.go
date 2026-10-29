@@ -286,7 +286,7 @@ func TestTargetStatsFailureAndReset(t *testing.T) {
 		t.Fatalf("LastError: got %q, want %q", view.LastError, "Timeout")
 	}
 
-	tgt.SetLastDSCP(46 << 2)
+	tgt.NewProbe().OnSuccess(time.Millisecond, 64, 46<<2)
 	tgt.OnDuplicate()
 	tgt.OnLateReply()
 	tgt.Reset()
@@ -309,24 +309,6 @@ func TestTargetStatsFailureAndReset(t *testing.T) {
 	}
 	if view.LastDSCP != 0 {
 		t.Fatalf("Reset did not clear LastDSCP: got %d", view.LastDSCP)
-	}
-}
-
-func TestTargetStats_SetLastDSCP(t *testing.T) {
-	tgt := NewTargetStats("example.com")
-	if got := tgt.GetView().LastDSCP; got != 0 {
-		t.Fatalf("default LastDSCP: got %d, want 0", got)
-	}
-	tgt.SetLastDSCP(46 << 2) // EF's TOS byte
-	view := tgt.GetView()
-	if view.LastDSCP != 46<<2 {
-		t.Fatalf("LastDSCP: got %d, want %d", view.LastDSCP, 46<<2)
-	}
-	// A later observation (e.g. bleaching re-marking the reply to CS0)
-	// overwrites, matching LastTTL's "most recent value wins" semantics.
-	tgt.SetLastDSCP(0)
-	if got := tgt.GetView().LastDSCP; got != 0 {
-		t.Fatalf("LastDSCP after re-observing 0: got %d, want 0", got)
 	}
 }
 
@@ -514,12 +496,12 @@ func TestPortCheckResult_ConcurrentAccess(t *testing.T) {
 	r := &PortCheckResult{Port: 80, Protocol: "tcp", Status: "Checking..."}
 	done := make(chan struct{})
 	go func() {
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			r.SetResult("Open", time.Duration(i)*time.Millisecond)
 		}
 		close(done)
 	}()
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		_ = r.GetView()
 	}
 	<-done

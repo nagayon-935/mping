@@ -137,7 +137,7 @@ func TestTableRendererUpdate_GroupHeaderRendersEvenWhenMembersOffWindow(t *testi
 		targets[i].OnSuccess(10*time.Millisecond, 64)
 	}
 	groups := make([]TargetGroup, numGroups)
-	for g := 0; g < numGroups; g++ {
+	for g := range numGroups {
 		indices := make([]int, perGroup)
 		for i := range indices {
 			indices[i] = g*perGroup + i

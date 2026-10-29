@@ -205,7 +205,7 @@ func TestMTRStats_ConcurrentAccess(t *testing.T) {
 	m.EnsureLen(5)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
@@ -218,12 +218,10 @@ func TestMTRStats_ConcurrentAccess(t *testing.T) {
 		}(i)
 	}
 	// Concurrent reads
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
 			_ = m.View()
-		}()
+		})
 	}
 	wg.Wait()
 }
@@ -404,23 +402,6 @@ func TestMTRStats_OutOfRangeHopsAreIgnored(t *testing.T) {
 	for _, hop := range m.View() {
 		if hop.Sent != 0 || hop.IP != "" {
 			t.Fatalf("hop %d changed by an out-of-range ttl: %+v", hop.TTL, hop)
-		}
-	}
-}
-
-func TestMTRStats_HasIPReportsOnlyAnsweredHops(t *testing.T) {
-	m := NewMTRStats()
-	m.EnsureLen(2)
-	m.RecordReply(1, "192.0.2.1", "", "", "", time.Millisecond)
-	m.RecordLoss(2)
-
-	tests := []struct {
-		ttl  int
-		want bool
-	}{{1, true}, {2, false}, {0, false}, {3, false}}
-	for _, tt := range tests {
-		if got := m.HasIP(tt.ttl); got != tt.want {
-			t.Errorf("HasIP(%d) = %v, want %v", tt.ttl, got, tt.want)
 		}
 	}
 }

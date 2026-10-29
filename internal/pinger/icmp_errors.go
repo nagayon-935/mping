@@ -1,6 +1,8 @@
 package pinger
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 
 	"golang.org/x/net/icmp"
@@ -11,11 +13,11 @@ import (
 func icmpErrorString(typ icmp.Type, code int) string {
 	switch typ {
 	case ipv4.ICMPTypeDestinationUnreachable:
-		return destUnreachString(code)
+		return lookupICMPCode(destUnreachCodes, code, "Destination Unreachable")
 	case ipv4.ICMPTypeTimeExceeded:
-		return timeExceededString(code)
+		return lookupICMPCode(timeExceededCodes, code, "Time Exceeded")
 	case ipv4.ICMPTypeParameterProblem:
-		return paramProblemString(code)
+		return lookupICMPCode(paramProblemCodes, code, "Parameter Problem")
 	default:
 		return "ICMP Error"
 	}
@@ -31,13 +33,13 @@ func icmpErrorString(typ icmp.Type, code int) string {
 func icmpV6ErrorString(typ icmp.Type, code int) string {
 	switch typ {
 	case ipv6.ICMPTypeDestinationUnreachable:
-		return destUnreachV6String(code)
+		return lookupICMPCode(destUnreachV6Codes, code, "Destination Unreachable")
 	case ipv6.ICMPTypePacketTooBig:
 		return "Packet Too Big"
 	case ipv6.ICMPTypeTimeExceeded:
-		return timeExceededV6String(code)
+		return lookupICMPCode(timeExceededV6Codes, code, "Time Exceeded")
 	case ipv6.ICMPTypeParameterProblem:
-		return paramProblemV6String(code)
+		return lookupICMPCode(paramProblemV6Codes, code, "Parameter Problem")
 	default:
 		return "ICMPv6 Error"
 	}
@@ -109,30 +111,6 @@ func lookupICMPCode(codes map[int]string, code int, fallback string) string {
 	return fallback
 }
 
-func destUnreachString(code int) string {
-	return lookupICMPCode(destUnreachCodes, code, "Destination Unreachable")
-}
-
-func destUnreachV6String(code int) string {
-	return lookupICMPCode(destUnreachV6Codes, code, "Destination Unreachable")
-}
-
-func timeExceededString(code int) string {
-	return lookupICMPCode(timeExceededCodes, code, "Time Exceeded")
-}
-
-func timeExceededV6String(code int) string {
-	return lookupICMPCode(timeExceededV6Codes, code, "Time Exceeded")
-}
-
-func paramProblemString(code int) string {
-	return lookupICMPCode(paramProblemCodes, code, "Parameter Problem")
-}
-
-func paramProblemV6String(code int) string {
-	return lookupICMPCode(paramProblemV6Codes, code, "Parameter Problem")
-}
-
 // packetTooBigString renders an ICMPv6 Packet Too Big message (RFC 4443
 // section 3.2), including the next-hop MTU reported by the router so MTU and
 // fragmentation issues are diagnosable straight from the TUI instead of
@@ -142,10 +120,6 @@ func packetTooBigString(mtu int) string {
 	return fmt.Sprintf("Packet Too Big (MTU=%d)", mtu)
 }
 
-// extractEchoIDSeq extracts the ICMP echo ID and sequence number from an ICMP
-// error message (Time Exceeded, Destination Unreachable, Parameter Problem).
-// It first tries parsing the embedded original IP+ICMP headers, then falls back
-// to scanning for the traceSignature pattern in the payload.
 // icmpErrorBodyData extracts the embedded original packet data from an ICMP error body.
 func icmpErrorBodyData(msg *icmp.Message) ([]byte, bool) {
 	switch body := msg.Body.(type) {
@@ -162,6 +136,10 @@ func icmpErrorBodyData(msg *icmp.Message) ([]byte, bool) {
 	}
 }
 
+// extractEchoIDSeq extracts the ICMP echo ID and sequence number from an ICMP
+// error message (Time Exceeded, Destination Unreachable, Parameter Problem).
+// It first tries parsing the embedded original IP+ICMP headers, then falls back
+// to scanning for the traceSignature pattern in the payload.
 func extractEchoIDSeq(msg *icmp.Message) (int, int, bool) {
 	data, ok := icmpErrorBodyData(msg)
 	if !ok {
@@ -172,13 +150,11 @@ func extractEchoIDSeq(msg *icmp.Message) (int, int, bool) {
 		return id, seq, true
 	}
 
-	// Fallback: Pattern matching for traceSignature + ID (2B) + Seq (2B)
-	for i := 0; i <= len(data)-8; i++ {
-		if data[i] == traceSignature[0] && data[i+1] == traceSignature[1] && data[i+2] == traceSignature[2] && data[i+3] == traceSignature[3] {
-			id := int(data[i+4])<<8 | int(data[i+5])
-			seq := int(data[i+6])<<8 | int(data[i+7])
-			return id, seq, true
-		}
+	// Fallback: Pattern matching for traceSignature + ID (2B) + Seq (2B).
+	// Only the first occurrence can fit: if it leaves fewer than 8 bytes, every
+	// later occurrence does too.
+	if i := bytes.Index(data, []byte(traceSignature)); i >= 0 && i+8 <= len(data) {
+		return int(binary.BigEndian.Uint16(data[i+4:])), int(binary.BigEndian.Uint16(data[i+6:])), true
 	}
 	return 0, 0, false
 }
@@ -189,9 +165,13 @@ func parseInnerEchoIDSeq(data []byte) (int, int, bool) {
 	if len(data) < 1 {
 		return 0, 0, false
 	}
-	version := data[0] >> 4
 
-	if version == 4 {
+	// Pick the ICMP protocol number (also used as the IP next-header value for
+	// a directly embedded ICMP message), the IP header length and the inner
+	// next-header from the embedded original IP header.
+	var icmpProto, headerLen, nextHeader int
+	switch data[0] >> 4 {
+	case 4:
 		if len(data) < 20 {
 			return 0, 0, false
 		}
@@ -199,60 +179,41 @@ func parseInnerEchoIDSeq(data []byte) (int, int, bool) {
 		if ihl < 20 || len(data) < ihl {
 			return 0, 0, false
 		}
-
-		// The inner packet could be ICMP (Protocol 1) or UDP (Protocol 17)
-		// if we sent it via a udp4 socket.
-		protocol := int(data[9])
-		innerData := data[ihl:]
-
-		if protocol == 1 { // ICMP
-			inner, err := icmp.ParseMessage(1, innerData)
-			if err == nil {
-				if echo, ok := inner.Body.(*icmp.Echo); ok {
-					return echo.ID, echo.Seq, true
-				}
-			}
-		} else if protocol == 17 { // UDP
-			// If we sent ICMP over a UDP socket (non-privileged),
-			// the original packet will have a UDP header (8 bytes).
-			if len(innerData) >= 8 {
-				// Skip UDP header and try to parse the payload as ICMP
-				inner, err := icmp.ParseMessage(1, innerData[8:])
-				if err == nil {
-					if echo, ok := inner.Body.(*icmp.Echo); ok {
-						return echo.ID, echo.Seq, true
-					}
-				}
-			}
-		}
-		return 0, 0, false
-	} else if version == 6 {
+		icmpProto, headerLen, nextHeader = 1, ihl, int(data[9])
+	case 6:
 		// IPv6 header is 40 bytes.
 		const ipv6HeaderLen = 40
 		if len(data) < ipv6HeaderLen {
 			return 0, 0, false
 		}
+		icmpProto, headerLen, nextHeader = 58, ipv6HeaderLen, int(data[6]) // Next Header
+	default:
+		return 0, 0, false
+	}
 
-		protocol := int(data[6]) // Next Header
-		innerData := data[ipv6HeaderLen:]
-
-		if protocol == 58 { // ICMPv6
-			inner, err := icmp.ParseMessage(58, innerData)
-			if err == nil {
-				if echo, ok := inner.Body.(*icmp.Echo); ok {
-					return echo.ID, echo.Seq, true
-				}
-			}
-		} else if protocol == 17 { // UDP
-			if len(innerData) >= 8 {
-				inner, err := icmp.ParseMessage(58, innerData[8:])
-				if err == nil {
-					if echo, ok := inner.Body.(*icmp.Echo); ok {
-						return echo.ID, echo.Seq, true
-					}
-				}
-			}
+	// The inner packet could be ICMP or UDP (protocol 17) if we sent it via a
+	// udp socket.
+	innerData := data[headerLen:]
+	switch nextHeader {
+	case icmpProto:
+	case 17: // UDP
+		// If we sent ICMP over a UDP socket (non-privileged), the original
+		// packet will have a UDP header (8 bytes). Skip it and try to parse the
+		// payload as ICMP.
+		if len(innerData) < 8 {
+			return 0, 0, false
 		}
+		innerData = innerData[8:]
+	default:
+		return 0, 0, false
+	}
+
+	inner, err := icmp.ParseMessage(icmpProto, innerData)
+	if err != nil {
+		return 0, 0, false
+	}
+	if echo, ok := inner.Body.(*icmp.Echo); ok {
+		return echo.ID, echo.Seq, true
 	}
 	return 0, 0, false
 }

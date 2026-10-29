@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/report"
@@ -14,10 +15,8 @@ const maxRemovedTargets = 128
 func (s *supervisor) groupNameForIndex(targetIdx int) string {
 	var name string
 	for _, group := range s.cfg.groups {
-		for _, idx := range group.Indices {
-			if idx == targetIdx {
-				name = group.Name
-			}
+		if slices.Contains(group.Indices, targetIdx) {
+			name = group.Name
 		}
 	}
 	return name
@@ -25,10 +24,7 @@ func (s *supervisor) groupNameForIndex(targetIdx int) string {
 
 func (s *supervisor) archiveTarget(target *stats.TargetStats) {
 	record := report.NewTarget(target)
-	for i, t := range s.cfg.targets {
-		if t != target {
-			continue
-		}
+	if i := slices.Index(s.cfg.targets, target); i >= 0 {
 		record.Group = s.groupNameForIndex(i)
 	}
 	now := time.Now().UTC()

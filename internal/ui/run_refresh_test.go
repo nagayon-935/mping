@@ -337,7 +337,7 @@ func TestRunWithHighRTTAndJitter(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	target.SetIP("1.1.1.1")
 	// Simulate high RTT (> 200ms red threshold) and high jitter (> 50ms red threshold)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		target.IncSent()
 		target.OnSuccess(300*time.Millisecond, 64)
 	}
@@ -374,7 +374,7 @@ func TestRunWithHighLossAlert(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	target.SetIP("1.1.1.1")
 	// Simulate >80% loss: 9 packets lost, 1 success
-	for i := 0; i < 9; i++ {
+	for range 9 {
 		target.IncSent()
 		target.OnFailure("Timeout")
 	}

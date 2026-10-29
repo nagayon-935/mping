@@ -18,9 +18,9 @@ var procStart = time.Now()
 // into payload immediately after the MPING signature (see
 // minTimestampPayloadSize). The receiver goroutine reads it back via
 // extractSendTimestamp to compute RTT without an extra hop through
-// runWorker's own goroutine (see handleEchoReply). It is a no-op when
+// runTargetWorker's own goroutine (see handleEchoReply). It is a no-op when
 // payload is smaller than minTimestampPayloadSize (e.g. -s below 13),
-// leaving that probe's RTT to runWorker's own start-time fallback.
+// leaving that probe's RTT to runTargetWorker's own start-time fallback.
 func embedSendTimestamp(payload []byte, sent time.Time) {
 	if len(payload) < minTimestampPayloadSize {
 		return
@@ -63,7 +63,7 @@ func extractSendTimestamp(data []byte, received time.Time, timeout time.Duration
 //     two monotonic readings never goes backwards), so a negative result
 //     can only come from mangled timestamp bytes.
 //   - rtt > 2*timeout: a reply arriving this late would already have had
-//     its `unacked` entry swept out as a timeout before runWorker's select
+//     its `unacked` entry swept out as a timeout before runTargetWorker's select
 //     loop could ever match it against a still-live seq (see
 //     rearmSweepTimer), so a *genuine* embedded timestamp can never
 //     legitimately produce a value this large. The 2x margin (rather than

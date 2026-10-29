@@ -2,6 +2,7 @@ package stats
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,24 @@ type HopStats struct {
 	MaxRTT  time.Duration
 	SumRTT  time.Duration
 	jitter  int64 // ns, RFC 1889 smoothing
+}
+
+// annotate overwrites IP/ASN/Country/Org with each non-empty argument; empty
+// arguments leave the existing value untouched. Caller must hold the owning
+// MTRStats.mu.
+func (h *HopStats) annotate(ip, asn, country, org string) {
+	if ip != "" {
+		h.IP = ip
+	}
+	if asn != "" {
+		h.ASN = asn
+	}
+	if country != "" {
+		h.Country = country
+	}
+	if org != "" {
+		h.Org = org
+	}
 }
 
 // HopView is the read-only per-hop snapshot for UI/export.
@@ -96,18 +115,7 @@ func (m *MTRStats) RecordReply(ttl int, ip, asn, country, org string, rtt time.D
 	}
 	h.Sent++
 	h.Recv++
-	if ip != "" {
-		h.IP = ip
-	}
-	if asn != "" {
-		h.ASN = asn
-	}
-	if country != "" {
-		h.Country = country
-	}
-	if org != "" {
-		h.Org = org
-	}
+	h.annotate(ip, asn, country, org)
 	// RFC 1889 jitter
 	if h.Recv > 1 {
 		h.jitter = updateJitter(h.jitter, rtt, h.LastRTT)
@@ -135,16 +143,6 @@ func (m *MTRStats) RecordLoss(ttl int) {
 	h.Sent++
 }
 
-// HasIP reports whether the hop at ttl has ever had a responder IP recorded
-// (i.e. would render as something other than "*"). ttl is 1-based; an
-// out-of-range ttl reports false.
-func (m *MTRStats) HasIP(ttl int) bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	h := m.hopAt(ttl)
-	return h != nil && h.IP != ""
-}
-
 // SetIP updates the responder identity for the hop at ttl without a sample.
 // Used during discovery when no RTT measurement was taken.
 // ttl is 1-based.
@@ -156,18 +154,9 @@ func (m *MTRStats) SetIP(ttl int, ip, asn, country, org string) {
 	if h == nil {
 		return
 	}
+	h.annotate(ip, asn, country, org)
 	if ip != "" {
-		h.IP = ip
 		h.routeIP = ip // track discovery-time IP separately for flap detection
-	}
-	if asn != "" {
-		h.ASN = asn
-	}
-	if country != "" {
-		h.Country = country
-	}
-	if org != "" {
-		h.Org = org
 	}
 }
 
@@ -211,6 +200,12 @@ func (m *MTRStats) View() []HopView {
 func (m *MTRStats) RouteSnapshot() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	return m.routeIPsLocked()
+}
+
+// routeIPsLocked returns the ordered discovery-time hop IPs (routeIP, not the
+// live IP field). Caller must hold m.mu (read or write).
+func (m *MTRStats) routeIPsLocked() []string {
 	ips := make([]string, len(m.hops))
 	for i, h := range m.hops {
 		ips[i] = h.routeIP
@@ -224,12 +219,9 @@ func (m *MTRStats) CheckFlap(prevIPs []string, now time.Time) (bool, string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cur := make([]string, len(m.hops))
-	for i, h := range m.hops {
-		cur[i] = h.routeIP // compare discovery IPs, not live probe IPs
-	}
+	cur := m.routeIPsLocked() // compare discovery IPs, not live probe IPs
 
-	if routeEqual(prevIPs, cur) {
+	if slices.Equal(prevIPs, cur) {
 		return false, ""
 	}
 
@@ -246,18 +238,6 @@ func (m *MTRStats) FlapInfo() (count int, at time.Time, desc string) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.flapCount, m.lastFlapAt, m.lastFlapDesc
-}
-
-func routeEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func buildFlapDesc(prev, cur []string) string {
@@ -277,9 +257,6 @@ func buildFlapDesc(prev, cur []string) string {
 			}
 			changed = append(changed, fmt.Sprintf("hop %d: %s → %s", i+1, old, nw))
 		}
-	}
-	if len(changed) == 1 {
-		return changed[0]
 	}
 	return strings.Join(changed, "; ")
 }

@@ -144,11 +144,6 @@ func BuildSnapshotFromViews(targets []TargetView, httpResults []HTTPCheckView) E
 			})
 		}
 
-		var traceHops []string
-		if len(v.TraceHops) > 0 {
-			traceHops = v.TraceHops
-		}
-
 		var mtrHops []HopSummary
 		for _, h := range v.MTRHops {
 			mtrHops = append(mtrHops, HopSummary{
@@ -192,7 +187,7 @@ func BuildSnapshotFromViews(targets []TargetView, httpResults []HTTPCheckView) E
 			LastDSCP:         v.LastDSCP,
 			LastError:        v.LastError,
 			LastLossTime:     lastLossTime,
-			TraceHops:        traceHops,
+			TraceHops:        v.TraceHops,
 			PortResults:      portResults,
 			PMTU:             v.PMTU,
 			PMTUBottleneckIP: v.PMTUBottleneckIP,

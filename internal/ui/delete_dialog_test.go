@@ -87,7 +87,7 @@ func TestDeleteDialogShowsAndConfirmsFrozenTarget(t *testing.T) {
 	root.SetRect(0, 0, 140, 45)
 	root.Draw(screen)
 	var text strings.Builder
-	for y := 0; y < 45; y++ {
+	for y := range 45 {
 		text.WriteString(screenVisibleRow(screen, y, 140))
 		text.WriteByte('\n')
 	}

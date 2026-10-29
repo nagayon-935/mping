@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"time"
 
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/nagayon-935/mping/internal/ui"
@@ -24,9 +23,6 @@ func probeConfig(cfg config) config {
 
 func diffProbeConfig(oldCfg, newCfg config) []string {
 	a, b := reflect.ValueOf(probeConfig(oldCfg)), reflect.ValueOf(probeConfig(newCfg))
-	if reflect.DeepEqual(a.Interface(), b.Interface()) {
-		return nil
-	}
 	var changed []string
 	for i := 0; i < a.NumField(); i++ {
 		if !reflect.DeepEqual(reflectValue(a.Field(i)), reflectValue(b.Field(i))) {
@@ -53,11 +49,7 @@ func (s *supervisor) reconcileTargets(cfg config, specs []targetSpec) (targets [
 			old[identity(spec)] = entries[1:]
 			reused[targets[i]] = true
 		} else {
-			targets[i] = buildTargetsForIteration([]targetSpec{spec}, cfg)[0]
-			s.configureTarget(targets[i])
-			if len(s.cfg.targets) > 0 {
-				targets[i].SetIfaceMTU(s.cfg.targets[0].GetViewWindow(0).IfaceMTU)
-			}
+			targets[i] = s.newLiveTargets(cfg, []targetSpec{spec})[0]
 			added = append(added, i)
 		}
 	}
@@ -116,10 +108,7 @@ func (s *supervisor) reloadLive(cfg config, specs []targetSpec, groups []ui.Targ
 		}
 		applied = true
 		if len(added) > 0 {
-			select {
-			case <-s.finished:
-			default:
-			}
+			s.clearFinished()
 		}
 		for _, change := range []struct {
 			changed bool
@@ -170,10 +159,7 @@ func reflectValue(v reflect.Value) any {
 }
 
 func reloadNotice(logCh chan<- string, message string) {
-	select {
-	case logCh <- fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), message):
-	default:
-	}
+	postLog(logCh, fmt.Sprintf("[%s] %s", clock(), message))
 }
 
 func settingName(field string) string {

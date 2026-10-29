@@ -33,8 +33,9 @@ var dscpNameTable = map[string]int{
 // ParseDSCP parses a DSCP specification — either one of dscpNameTable's
 // codepoint names (case-insensitive, e.g. "ef", "AF41") or a bare decimal
 // number — and returns the byte value to place directly in the IPv4 TOS /
-// IPv6 TrafficClass field via ipv4.ControlMessage.TOS / (*ipv4.PacketConn).
-// SetTOS or their IPv6 TrafficClass equivalents.
+// IPv6 TrafficClass field via (*ipv4.PacketConn).SetTOS or the IPv6
+// equivalents, (*ipv6.PacketConn).SetTrafficClass / ipv6.ControlMessage.
+// TrafficClass (x/net's ipv4.ControlMessage has no TOS field).
 //
 // A named codepoint is looked up as a 6-bit DSCP value and shifted left 2
 // bits, since DSCP occupies only the top 6 bits of the 8-bit TOS/

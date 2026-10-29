@@ -71,14 +71,10 @@ func (r *HTTPCheckResult) SetExpectedResult(statusCode int, rtt time.Duration, e
 	switch status {
 	case "Up":
 		r.UpCount++
-		r.recordRTT(rtt)
+		r.rtt.record(rtt)
 	default:
 		r.DownCount++
 	}
-}
-
-func (r *HTTPCheckResult) recordRTT(rtt time.Duration) {
-	r.rtt.record(rtt)
 }
 
 // GetView returns a thread-safe snapshot.

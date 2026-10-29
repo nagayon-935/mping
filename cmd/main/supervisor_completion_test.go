@@ -28,7 +28,7 @@ func TestSupervisorNotifiesEachCountCompletion(t *testing.T) {
 	if err := sup.startPinger(); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if i > 0 {
 			if err := sup.do(cmdRestart); err != nil {
 				t.Fatal(err)

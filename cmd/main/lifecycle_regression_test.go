@@ -66,7 +66,7 @@ func TestCancelledTraceKeepsPreviousRoute(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		runTraceroutes(ctx, regressionTracer(func(ctx context.Context) ([]string, error) { close(entered); <-ctx.Done(); return nil, ctx.Err() }), []*stats.TargetStats{target})
+		runTraceroutes(ctx, regressionTracer(func(ctx context.Context) ([]string, error) { close(entered); <-ctx.Done(); return nil, ctx.Err() }), target)
 		close(done)
 	}()
 	<-entered

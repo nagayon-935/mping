@@ -220,7 +220,6 @@ func TestRunReceiverV6PropagatesObservedDSCPToReply(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{})
 	id := p.baseID & 0xffff
-	p.targetMap[id] = target
 	ch := make(chan Reply, 1)
 	p.targetChans[id] = ch
 
@@ -267,7 +266,6 @@ func TestRunReceiverV4NeverPopulatesDSCP(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{})
 	id := p.baseID & 0xffff
-	p.targetMap[id] = target
 	ch := make(chan Reply, 1)
 	p.targetChans[id] = ch
 

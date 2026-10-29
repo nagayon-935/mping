@@ -146,7 +146,7 @@ func BenchmarkGraphViewDraw_20Targets_LongHistory(b *testing.B) {
 	targets := make([]*stats.TargetStats, numTargets)
 	for i := range targets {
 		targets[i] = stats.NewTargetStats("host")
-		for j := 0; j < 3000; j++ {
+		for j := range 3000 {
 			targets[i].IncSent()
 			targets[i].OnSuccess(time.Duration(j%200)*time.Millisecond, 64)
 		}
@@ -269,7 +269,7 @@ func TestGraphViewDraw_HeaderText(t *testing.T) {
 
 func screenRowString(screen tcell.Screen, y, width int) string {
 	var b strings.Builder
-	for x := 0; x < width; x++ {
+	for x := range width {
 		r, _, _, _ := screen.GetContent(x, y)
 		if r == 0 {
 			r = ' '
@@ -499,7 +499,7 @@ func TestGraphViewDraw_HighRTT(t *testing.T) {
 
 	target := stats.NewTargetStats("example.com")
 	// Add RTT values > 100ms to trigger v > yMax cap branch
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		target.IncSent()
 		target.OnSuccess(200*time.Millisecond, 64)
 	}
@@ -529,7 +529,7 @@ func TestGraphViewDraw_SmallRTT(t *testing.T) {
 
 	target := stats.NewTargetStats("example.com")
 	// Add very small RTT (1ms) to trigger ratio < 0.05 floor branch
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		target.IncSent()
 		target.OnSuccess(1*time.Millisecond, 64)
 	}
@@ -577,7 +577,7 @@ func TestGraphViewDraw_SmallHeightSmallRTT(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	// Very small RTT = 1ms → ratio=0.01 < 0.05 → floored to 0.05
 	// With plotHeight=2: totalLevels = int(0.05*2*8)=0 → totalLevels=1 branch
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		target.IncSent()
 		target.OnSuccess(1*time.Millisecond, 64)
 	}

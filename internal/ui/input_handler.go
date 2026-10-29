@@ -12,9 +12,10 @@ import (
 
 // inputHandlerDeps bundles everything the main key handler needs: widgets
 // and callbacks that stay fixed for Run()'s lifetime, plus pointers to the
-// render state it shares with updateTable (row count, error log, per-host
-// alert/status caches) — pointers because both sides must observe the same
-// reassignment (e.g. the 'R' key resetting errorLogs to a fresh slice).
+// render state it shares with tableRenderer (rowCount, and the viewState with
+// the error log and per-host alert/status caches) — pointers because both
+// sides must observe the same reassignment (e.g. the 'R' key resetting
+// errorLogs to a fresh slice).
 //
 // TD-23②: extracted out of Run()'s ~170-line app.SetInputCapture closure so
 // the key-handling logic lives in its own file, independently readable from
@@ -224,7 +225,7 @@ func (h *inputHandler) showState() {
 	}
 	switch h.state {
 	case monitorRunning:
-		h.footer.SetText("Enter Detail | Tab Pane | f Fold | z Max | w Save | a Add | d Del | s Stop | q Quit")
+		h.footer.SetText(footerHelpText)
 	case monitorStopping:
 		h.footer.SetText("Stopping... Press 'S' to restart after stop, 'q' to quit")
 	case monitorStopped:
@@ -239,7 +240,7 @@ func (h *inputHandler) submit(f func()) bool {
 	if h.session.Submit(f) {
 		return true
 	}
-	h.vs.appendLog("[yellow]Operation queue full; please try again[-]")
+	h.vs.appendLog(queueFullLog)
 	return false
 }
 

@@ -372,7 +372,7 @@ func TestBulkEventsMergesTargetsNewestFirstWithHosts(t *testing.T) {
 func TestBulkEventsLimitKeepsTheNewest(t *testing.T) {
 	src := NewSource()
 	p, a := providerWithTarget("a.example")
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		time.Sleep(time.Millisecond)
 		a.RecordEvent("ping", fmt.Sprintf("event %d", i))
 	}

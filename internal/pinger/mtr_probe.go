@@ -2,6 +2,7 @@ package pinger
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"sync"
@@ -45,7 +46,6 @@ type HopSocket struct {
 	sendV4 hopSendConnV4
 	sendV6 hopSendConnV6
 	isV4   bool
-	pinger *Pinger
 
 	// sendMu serializes IPv4 SetTTL+WriteTo pairs. Unlike IPv6 (which sets
 	// HopLimit per packet via an ipv6.ControlMessage), IPv4's TTL can only be
@@ -118,14 +118,10 @@ func (p *Pinger) OpenHopSocketContext(ctx context.Context, dest string) (*HopSoc
 func (p *Pinger) openHopSocketAddr(dstAddr *net.IPAddr) (*HopSocket, error) {
 	isV4 := dstAddr.IP.To4() != nil
 
-	sock := &HopSocket{isV4: isV4, pinger: p}
+	sock := &HopSocket{isV4: isV4}
 
 	if isV4 {
-		bindAddr := "0.0.0.0"
-		if p.Source != "" {
-			bindAddr = p.Source
-		}
-		c, err := p.listenPacket("ip4:icmp", bindAddr)
+		c, err := p.listenICMP(false)
 		if err != nil {
 			return nil, fmt.Errorf("open MTR send socket (v4): %w", err)
 		}
@@ -133,11 +129,7 @@ func (p *Pinger) openHopSocketAddr(dstAddr *net.IPAddr) (*HopSocket, error) {
 		bindToInterfaceFn(c, p.Interface, false)
 		sock.sendV4 = ipv4.NewPacketConn(c)
 	} else {
-		bindAddr := "::"
-		if p.Source != "" {
-			bindAddr = p.Source
-		}
-		c, err := p.listenPacket("ip6:ipv6-icmp", bindAddr)
+		c, err := p.listenICMP(true)
 		if err != nil {
 			return nil, fmt.Errorf("open MTR send socket (v6): %w", err)
 		}
@@ -147,7 +139,7 @@ func (p *Pinger) openHopSocketAddr(dstAddr *net.IPAddr) (*HopSocket, error) {
 		// Non-fatal: hop limit control message may not be available on all platforms.
 		_ = v6conn.SetControlMessage(ipv6.FlagHopLimit, true)
 		// Same kernel-side filter as the main receiver socket (see
-		// applyICMPv6Filter in pinger.go). This conn is used for both the
+		// applyICMPv6Filter in receiver.go). This conn is used for both the
 		// standalone read path (receiveViaSocket, when no Pinger.connV6 is
 		// running) and the send-only path when a Pinger is running
 		// (replies are read via the shared trace channel instead) - the
@@ -186,22 +178,16 @@ func (p *Pinger) ProbeHop(ctx context.Context, sock *HopSocket, dest string, ttl
 func (p *Pinger) probeHopAddr(ctx context.Context, sock *HopSocket, dstAddr *net.IPAddr, ttl, traceID int, timeout time.Duration) (HopReply, error) {
 	payload := make([]byte, 8)
 	copy(payload[0:4], traceSignature)
-	payload[4] = byte(traceID >> 8)
-	payload[5] = byte(traceID & 0xff)
-	payload[6] = byte(ttl >> 8)
-	payload[7] = byte(ttl & 0xff)
+	binary.BigEndian.PutUint16(payload[4:6], uint16(traceID))
+	binary.BigEndian.PutUint16(payload[6:8], uint16(ttl))
 
-	var probeMsg icmp.Message
-	if sock.isV4 {
-		probeMsg = icmp.Message{
-			Type: ipv4.ICMPTypeEcho, Code: 0,
-			Body: &icmp.Echo{ID: traceID, Seq: ttl, Data: payload},
-		}
-	} else {
-		probeMsg = icmp.Message{
-			Type: ipv6.ICMPTypeEchoRequest, Code: 0,
-			Body: &icmp.Echo{ID: traceID, Seq: ttl, Data: payload},
-		}
+	var echoType icmp.Type = ipv4.ICMPTypeEcho
+	if !sock.isV4 {
+		echoType = ipv6.ICMPTypeEchoRequest
+	}
+	probeMsg := icmp.Message{
+		Type: echoType, Code: 0,
+		Body: &icmp.Echo{ID: traceID, Seq: ttl, Data: payload},
 	}
 	b, err := probeMsg.Marshal(nil)
 	if err != nil {
@@ -290,10 +276,7 @@ func receiveViaTraceChan(ctx context.Context, traceCh chan traceMsg, accept func
 		select {
 		case <-ctx.Done():
 			return HopReply{}, ctx.Err()
-		case tm, ok := <-traceCh:
-			if !ok {
-				return HopReply{Responded: false}, nil
-			}
+		case tm := <-traceCh:
 			if r, matched := accept(tm.parsed, tm.src); matched {
 				r.RTT = time.Since(sent)
 				return r, nil

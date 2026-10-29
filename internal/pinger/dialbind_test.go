@@ -69,7 +69,7 @@ func TestNewBoundDialer_SourceSetsLocalAddrPerNetwork(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.network+"/"+tt.source, func(t *testing.T) {
-			d := newBoundDialer(tt.network, time.Second, BindConfig{Source: tt.source})
+			d := NewBoundDialer(tt.network, time.Second, BindConfig{Source: tt.source})
 
 			var gotIP net.IP
 			switch tt.network {
@@ -108,7 +108,7 @@ func TestNewBoundDialer_NoUsableSourceLeavesLocalAddrNil(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := newBoundDialer("tcp", time.Second, BindConfig{Source: tt.source})
+			d := NewBoundDialer("tcp", time.Second, BindConfig{Source: tt.source})
 			if d.LocalAddr != nil {
 				t.Errorf("LocalAddr: got %v (%T), want nil", d.LocalAddr, d.LocalAddr)
 			}
@@ -119,7 +119,7 @@ func TestNewBoundDialer_NoUsableSourceLeavesLocalAddrNil(t *testing.T) {
 // TestNewBoundDialer_PreservesTimeout guards against the dial timeout being
 // dropped while the binding fields are added.
 func TestNewBoundDialer_PreservesTimeout(t *testing.T) {
-	d := newBoundDialer("tcp", 1234*time.Millisecond, BindConfig{})
+	d := NewBoundDialer("tcp", 1234*time.Millisecond, BindConfig{})
 	if d.Timeout != 1234*time.Millisecond {
 		t.Errorf("Timeout: got %v, want %v", d.Timeout, 1234*time.Millisecond)
 	}
@@ -129,7 +129,7 @@ func TestNewBoundDialer_PreservesTimeout(t *testing.T) {
 // dialer installs no Control hook at all, so the socket setup path is
 // byte-for-byte the one that shipped before interface binding existed.
 func TestNewBoundDialer_NoInterfaceLeavesControlNil(t *testing.T) {
-	d := newBoundDialer("tcp", time.Second, BindConfig{Source: "192.0.2.5"})
+	d := NewBoundDialer("tcp", time.Second, BindConfig{Source: "192.0.2.5"})
 	if d.Control != nil {
 		t.Error("Control: got non-nil, want nil when Interface is unset")
 	}
@@ -153,7 +153,7 @@ func TestNewBoundDialer_ControlDispatchesToBindSeam(t *testing.T) {
 		t.Run(tt.network, func(t *testing.T) {
 			calls := spyBindRawConnToInterface(t)
 
-			d := newBoundDialer("tcp", time.Second, BindConfig{Interface: "eth0"})
+			d := NewBoundDialer("tcp", time.Second, BindConfig{Interface: "eth0"})
 			if d.Control == nil {
 				t.Fatal("Control: got nil, want non-nil when Interface is set")
 			}
@@ -172,25 +172,6 @@ func TestNewBoundDialer_ControlDispatchesToBindSeam(t *testing.T) {
 				t.Errorf("isIPv6: got %v, want %v", got.isIPv6, tt.wantIsIPv6)
 			}
 		})
-	}
-}
-
-// TestNewBoundDialer_ExportedWrapperDelegates verifies the exported
-// NewBoundDialer (for callers outside this package, e.g. cmd/main's DNS
-// resolver) produces the same dialer as the internal constructor.
-func TestNewBoundDialer_ExportedWrapperDelegates(t *testing.T) {
-	bc := BindConfig{Source: "192.0.2.5"}
-	got := NewBoundDialer("udp", 2*time.Second, bc)
-
-	if got.Timeout != 2*time.Second {
-		t.Errorf("Timeout: got %v, want %v", got.Timeout, 2*time.Second)
-	}
-	addr, ok := got.LocalAddr.(*net.UDPAddr)
-	if !ok {
-		t.Fatalf("LocalAddr: got %T, want *net.UDPAddr", got.LocalAddr)
-	}
-	if !addr.IP.Equal(net.ParseIP("192.0.2.5")) {
-		t.Errorf("LocalAddr IP: got %v, want 192.0.2.5", addr.IP)
 	}
 }
 

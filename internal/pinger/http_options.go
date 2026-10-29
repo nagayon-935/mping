@@ -32,7 +32,7 @@ func (o HTTPOptions) Accepts(code int) bool {
 }
 func ParseHTTPStatus(raw string) ([]StatusRange, error) {
 	var ranges []StatusRange
-	for _, part := range strings.Split(raw, ",") {
+	for part := range strings.SplitSeq(raw, ",") {
 		lo, hi, span := strings.Cut(strings.TrimSpace(part), "-")
 		min, err := strconv.Atoi(lo)
 		if err != nil || min < 100 || min > 599 {

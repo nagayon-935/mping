@@ -135,14 +135,12 @@ func TestSupervisorSerializesConcurrentRestarts(t *testing.T) {
 	defer sup.Shutdown()
 
 	var wg sync.WaitGroup
-	for g := 0; g < 4; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 4 {
+		wg.Go(func() {
 			if err := sup.do(cmdRestart); err != nil {
 				t.Errorf("cmdRestart: %v", err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

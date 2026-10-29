@@ -34,22 +34,9 @@ func (p *Pinger) TraceRoute(ctx context.Context, dest string, maxHops int, timeo
 	}
 	defer sock.Close()
 
-	doneChan := make(chan struct{})
-	watcherDone := make(chan struct{})
 	// The trace owns its socket cancellation watcher as well as its probes.
 	// Join it before returning so reset cannot leave an old watcher behind.
-	defer func() {
-		close(doneChan)
-		<-watcherDone
-	}()
-	go func() {
-		defer close(watcherDone)
-		select {
-		case <-ctx.Done():
-			sock.Close()
-		case <-doneChan:
-		}
-	}()
+	defer closeOnCancel(ctx, func() { sock.Close() })()
 
 	traceID := p.NextTraceID()
 	if traceID < 0 {

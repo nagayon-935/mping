@@ -20,10 +20,7 @@ func fitWidthsToAvailable(desired, minWidths, maxWidths, shrinkPriority, growPri
 		if minWidths[i] > maxWidths[i] {
 			maxWidths[i] = minWidths[i]
 		}
-		w := desired[i]
-		if w < minWidths[i] {
-			w = minWidths[i]
-		}
+		w := max(desired[i], minWidths[i])
 		if w > maxWidths[i] {
 			w = maxWidths[i]
 		}

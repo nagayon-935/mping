@@ -31,7 +31,7 @@ func TestRunTraceroutesUsesMonitoredAddress(t *testing.T) {
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				runTraceroutes(ctx, called, []*stats.TargetStats{target})
+				runTraceroutes(ctx, called, target)
 			}()
 			select {
 			case dest := <-called:

@@ -69,21 +69,25 @@ func expandTargets(specs []targetSpec, groups []ui.TargetGroup, cfg config) ([]t
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// resolveNetwork can probe for IPv6 connectivity, so it runs once and only
+	// when some host actually needs a DNS lookup.
+	var network string
 	resolvedIPs := make(map[string][]string)
 	for _, spec := range specs {
 		if spec.PinnedIP != "" {
 			continue
 		}
-		rawHost := spec.Host
-		if _, err := netip.ParseAddr(rawHost); err == nil {
-			resolvedIPs[spec.Host] = []string{rawHost}
+		if _, err := netip.ParseAddr(spec.Host); err == nil {
+			resolvedIPs[spec.Host] = []string{spec.Host}
 			continue
 		}
 
-		network := resolveNetwork(cfg)
-		ips, err := resolver.LookupIP(ctx, network, rawHost)
+		if network == "" {
+			network = resolveNetwork(cfg)
+		}
+		ips, err := resolver.LookupIP(ctx, network, spec.Host)
 		if err != nil || len(ips) == 0 {
-			resolvedIPs[spec.Host] = []string{rawHost}
+			resolvedIPs[spec.Host] = []string{spec.Host}
 			continue
 		}
 
@@ -108,11 +112,11 @@ func expandTargets(specs []targetSpec, groups []ui.TargetGroup, cfg config) ([]t
 		startIdx := len(expandedSpecs)
 
 		for _, ip := range ips {
+			expanded := targetSpec{Host: spec.Host, Name: spec.Name, DSCP: spec.DSCP}
 			if spec.Host != ip {
-				expandedSpecs = append(expandedSpecs, targetSpec{Host: spec.Host, PinnedIP: ip, Name: spec.Name, DSCP: spec.DSCP})
-			} else {
-				expandedSpecs = append(expandedSpecs, targetSpec{Host: ip, Name: spec.Name, DSCP: spec.DSCP})
+				expanded.PinnedIP = ip
 			}
+			expandedSpecs = append(expandedSpecs, expanded)
 		}
 
 		endIdx := len(expandedSpecs)

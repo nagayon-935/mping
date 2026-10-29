@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"syscall"
-	"time"
 
 	"github.com/nagayon-935/mping/internal/ui"
 	"github.com/rivo/tview"
@@ -95,7 +94,7 @@ func (h *headlessRunner) drain(logCh <-chan string) {
 func (h *headlessRunner) logLine(line string) { fmt.Fprintln(h.out, plainLogLine(line)) }
 
 func (h *headlessRunner) note(format string, args ...any) {
-	fmt.Fprintf(h.out, "[%s] %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
+	fmt.Fprintf(h.out, "[%s] %s\n", clock(), fmt.Sprintf(format, args...))
 }
 
 // plainLogLine renders a Log-pane line without tview colour tags, using

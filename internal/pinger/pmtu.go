@@ -111,26 +111,15 @@ func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloa
 		return false, "", err
 	}
 
-	bindAddr := "0.0.0.0"
-	if p.Source != "" {
-		bindAddr = p.Source
-	}
-
-	c, err := p.listenPacket("ip4:icmp", bindAddr)
+	// Unlike the pinger and MTR sockets, this one deliberately does not bind
+	// to the interface.
+	c, err := p.listenICMP(false)
 	if err != nil {
 		return false, "", err
 	}
 	defer c.Close()
 
-	doneChan := make(chan struct{})
-	defer close(doneChan)
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = c.Close()
-		case <-doneChan:
-		}
-	}()
+	defer closeOnCancel(ctx, func() { _ = c.Close() })()
 
 	rc, err := ipv4.NewRawConn(c)
 	if err != nil {
@@ -172,10 +161,8 @@ func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloa
 		_ = rc.SetReadDeadline(deadline)
 		hdr, pld, _, err := rc.ReadFrom(buf)
 		if err != nil {
-			if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
-				return false, "", nil
-			}
-			// Non-timeout read errors (e.g. socket closed) are treated as no reply.
+			// A read timeout or any other read error (e.g. socket closed) is
+			// treated as no reply.
 			return false, "", nil
 		}
 		parsed, err := icmp.ParseMessage(1, pld)

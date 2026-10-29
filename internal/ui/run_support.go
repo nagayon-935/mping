@@ -65,7 +65,7 @@ func wireHostInputs(
 							})
 						}
 					}) {
-						vs.appendLog("[yellow]Operation queue full; please try again[-]")
+						vs.appendLog(queueFullLog)
 					}
 				}
 			} else if key == tcell.KeyEscape {

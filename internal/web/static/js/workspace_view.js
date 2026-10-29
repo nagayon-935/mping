@@ -1,11 +1,10 @@
 // Monitor workspace rendering. Selection, ordering and fetching live outside
 // this module; table, route and graph panes share one prepared target list.
+import { $ } from "./dom.js";
 import { renderTargets } from "./table.js";
 import { renderMTR } from "./mtr.js";
 import { renderTraceroutes } from "./traceroute.js";
 import { STATUS_LABELS } from "./toolbar.js";
-
-const $ = (id) => document.getElementById(id);
 
 export function createWorkspaceView({ graphs, inspect, canControl, selectTarget, sortColumn, renderUnlessSelecting, selectedId }) {
   // Locate scrolls a pane to the selected host without reordering anything.

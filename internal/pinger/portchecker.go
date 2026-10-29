@@ -56,7 +56,6 @@ type PortChecker struct {
 	udpDialer  *net.Dialer
 	ctx        context.Context
 	cancel     context.CancelFunc
-	stopOnce   sync.Once
 	targetMu   sync.Mutex
 	targetRuns map[*stats.TargetStats]*portTargetRun
 	wg         sync.WaitGroup
@@ -81,8 +80,8 @@ func NewPortChecker(targets []*stats.TargetStats, specs []PortSpec, interval, ti
 		interval:   interval,
 		timeout:    timeout,
 		bind:       bind,
-		tcpDialer:  newBoundDialer("tcp", timeout, bind),
-		udpDialer:  newBoundDialer("udp", timeout, bind),
+		tcpDialer:  NewBoundDialer("tcp", timeout, bind),
+		udpDialer:  NewBoundDialer("udp", timeout, bind),
 		ctx:        ctx,
 		cancel:     cancel,
 	}
@@ -101,7 +100,7 @@ func (pc *PortChecker) Start() {
 
 // Stop signals all goroutines to exit. Safe to call multiple times.
 func (pc *PortChecker) Stop() {
-	pc.stopOnce.Do(func() { pc.cancel() })
+	pc.cancel()
 }
 
 // Wait blocks until all check goroutines have exited. Call Stop first.
@@ -183,20 +182,7 @@ func checkUDP(ctx context.Context, dialer *net.Dialer, addr string, timeout time
 	}
 	defer conn.Close()
 
-	doneChan := make(chan struct{})
-	watcherDone := make(chan struct{})
-	defer func() {
-		close(doneChan)
-		<-watcherDone
-	}()
-	go func() {
-		defer close(watcherDone)
-		select {
-		case <-ctx.Done():
-			_ = conn.Close()
-		case <-doneChan:
-		}
-	}()
+	defer closeOnCancel(ctx, func() { _ = conn.Close() })()
 
 	start := time.Now()
 	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
@@ -232,10 +218,6 @@ type portTargetRun struct {
 
 func (pc *PortChecker) launchTarget(t *stats.TargetStats, results []*stats.PortCheckResult) {
 	pc.targetMu.Lock()
-	if pc.ctx == nil {
-		pc.targetMu.Unlock()
-		return
-	}
 	if _, exists := pc.targetRuns[t]; exists {
 		pc.targetMu.Unlock()
 		return
@@ -244,9 +226,7 @@ func (pc *PortChecker) launchTarget(t *stats.TargetStats, results []*stats.PortC
 	run := &portTargetRun{cancel: cancel, done: make(chan struct{})}
 	pc.targetRuns[t] = run
 	pc.targetMu.Unlock()
-	pc.wg.Add(1)
-	go func() {
-		defer pc.wg.Done()
+	pc.wg.Go(func() {
 		defer close(run.done)
 		var wg sync.WaitGroup
 		for j, spec := range pc.specs {
@@ -257,7 +237,7 @@ func (pc *PortChecker) launchTarget(t *stats.TargetStats, results []*stats.PortC
 			}(spec, results[j])
 		}
 		wg.Wait()
-	}()
+	})
 }
 func (pc *PortChecker) AddTarget(t *stats.TargetStats) {
 	results := newPortResults(pc.specs)

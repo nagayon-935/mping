@@ -40,8 +40,7 @@ func TestStopCancelsAndJoinsContextDNS(t *testing.T) {
 			p := NewPingerWithOptions([]*stats.TargetStats{target}, opts)
 			p.asnJitter = func() time.Duration { return 0 }
 			p.ptrJitter = func() time.Duration { return 0 }
-			p.wg.Add(1) // simulate the owning worker without opening a socket
-			go func() { defer p.wg.Done(); p.resolveTarget(target) }()
+			p.wg.Go(func() { p.resolveTarget(target) })
 			select {
 			case <-entered:
 			case <-time.After(time.Second):

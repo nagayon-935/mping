@@ -124,12 +124,8 @@ func WatchPaths(ctx context.Context, paths func() []string, onChange func()) err
 				if timer == nil {
 					timer = time.NewTimer(debounceDelay)
 				} else {
-					if !timer.Stop() {
-						select {
-						case <-timer.C:
-						default:
-						}
-					}
+					// Go >= 1.23 timers discard any unreceived value on
+					// Reset, so no Stop/drain dance is needed.
 					timer.Reset(debounceDelay)
 				}
 			}

@@ -135,12 +135,8 @@ func (s *Source) update(f func(sourceState) sourceState) {
 // and a version that changes on every transition.
 func (s *Source) load() (Provider, State, uint64) {
 	st := s.cur.Load()
-	if st == nil || st.state == "" {
-		var version uint64
-		if st != nil {
-			version = st.version
-		}
-		return nil, StateStarting, version
+	if st == nil {
+		return nil, StateStarting, 0
 	}
 	return st.provider, st.state, st.version
 }

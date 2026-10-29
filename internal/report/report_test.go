@@ -57,9 +57,8 @@ func TestWriteNeverOverwritesAndPublishesCompleteFile(t *testing.T) {
 	r := Report{SchemaVersion: 1, Scope: "session", Targets: []Target{}}
 	var wg sync.WaitGroup
 	results := make(chan error, 8)
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() { defer wg.Done(); results <- Write(path, "json", r) }()
+	for range 8 {
+		wg.Go(func() { results <- Write(path, "json", r) })
 	}
 	wg.Wait()
 	close(results)
