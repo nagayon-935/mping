@@ -25,6 +25,8 @@ func TestParseHostsFile_RejectsRemovedSettings(t *testing.T) {
 	}{
 		{"top-level dscp", "dscp: EF\nhosts:\n  - example.com\n", `line 1: "dscp" was removed`},
 		{"per-host dscp", "hosts:\n  - host: 2001:db8::1\n    dscp: EF\n", `line 3: "dscp" was removed`},
+		{"http-status", "hosts: [example.com]\nhttp-status: 200-299\n", `line 2: "http-status" was removed`},
+		{"http-header", "hosts: [example.com]\nhttp-header:\n  - X-Key=value\n", `line 2: "http-header" was removed`},
 		{"group host dscp", "groups:\n  - name: qos\n    hosts:\n      - {host: \"::1\", dscp: EF}\n", `line 4: "dscp" was removed`},
 	}
 	for _, tt := range tests {

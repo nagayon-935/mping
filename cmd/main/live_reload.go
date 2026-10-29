@@ -163,7 +163,7 @@ func reloadNotice(logCh chan<- string, message string) {
 }
 
 func settingName(field string) string {
-	names := map[string]string{"intervalMs": "interval", "timeoutMs": "timeout", "packetSize": "size", "ifaceName": "interface", "sourceAddr": "source", "mtuEnabled": "discovery-mtu", "trace": "traceroute", "asnEnabled": "asn", "ptrEnabled": "ptr", "ipv4Only": "ipv4", "ipv6Only": "ipv6", "portSpecs": "port", "httpURLs": "http", "jsonOutputFile": "json-output", "dnsServer": "dns-server", "resolveAll": "resolve-all", "httpStatus": "http-status", "httpFollowRedirects": "http-follow-redirects", "httpHeaders": "http-header"}
+	names := map[string]string{"intervalMs": "interval", "timeoutMs": "timeout", "packetSize": "size", "ifaceName": "interface", "sourceAddr": "source", "mtuEnabled": "discovery-mtu", "trace": "traceroute", "asnEnabled": "asn", "ptrEnabled": "ptr", "ipv4Only": "ipv4", "ipv6Only": "ipv6", "portSpecs": "port", "httpURLs": "http", "jsonOutputFile": "json-output", "dnsServer": "dns-server", "resolveAll": "resolve-all", "httpFollowRedirects": "http-follow-redirects"}
 	if name, ok := names[field]; ok {
 		return name
 	}

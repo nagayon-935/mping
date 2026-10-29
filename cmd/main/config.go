@@ -48,9 +48,7 @@ type config struct {
 	healthWindow                     time.Duration
 	eventOutput                      string
 	checkConfig                      bool
-	httpStatus                       string
 	httpFollowRedirects              bool
-	httpHeaders                      []string
 }
 
 // applyDocToCfg applies YAML document fields to cfg, respecting CLI flag
@@ -82,9 +80,7 @@ func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsfile.Document) ([]hos
 	syncField(fs, "health-failures", doc.HealthFailures, &cfg.healthFailures)
 	syncField(fs, "health-recoveries", doc.HealthRecoveries, &cfg.healthRecoveries)
 	syncField(fs, "event-output", doc.EventOutput, &cfg.eventOutput)
-	syncField(fs, "http-status", doc.HTTPStatus, &cfg.httpStatus)
 	syncField(fs, "http-follow-redirects", doc.HTTPFollowRedirects, &cfg.httpFollowRedirects)
-	syncSlice(fs, "http-header", doc.HTTPHeaders, &cfg.httpHeaders)
 	if err := syncDuration(fs, "health-window", doc.HealthWindow, &cfg.healthWindow); err != nil {
 		return nil, nil, cfg, err
 	}

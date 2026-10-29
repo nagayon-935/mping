@@ -100,16 +100,16 @@ type Document struct {
 	HealthRecoveries    *int        `yaml:"health-recoveries"`
 	HealthWindow        *string     `yaml:"health-window"`
 	EventOutput         *string     `yaml:"event-output"`
-	HTTPStatus          *string     `yaml:"http-status"`
 	HTTPFollowRedirects *bool       `yaml:"http-follow-redirects"`
-	HTTPHeaders         []string    `yaml:"http-header"`
 }
 
 // removedSettings are keys earlier versions accepted, with what to tell a
 // user whose file still has them. They are rejected by name so the error
 // says the setting was removed, not that it was mistyped.
 var removedSettings = map[string]string{
-	"dscp": "DSCP marking is no longer supported; delete the key",
+	"dscp":        "DSCP marking is no longer supported; delete the key",
+	"http-status": "HTTP checks always treat 200-399 as up; delete the key",
+	"http-header": "custom HTTP request headers are no longer supported; delete the key",
 }
 
 // checkRemovedSettings rejects a document that still uses a removed

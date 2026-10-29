@@ -54,7 +54,7 @@ func (s *supervisor) captureReport(selectedID uint64) (report.Report, error) {
 		DNSServer: cfg.dnsServer, ResolveAll: cfg.resolveAll,
 		Traceroute: s.cfg.traceEnabled, MTR: s.cfg.mtrEnabled, PMTUDiscovery: cfg.mtuEnabled,
 		HTTPURLs:       append([]string(nil), s.cfg.httpURLs...),
-		HealthFailures: healthPolicy(cfg).Failures, HealthRecoveries: healthPolicy(cfg).Recoveries, HealthWindowSeconds: healthPolicy(cfg).Window.Seconds(), HTTPStatus: cfg.httpStatus, HTTPFollowRedirects: cfg.httpFollowRedirects,
+		HealthFailures: healthPolicy(cfg).Failures, HealthRecoveries: healthPolicy(cfg).Recoveries, HealthWindowSeconds: healthPolicy(cfg).Window.Seconds(), HTTPFollowRedirects: cfg.httpFollowRedirects,
 		Thresholds: thresholdsMap(cfg.thresholds),
 	}
 	if !s.cfg.durationDeadline.IsZero() {

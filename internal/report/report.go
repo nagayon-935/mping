@@ -30,7 +30,6 @@ type Settings struct {
 	HealthFailures      int                `json:"health_failures"`
 	HealthRecoveries    int                `json:"health_recoveries"`
 	HealthWindowSeconds float64            `json:"health_window_seconds"`
-	HTTPStatus          string             `json:"http_status"`
 	HTTPFollowRedirects bool               `json:"http_follow_redirects"`
 }
 

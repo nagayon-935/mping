@@ -58,10 +58,9 @@ func NewHTTPChecker(urls []string, interval, timeout time.Duration, bind BindCon
 	return NewHTTPCheckerWithOptions(urls, interval, timeout, bind, DefaultHTTPOptions())
 }
 
-// DefaultHTTPOptions mirrors the CLI defaults: 2xx/3xx is up, redirects are
-// followed.
+// DefaultHTTPOptions mirrors the CLI default of following redirects.
 func DefaultHTTPOptions() HTTPOptions {
-	return HTTPOptions{ExpectedStatus: []StatusRange{{200, 399}}, FollowRedirects: true}
+	return HTTPOptions{FollowRedirects: true}
 }
 
 // resolveTo returns an Options.ResolveIPAddr hook that resolves every host to ip.

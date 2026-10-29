@@ -54,9 +54,7 @@ func registerFlags(fs *pflag.FlagSet, cfg *config, th *thresholdFlags) {
 	fs.IntVar(&cfg.healthRecoveries, "health-recoveries", 2, "consecutive replies required to clear a down state")
 	fs.DurationVar(&cfg.healthWindow, "health-window", time.Minute, "recent loss window (1s-1h)")
 	fs.StringVar(&cfg.eventOutput, "event-output", "", "append structured measurement events to a JSONL file")
-	fs.StringVar(&cfg.httpStatus, "http-status", "200-399", "expected HTTP status codes/ranges, e.g. 200-299,401")
 	fs.BoolVar(&cfg.httpFollowRedirects, "http-follow-redirects", true, "follow HTTP redirects (up to 10)")
-	fs.StringArrayVar(&cfg.httpHeaders, "http-header", nil, "HTTP request header Name=value; repeatable, supports ${ENV_VAR}")
 
 	fs.IntVar(&th.rttWarnMs, "rtt-warn", 50, "RTT warn threshold in ms (orange)")
 	fs.IntVar(&th.rttCritMs, "rtt-crit", 200, "RTT crit threshold in ms (red)")
@@ -69,7 +67,9 @@ func registerFlags(fs *pflag.FlagSet, cfg *config, th *thresholdFlags) {
 // removedFlags maps deleted long flags to the reason shown when a script still
 // passes one; pflag alone would only report "unknown flag".
 var removedFlags = map[string]string{
-	"dscp": "DSCP marking is no longer supported",
+	"dscp":        "DSCP marking is no longer supported",
+	"http-status": "HTTP checks always treat 200-399 as up",
+	"http-header": "custom HTTP request headers are no longer supported",
 }
 
 // removedFlagError returns an error naming the first removed flag in args,

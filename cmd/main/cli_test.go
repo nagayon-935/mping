@@ -61,13 +61,18 @@ func TestParseArgs_Errors(t *testing.T) {
 }
 
 func TestParseArgs_RemovedFlags(t *testing.T) {
-	for _, args := range [][]string{
-		{"--dscp", "EF", "example.com"},
-		{"--dscp=EF", "example.com"},
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--dscp", "EF", "example.com"}, "--dscp was removed"},
+		{[]string{"--dscp=EF", "example.com"}, "--dscp was removed"},
+		{[]string{"--http-status", "200-299", "example.com"}, "--http-status was removed"},
+		{[]string{"--http-header=X-Key=value", "example.com"}, "--http-header was removed"},
 	} {
-		_, _, _, _, err := parseArgs(args)
-		if err == nil || !strings.Contains(err.Error(), "--dscp was removed") {
-			t.Errorf("parseArgs(%v) error = %v, want it to say --dscp was removed", args, err)
+		_, _, _, _, err := parseArgs(tt.args)
+		if err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("parseArgs(%v) error = %v, want it to contain %q", tt.args, err, tt.want)
 		}
 	}
 	// A removed flag's name used as another flag's value is not a flag.

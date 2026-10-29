@@ -4,12 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"net/netip"
 	"net/url"
-	"os"
-	"strings"
-	"unicode"
 
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
@@ -29,58 +25,13 @@ func healthPolicy(cfg config) stats.HealthPolicy {
 }
 
 func httpOptions(cfg config) (pinger.HTTPOptions, error) {
-	status := cfg.httpStatus
-	follow := cfg.httpFollowRedirects
-	if status == "" {
-		status = "200-399"
-		follow = true
-	}
-	ranges, err := pinger.ParseHTTPStatus(status)
-	if err != nil {
-		return pinger.HTTPOptions{}, err
-	}
-	headers := make(http.Header)
-	for i, raw := range cfg.httpHeaders {
-		name, value, ok := strings.Cut(raw, "=")
-		name = strings.TrimSpace(name)
-		if !ok || name == "" || strings.EqualFold(name, "Host") {
-			return pinger.HTTPOptions{}, fmt.Errorf("http-header[%d]: expected Name=value (Host is not supported)", i)
-		}
-		for _, r := range name {
-			if r > unicode.MaxASCII || !(unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("!#$%&'*+-.^_`|~", r)) {
-				return pinger.HTTPOptions{}, fmt.Errorf("http-header[%d]: invalid header name", i)
-			}
-		}
-		missing := false
-		value = os.Expand(value, func(key string) string {
-			v, ok := os.LookupEnv(key)
-			if !ok {
-				missing = true
-			}
-			return v
-		})
-		if missing {
-			return pinger.HTTPOptions{}, fmt.Errorf("http-header[%d]: referenced environment variable is not set", i)
-		}
-		invalidValue := false
-		for i := range len(value) {
-			if value[i] < 32 && value[i] != '\t' || value[i] == 127 {
-				invalidValue = true
-				break
-			}
-		}
-		if invalidValue {
-			return pinger.HTTPOptions{}, fmt.Errorf("http-header[%d]: invalid header value", i)
-		}
-		headers.Add(name, value)
-	}
 	for i, raw := range cfg.httpURLs {
 		u, err := url.Parse(raw)
 		if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
 			return pinger.HTTPOptions{}, fmt.Errorf("http[%d]: expected http(s) URL without credentials or fragment", i)
 		}
 	}
-	return pinger.HTTPOptions{ExpectedStatus: ranges, FollowRedirects: follow, Headers: headers}, nil
+	return pinger.HTTPOptions{FollowRedirects: cfg.httpFollowRedirects}, nil
 }
 
 func validateBinding(cfg config) error {
@@ -125,12 +76,6 @@ func printCheckedConfig(out io.Writer, sp startupParams) error {
 		targets[i] = map[string]string{"host": spec.Host, "address": spec.resolveAddr(), "name": spec.display()}
 	}
 	cfg := sp.cfg
-	// Header values are deliberately excluded, including values resolved from the environment.
-	headers := []string{}
-	for _, raw := range cfg.httpHeaders {
-		name, _, _ := strings.Cut(raw, "=")
-		headers = append(headers, strings.TrimSpace(name))
-	}
 	groups := make([]map[string]any, len(sp.groups))
 	for i, group := range sp.groups {
 		names := []string{}
@@ -155,9 +100,8 @@ func printCheckedConfig(out io.Writer, sp startupParams) error {
 			"traceroute": cfg.trace, "mtr": cfg.mtr, "asn": cfg.asnEnabled,
 			"ptr": cfg.ptrEnabled, "discovery_mtu": cfg.mtuEnabled,
 			"ports": cfg.portSpecs, "http_urls": cfg.httpURLs,
-			"http_status": cfg.httpStatus, "http_follow_redirects": cfg.httpFollowRedirects,
-			"http_header_names": headers,
-			"health_failures":   cfg.healthFailures, "health_recoveries": cfg.healthRecoveries,
+			"http_follow_redirects": cfg.httpFollowRedirects,
+			"health_failures":       cfg.healthFailures, "health_recoveries": cfg.healthRecoveries,
 			"health_window": cfg.healthWindow.String(),
 			"thresholds":    thresholdsMap(cfg.thresholds),
 			"web":           cfg.webEnabled, "web_port": cfg.webPort, "no_tui": cfg.noTUI,

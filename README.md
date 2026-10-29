@@ -329,9 +329,7 @@ Current health is separate from lifetime loss and RTT statistics. By default, **
 | `--health-recoveries` | `2` | Consecutive replies to clear unavailability (1–10000) |
 | `--health-window` | `1m` | Recent-loss window, 1s–1h, in one-second buckets; changing its length starts a fresh recent window |
 | `--event-output` | empty | Append structured backend events to a JSONL file |
-| `--http-status` | `200-399` | Expected HTTP codes/ranges, e.g. `200-299,401` |
 | `--http-follow-redirects` | `true` | Follow redirects, up to 10; false inspects the first response |
-| `--http-header` | empty | Repeatable `Name=value` request header; YAML uses a list |
 
 `health` in snapshots/reports includes status, reason, unavailability, consecutive counts, recent loss, and last probe/reply timestamps. Recent counters describe the window at `evaluated_at` (the last completed probe or policy change), so stopping preserves the judgment and its inputs together. `measurement_state` (`running`, `finished`, `stopped`) describes ICMP measurement separately from the Web server's `state`; after `--count` completes, auxiliary monitors may continue in the TUI. Graphs use actual timestamps and leave pauses blank instead of shifting an old reply to now.
 
@@ -343,7 +341,7 @@ mping --check-config -f examples/monitoring.yaml --interval 500
 
 `--check-config` (CLI only) prints the effective settings, expanded targets/count, groups and explicit CLI overrides. It starts no probes, listeners, UI or output writers and needs no raw-socket privileges. `--resolve-all` may perform DNS lookups. Header values are omitted; only their names are shown. CLI flags take precedence over YAML.
 
-Header values support environment references such as `Authorization=Bearer ${HEALTH_TOKEN}`. Missing variables and malformed headers fail validation without echoing values. The same header policy applies to every configured URL; use a separate invocation for different credentials. Configured headers are removed on redirects to a different origin, including HTTPS to HTTP. URLs must be HTTP(S) without embedded credentials or fragments. Reports and configuration checks never include header values.
+HTTP checks count a 2xx or 3xx response as up and anything else as down. URLs must be HTTP(S) without embedded credentials or fragments.
 
 Backend health transitions reach TUI, Web and headless logs. Consecutive identical ping failures are folded with `count` and `last_at`; the JSONL stream appends count updates for those records as they occur. This is separate from per-probe CSV output and periodic JSON snapshots. The event writer uses a bounded queue, reports overflow/write failures to stderr, and flushes on normal shutdown. Web settings, CSV/event destinations and the session duration deadline remain startup-only; changes log a restart notice. Port and network changes rebuild the relevant measurement session. See [examples/monitoring.yaml](examples/monitoring.yaml).
 
