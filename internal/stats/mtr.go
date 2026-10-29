@@ -16,6 +16,7 @@ type HopStats struct {
 	ASN     string // cached ASN annotation
 	Country string // two-letter country code (from Cymru)
 	Org     string // organization name (from Cymru)
+	PTR     string // reverse DNS name of IP, "" when unknown
 	Sent    int
 	Recv    int
 	LastRTT time.Duration
@@ -26,10 +27,13 @@ type HopStats struct {
 }
 
 // annotate overwrites IP/ASN/Country/Org with each non-empty argument; empty
-// arguments leave the existing value untouched. Caller must hold the owning
-// MTRStats.mu.
+// arguments leave the existing value untouched. A new responder IP drops the
+// previous one's PTR name. Caller must hold the owning MTRStats.mu.
 func (h *HopStats) annotate(ip, asn, country, org string) {
 	if ip != "" {
+		if ip != h.IP {
+			h.PTR = ""
+		}
 		h.IP = ip
 	}
 	if asn != "" {
@@ -50,6 +54,7 @@ type HopView struct {
 	ASN     string
 	Country string
 	Org     string
+	PTR     string
 	Sent    int
 	Recv    int
 	LossPct float64
@@ -68,6 +73,7 @@ type MTRStats struct {
 	flapCount    int
 	lastFlapAt   time.Time
 	lastFlapDesc string
+	lastErr      string // why the route could not be discovered, "" once it was
 }
 
 // NewMTRStats returns an empty MTRStats.
@@ -160,6 +166,32 @@ func (m *MTRStats) SetIP(ttl int, ip, asn, country, org string) {
 	}
 }
 
+// SetPTR records the reverse DNS name of the hop at ttl, provided ip is
+// still that hop's responder. ttl is 1-based.
+func (m *MTRStats) SetPTR(ttl int, ip, name string) {
+	defer bumpGeneration()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if h := m.hopAt(ttl); h != nil && h.IP == ip {
+		h.PTR = name
+	}
+}
+
+// SetError records why the route could not be discovered; "" clears it.
+func (m *MTRStats) SetError(msg string) {
+	defer bumpGeneration()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastErr = msg
+}
+
+// Error returns the last route discovery error, or "".
+func (m *MTRStats) Error() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.lastErr
+}
+
 // View returns an ordered read-only snapshot of all hops.
 func (m *MTRStats) View() []HopView {
 	m.mu.RLock()
@@ -180,6 +212,7 @@ func (m *MTRStats) View() []HopView {
 			ASN:     h.ASN,
 			Country: h.Country,
 			Org:     h.Org,
+			PTR:     h.PTR,
 			Sent:    h.Sent,
 			Recv:    h.Recv,
 			LossPct: lossPct,
@@ -261,10 +294,10 @@ func buildFlapDesc(prev, cur []string) string {
 	return strings.Join(changed, "; ")
 }
 
-// Reset clears all hop data and the flap history. The flap fields go with
-// the hops: they describe route changes observed over a monitoring window
-// that a reset discards, so leaving them behind would report a flap against
-// a window the user just threw away.
+// Reset clears all hop data, the flap history and the last error. The flap
+// fields go with the hops: they describe route changes observed over a
+// monitoring window that a reset discards, so leaving them behind would
+// report a flap against a window the user just threw away.
 func (m *MTRStats) Reset() {
 	defer bumpGeneration()
 	m.mu.Lock()
@@ -273,6 +306,7 @@ func (m *MTRStats) Reset() {
 	m.flapCount = 0
 	m.lastFlapAt = time.Time{}
 	m.lastFlapDesc = ""
+	m.lastErr = ""
 }
 
 // hopAt returns the HopStats for ttl (1-based), or nil if out of range.

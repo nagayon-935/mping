@@ -106,6 +106,14 @@ func (p *Pinger) GetASNInfoFor(ip string) ASNInfo {
 	return p.getASNInfo(ip)
 }
 
+// GetPTRFor returns ip's reverse DNS name when PTR lookup is enabled.
+func (p *Pinger) GetPTRFor(ip string) string {
+	if !p.PtrEnabled {
+		return ""
+	}
+	return p.getPTR(ip)
+}
+
 // OpenHopSocketContext opens a send socket for TTL-limited probes to dest,
 // cancelling DNS resolution with the MTR engine's context.
 // The caller must call HopSocket.Close() when done.

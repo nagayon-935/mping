@@ -93,6 +93,7 @@ func (a *pingerMTRAdapter) NextTraceID() int { return a.p.NextTraceID() }
 func (a *pingerMTRAdapter) ASNInfoFor(ip string) pinger.ASNInfo {
 	return a.p.GetASNInfoFor(ip)
 }
+func (a *pingerMTRAdapter) PTRFor(ip string) string { return a.p.GetPTRFor(ip) }
 
 var newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 	return &pingerAdapter{Pinger: pinger.NewPingerWithOptions(targets, opts)}

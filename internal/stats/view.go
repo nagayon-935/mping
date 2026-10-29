@@ -36,6 +36,7 @@ type TargetView struct {
 	MTRFlapCount     int
 	MTRLastFlapAt    time.Time
 	MTRLastFlapDesc  string
+	MTRError         string // why the route could not be discovered, "" once it was
 	Sent             int
 	Recv             int
 	Loss             int
@@ -76,10 +77,11 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 	var mtrHops []HopView
 	var mtrFlapCount int
 	var mtrLastFlapAt time.Time
-	var mtrLastFlapDesc string
+	var mtrLastFlapDesc, mtrError string
 	if t.mtrStats != nil {
 		mtrHops = t.mtrStats.View()
 		mtrFlapCount, mtrLastFlapAt, mtrLastFlapDesc = t.mtrStats.FlapInfo()
+		mtrError = t.mtrStats.Error()
 	}
 
 	th := t.healthPolicyLocked().Thresholds
@@ -107,6 +109,7 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 		MTRFlapCount:     mtrFlapCount,
 		MTRLastFlapAt:    mtrLastFlapAt,
 		MTRLastFlapDesc:  mtrLastFlapDesc,
+		MTRError:         mtrError,
 		Sent:             t.sent,
 		Recv:             t.recv,
 		Loss:             t.loss,

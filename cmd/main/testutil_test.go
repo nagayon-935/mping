@@ -285,6 +285,7 @@ func (noopHopProber) ProbeHop(ctx context.Context, sock mtr.HopSocket, dest stri
 func (noopHopProber) NextTraceID() int { return 0 }
 
 func (noopHopProber) ASNInfoFor(ip string) pinger.ASNInfo { return pinger.ASNInfo{} }
+func (noopHopProber) PTRFor(string) string                { return "" }
 
 // liveFakePinger is a fakePinger that also implements dynamicPinger, so the
 // supervisor takes its live-edit and event-driven completion paths.

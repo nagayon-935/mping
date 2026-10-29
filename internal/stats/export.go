@@ -46,6 +46,7 @@ type TargetSummary struct {
 	PMTU             int           `json:"pmtu,omitempty"`
 	PMTUBottleneckIP string        `json:"pmtu_bottleneck_ip,omitempty"`
 	MTRHops          []HopSummary  `json:"mtr_hops,omitempty"`
+	MTRError         string        `json:"mtr_error,omitempty"`
 }
 
 // HopSummary is a JSON-serialisable summary for a single MTR hop.
@@ -55,6 +56,7 @@ type HopSummary struct {
 	ASN       string  `json:"asn,omitempty"`
 	Country   string  `json:"country,omitempty"`
 	Org       string  `json:"org,omitempty"`
+	PTR       string  `json:"ptr,omitempty"`
 	Sent      int     `json:"sent"`
 	Recv      int     `json:"recv"`
 	LossPct   float64 `json:"loss_pct"`
@@ -152,6 +154,7 @@ func BuildSnapshotFromViews(targets []TargetView, httpResults []HTTPCheckView) E
 				ASN:       h.ASN,
 				Country:   h.Country,
 				Org:       h.Org,
+				PTR:       h.PTR,
 				Sent:      h.Sent,
 				Recv:      h.Recv,
 				LossPct:   h.LossPct,
@@ -192,6 +195,7 @@ func BuildSnapshotFromViews(targets []TargetView, httpResults []HTTPCheckView) E
 			PMTU:             v.PMTU,
 			PMTUBottleneckIP: v.PMTUBottleneckIP,
 			MTRHops:          mtrHops,
+			MTRError:         v.MTRError,
 		})
 	}
 
