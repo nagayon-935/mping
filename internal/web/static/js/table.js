@@ -5,7 +5,7 @@ import { countCell, numCell, rttCell, textCell } from "./cells.js";
 import { columnWidthPx, setColumns } from "./columns.js";
 import { SORTS } from "./workspace.js";
 import {
-  buildSections, cellLevels, dscpName, formatPct, isIPLiteral, lossRate, matchesFilter, rowLevel,
+  buildSections, cellLevels, formatPct, isIPLiteral, lossRate, matchesFilter, rowLevel,
   selectColumns, statusReason,
 } from "./model.js";
 
@@ -26,7 +26,6 @@ export function targetColumns(features, targets = []) {
     { key: "last", label: "RTT", num: true, required: true, title: "Round-trip time of the latest probe" },
     { key: "jitter", label: "Jitter", num: true, priority: 3 },
     { key: "ttl", label: "TTL", num: true, priority: 7 },
-    features.dscp && { key: "dscp", label: "DSCP", priority: 9 },
   ].filter(Boolean);
 }
 
@@ -59,7 +58,6 @@ function targetCell(col, t, cells, features, group, focused) {
     case "last": return metricCell(rttCell(t.last_rtt_ms, cells.last));
     case "jitter": return metricCell(rttCell(t.jitter_ms, cells.jitter));
     case "ttl": return numCell(t.last_ttl > 0 ? String(t.last_ttl) : "–");
-    case "dscp": return el("td", { text: dscpName(t.last_dscp) });
     default: return el("td");
   }
 }

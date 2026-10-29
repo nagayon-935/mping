@@ -36,7 +36,6 @@ type Features struct {
 	ASN        bool `json:"asn"`
 	PTR        bool `json:"ptr"`
 	MTU        bool `json:"mtu"`
-	DSCP       bool `json:"dscp"`
 }
 
 // Thresholds are the warn/crit colour boundaries, in JSON-friendly units.

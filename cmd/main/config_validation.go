@@ -34,7 +34,7 @@ func validateMergedHosts(cfg config, hosts []hostsfile.Entry, groups []hostsfile
 		IntervalMs: &cfg.intervalMs, TimeoutMs: &cfg.timeoutMs,
 		PacketSize: &cfg.packetSize, Count: &cfg.count,
 		Duration: &duration, Ipv4Only: &cfg.ipv4Only, Ipv6Only: &cfg.ipv6Only,
-		DNSServer: &cfg.dnsServer, DSCP: &cfg.dscp, WebPort: &cfg.webPort,
+		DNSServer: &cfg.dnsServer, WebPort: &cfg.webPort,
 	}
 	if err := validateHostsDoc(doc); err != nil {
 		return err
@@ -69,11 +69,6 @@ func validateHostEntries(hosts []hostsfile.Entry, location string) error {
 	for i, h := range hosts {
 		if strings.TrimSpace(h.Host) == "" {
 			return fmt.Errorf("%s[%d]: empty host entry", location, i)
-		}
-		if h.DSCP != "" {
-			if _, err := pinger.ParseDSCP(h.DSCP); err != nil {
-				return fmt.Errorf("%s[%d]: dscp: %w", location, i, err)
-			}
 		}
 	}
 	return nil
@@ -139,11 +134,6 @@ func validateHostsDoc(doc hostsfile.Document) error {
 	}
 	if err := validateHostNames(doc); err != nil {
 		return err
-	}
-	if doc.DSCP != nil && *doc.DSCP != "" {
-		if _, err := pinger.ParseDSCP(*doc.DSCP); err != nil {
-			return fmt.Errorf("dscp: %w", err)
-		}
 	}
 	if doc.IntervalMs != nil && (*doc.IntervalMs < minIntervalMs || *doc.IntervalMs > maxIntervalMs) {
 		return fmt.Errorf("interval: must be %d–%d ms, got %d", minIntervalMs, maxIntervalMs, *doc.IntervalMs)

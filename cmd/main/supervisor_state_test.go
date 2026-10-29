@@ -181,7 +181,7 @@ func TestSupervisorStopResetRestartPreservesStateAndOwnership(t *testing.T) {
 	target := sup.cfg.targets[0]
 	old := target.NewProbe()
 	old.IncSent()
-	old.OnSuccess(time.Millisecond, 64, 0)
+	old.OnSuccess(time.Millisecond, 64)
 	sup.stopAll()
 	if target.GetView().Sent != 1 || target.GetView().Recv != 1 {
 		t.Fatal("stop cleared statistics")
@@ -198,7 +198,7 @@ func TestSupervisorStopResetRestartPreservesStateAndOwnership(t *testing.T) {
 	}
 	fresh := target.NewProbe()
 	fresh.IncSent()
-	fresh.OnSuccess(time.Millisecond, 64, 0)
+	fresh.OnSuccess(time.Millisecond, 64)
 	if err := sup.do(cmdRestart); err != nil {
 		t.Fatal(err)
 	}

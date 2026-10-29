@@ -295,10 +295,12 @@ type liveFakePinger struct {
 	failAdd bool
 }
 
+var _ dynamicPinger = (*liveFakePinger)(nil)
+
 func newLiveFakePinger() *liveFakePinger {
 	return &liveFakePinger{events: make(chan struct{}, 1), done: make(chan struct{})}
 }
-func (p *liveFakePinger) AddTarget(*stats.TargetStats, string, *int) error {
+func (p *liveFakePinger) AddTarget(*stats.TargetStats, string) error {
 	if p.failAdd {
 		return errors.New("ID allocation failed")
 	}

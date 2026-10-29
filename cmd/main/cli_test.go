@@ -60,6 +60,22 @@ func TestParseArgs_Errors(t *testing.T) {
 	}
 }
 
+func TestParseArgs_RemovedFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"--dscp", "EF", "example.com"},
+		{"--dscp=EF", "example.com"},
+	} {
+		_, _, _, _, err := parseArgs(args)
+		if err == nil || !strings.Contains(err.Error(), "--dscp was removed") {
+			t.Errorf("parseArgs(%v) error = %v, want it to say --dscp was removed", args, err)
+		}
+	}
+	// A removed flag's name used as another flag's value is not a flag.
+	if _, _, _, _, err := parseArgs([]string{"-o", "--dscp", "example.com"}); err != nil {
+		t.Errorf("--dscp as the -o value: unexpected error %v", err)
+	}
+}
+
 func TestParseArgsRejectsOutOfRangeWebPort(t *testing.T) {
 	for _, port := range []string{"0", "-1", "65536"} {
 		t.Run(port, func(t *testing.T) {

@@ -45,12 +45,6 @@ type RunOptions struct {
 	HTTPEnabled   bool
 	ASNEnabled    bool
 	PTREnabled    bool
-	// DSCPEnabled shows the DSCP column (observed TOS/TrafficClass on each
-	// target's most recent reply). Same dynamic-column pattern as ASNEnabled/
-	// PTREnabled: cmd/main sets it when --dscp or any host's per-target dscp
-	// override is configured, so the column only appears when the feature is
-	// actually in use.
-	DSCPEnabled bool
 	// HTTPResults returns live HTTP health-check results for the HTTP Monitor
 	// pane. Called on every render tick (rather than once at startup) so it
 	// reflects a checker swapped in by OnResetHTTP after Run has started.

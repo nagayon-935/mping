@@ -50,7 +50,7 @@ func (s *supervisor) captureReport(selectedID uint64) (report.Report, error) {
 		IntervalMS: s.cfg.interval.Milliseconds(), TimeoutMS: s.cfg.timeout.Milliseconds(),
 		PayloadBytes: s.cfg.packetSize, Interface: s.cfg.bind.Interface, BoundSource: s.cfg.bind.Source,
 		SourceIPv4Hint: s.cfg.sourceIPv4, SourceIPv6Hint: s.cfg.sourceIPv6, Network: s.cfg.network,
-		Count: cfg.count, Duration: s.cfg.durationLimit.String(), DSCP: cfg.dscp,
+		Count: cfg.count, Duration: s.cfg.durationLimit.String(),
 		DNSServer: cfg.dnsServer, ResolveAll: cfg.resolveAll,
 		Traceroute: s.cfg.traceEnabled, MTR: s.cfg.mtrEnabled, PMTUDiscovery: cfg.mtuEnabled,
 		HTTPURLs:       append([]string(nil), s.cfg.httpURLs...),

@@ -212,7 +212,7 @@ func TestHandleEchoReply_SetsRTTFromEmbeddedTimestamp(t *testing.T) {
 	embedSendTimestamp(payload, sent)
 
 	msg := &icmp.Message{Body: &icmp.Echo{ID: id, Seq: 5, Data: payload}}
-	p.handleEchoReply(msg, 64, 0)
+	p.handleEchoReply(msg, 64)
 
 	select {
 	case reply := <-p.targetChans[id]:
@@ -240,7 +240,7 @@ func TestHandleEchoReply_FallsBackWhenTimestampInvalid(t *testing.T) {
 	copy(payload, "XXXXX") // corrupt signature, as a middlebox rewrite would
 
 	msg := &icmp.Message{Body: &icmp.Echo{ID: id, Seq: 5, Data: payload}}
-	p.handleEchoReply(msg, 64, 0)
+	p.handleEchoReply(msg, 64)
 
 	select {
 	case reply := <-p.targetChans[id]:

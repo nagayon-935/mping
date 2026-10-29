@@ -33,8 +33,8 @@ func diffProbeConfig(oldCfg, newCfg config) []string {
 }
 
 func (s *supervisor) reconcileTargets(cfg config, specs []targetSpec) (targets []*stats.TargetStats, added []int, reused map[*stats.TargetStats]bool) {
-	type key struct{ host, ip, dscp string }
-	identity := func(spec targetSpec) key { return key{spec.Host, spec.PinnedIP, spec.DSCP} }
+	type key struct{ host, ip string }
+	identity := func(spec targetSpec) key { return key{spec.Host, spec.PinnedIP} }
 	old := map[key][]*stats.TargetStats{}
 	for i, spec := range s.cfg.specs {
 		old[identity(spec)] = append(old[identity(spec)], s.cfg.targets[i])

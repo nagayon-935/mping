@@ -22,7 +22,6 @@ Widths include cell padding. Numeric text uses a 13px monospace font, with
 | RTT / jitter | Positive Go durations up to roughly 9.22e12 ms | At most 10 chars including ` ms`; scientific notation from 1e6 ms | 100px |
 | Counts | Nonnegative Go integer counts, up to int64 maximum | At most 8 chars; grouped below 1M, M/B/T above, scientific from 1e15 | 88px |
 | TTL / hop | 0–255 | 3 digits | 60px |
-| DSCP | Named codepoints up to 4 chars, or 0–63 | 4 chars | 72px |
 | HTTP URL | No new length restriction | One line, ellipsis; full URL remains in the DOM and title | At least 240px; flexible |
 | HTTP code | 3-digit status codes | 3 digits | 64px |
 | Port | `65535/udp` | 9 chars | 104px |
@@ -35,7 +34,7 @@ the complete underlying strings, not their ellipsized presentation.
 
 The overview always keeps **Status, Host, Loss % and latest RTT**. Extra
 columns appear as the viewport or the available pane width grows, in priority
-order: Jitter, Sent, Recv, IP, TTL, AS (when enabled), DSCP (when enabled).
+order: Jitter, Sent, Recv, IP, TTL, AS (when enabled).
 Columns retain their normal display order. The current RTT header reads
 **RTT**, with units in each value. If all configured hosts are IP literals,
 the redundant IP column is omitted. This decision uses the full target list,
@@ -65,7 +64,7 @@ Every desktop pane takes its grid cell's height and scrolls internally. Narrower
 screens stack the panes. Phones use compact status/host/loss/RTT widths of
 72/94/46/80px, reduced to 72/66/44/80px up to 360px.
 Status, host, loss and latest RTT need 292px (72 + 94 + 46 + 80), so a phone
-keeps these four fields. AS and DSCP are omitted unless enabled, including in
+keeps these four fields. AS is omitted unless enabled, including in
 the selected target's details; PTR annotations and PMTU details follow their
 respective options as well.
 

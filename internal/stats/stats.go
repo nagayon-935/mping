@@ -31,7 +31,6 @@ type TargetStats struct {
 	host            string // as configured; the display label is displayNameLocked
 	startedAt       time.Time
 	windowStartedAt time.Time
-	dscp            string
 	ipHistory       []IPChange
 	ipChanges       int
 	cancelled       int
@@ -64,16 +63,9 @@ type TargetStats struct {
 	// apart from one that's truly dropping packets -- mirrors ping.c's
 	// -W/nrcvtimeout. The loss already recorded for that probe is left
 	// standing; a late reply never decrements it.
-	lateReplies int
-	lastRTT     time.Duration
-	lastTTL     int
-	// lastDSCP is the TOS (IPv4) / TrafficClass (IPv6) byte observed on the
-	// most recent successful reply's own IP header — i.e. what DSCP marking
-	// actually arrived, after any re-marking or bleaching along the return
-	// path. Zero both as the pre-first-reply default and when the platform
-	// didn't supply a control message; same ambiguity as lastTTL's zero
-	// value, and for the same reason (see pinger.Reply.DSCP).
-	lastDSCP     int
+	lateReplies  int
+	lastRTT      time.Duration
+	lastTTL      int
 	lastLossTime time.Time
 	lastError    string
 
@@ -112,15 +104,6 @@ func (t *TargetStats) ID() uint64 { return t.id }
 // Host returns the host exactly as configured (hostname or literal IP). It
 // never changes; the label shown to the user is DisplayName.
 func (t *TargetStats) Host() string { return t.host }
-
-// SetDSCP records the configured outbound DSCP marking (a codepoint name or
-// number) shown in the target's details. It does not change what is sent.
-func (t *TargetStats) SetDSCP(dscp string) {
-	defer bumpGeneration()
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.dscp = dscp
-}
 
 // MTR returns the MTRStats for this target, creating it lazily on first call.
 func (t *TargetStats) MTR() *MTRStats {
@@ -294,7 +277,6 @@ func (t *TargetStats) Reset() {
 	t.lateReplies = 0
 	t.lastRTT = 0
 	t.lastTTL = 0
-	t.lastDSCP = 0
 	t.lastLossTime = time.Time{}
 	t.lastError = ""
 	t.rtt = rttAccumulator{}

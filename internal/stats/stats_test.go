@@ -283,7 +283,7 @@ func TestTargetStatsFailureAndReset(t *testing.T) {
 		t.Fatalf("LastError: got %q, want %q", view.LastError, "Timeout")
 	}
 
-	tgt.NewProbe().OnSuccess(time.Millisecond, 64, 46<<2)
+	tgt.NewProbe().OnSuccess(time.Millisecond, 64)
 	tgt.OnDuplicate()
 	tgt.OnLateReply()
 	tgt.Reset()
@@ -303,9 +303,6 @@ func TestTargetStatsFailureAndReset(t *testing.T) {
 	}
 	if !view.LastLossTime.IsZero() || view.LastError != "" {
 		t.Fatalf("Reset did not clear error state: lastLoss=%v lastError=%q", view.LastLossTime, view.LastError)
-	}
-	if view.LastDSCP != 0 {
-		t.Fatalf("Reset did not clear LastDSCP: got %d", view.LastDSCP)
 	}
 }
 
@@ -522,7 +519,7 @@ func TestLightweightReadAccessors(t *testing.T) {
 	}
 }
 
-func TestTargetStatsIdentityAndConfiguredDSCP(t *testing.T) {
+func TestTargetStatsIdentity(t *testing.T) {
 	a, b := NewTargetStats("192.0.2.1"), NewTargetStats("192.0.2.1")
 	if a.ID() == 0 || a.ID() == b.ID() {
 		t.Fatalf("IDs = %d, %d; want distinct non-zero IDs", a.ID(), b.ID())
@@ -532,13 +529,7 @@ func TestTargetStatsIdentityAndConfiguredDSCP(t *testing.T) {
 	if a.Host() != "192.0.2.1" || a.DisplayName() != "edge" {
 		t.Fatalf("Host() = %q, DisplayName() = %q; want the configured host kept apart from the label", a.Host(), a.DisplayName())
 	}
-
-	gen := Generation()
-	a.SetDSCP("EF")
-	if v := a.GetView(); v.DSCP != "EF" || v.ID != a.ID() {
-		t.Fatalf("view DSCP/ID = %q/%d, want EF/%d", v.DSCP, v.ID, a.ID())
-	}
-	if Generation() == gen {
-		t.Fatal("SetDSCP did not bump the generation, so the UI would not redraw")
+	if v := a.GetView(); v.ID != a.ID() {
+		t.Fatalf("view ID = %d, want %d", v.ID, a.ID())
 	}
 }

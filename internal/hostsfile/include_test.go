@@ -19,17 +19,17 @@ func TestReadIncludeFile(t *testing.T) {
 			want:    []Entry{{Host: "10.0.0.1"}, {Host: "gw.example.com"}},
 		},
 		{
-			name:    "CSV columns host,name,dscp",
-			content: "10.0.0.1,core-sw01\n10.0.0.2, core-sw02 , EF\n10.0.0.3,,CS1\n",
+			name:    "CSV columns host,name",
+			content: "10.0.0.1,core-sw01\n10.0.0.2, core-sw02 \n10.0.0.3,\n",
 			want: []Entry{
 				{Host: "10.0.0.1", Name: "core-sw01"},
-				{Host: "10.0.0.2", Name: "core-sw02", DSCP: "EF"},
-				{Host: "10.0.0.3", DSCP: "CS1"},
+				{Host: "10.0.0.2", Name: "core-sw02"},
+				{Host: "10.0.0.3"},
 			},
 		},
 		{
 			name:    "header row is skipped",
-			content: "Host,Name,DSCP\n10.0.0.1,core\n",
+			content: "Host,Name\n10.0.0.1,core\n",
 			want:    []Entry{{Host: "10.0.0.1", Name: "core"}},
 		},
 		{
@@ -44,10 +44,10 @@ func TestReadIncludeFile(t *testing.T) {
 		},
 		{
 			name:    "patterns are expanded",
-			content: "10.0.0.1-2\nsw{1..2}.lab,,EF\n",
+			content: "10.0.0.1-2\nsw{1..2}.lab\n",
 			want: []Entry{
 				{Host: "10.0.0.1"}, {Host: "10.0.0.2"},
-				{Host: "sw1.lab", DSCP: "EF"}, {Host: "sw2.lab", DSCP: "EF"},
+				{Host: "sw1.lab"}, {Host: "sw2.lab"},
 			},
 		},
 		{
@@ -83,9 +83,9 @@ func TestReadIncludeFile_Errors(t *testing.T) {
 		content string
 		wantErr string
 	}{
-		{name: "too many columns", content: "10.0.0.1\n10.0.0.2,a,EF,extra\n", wantErr: "line 2: expected at most 3 columns"},
+		{name: "removed dscp column", content: "10.0.0.1\n10.0.0.2,a,EF\n", wantErr: "line 2: the third (dscp) column was removed"},
+		{name: "too many columns", content: "10.0.0.2,a,b,c\n", wantErr: "line 1: expected at most 2 columns"},
 		{name: "empty host column", content: ",name-only\n", wantErr: "line 1: host column is empty"},
-		{name: "invalid DSCP", content: "10.0.0.1,a,bogus\n", wantErr: "line 1: invalid dscp"},
 		{name: "invalid pattern", content: "10.0.0.0/16\n", wantErr: "line 1: expands to more than"},
 		{name: "name on multi-host pattern", content: "10.0.0.1-5,pair\n", wantErr: "line 1: name cannot be used"},
 		{name: "host with a space", content: "10.0.0.1\nsw 01.lab\n", wantErr: "line 2: host is not a valid IP address or hostname"},

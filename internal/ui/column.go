@@ -54,7 +54,7 @@ type column struct {
 // order. DNS/ASN are inserted after Dst IP only when enabled; every column
 // carries its own shrink/grow priority, so enabling them cannot desync width
 // adjustment.
-func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled, dscpEnabled bool) []column {
+func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled bool) []column {
 	cols := []column{
 		{
 			name: "Src IP", align: tview.AlignLeft, base: 6, min: 4, max: 45,
@@ -96,16 +96,6 @@ func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled, dscpEnabled bool) []co
 			name: "PTR", align: tview.AlignLeft, base: 12, min: 8, max: 40,
 			dynamic: true, shrinkPriority: 28, growPriority: 18,
 			render: func(ctx columnRowContext) string { return ctx.view.PTR },
-		})
-	}
-	if dscpEnabled {
-		cols = append(cols, column{
-			// DSCP mirrors TTL: a fixed-width, always-populated column
-			// (once a reply arrives) rather than a "dynamic" one, since its
-			// values are short names/numbers, not variable-length text.
-			name: "DSCP", align: tview.AlignRight, base: 6, min: 4, max: 8,
-			shrinkPriority: 29, growPriority: 19,
-			render: func(ctx columnRowContext) string { return dscpDisplayString(ctx.view.LastDSCP) },
 		})
 	}
 	cols = append(cols,

@@ -216,7 +216,6 @@ func webMeta(cfg config, hosts []targetSpec, portCount int) web.Meta {
 			ASN:        cfg.asnEnabled,
 			PTR:        cfg.ptrEnabled,
 			MTU:        cfg.mtuEnabled,
-			DSCP:       dscpColumnEnabled(cfg, hosts),
 		},
 		Thresholds: web.Thresholds{
 			RTTWarnMs:    durationMs(th.RTTWarn),

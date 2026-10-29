@@ -69,7 +69,7 @@ func newTUI(opts RunOptions) *tui {
 	}
 	t.sidePanes = newSidePanes(opts, func() []*stats.TargetStats { return t.targets }, t.vs)
 
-	t.tr = newTableRenderer(t.targets, opts.SourceIPv4, opts.SourceIPv6, opts.PacketSize, opts.ASNEnabled, opts.PTREnabled, opts.DSCPEnabled, opts.Groups,
+	t.tr = newTableRenderer(t.targets, opts.SourceIPv4, opts.SourceIPv6, opts.PacketSize, opts.ASNEnabled, opts.PTREnabled, opts.Groups,
 		t.table, t.tablePane, opts.InitialLogs, t.vs)
 	t.tr.sidePanes = t.sidePanes
 	t.tr.selectionEnabled = true

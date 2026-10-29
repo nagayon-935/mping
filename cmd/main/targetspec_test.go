@@ -79,13 +79,13 @@ func TestExpandTargets(t *testing.T) {
 			cfg: config{resolveAll: true}, wantSame: true, wantDisplay0: "example.com (1.1.1.1)",
 		},
 		{
-			name:  "--resolve-all keeps names and DSCP of literal hosts",
-			specs: []targetSpec{{Host: "127.0.0.1", Name: "loopback", DSCP: "EF"}},
+			name:  "--resolve-all keeps names of literal hosts",
+			specs: []targetSpec{{Host: "127.0.0.1", Name: "loopback"}},
 			cfg:   config{resolveAll: true}, wantSame: true,
 		},
 		{
-			name:   "--resolve-all keeps an IPv6 zone, DSCP and groups",
-			specs:  []targetSpec{{Host: "fe80::1%en0", DSCP: "EF"}, {Host: "::1"}},
+			name:   "--resolve-all keeps an IPv6 zone and groups",
+			specs:  []targetSpec{{Host: "fe80::1%en0"}, {Host: "::1"}},
 			groups: []ui.TargetGroup{{Name: "local", Indices: []int{0, 1}}},
 			cfg:    config{resolveAll: true, ipv6Only: true, sourceAddr: "::1"}, wantSame: true,
 		},

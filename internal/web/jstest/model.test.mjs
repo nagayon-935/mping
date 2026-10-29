@@ -17,7 +17,6 @@ import {
   summarize,
   matchesFilter,
   badgeFor,
-  dscpName,
   tokenFromHash,
   validateHost,
   isIPLiteral,
@@ -152,14 +151,6 @@ test("badgeFor keeps a final stopped state when the stream drops", () => {
   assert.equal(badgeFor("running", false).label, "Reconnecting");
   assert.equal(badgeFor("stopped", false).label, "Session ended");
   assert.equal(badgeFor(null, false).label, "Connecting");
-});
-
-test("dscpName mirrors pinger.DSCPName: top 6 bits, ECN ignored, decimal fallback", () => {
-  assert.equal(dscpName(0), "–");
-  assert.equal(dscpName(184), "EF");
-  assert.equal(dscpName(185), "EF");
-  assert.equal(dscpName(32), "CS1");
-  assert.equal(dscpName(4), "1");
 });
 
 test("tokenFromHash reads only a #token= fragment", () => {

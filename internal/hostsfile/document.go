@@ -21,19 +21,12 @@ import (
 // Entry is one entry of a hosts-file's hosts:/groups[].hosts: list. It
 // unmarshals from either a bare scalar string (the common case: just a
 // hostname/IP) or a mapping with a required 'host' key and an optional
-// 'dscp' key — the per-target DSCP override that lets the same destination
-// be monitored under two different DSCP markings side by side (e.g. one
-// entry with dscp: EF, another with dscp: CS0, both host: the same address;
-// see targetSpec.DSCP).
+// 'name' key.
 type Entry struct {
 	Host string
 	// Name is an optional display name shown instead of Host (from the
 	// mapping form's 'name' key, or an include file's second column).
 	Name string
-	// DSCP is the raw dscp: value for this entry (a name like "EF" or a
-	// bare number), or "" when absent — parsed lazily, same rationale as
-	// config.dscp.
-	DSCP string
 	// netBox retains source naming data until all includes have been loaded.
 	netBox *netBoxRow
 }
@@ -48,7 +41,7 @@ func (h *Entry) UnmarshalYAML(value *yaml.Node) error {
 		return nil
 	}
 	if value.Kind != yaml.MappingNode {
-		return fmt.Errorf("host entry: expected a string or a mapping with 'host'/'name'/'dscp' keys, got %v", value.Kind)
+		return fmt.Errorf("host entry: expected a string or a mapping with 'host'/'name' keys, got %v", value.Kind)
 	}
 	for i := 0; i+1 < len(value.Content); i += 2 {
 		key, val := value.Content[i].Value, value.Content[i+1]
@@ -57,10 +50,8 @@ func (h *Entry) UnmarshalYAML(value *yaml.Node) error {
 			h.Host = val.Value
 		case "name":
 			h.Name = val.Value
-		case "dscp":
-			h.DSCP = val.Value
 		default:
-			return fmt.Errorf("host entry: unknown field %q (expected 'host', 'name' or 'dscp')", key)
+			return fmt.Errorf("host entry: unknown field %q (expected 'host' or 'name')", key)
 		}
 	}
 	if h.Host == "" {
@@ -102,7 +93,6 @@ type Document struct {
 	DNSServer           *string     `yaml:"dns-server"`
 	ResolveAll          *bool       `yaml:"resolve-all"`
 	Duration            *string     `yaml:"duration"`
-	DSCP                *string     `yaml:"dscp"`
 	Web                 *bool       `yaml:"web"`
 	WebPort             *int        `yaml:"web-port"`
 	Thresholds          *Thresholds `yaml:"thresholds"`
@@ -113,6 +103,40 @@ type Document struct {
 	HTTPStatus          *string     `yaml:"http-status"`
 	HTTPFollowRedirects *bool       `yaml:"http-follow-redirects"`
 	HTTPHeaders         []string    `yaml:"http-header"`
+}
+
+// removedSettings are keys earlier versions accepted, with what to tell a
+// user whose file still has them. They are rejected by name so the error
+// says the setting was removed, not that it was mistyped.
+var removedSettings = map[string]string{
+	"dscp": "DSCP marking is no longer supported; delete the key",
+}
+
+// checkRemovedSettings rejects a document that still uses a removed
+// setting, at the top level or in a host entry, naming its line. Syntax
+// errors are left to the strict decode.
+func checkRemovedSettings(data []byte) error {
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return nil
+	}
+	return findRemovedKey(&root)
+}
+
+func findRemovedKey(n *yaml.Node) error {
+	if n.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if key := n.Content[i]; removedSettings[key.Value] != "" {
+				return fmt.Errorf("line %d: %q was removed: %s", key.Line, key.Value, removedSettings[key.Value])
+			}
+		}
+	}
+	for _, c := range n.Content {
+		if err := findRemovedKey(c); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Thresholds mirrors the stats.Thresholds boundaries in the YAML config.
@@ -146,6 +170,9 @@ func Parse(path string) (Document, error) {
 		return doc, nil
 	}
 
+	if err := checkRemovedSettings(data); err != nil {
+		return Document{}, fmt.Errorf("parse hosts file %q: %w", path, err)
+	}
 	var doc Document
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true) // reject typos/unknown keys instead of silently dropping them

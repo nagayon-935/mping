@@ -14,9 +14,8 @@ func TestStartupAndReloadValidateEffectiveConfig(t *testing.T) {
 		args       []string
 		valid      bool
 		// wantLog is the text a rejected reload must log; "" means
-		// "validation". Per-host DSCP is checked while expanding host
-		// patterns (so errors keep the entry's original index), which
-		// happens at parse time.
+		// "validation". Removed settings are rejected while parsing,
+		// before validation runs, so they carry their own message.
 		wantLog string
 	}{
 		{name: "zero interval", yaml: "interval: 0"},
@@ -26,8 +25,8 @@ func TestStartupAndReloadValidateEffectiveConfig(t *testing.T) {
 		{name: "negative size", yaml: "size: -1"},
 		{name: "large size", yaml: "size: 9873"},
 		{name: "negative count", yaml: "count: -1"},
-		{name: "invalid global DSCP", yaml: "dscp: bad"},
-		{name: "invalid host DSCP", yaml: "groups: [{name: qos, hosts: [{host: '::1', dscp: bad}]}]", wantLog: `groups["qos"][0]: dscp:`},
+		{name: "removed global setting", yaml: "dscp: EF", wantLog: `"dscp" was removed`},
+		{name: "removed host setting", yaml: "groups: [{name: qos, hosts: [{host: '::1', dscp: EF}]}]", wantLog: `"dscp" was removed`},
 		{name: "invalid group", yaml: "groups: [{name: empty, hosts: []}]"},
 		{name: "invalid thresholds", yaml: "thresholds: {rtt-warn: 300}"},
 		{name: "zero web port", yaml: "web-port: 0"},
@@ -35,7 +34,6 @@ func TestStartupAndReloadValidateEffectiveConfig(t *testing.T) {
 		{name: "web enabled from YAML", yaml: "web: true\nweb-port: 18080", valid: true},
 		{name: "CLI interval wins", yaml: "interval: 0", args: []string{"-i", "200"}, valid: true},
 		{name: "CLI web port wins", yaml: "web-port: 0", args: []string{"--web-port", "18080"}, valid: true},
-		{name: "CLI DSCP wins", yaml: "dscp: bad", args: []string{"--dscp", "EF"}, valid: true},
 		{name: "CLI thresholds win", yaml: "thresholds: {rtt-warn: 300}", args: []string{"--rtt-crit", "500"}, valid: true},
 	}
 	for _, tc := range cases {

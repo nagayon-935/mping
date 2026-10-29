@@ -37,7 +37,7 @@ func (r Report) Text() string {
 
 func writeTarget(b *strings.Builder, t Target) {
 	v := t.Statistics
-	fmt.Fprintf(b, "\n%s (%s) | Target #%d | Group %s | DSCP %s\nStarted: %s | Ping statistics since: %s\n", v.Host, v.IP, v.ID, t.Group, t.DSCP, v.StartedAt.Format(time.RFC3339), t.WindowStartedAt.Format(time.RFC3339))
+	fmt.Fprintf(b, "\n%s (%s) | Target #%d | Group %s\nStarted: %s | Ping statistics since: %s\n", v.Host, v.IP, v.ID, t.Group, v.StartedAt.Format(time.RFC3339), t.WindowStartedAt.Format(time.RFC3339))
 	if t.RemovedAt != nil {
 		fmt.Fprintf(b, "Removed: %s\n", t.RemovedAt.Format(time.RFC3339))
 	}

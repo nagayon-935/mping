@@ -45,7 +45,7 @@ func TestParseHostsFile_ExpandsPatternsAndKeepsNames(t *testing.T) {
 groups:
   - name: Core
     hosts:
-      - {host: "sw{1..2}.lab", dscp: EF}
+      - "sw{1..2}.lab"
 `)
 
 	doc, err := Parse(path)
@@ -57,7 +57,7 @@ groups:
 	if !reflect.DeepEqual(doc.Hosts, wantHosts) {
 		t.Fatalf("hosts = %v, want %v", doc.Hosts, wantHosts)
 	}
-	wantGroup := []Entry{{Host: "sw1.lab", DSCP: "EF"}, {Host: "sw2.lab", DSCP: "EF"}}
+	wantGroup := []Entry{{Host: "sw1.lab"}, {Host: "sw2.lab"}}
 	if len(doc.Groups) != 1 || !reflect.DeepEqual(doc.Groups[0].Hosts, wantGroup) {
 		t.Fatalf("groups = %v, want one group with %v", doc.Groups, wantGroup)
 	}

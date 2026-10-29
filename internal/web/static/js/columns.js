@@ -8,7 +8,7 @@ const widths = {
   sent: "var(--col-count)", recv: "var(--col-count)", count: "var(--col-count)",
   last: "var(--col-rtt)", avg: "var(--col-rtt)", min: "var(--col-rtt)",
   max: "var(--col-rtt)", jitter: "var(--col-rtt)", rtt: "var(--col-rtt)",
-  ttl: "var(--col-ttl)", dscp: "var(--col-dscp)",
+  ttl: "var(--col-ttl)",
   url: "var(--col-url)", code: "var(--col-code)", port: "var(--col-port)",
   statusLabel: "var(--col-status-label)",
 };

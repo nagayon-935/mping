@@ -122,11 +122,7 @@ func printCheckedConfig(out io.Writer, sp startupParams) error {
 	sp.fs.Visit(func(f *pflag.Flag) { overrides = append(overrides, f.Name) })
 	targets := make([]map[string]string, len(sp.hosts))
 	for i, spec := range sp.hosts {
-		dscp := spec.DSCP
-		if dscp == "" {
-			dscp = sp.cfg.dscp
-		}
-		targets[i] = map[string]string{"host": spec.Host, "address": spec.resolveAddr(), "name": spec.display(), "dscp": dscp}
+		targets[i] = map[string]string{"host": spec.Host, "address": spec.resolveAddr(), "name": spec.display()}
 	}
 	cfg := sp.cfg
 	// Header values are deliberately excluded, including values resolved from the environment.
@@ -155,7 +151,7 @@ func printCheckedConfig(out io.Writer, sp startupParams) error {
 			"size": cfg.packetSize, "count": cfg.count, "duration": cfg.duration.String(),
 			"interface": cfg.ifaceName, "source": cfg.sourceAddr,
 			"ipv4": cfg.ipv4Only, "ipv6": cfg.ipv6Only,
-			"dns_server": cfg.dnsServer, "resolve_all": cfg.resolveAll, "dscp": cfg.dscp,
+			"dns_server": cfg.dnsServer, "resolve_all": cfg.resolveAll,
 			"traceroute": cfg.trace, "mtr": cfg.mtr, "asn": cfg.asnEnabled,
 			"ptr": cfg.ptrEnabled, "discovery_mtu": cfg.mtuEnabled,
 			"ports": cfg.portSpecs, "http_urls": cfg.httpURLs,

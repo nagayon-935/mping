@@ -47,7 +47,7 @@ func TestRunWithWebServesLiveSnapshotWhileUIRuns(t *testing.T) {
 	openBrowser = func(u string) { openedURL = u }
 
 	var out, errOut bytes.Buffer
-	code := run([]string{"-S", "10.0.0.2", "--web", "--dscp", "EF", "example.com"}, &out, &errOut)
+	code := run([]string{"-S", "10.0.0.2", "--web", "example.com"}, &out, &errOut)
 
 	if code != 0 {
 		t.Fatalf("run = %d, want 0 (stderr: %s)", code, errOut.String())
@@ -60,9 +60,6 @@ func TestRunWithWebServesLiveSnapshotWhileUIRuns(t *testing.T) {
 	}
 	if len(snap.Snapshot.Targets) != 1 || snap.Snapshot.Targets[0].Host != "example.com" {
 		t.Errorf("targets = %+v, want example.com", snap.Snapshot.Targets)
-	}
-	if !snap.Meta.Features.DSCP {
-		t.Error("meta.features.dscp = false, want true with --dscp")
 	}
 	if !containsSubstring(logs, "Web UI: "+started().URL()) {
 		t.Errorf("initial logs %q do not announce %s", logs, started().URL())
@@ -135,7 +132,7 @@ func TestRunExitsWhenWebServerCannotStart(t *testing.T) {
 func TestWebMetaReflectsConfig(t *testing.T) {
 	cfg := config{
 		intervalMs: 500, trace: true, mtr: true, asnEnabled: true, ptrEnabled: true, mtuEnabled: true,
-		httpURLs: []string{"https://example.com/"}, dscp: "EF",
+		httpURLs: []string{"https://example.com/"},
 		thresholds: stats.Thresholds{
 			RTTWarn: 40 * time.Millisecond, RTTCrit: 150 * time.Millisecond,
 			JitterWarn: 5 * time.Millisecond, JitterCrit: 25 * time.Millisecond,
@@ -147,7 +144,7 @@ func TestWebMetaReflectsConfig(t *testing.T) {
 
 	want := web.Meta{
 		IntervalMs: 500,
-		Features:   web.Features{Traceroute: true, MTR: true, Port: true, HTTP: true, ASN: true, PTR: true, DSCP: true, MTU: true},
+		Features:   web.Features{Traceroute: true, MTR: true, Port: true, HTTP: true, ASN: true, PTR: true, MTU: true},
 		Thresholds: web.Thresholds{RTTWarnMs: 40, RTTCritMs: 150, JitterWarnMs: 5, JitterCritMs: 25, LossWarnPct: 10, LossCritPct: 50},
 	}
 	if got.IntervalMs != want.IntervalMs || got.Features != want.Features || got.Thresholds != want.Thresholds {

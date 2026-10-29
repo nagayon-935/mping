@@ -114,48 +114,6 @@ func TestMergeHosts(t *testing.T) {
 	}
 }
 
-// TestMergeHosts_PerTargetDSCP exercises the feature's primary use case end
-// to end through the real hosts-file pipeline: the same destination
-// monitored twice under two different DSCP markings, plus a global default
-// and a plain (no-override) host.
-func TestMergeHosts_PerTargetDSCP(t *testing.T) {
-	yamlContent := `
-dscp: CS0
-hosts:
-  - host: 2001:db8::1
-    dscp: EF
-  - host: 2001:db8::1
-    dscp: DF
-  - plain.example.com
-`
-	path := writeHostsYAML(t, yamlContent)
-	cfg, _, _, _, err := parseArgs([]string{"-f", path})
-	if err != nil {
-		t.Fatal(err)
-	}
-	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
-
-	got, _, mergedCfg, err := mergeHosts(cfg, fs, nil)
-	if err != nil {
-		t.Fatalf("mergeHosts: %v", err)
-	}
-	if mergedCfg.dscp != "CS0" {
-		t.Fatalf("mergedCfg.dscp = %q, want %q", mergedCfg.dscp, "CS0")
-	}
-	if len(got) != 3 {
-		t.Fatalf("hosts len: got %d, want 3", len(got))
-	}
-	if got[0].Host != "2001:db8::1" || got[0].DSCP != "EF" {
-		t.Fatalf("got[0] = %+v, want Host=2001:db8::1 DSCP=EF", got[0])
-	}
-	if got[1].Host != "2001:db8::1" || got[1].DSCP != "DF" {
-		t.Fatalf("got[1] = %+v, want Host=2001:db8::1 DSCP=DF", got[1])
-	}
-	if got[2].Host != "plain.example.com" || got[2].DSCP != "" {
-		t.Fatalf("got[2] = %+v, want Host=plain.example.com DSCP=\"\"", got[2])
-	}
-}
-
 func TestMergeHosts_Options(t *testing.T) {
 	// Interface existence is now checked before a configuration is admitted;
 	// this merge fixture must not depend on the developer machine having eth0.

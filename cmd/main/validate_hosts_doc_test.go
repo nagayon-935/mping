@@ -41,21 +41,6 @@ func TestValidateHostsDoc(t *testing.T) {
 		{name: "negative duration", doc: hostsfile.Document{Hosts: hostEntries("a.com"), Duration: ptrTo("-5s")}, wantAnyErr: true},
 		{name: "ipv4 and ipv6 both true", doc: hostsfile.Document{Hosts: hostEntries("a.com"), Ipv4Only: ptrTo(true), Ipv6Only: ptrTo(true)}, wantAnyErr: true},
 
-		// DSCP.
-		{name: "global dscp valid", doc: hostsfile.Document{Hosts: hostEntries("a.com"), DSCP: ptrTo("EF")}},
-		{name: "global dscp invalid", doc: hostsfile.Document{Hosts: hostEntries("a.com"), DSCP: ptrTo("NOT-A-CODEPOINT")}, wantAnyErr: true},
-		{name: "per-host dscp valid", doc: hostsfile.Document{Hosts: []hostsfile.Entry{{Host: "a.com", DSCP: "AF41"}}}},
-		{
-			name:    "per-host dscp out of range names the entry",
-			doc:     hostsfile.Document{Hosts: []hostsfile.Entry{{Host: "a.com", DSCP: "9999"}}},
-			wantErr: "hosts[0]",
-		},
-		{
-			name:    "group host dscp invalid names the group entry",
-			doc:     hostsfile.Document{Groups: []hostsfile.Group{{Name: "DC1", Hosts: []hostsfile.Entry{{Host: "a.com", DSCP: "bogus"}}}}},
-			wantErr: `groups["DC1"][0]`,
-		},
-
 		// Thresholds.
 		{
 			name: "thresholds with warn >= crit",

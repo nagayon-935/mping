@@ -93,7 +93,7 @@ func appendErrorLog(errorLogs *[]string, errorView *tview.TextView, msg string) 
 	errorView.ScrollToEnd()
 }
 
-// Stable keys distinguish repeated hosts, DSCP variants and re-added targets.
+// Stable keys distinguish repeated hosts and re-added targets.
 func targetViewKey(v stats.TargetView) string {
 	if v.ID == 0 {
 		return v.Host

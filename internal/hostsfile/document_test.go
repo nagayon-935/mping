@@ -2,6 +2,7 @@ package hostsfile
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -18,25 +19,21 @@ func TestParseHostsFile_Mapping(t *testing.T) {
 	}
 }
 
-func TestParseHostsFile_PerHostDSCPMapping(t *testing.T) {
-	// The feature's primary use case: the same destination monitored twice,
-	// once per DSCP marking, side by side.
-	path := writeHostsYAML(t, "hosts:\n"+
-		"  - host: 2001:db8::1\n    dscp: EF\n"+
-		"  - host: 2001:db8::1\n    dscp: CS0\n"+
-		"  - plain.example.com\n")
-
-	got, err := Parse(path)
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
+func TestParseHostsFile_RejectsRemovedSettings(t *testing.T) {
+	tests := []struct {
+		name, content, want string
+	}{
+		{"top-level dscp", "dscp: EF\nhosts:\n  - example.com\n", `line 1: "dscp" was removed`},
+		{"per-host dscp", "hosts:\n  - host: 2001:db8::1\n    dscp: EF\n", `line 3: "dscp" was removed`},
+		{"group host dscp", "groups:\n  - name: qos\n    hosts:\n      - {host: \"::1\", dscp: EF}\n", `line 4: "dscp" was removed`},
 	}
-	want := []Entry{
-		{Host: "2001:db8::1", DSCP: "EF"},
-		{Host: "2001:db8::1", DSCP: "CS0"},
-		{Host: "plain.example.com"},
-	}
-	if !reflect.DeepEqual(got.Hosts, want) {
-		t.Fatalf("hosts: got %v, want %v", got.Hosts, want)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse(writeHostsYAML(t, tt.content))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Parse error = %v, want it to contain %q", err, tt.want)
+			}
+		})
 	}
 }
 
@@ -77,8 +74,8 @@ func TestParseHostsFile_RejectsInvalidDocuments(t *testing.T) {
 		name    string
 		content string
 	}{
-		{"host mapping missing the required 'host' key", "hosts:\n  - dscp: EF\n"},
-		{"unknown key in host mapping (typo of dscp)", "hosts:\n  - host: example.com\n    dscpp: EF\n"},
+		{"host mapping missing the required 'host' key", "hosts:\n  - name: edge\n"},
+		{"unknown key in host mapping (typo of name)", "hosts:\n  - host: example.com\n    nmae: edge\n"},
 		{"unknown top-level key (typo of interval)", "hosts:\n  - example.com\ninterva: 500\n"},
 		{"unknown key in nested group (host for hosts)", "groups:\n  - name: web\n    host:\n      - example.com\n"},
 	}

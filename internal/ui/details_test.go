@@ -18,7 +18,7 @@ func TestSelectionKeepsIdentityAndSkipsGroupHeadings(t *testing.T) {
 	pane := tview.NewFlex().AddItem(table, 0, 1, true)
 	pane.SetRect(0, 0, 220, 40)
 	table.SetRect(0, 0, 218, 38)
-	tr := newTableRenderer([]*stats.TargetStats{a, b, c}, "", "", 56, false, false, false, []TargetGroup{{Name: "group", Indices: []int{0, 1}}}, table, pane, nil, newViewState(tview.NewTextView()))
+	tr := newTableRenderer([]*stats.TargetStats{a, b, c}, "", "", 56, false, false, []TargetGroup{{Name: "group", Indices: []int{0, 1}}}, table, pane, nil, newViewState(tview.NewTextView()))
 	tr.selectionEnabled = true
 	tr.selectedID = c.ID()
 	tr.update()
@@ -114,14 +114,13 @@ func TestDetailsOptionalSectionsFollowOptionsEvenWithCachedData(t *testing.T) {
 	target := stats.NewTargetStats("router")
 	target.SetASNInfo("AS64500", "JP", "Example")
 	target.SetPTR("router.example")
-	target.SetDSCP("EF")
 	target.SetPMTU(1400)
 	target.SetTraceHops([]string{"192.0.2.1"})
 	target.MTR().EnsureLen(1)
 	target.SetPortResults([]*stats.PortCheckResult{stats.NewPortCheckResult(443, "tcp")})
 	off := renderHostDetails(target, RunOptions{})
-	on := renderHostDetails(target, RunOptions{ASNEnabled: true, PTREnabled: true, DSCPEnabled: true, MTUEnabled: true, TraceEnabled: true, MTREnabled: true, PortEnabled: true})
-	for _, label := range []string{"ASN:", "PTR:", "DSCP:", "PMTU payload:", "[yellow]Route", "[yellow]MTR", "[yellow]Ports"} {
+	on := renderHostDetails(target, RunOptions{ASNEnabled: true, PTREnabled: true, MTUEnabled: true, TraceEnabled: true, MTREnabled: true, PortEnabled: true})
+	for _, label := range []string{"ASN:", "PTR:", "PMTU payload:", "[yellow]Route", "[yellow]MTR", "[yellow]Ports"} {
 		if strings.Contains(off, label) {
 			t.Fatalf("disabled option shown: %s", label)
 		}

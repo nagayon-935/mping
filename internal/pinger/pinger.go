@@ -91,15 +91,6 @@ type PacketConnV4 interface {
 	SetReadDeadline(t time.Time) error
 	Close() error
 	SetControlMessage(cf ipv4.ControlFlags, on bool) error
-	// SetTOS arms the socket-wide default outbound DSCP/ECN byte
-	// (Pinger.DSCP). Unlike PacketConnV6.SetTrafficClass, this is IPv4's
-	// ONLY DSCP hook: x/net's ipv4.ControlMessage carries no TOS field, so
-	// there is no per-packet write-side override and no receive-side
-	// observation for IPv4 (both of which ipv6.ControlMessage supports via
-	// TrafficClass) — every IPv4 target is stuck sharing this one global
-	// value. A Pinger.TargetDSCP entry for an IPv4 target is therefore
-	// silently unusable; see getWriteFunc.
-	SetTOS(tos int) error
 }
 
 // PacketConnV6 interface matches *ipv6.PacketConn methods we use
@@ -110,8 +101,6 @@ type PacketConnV6 interface {
 	Close() error
 	SetControlMessage(cf ipv6.ControlFlags, on bool) error
 	SetICMPFilter(f *ipv6.ICMPFilter) error
-	// SetTrafficClass is SetTOS's IPv6 counterpart (see PacketConnV4.SetTOS).
-	SetTrafficClass(tc int) error
 }
 
 // Reply represents a single received ICMP echo reply or error from the receiver loop.
@@ -126,15 +115,8 @@ type Reply struct {
 	// falls back to its own start-time bookkeeping in `unacked`.
 	RTT time.Duration
 	TTL int
-	// DSCP is the TOS (IPv4) / TrafficClass (IPv6) byte read off the reply's
-	// own IP header via the ipv4.FlagTOS / ipv6.FlagTrafficClass control
-	// message — i.e. what the reply actually arrived carrying, after any
-	// re-marking or bleaching along the return path. Zero when the platform
-	// didn't supply a control message, indistinguishable from an explicit
-	// CS0/Default reply; the TTL field has the same zero-value ambiguity.
-	DSCP int
-	Seq  int
-	Err  string
+	Seq int
+	Err string
 }
 
 type traceMsg struct {
@@ -165,17 +147,6 @@ type Pinger struct {
 	ResolveInterval time.Duration // Interval to re-resolve DNS
 	AsnEnabled      bool          // Enable ASN lookups
 	PtrEnabled      bool          // Enable PTR (reverse DNS) lookups
-
-	// DSCP is the outbound DSCP-derived TOS (IPv4) / TrafficClass (IPv6)
-	// byte applied to every target via a socket-wide SetTOS/SetTrafficClass
-	// call in Start(). dscpUnset (the default) leaves the OS default in
-	// place. A per-target entry in TargetDSCP overrides this for that one
-	// target.
-	DSCP int
-
-	// TargetDSCP holds per-target outbound overrides by stats identity, so two
-	// entries for the same host can use different IPv6 traffic classes.
-	TargetDSCP map[*stats.TargetStats]int
 
 	connV4           PacketConnV4
 	connV6           PacketConnV6
@@ -290,15 +261,6 @@ type Options struct {
 	// counter. Zero value matches production behavior (start at 0); tests
 	// set it to exercise the 16-bit ICMP seq wraparound boundary.
 	InitialSeq int
-
-	// DSCP is the global outbound DSCP-derived TOS/TrafficClass byte
-	// (0-255). Nil (the zero value) leaves the OS default in place — a
-	// *int rather than a plain int so "not configured" is distinguishable
-	// from an explicit "0" (CS0/Default) selection.
-	DSCP *int
-
-	// TargetDSCP overrides DSCP by index in the targets passed to the constructor.
-	TargetDSCP map[int]int
 }
 
 // NewPingerWithOptions creates a Pinger with the provided options.
@@ -332,21 +294,6 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		lookupAddrContext = resolver.LookupAddr
 	}
 
-	dscp := dscpUnset
-	if opts.DSCP != nil {
-		dscp = *opts.DSCP
-	}
-
-	var targetDSCP map[*stats.TargetStats]int
-	if len(opts.TargetDSCP) > 0 {
-		targetDSCP = make(map[*stats.TargetStats]int, len(opts.TargetDSCP))
-		for i, value := range opts.TargetDSCP {
-			if i >= 0 && i < len(targets) {
-				targetDSCP[targets[i]] = value
-			}
-		}
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Pinger{
 		Targets:            targets,
@@ -362,8 +309,6 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		ResolveInterval:    60 * time.Second,
 		AsnEnabled:         opts.AsnEnabled,
 		PtrEnabled:         opts.PtrEnabled,
-		DSCP:               dscp,
-		TargetDSCP:         targetDSCP,
 		traceChans:         make(map[int]chan traceMsg),
 		ctx:                ctx,
 		cancel:             cancel,
@@ -470,9 +415,9 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 			// Non-fatal, same rationale as the IPv4 block above.
 			bindToInterfaceFn(c, p.Interface, true)
 			p.connV6 = ipv6.NewPacketConn(c)
-			// Non-fatal: hop limit/traffic class control messages may not
-			// be available on all platforms.
-			_ = p.connV6.SetControlMessage(ipv6.FlagHopLimit|ipv6.FlagTrafficClass, true)
+			// Non-fatal: the hop limit control message may not be available
+			// on all platforms.
+			_ = p.connV6.SetControlMessage(ipv6.FlagHopLimit, true)
 			applyICMPv6Filter(p.connV6)
 		} else {
 			errV6 = err
@@ -482,8 +427,6 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 	if p.connV4 == nil && p.connV6 == nil {
 		return fmt.Errorf("failed to initialize pinger: v4=%v, v6=%v", errV4, errV6)
 	}
-
-	p.armDSCP()
 
 	// Allocate the entire initial set before starting any workers.
 	ids := make([]int, len(p.Targets))
@@ -507,31 +450,6 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 	}
 
 	return nil
-}
-
-// armDSCP applies Start()'s global DSCP default (Pinger.DSCP) to whichever
-// sockets Start() just opened, via SetTOS (IPv4) / SetTrafficClass (IPv6).
-// A no-op when DSCP is dscpUnset (the default), leaving the OS default TOS/
-// TrafficClass in place. Split out from Start() so it can be exercised
-// directly against PacketConnV4/V6 test doubles — Start() itself always
-// wraps its listenPacket result in a real *ipv4.PacketConn/*ipv6.PacketConn,
-// which makes SetTOS/SetTrafficClass's effect unobservable through a plain
-// net.PacketConn fake.
-//
-// Both calls are non-fatal (same rationale as the neighboring
-// SetControlMessage calls in Start()): a platform where TOS/TrafficClass
-// isn't settable shouldn't abort startup over what amounts to an optional
-// QoS marking.
-func (p *Pinger) armDSCP() {
-	if p.DSCP == dscpUnset {
-		return
-	}
-	if p.connV4 != nil {
-		_ = p.connV4.SetTOS(p.DSCP)
-	}
-	if p.connV6 != nil {
-		_ = p.connV6.SetTrafficClass(p.DSCP)
-	}
 }
 
 func isIPv4(s string) bool {

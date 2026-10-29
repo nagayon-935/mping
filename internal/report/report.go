@@ -20,7 +20,6 @@ type Settings struct {
 	DurationDeadline    *time.Time         `json:"duration_deadline,omitempty"`
 	PMTUDiscovery       bool               `json:"pmtu_discovery"`
 	Duration            string             `json:"duration"`
-	DSCP                string             `json:"dscp,omitempty"`
 	DNSServer           string             `json:"dns_server,omitempty"`
 	ResolveAll          bool               `json:"resolve_all"`
 	Traceroute          bool               `json:"traceroute"`
@@ -53,7 +52,6 @@ type Target struct {
 	Statistics       stats.TargetSummary `json:"statistics"`
 	WindowStartedAt  time.Time           `json:"window_started_at"`
 	Group            string              `json:"group,omitempty"`
-	DSCP             string              `json:"dscp,omitempty"`
 	InterfaceMTU     int                 `json:"interface_mtu,omitempty"`
 	DNSServer        string              `json:"dns_server,omitempty"`
 	MTRFlapCount     int                 `json:"mtr_flap_count"`
@@ -81,7 +79,7 @@ func NewTarget(t *stats.TargetStats) Target {
 	if len(v.IPHistory) > 0 {
 		ipDropped = max(0, v.IPChanges+1-len(v.IPHistory))
 	}
-	return Target{InterfaceMTU: v.IfaceMTU, DNSServer: v.DNSServer, MTRFlapCount: v.MTRFlapCount, MTRLastFlapAt: v.MTRLastFlapAt, MTRLastFlapDesc: v.MTRLastFlapDesc, IPHistoryDropped: ipDropped, Statistics: summary, WindowStartedAt: v.WindowStartedAt, DSCP: v.DSCP, IPChanges: v.IPChanges, IPHistory: v.IPHistory, Events: events, EventsDropped: dropped, PortDetails: ports}
+	return Target{InterfaceMTU: v.IfaceMTU, DNSServer: v.DNSServer, MTRFlapCount: v.MTRFlapCount, MTRLastFlapAt: v.MTRLastFlapAt, MTRLastFlapDesc: v.MTRLastFlapDesc, IPHistoryDropped: ipDropped, Statistics: summary, WindowStartedAt: v.WindowStartedAt, IPChanges: v.IPChanges, IPHistory: v.IPHistory, Events: events, EventsDropped: dropped, PortDetails: ports}
 }
 
 type Report struct {

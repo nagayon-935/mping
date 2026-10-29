@@ -38,12 +38,9 @@ func (p Probe) IncSent() bool {
 	return p.update(func(t *TargetStats) { t.sent++ })
 }
 
-// OnSuccess records the reply and its traffic class in one atomic update.
-func (p Probe) OnSuccess(rtt time.Duration, ttl, dscp int) bool {
-	return p.update(func(t *TargetStats) {
-		t.onSuccessLocked(rtt, ttl)
-		t.lastDSCP = dscp
-	})
+// OnSuccess records the reply.
+func (p Probe) OnSuccess(rtt time.Duration, ttl int) bool {
+	return p.update(func(t *TargetStats) { t.onSuccessLocked(rtt, ttl) })
 }
 
 // OnFailure records a send error, DNS error, ICMP error or timeout.

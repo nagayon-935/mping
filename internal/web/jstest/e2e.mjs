@@ -417,7 +417,7 @@ try {
         mtr_hops:[{ttl:1,ip:"192.0.2.1",asn:"AS64500",org:"Cached org",loss_pct:0,sent:1,last_rtt_ms:1,avg_rtt_ms:1,min_rtt_ms:1,max_rtt_ms:1,jitter_ms:0}]};
       const tabs=document.createElement("div"),body=document.createElement("div"),label=document.createElement("div");
       const inspect=createInspect({tabs,body,target:label,onSelect(){},actionsFor(){return null},canControl(){return false},requestRender(){}});
-      const view={...response,snapshot:{...response.snapshot,targets:[target]},meta:{...response.meta,features:{mtr:true,asn:false,ptr:false,mtu:false,port:false,http:false,dscp:false}},selectedId:null};
+      const view={...response,snapshot:{...response.snapshot,targets:[target]},meta:{...response.meta,features:{mtr:true,asn:false,ptr:false,mtu:false,port:false,http:false}},selectedId:null};
       inspect.render(view);
       const initialTabs=[...tabs.querySelectorAll("button")].map(n=>n.dataset.tab);
       view.selectedId=target.id;

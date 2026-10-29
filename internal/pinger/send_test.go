@@ -66,7 +66,7 @@ func TestGetWriteFunc(t *testing.T) {
 		p := NewPinger(nil)
 		conn := &fakePacketConn{}
 		p.connV4 = conn
-		msgType, writeFunc, errStr := p.getWriteFunc(v4Dst, dscpUnset, false)
+		msgType, writeFunc, errStr := p.getWriteFunc(v4Dst)
 		if writeFunc == nil || errStr != "" {
 			t.Fatalf("writeFunc nil=%v errStr=%q, want a usable writer", writeFunc == nil, errStr)
 		}
@@ -82,7 +82,7 @@ func TestGetWriteFunc(t *testing.T) {
 	})
 
 	t.Run("IPv4 without conn", func(t *testing.T) {
-		_, writeFunc, errStr := NewPinger(nil).getWriteFunc(v4Dst, dscpUnset, false)
+		_, writeFunc, errStr := NewPinger(nil).getWriteFunc(v4Dst)
 		if writeFunc != nil {
 			t.Fatal("expected nil writeFunc")
 		}
@@ -95,7 +95,7 @@ func TestGetWriteFunc(t *testing.T) {
 		p := NewPinger(nil)
 		conn := &fakePacketConnV6{}
 		p.connV6 = conn
-		msgType, writeFunc, errStr := p.getWriteFunc(v6Dst, dscpUnset, false)
+		msgType, writeFunc, errStr := p.getWriteFunc(v6Dst)
 		if writeFunc == nil || errStr != "" {
 			t.Fatalf("writeFunc nil=%v errStr=%q, want a usable writer", writeFunc == nil, errStr)
 		}
@@ -105,13 +105,13 @@ func TestGetWriteFunc(t *testing.T) {
 		if n, err := writeFunc([]byte("test"), v6Dst); err != nil || n != 4 {
 			t.Fatalf("writeFunc = (%d, %v), want (4, nil)", n, err)
 		}
-		if len(conn.writeCMs) != 1 {
-			t.Fatalf("conn saw %d writes, want 1", len(conn.writeCMs))
+		if conn.writes != 1 {
+			t.Fatalf("conn saw %d writes, want 1", conn.writes)
 		}
 	})
 
 	t.Run("IPv6 without conn", func(t *testing.T) {
-		_, writeFunc, errStr := NewPinger(nil).getWriteFunc(v6Dst, dscpUnset, false)
+		_, writeFunc, errStr := NewPinger(nil).getWriteFunc(v6Dst)
 		if writeFunc != nil {
 			t.Fatal("expected nil writeFunc")
 		}

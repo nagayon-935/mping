@@ -21,12 +21,6 @@ type targetSpec struct {
 	// When set it replaces Host in display(); the pinger still reaches
 	// Host, via the display→address map built by buildPingerOptions.
 	Name string
-	// DSCP is this target's raw per-target dscp: override (a name like
-	// "EF" or a bare number), sourced from a hosts-file mapping entry
-	// (hostsfile.Entry.DSCP). "" means no override — the target falls back to
-	// config.dscp, mping's global default. Parsed lazily by
-	// buildPingerOptions, same rationale as config.dscp.
-	DSCP string
 }
 
 // resolveAddr returns the address DNS/dial resolution should use: the
@@ -112,7 +106,7 @@ func expandTargets(specs []targetSpec, groups []ui.TargetGroup, cfg config) ([]t
 		startIdx := len(expandedSpecs)
 
 		for _, ip := range ips {
-			expanded := targetSpec{Host: spec.Host, Name: spec.Name, DSCP: spec.DSCP}
+			expanded := targetSpec{Host: spec.Host, Name: spec.Name}
 			if spec.Host != ip {
 				expanded.PinnedIP = ip
 			}

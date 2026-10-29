@@ -30,20 +30,15 @@ type TargetSummary struct {
 	// majority of runs never see either; see the stats.TargetStats fields
 	// duplicates and lateReplies for what each counts and why neither is
 	// folded into Recv or Loss.
-	Duplicates  int     `json:"duplicates,omitempty"`
-	LateReplies int     `json:"late_replies,omitempty"`
-	LossRatePct float64 `json:"loss_rate_pct"`
-	MinRTTMs    float64 `json:"min_rtt_ms"`
-	AvgRTTMs    float64 `json:"avg_rtt_ms"`
-	MaxRTTMs    float64 `json:"max_rtt_ms"`
-	LastRTTMs   float64 `json:"last_rtt_ms"`
-	JitterMs    float64 `json:"jitter_ms"`
-	LastTTL     int     `json:"last_ttl"`
-	// LastDSCP is the TOS (IPv4) / TrafficClass (IPv6) byte observed on the
-	// most recent reply's own IP header (see TargetView.LastDSCP).
-	// Always 0 for IPv4 targets: x/net's ipv4.ControlMessage has no TOS
-	// field, so IPv4 has no receive-side DSCP observation at all.
-	LastDSCP         int           `json:"last_dscp"`
+	Duplicates       int           `json:"duplicates,omitempty"`
+	LateReplies      int           `json:"late_replies,omitempty"`
+	LossRatePct      float64       `json:"loss_rate_pct"`
+	MinRTTMs         float64       `json:"min_rtt_ms"`
+	AvgRTTMs         float64       `json:"avg_rtt_ms"`
+	MaxRTTMs         float64       `json:"max_rtt_ms"`
+	LastRTTMs        float64       `json:"last_rtt_ms"`
+	JitterMs         float64       `json:"jitter_ms"`
+	LastTTL          int           `json:"last_ttl"`
 	LastError        string        `json:"last_error,omitempty"`
 	LastLossTime     *time.Time    `json:"last_loss_time,omitempty"`
 	TraceHops        []string      `json:"trace_hops,omitempty"`
@@ -190,7 +185,6 @@ func BuildSnapshotFromViews(targets []TargetView, httpResults []HTTPCheckView) E
 			LastRTTMs:        durationMs(v.LastRTT),
 			JitterMs:         durationMs(v.Jitter),
 			LastTTL:          v.LastTTL,
-			LastDSCP:         v.LastDSCP,
 			LastError:        v.LastError,
 			LastLossTime:     lastLossTime,
 			TraceHops:        v.TraceHops,

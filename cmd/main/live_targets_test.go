@@ -53,7 +53,7 @@ func TestLiveEditFailureAndAmbiguousDeletionPreserveTargets(t *testing.T) {
 	a, b := stats.NewTargetStats("same"), stats.NewTargetStats("same")
 	p := newLiveFakePinger()
 	p.failAdd = true
-	s := newSupervisor(supervisorConfig{targets: []*stats.TargetStats{a, b}, specs: []targetSpec{{Host: "same", DSCP: "EF"}, {Host: "same", DSCP: "CS0"}}, makePinger: func(int) pingerController { return p }})
+	s := newSupervisor(supervisorConfig{targets: []*stats.TargetStats{a, b}, specs: []targetSpec{{Host: "same"}, {Host: "same"}}, makePinger: func(int) pingerController { return p }})
 	s.Start()
 	defer s.Shutdown()
 	if err := s.startPinger(); err != nil {

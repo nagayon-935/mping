@@ -117,7 +117,7 @@ func TestExpandHostPattern_LimitBoundary(t *testing.T) {
 
 func TestExpandHostEntries(t *testing.T) {
 	entries := []Entry{
-		{Host: "10.0.0.1-2", DSCP: "EF"},
+		{Host: "10.0.0.1-2"},
 		{Host: "gw.example.com", Name: "gateway"},
 		{Host: "10.0.0.9/32", Name: "single"},
 	}
@@ -126,8 +126,8 @@ func TestExpandHostEntries(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	want := []Entry{
-		{Host: "10.0.0.1", DSCP: "EF"},
-		{Host: "10.0.0.2", DSCP: "EF"},
+		{Host: "10.0.0.1"},
+		{Host: "10.0.0.2"},
 		{Host: "gw.example.com", Name: "gateway"},
 		{Host: "10.0.0.9", Name: "single"},
 	}
@@ -156,11 +156,6 @@ func TestExpandHostEntries_ErrorsUseUnexpandedIndex(t *testing.T) {
 			name:    "pattern error quotes the YAML value",
 			entries: []Entry{{Host: "a"}, {Host: "10.0.0.0/16"}},
 			wantErr: `hosts[1] "10.0.0.0/16": expands to more than`,
-		},
-		{
-			name:    "DSCP is checked before expansion",
-			entries: []Entry{{Host: "10.0.0.1-50"}, {Host: "10.0.1.1-50", DSCP: "bogus"}},
-			wantErr: "hosts[1]: dscp:",
 		},
 	}
 	for _, tt := range tests {

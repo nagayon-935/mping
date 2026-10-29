@@ -336,7 +336,7 @@ func TestZshCompletionLoad(t *testing.T) {
 			harness := `_arguments() { printf '%s\n' "$@"; }
 _describe() { :; }
 compdef() { :; }
-words=(mping --dscp '')
+words=(mping --interval '')
 CURRENT=3
 `
 			if mode == "source" {
@@ -349,7 +349,7 @@ CURRENT=3
 			if err != nil {
 				t.Fatalf("zsh %s: %v\n%s", mode, err, out)
 			}
-			for _, needle := range []string{`'dscp\:'`, "*--http=", "*-H+", "--file=", "-f+", ":interface:_mping_interfaces"} {
+			for _, needle := range []string{`http\://127.0.0.1\:<web-port>/`, "*--http=", "*-H+", "--file=", "-f+", ":interface:_mping_interfaces"} {
 				if !strings.Contains(string(out), needle) {
 					t.Errorf("zsh %s lost spec %q:\n%s", mode, needle, out)
 				}

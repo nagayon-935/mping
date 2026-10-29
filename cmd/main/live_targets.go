@@ -11,12 +11,16 @@ import (
 )
 
 type dynamicPinger interface {
-	AddTarget(*stats.TargetStats, string, *int) error
+	AddTarget(*stats.TargetStats, string) error
 	RemoveTarget(*stats.TargetStats)
 	WorkerEvents() <-chan struct{}
 	WorkersFinished() bool
 	Done() <-chan struct{}
 }
+
+// The supervisor finds live-edit support by type assertion, so a signature
+// drift would silently disable live edits instead of failing the build.
+var _ dynamicPinger = (*pinger.Pinger)(nil)
 
 type targetSnapshot struct {
 	targets          []*stats.TargetStats
@@ -69,12 +73,7 @@ func (s *supervisor) editTargets(edit func(*supervisor) error) error {
 }
 
 func (s *supervisor) registerDynamicTarget(p dynamicPinger, t *stats.TargetStats, spec targetSpec) error {
-	var dscp *int
-	if spec.DSCP != "" {
-		value, _ := pinger.ParseDSCP(spec.DSCP)
-		dscp = &value
-	}
-	return p.AddTarget(t, spec.resolveAddr(), dscp)
+	return p.AddTarget(t, spec.resolveAddr())
 }
 
 func (s *supervisor) attachTargetMonitors(t *stats.TargetStats) {

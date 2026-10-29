@@ -123,21 +123,6 @@ export function badgeFor(state, connected) {
   }
 }
 
-// Mirrors pinger.dscpValueNames (CS0 wins the DF/CS0 alias).
-const dscpNames = new Map([
-  [46, "EF"], [44, "VA"], [0, "CS0"],
-  [8, "CS1"], [16, "CS2"], [24, "CS3"], [32, "CS4"], [40, "CS5"], [48, "CS6"], [56, "CS7"],
-  [10, "AF11"], [12, "AF12"], [14, "AF13"], [18, "AF21"], [20, "AF22"], [22, "AF23"],
-  [26, "AF31"], [28, "AF32"], [30, "AF33"], [34, "AF41"], [36, "AF42"], [38, "AF43"],
-]);
-
-/** Codepoint name for an observed TOS/TrafficClass byte, like the TUI's DSCP column. */
-export function dscpName(tos) {
-  if (!(tos > 0)) return "–";
-  const dscp = (tos >> 2) & 0x3f;
-  return dscpNames.get(dscp) ?? String(dscp);
-}
-
 /** The control token from a "#token=<hex>" fragment, or null. */
 export function tokenFromHash(hash) {
   const m = /^#token=([^&]+)$/.exec(hash ?? "");

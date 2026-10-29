@@ -12,31 +12,11 @@ import (
 	"golang.org/x/net/ipv6"
 )
 
-// dscpFor returns the override belonging to this target instance. Without an
-// override, the write uses the socket-wide default armed by Start.
-func (p *Pinger) dscpFor(t *stats.TargetStats) (int, bool) {
-	p.mapMu.RLock()
-	defer p.mapMu.RUnlock()
-	v, ok := p.TargetDSCP[t] // a nil map yields (0, false)
-	return v, ok
-}
-
 // getWriteFunc returns the appropriate ICMP message type and write function
-// for the given destination address. For IPv6, dscp (when ok) is attached as
-// an explicit per-packet ipv6.ControlMessage.TrafficClass on every WriteTo
-// the returned func makes — overriding, for this target only, the
-// socket-wide default Start() set via SetTrafficClass (or the OS default
-// when that wasn't set either). IPv4 has no per-packet equivalent, so dscp
-// is ignored there (see below).
-func (p *Pinger) getWriteFunc(dstAddr *net.IPAddr, dscp int, ok bool) (icmp.Type, func([]byte, net.Addr) (int, error), string) {
-	isV4 := dstAddr.IP.To4() != nil
-	if isV4 {
+// for the given destination address.
+func (p *Pinger) getWriteFunc(dstAddr *net.IPAddr) (icmp.Type, func([]byte, net.Addr) (int, error), string) {
+	if dstAddr.IP.To4() != nil {
 		if p.connV4 != nil {
-			// dscp/ok are intentionally unused here: x/net's
-			// ipv4.ControlMessage has no TOS field, so IPv4 has no
-			// per-packet write-side hook to attach a per-target override
-			// to (see PacketConnV4.SetTOS's doc) — every IPv4 target gets
-			// only the socket-wide default Start() armed via SetTOS.
 			return ipv4.ICMPTypeEcho, func(b []byte, dst net.Addr) (int, error) {
 				return p.connV4.WriteTo(b, nil, dst)
 			}, ""
@@ -44,20 +24,15 @@ func (p *Pinger) getWriteFunc(dstAddr *net.IPAddr, dscp int, ok bool) (icmp.Type
 		return nil, nil, "No IPv4 Conn"
 	}
 	if p.connV6 != nil {
-		var cm *ipv6.ControlMessage
-		if ok {
-			cm = &ipv6.ControlMessage{TrafficClass: dscp}
-		}
 		return ipv6.ICMPTypeEchoRequest, func(b []byte, dst net.Addr) (int, error) {
-			return p.connV6.WriteTo(b, cm, dst)
+			return p.connV6.WriteTo(b, nil, dst)
 		}, ""
 	}
 	return nil, nil, "No IPv6 Conn"
 }
 
 func (p *Pinger) sendProbeWithStats(t *stats.TargetStats, probe stats.Probe, id, seq int, payload []byte, dstAddr *net.IPAddr) (time.Time, bool) {
-	dscp, dscpOK := p.dscpFor(t)
-	msgType, writeFunc, errStr := p.getWriteFunc(dstAddr, dscp, dscpOK)
+	msgType, writeFunc, errStr := p.getWriteFunc(dstAddr)
 	if writeFunc == nil {
 		probe.OnFailure(errStr)
 		return time.Time{}, false
@@ -391,7 +366,7 @@ func (p *Pinger) settleReply(t *stats.TargetStats, reply Reply, unacked map[int]
 			if rtt <= 0 {
 				rtt = time.Since(pend.start)
 			}
-			pend.stats.OnSuccess(rtt, reply.TTL, reply.DSCP)
+			pend.stats.OnSuccess(rtt, reply.TTL)
 			p.log(t, pend.logicalSeq, "OK", rtt, reply.TTL, "")
 		}
 		// Remember how this wire seq was resolved so a further reply

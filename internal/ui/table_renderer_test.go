@@ -24,7 +24,7 @@ func newTestTableRenderer(targets []*stats.TargetStats, width int) *tableRendere
 	errorView := tview.NewTextView()
 	vs := newViewState(errorView)
 
-	return newTableRenderer(targets, "10.0.0.1", "", 56, false, false, false, nil, table, tablePane, nil, vs)
+	return newTableRenderer(targets, "10.0.0.1", "", 56, false, false, nil, table, tablePane, nil, vs)
 }
 
 // TestTableRendererUpdate_LayoutByWidth checks that update() builds the
@@ -121,7 +121,7 @@ func TestTableRendererUpdate_TallPaneRendersAllVisibleRows(t *testing.T) {
 	table := newPingTable()
 	tablePane := newTablePane(table)
 	vs := newViewState(newLogView())
-	tr := newTableRenderer(targets, "10.0.0.1", "", 56, false, false, false, nil, table, tablePane, nil, vs)
+	tr := newTableRenderer(targets, "10.0.0.1", "", 56, false, false, nil, table, tablePane, nil, vs)
 	tr.selectionEnabled = true
 
 	graph := newGraphPane(targets, time.Second)

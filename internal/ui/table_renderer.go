@@ -69,7 +69,7 @@ type tableRenderer struct {
 // headers/aligns/widths/priorities, seeds the Error column's data-derived
 // max width, and primes the initial column widths and log lines.
 func newTableRenderer(
-	targets []*stats.TargetStats, sourceIPv4, sourceIPv6 string, packetSize int, asnEnabled, ptrEnabled, dscpEnabled bool, groups []TargetGroup,
+	targets []*stats.TargetStats, sourceIPv4, sourceIPv6 string, packetSize int, asnEnabled, ptrEnabled bool, groups []TargetGroup,
 	table *tview.Table, tablePane *tview.Flex, initialLogs []string, vs *viewState,
 ) *tableRenderer {
 	dnsEnabled := false
@@ -81,7 +81,7 @@ func newTableRenderer(
 		}
 	}
 
-	cols := mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled, dscpEnabled)
+	cols := mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled)
 	tr := &tableRenderer{
 		targets: targets, sourceIPv4: sourceIPv4, sourceIPv6: sourceIPv6, packetSize: packetSize, groups: groups,
 		cols:             cols,

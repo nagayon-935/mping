@@ -3,9 +3,9 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/spf13/pflag"
 )
@@ -57,7 +57,6 @@ func registerFlags(fs *pflag.FlagSet, cfg *config, th *thresholdFlags) {
 	fs.StringVar(&cfg.httpStatus, "http-status", "200-399", "expected HTTP status codes/ranges, e.g. 200-299,401")
 	fs.BoolVar(&cfg.httpFollowRedirects, "http-follow-redirects", true, "follow HTTP redirects (up to 10)")
 	fs.StringArrayVar(&cfg.httpHeaders, "http-header", nil, "HTTP request header Name=value; repeatable, supports ${ENV_VAR}")
-	fs.StringVar(&cfg.dscp, "dscp", "", "outbound DSCP marking: a codepoint name (EF, CS0-CS7, AF11-AF43, VA, DF) or a 0-255 TOS/TrafficClass byte; overridable per host in a hosts file via 'dscp:' (IPv6 only for per-host overrides — see docs)")
 
 	fs.IntVar(&th.rttWarnMs, "rtt-warn", 50, "RTT warn threshold in ms (orange)")
 	fs.IntVar(&th.rttCritMs, "rtt-crit", 200, "RTT crit threshold in ms (red)")
@@ -65,6 +64,32 @@ func registerFlags(fs *pflag.FlagSet, cfg *config, th *thresholdFlags) {
 	fs.IntVar(&th.jitterCritMs, "jitter-crit", 50, "jitter crit threshold in ms (red)")
 	fs.Float64Var(&th.lossWarnPct, "loss-warn", 20, "loss warn threshold in percent (orange)")
 	fs.Float64Var(&th.lossCritPct, "loss-crit", 80, "loss crit threshold in percent (red)")
+}
+
+// removedFlags maps deleted long flags to the reason shown when a script still
+// passes one; pflag alone would only report "unknown flag".
+var removedFlags = map[string]string{
+	"dscp": "DSCP marking is no longer supported",
+}
+
+// removedFlagError returns an error naming the first removed flag in args,
+// or nil. It only runs after pflag rejected args, so a removed flag's name
+// given as another flag's value (-o --dscp) is never misreported.
+func removedFlagError(args []string) error {
+	for _, arg := range args {
+		if arg == "--" {
+			return nil
+		}
+		name, ok := strings.CutPrefix(arg, "--")
+		if !ok {
+			continue
+		}
+		name, _, _ = strings.Cut(name, "=")
+		if why, ok := removedFlags[name]; ok {
+			return fmt.Errorf("--%s was removed: %s", name, why)
+		}
+	}
+	return nil
 }
 
 func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) {
@@ -86,6 +111,9 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 	}
 
 	if err := fs.Parse(args); err != nil {
+		if removed := removedFlagError(args); removed != nil {
+			err = removed
+		}
 		return config{}, nil, nil, usageBuf.String(), err
 	}
 
@@ -119,12 +147,6 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 
 	if cfg.webPort < 1 || cfg.webPort > 65535 {
 		return config{}, nil, nil, usageBuf.String(), fmt.Errorf("--web-port: must be 1–65535, got %d", cfg.webPort)
-	}
-
-	if cfg.dscp != "" {
-		if _, err := pinger.ParseDSCP(cfg.dscp); err != nil {
-			return config{}, nil, nil, usageBuf.String(), fmt.Errorf("--dscp: %w", err)
-		}
 	}
 
 	return cfg, hosts, fs, usageBuf.String(), nil

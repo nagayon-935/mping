@@ -53,7 +53,7 @@ func TestValidateHostsDoc_Names(t *testing.T) {
 		{
 			name: "distinct names are valid",
 			doc: hostsfile.Document{
-				Hosts:  []hostsfile.Entry{{Host: "10.0.0.1", Name: "a"}, {Host: "10.0.0.1", Name: "b", DSCP: "EF"}},
+				Hosts:  []hostsfile.Entry{{Host: "10.0.0.1", Name: "a"}, {Host: "10.0.0.1", Name: "b"}},
 				Groups: []hostsfile.Group{{Name: "G", Hosts: []hostsfile.Entry{{Host: "10.0.0.2", Name: "c"}}}},
 			},
 		},
@@ -99,14 +99,14 @@ func TestValidateHostsDoc_Names(t *testing.T) {
 func TestBuildHostsAndGroups_CarriesNames(t *testing.T) {
 	specs, _ := buildHostsAndGroups(
 		[]hostsfile.Entry{{Host: "10.0.0.1", Name: "core"}},
-		[]hostsfile.Group{{Name: "G", Hosts: []hostsfile.Entry{{Host: "10.0.0.2", Name: "edge", DSCP: "EF"}}}},
+		[]hostsfile.Group{{Name: "G", Hosts: []hostsfile.Entry{{Host: "10.0.0.2", Name: "edge"}}}},
 		[]string{"cli.example"},
 	)
 
 	want := []targetSpec{
 		{Host: "10.0.0.1", Name: "core"},
 		{Host: "cli.example"},
-		{Host: "10.0.0.2", Name: "edge", DSCP: "EF"},
+		{Host: "10.0.0.2", Name: "edge"},
 	}
 	if !reflect.DeepEqual(specs, want) {
 		t.Fatalf("specs = %#v, want %#v", specs, want)

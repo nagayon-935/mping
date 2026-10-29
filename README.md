@@ -270,7 +270,7 @@ hosts:
   - {host: 10.0.0.1, name: core-sw01}
 ```
 
-`include:` (top level or per group) appends hosts from text/CSV files, resolved relative to the YAML file (`.csv` files and NetBox CSV exports can also be passed directly via `mping -f hosts.csv`). Each line is `host[,name[,dscp]]`; `#` starts a comment and a first line whose first column is `host` or `hostname` is treated as a header. Every host must be an IP address or a hostname (letters, digits, `.`, `-`, `_`), and the file must be readable by the user running mping. Include files are watched for changes like the YAML file itself, including ones added to the YAML before they exist.
+`include:` (top level or per group) appends hosts from text/CSV files, resolved relative to the YAML file (`.csv` files and NetBox CSV exports can also be passed directly via `mping -f hosts.csv`). Each line is `host[,name]`; `#` starts a comment and a first line whose first column is `host` or `hostname` is treated as a header. Every host must be an IP address or a hostname (letters, digits, `.`, `-`, `_`), and the file must be readable by the user running mping. Include files are watched for changes like the YAML file itself, including ones added to the YAML before they exist.
 
 NetBox IP Addresses CSV exports (CSVs with an `IP Address` column) are also accepted both directly via `-f` / `--file` and through `include:`. Prefix lengths (such as `/23`) are stripped automatically, only rows whose `Status` is `Active` (or blank) are loaded, and display names prefer `DNS name` (falling back to `Parent`), automatically disambiguating duplicates with the `Interface` and/or IP address.
 
@@ -366,13 +366,13 @@ Backend health transitions reach TUI, Web and headless logs. Consecutive identic
 | **w** | Save a session report from the overview, or one target from details |
 | **b** | Show the Web UI control URL and copy it (`--web` only) |
 
-Deletion opens a confirmation showing the host, target ID, IP, and DSCP. **Cancel** (`キャンセル`) is selected initially; Enter cancels. Use Tab or the left/right arrows to select **Delete** (`削除`), then Enter to confirm. Esc cancels, and repeated `d` does not confirm. Measurements continue while the dialog is open. Cancelling restores the previous focus and scroll position. Re-adding a deleted target starts a new measurement. For the last remaining target, the dialog explains that **q** exits mping; **Enter** or **Esc** returns to monitoring.
+Deletion opens a confirmation showing the host, target ID, and IP. **Cancel** (`キャンセル`) is selected initially; Enter cancels. Use Tab or the left/right arrows to select **Delete** (`削除`), then Enter to confirm. Esc cancels, and repeated `d` does not confirm. Measurements continue while the dialog is open. Cancelling restores the previous focus and scroll position. Re-adding a deleted target starts a new measurement. For the last remaining target, the dialog explains that **q** exits mping; **Enter** or **Esc** returns to monitoring.
 
 Pane folding and maximization are available in the overview. Folded title rows remain reachable with Tab; press `f` to expand them. Measurements continue while panes are hidden. Tab stays within the maximized pane until it is restored.
 
 > Live host edits preserve surviving targets' statistics, graphs, routes, port results, and independent HTTP checks. Editing a stopped session does not resume it. Re-adding a deleted host starts a new measurement. Existing `--count` budgets and the session's `--duration` deadline are preserved. Outstanding probes cancelled by deletion or stopping are exported as `cancelled`, not packet loss. YAML changes to groups, display names, health rules and target membership also retain surviving targets. Changes to probe/network settings rebuild measurements, with the changed settings logged.
 >
-> Selection and deletion use stable target IDs, including duplicate host names and DSCP variants. Echo IDs are never recycled within a session; after 32,768 worker allocations across initial starts, additions, and restarts, restart mping to obtain a fresh session.
+> Selection and deletion use stable target IDs, including duplicate host names. Echo IDs are never recycled within a session; after 32,768 worker allocations across initial starts, additions, and restarts, restart mping to obtain a fresh session.
 
 Stop, restart and reset operations execute in keypress order. A running reset discards results from probes sent before the reset and recreates enabled route/port/HTTP monitors. It keeps the remaining `--count` budget; restarting starts a fresh budget. When stopped, reset clears ping and MTR counters while preserving the last route and port/HTTP results. Quitting waits for measurement workers before writing the final JSON snapshot.
 

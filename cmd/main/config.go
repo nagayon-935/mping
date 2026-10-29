@@ -31,14 +31,6 @@ type config struct {
 	dnsServer      string
 	resolveAll     bool
 	duration       time.Duration
-	// dscp is the raw --dscp / dscp: value (a name like "EF" or a bare
-	// number), applied as the global outbound DSCP-derived TOS/TrafficClass
-	// default for every target that has no per-target override (see
-	// targetSpec.DSCP). Empty means "not configured" — parsed lazily by
-	// buildPingerOptions rather than here, so validateHostsDoc/parseArgs can
-	// reject a malformed spec before any pinger is constructed.
-	dscp string
-
 	// webEnabled/webPort control the loopback-only browser dashboard. Like
 	// --duration they are read once at startup: a YAML reload does not
 	// start, stop or move the web server.
@@ -85,7 +77,6 @@ func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsfile.Document) ([]hos
 	syncField(fs, "mtr", doc.Mtr, &cfg.mtr)
 	syncField(fs, "dns-server", doc.DNSServer, &cfg.dnsServer)
 	syncField(fs, "resolve-all", doc.ResolveAll, &cfg.resolveAll)
-	syncField(fs, "dscp", doc.DSCP, &cfg.dscp)
 	syncField(fs, "web", doc.Web, &cfg.webEnabled)
 	syncField(fs, "web-port", doc.WebPort, &cfg.webPort)
 	syncField(fs, "health-failures", doc.HealthFailures, &cfg.healthFailures)

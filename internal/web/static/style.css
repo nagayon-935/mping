@@ -206,7 +206,7 @@ body {
      loss <=5 chars, TTL <=3 chars; identity fields may be arbitrarily long. */
   --col-status: 168px; --col-host: 200px; --col-ip: 196px; --col-asn: 200px;
   --col-loss: 68px; --col-hop-loss: 96px; --col-rtt: 100px; --col-count: 88px;
-  --col-ttl: 60px; --col-dscp: 72px;
+  --col-ttl: 60px;
   --col-url: 240px; --col-code: 64px; --col-port: 104px; --col-status-label: 96px;
   width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 14px;
 }

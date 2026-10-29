@@ -30,13 +30,13 @@ func TestResetRejectsOutstandingProbeResults(t *testing.T) {
 			target.Reset()
 			switch outcome {
 			case "success":
-				ch <- Reply{Seq: 1, TTL: 64, DSCP: 184}
+				ch <- Reply{Seq: 1, TTL: 64}
 			case "icmp error":
 				ch <- Reply{Seq: 1, Err: "unreachable"}
 			}
 			<-done
 			v := target.GetView()
-			if v.Sent != 0 || v.Recv != 0 || v.Loss != 0 || v.LastDSCP != 0 || len(v.History) != 0 {
+			if v.Sent != 0 || v.Recv != 0 || v.Loss != 0 || len(v.History) != 0 {
 				t.Fatalf("pre-reset result counted: %+v", v)
 			}
 		})

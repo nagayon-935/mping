@@ -16,7 +16,6 @@ type TargetView struct {
 	ID               uint64
 	StartedAt        time.Time
 	WindowStartedAt  time.Time
-	DSCP             string
 	IPHistory        []IPChange
 	IPChanges        int
 	Cancelled        int
@@ -50,7 +49,6 @@ type TargetView struct {
 	Jitter           time.Duration // From RFC 1889 state
 	History          []time.Duration
 	LastTTL          int
-	LastDSCP         int
 	LastLossTime     time.Time
 	LastError        string
 }
@@ -88,7 +86,7 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 	return TargetView{
 		Health: t.healthViewLocked(), MeasurementState: t.measurementState,
 		Thresholds: th, Levels: th.levels(t.recv, t.loss, t.lastRTT, time.Duration(t.jitter)),
-		DSCP: t.dscp, IPHistory: append([]IPChange(nil), t.ipHistory...), IPChanges: t.ipChanges,
+		IPHistory: append([]IPChange(nil), t.ipHistory...), IPChanges: t.ipChanges,
 		ID:               t.id,
 		StartedAt:        t.startedAt,
 		WindowStartedAt:  t.windowStartedAt,
@@ -122,7 +120,6 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 		Jitter:           time.Duration(t.jitter),
 		History:          histCopy,
 		LastTTL:          t.lastTTL,
-		LastDSCP:         t.lastDSCP,
 		LastLossTime:     t.lastLossTime,
 		LastError:        t.lastError,
 	}

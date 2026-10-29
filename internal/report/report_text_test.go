@@ -18,7 +18,6 @@ func fullReport() Report {
 		Statistics:       stats.TargetSummary{Host: "example.com", IP: "192.0.2.1", ID: 1, TraceHops: []string{"a", "b"}, MTRHops: []stats.HopSummary{{TTL: 1, IP: "10.0.0.1"}}},
 		WindowStartedAt:  now,
 		Group:            "g",
-		DSCP:             "EF",
 		IPChanges:        2,
 		IPHistoryDropped: 1,
 		IPHistory:        []stats.IPChange{{At: now, IP: "192.0.2.1"}},

@@ -19,17 +19,14 @@ import (
 // reply channel.
 func TestRunReceiver_DispatchesToTargetChannel(t *testing.T) {
 	tests := []struct {
-		name     string
-		v6       bool
-		msg      func(id int) icmp.Message
-		wantSeq  int
-		wantTTL  int    // echo replies only
-		wantDSCP int    // echo replies only
-		wantErr  string // empty means an echo reply is expected
+		name    string
+		v6      bool
+		msg     func(id int) icmp.Message
+		wantSeq int
+		wantTTL int    // echo replies only
+		wantErr string // empty means an echo reply is expected
 	}{
 		{
-			// IPv4 replies never carry an observed DSCP: x/net's
-			// ipv4.ControlMessage has no TOS field, so it is always 0.
 			name: "v4 echo reply",
 			msg: func(id int) icmp.Message {
 				return icmp.Message{Type: ipv4.ICMPTypeEchoReply, Body: &icmp.Echo{ID: id, Seq: 7, Data: []byte("x")}}
@@ -47,13 +44,12 @@ func TestRunReceiver_DispatchesToTargetChannel(t *testing.T) {
 			wantSeq: 9, wantErr: "Destination Host Unreachable",
 		},
 		{
-			// The observed TrafficClass byte must reach the target via Reply.DSCP.
 			name: "v6 echo reply",
 			v6:   true,
 			msg: func(id int) icmp.Message {
 				return icmp.Message{Type: ipv6.ICMPTypeEchoReply, Body: &icmp.Echo{ID: id, Seq: 7, Data: []byte("x")}}
 			},
-			wantSeq: 7, wantTTL: 42, wantDSCP: 46 << 2,
+			wantSeq: 7, wantTTL: 42,
 		},
 		{
 			name: "v6 destination unreachable",
@@ -97,7 +93,7 @@ func TestRunReceiver_DispatchesToTargetChannel(t *testing.T) {
 			run := p.runReceiverV4
 			if tt.v6 {
 				p.connV6 = &fakePacketConnV6{readQueue: []readResultV6{
-					{data: raw, cm: &ipv6.ControlMessage{HopLimit: 42, TrafficClass: 46 << 2}},
+					{data: raw, cm: &ipv6.ControlMessage{HopLimit: 42}},
 				}}
 				run = p.runReceiverV6
 			} else {
@@ -113,8 +109,8 @@ func TestRunReceiver_DispatchesToTargetChannel(t *testing.T) {
 				if got.Seq != tt.wantSeq || got.Err != tt.wantErr {
 					t.Fatalf("reply = %+v, want Seq=%d Err=%q", got, tt.wantSeq, tt.wantErr)
 				}
-				if tt.wantErr == "" && (got.TTL != tt.wantTTL || got.DSCP != tt.wantDSCP) {
-					t.Fatalf("reply = %+v, want TTL=%d DSCP=%d", got, tt.wantTTL, tt.wantDSCP)
+				if tt.wantErr == "" && got.TTL != tt.wantTTL {
+					t.Fatalf("reply = %+v, want TTL=%d", got, tt.wantTTL)
 				}
 			case <-time.After(time.Second):
 				t.Fatal("timeout waiting for reply")
@@ -171,22 +167,19 @@ func TestRunReceiver_ExitsOnFatalSocketError(t *testing.T) {
 }
 
 func TestHandleEchoReply(t *testing.T) {
-	t.Run("matching ID reaches the target with TTL and observed DSCP", func(t *testing.T) {
+	t.Run("matching ID reaches the target with TTL", func(t *testing.T) {
 		target := stats.NewTargetStats("example.com")
 		p := NewPinger([]*stats.TargetStats{target})
 		id := p.baseID & 0xffff
 		ch := make(chan Reply, 1)
 		p.targetChans[id] = ch
 
-		// 184 (0xB8) is the EF DSCP codepoint's TOS byte, standing in for a
-		// value the receiver's ControlMessage carried off the reply's IP
-		// header (see runReceiverV6's cm.TrafficClass extraction).
-		p.handleEchoReply(&icmp.Message{Body: &icmp.Echo{ID: id, Seq: 5}}, 64, 184)
+		p.handleEchoReply(&icmp.Message{Body: &icmp.Echo{ID: id, Seq: 5}}, 64)
 
 		select {
 		case reply := <-ch:
-			if reply.TTL != 64 || reply.Seq != 5 || reply.DSCP != 184 {
-				t.Fatalf("reply = %+v, want TTL=64 Seq=5 DSCP=184", reply)
+			if reply.TTL != 64 || reply.Seq != 5 {
+				t.Fatalf("reply = %+v, want TTL=64 Seq=5", reply)
 			}
 		default:
 			t.Fatal("expected reply in channel")
@@ -200,7 +193,7 @@ func TestHandleEchoReply(t *testing.T) {
 		ch <- Reply{Seq: 1}
 		p.targetChans[id] = ch
 
-		p.handleEchoReply(&icmp.Message{Body: &icmp.Echo{ID: id, Seq: 2}}, 64, 0)
+		p.handleEchoReply(&icmp.Message{Body: &icmp.Echo{ID: id, Seq: 2}}, 64)
 
 		if got := <-ch; got.Seq != 1 {
 			t.Fatalf("channel head = %+v, want the original queued reply", got)
@@ -218,7 +211,7 @@ func TestHandleEchoReply(t *testing.T) {
 			ch := make(chan Reply, 1)
 			p.targetChans[p.baseID&0xffff] = ch
 
-			p.handleEchoReply(msg, 64, 0)
+			p.handleEchoReply(msg, 64)
 
 			if len(ch) != 0 {
 				t.Fatalf("unexpected reply delivered: %+v", <-ch)

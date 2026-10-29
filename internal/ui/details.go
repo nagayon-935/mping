@@ -53,9 +53,6 @@ func renderHostDetails(t *stats.TargetStats, opts RunOptions) string {
 		fmt.Fprintf(&b, "Measurements: %s | Health: %s — %s\nRecent loss (%.0fs): %.1f%% | Consecutive failures / replies: %d / %d\nLast probe: %s | Last reply: %s\n", tview.Escape(v.MeasurementState), v.Health.Status, tview.Escape(v.Health.Reason), v.Health.WindowSeconds, v.Health.RecentLossPct, v.Health.ConsecutiveFailures, v.Health.ConsecutiveSuccesses, detailTimestamp(v.Health.LastProbeAt), detailTimestamp(v.Health.LastReplyAt))
 	}
 	fmt.Fprintf(&b, "Interval: %s | Timeout: %s | Payload: %d bytes", opts.Interval, opts.Timeout, opts.PacketSize)
-	if opts.DSCPEnabled {
-		fmt.Fprintf(&b, " | DSCP: %s", tview.Escape(v.DSCP))
-	}
 	fmt.Fprint(&b, "\n\n")
 	fmt.Fprintf(&b, "[yellow]Ping[-]\nSent: %d | Received: %d | Loss: %d | Cancelled: %d\nLoss ratio (completed attempts): %.1f%% | DUP: %d | Late: %d\n", v.Sent, v.Recv, v.Loss, v.Cancelled, calcLossRate(v), v.Duplicates, v.LateReplies)
 	fmt.Fprintf(&b, "RTT last/min/avg/max: %s / %s / %s / %s\nJitter: %s | TTL: %s | Last loss: %s\nError: %s\n", formatRTT(v.LastRTT), formatRTT(v.MinRTT), formatRTT(v.AvgRTT), formatRTT(v.MaxRTT), formatRTT(v.Jitter), intOrDash(v.LastTTL), formatLossAgo(v.LastLossTime), tview.Escape(v.LastError))

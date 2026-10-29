@@ -34,13 +34,11 @@ func mergeHosts(cfg config, fs *pflag.FlagSet, hosts []string) ([]targetSpec, []
 
 // buildHostsAndGroups assembles the final host list and TargetGroup slice.
 // Ungrouped hosts (docHosts + cliHosts) come first; group hosts are appended
-// after, with indices pointing into the combined slice. docHosts entries
-// carry their per-target DSCP override (if any) straight into the returned
-// targetSpec; cliHosts (bare strings from argv) never have one.
+// after, with indices pointing into the combined slice.
 func buildHostsAndGroups(docHosts []hostsfile.Entry, docGroups []hostsfile.Group, cliHosts []string) ([]targetSpec, []ui.TargetGroup) {
 	allHosts := make([]targetSpec, 0, len(docHosts)+len(cliHosts))
 	for _, h := range docHosts {
-		allHosts = append(allHosts, targetSpec{Host: h.Host, Name: h.Name, DSCP: h.DSCP})
+		allHosts = append(allHosts, targetSpec{Host: h.Host, Name: h.Name})
 	}
 	for _, h := range cliHosts {
 		allHosts = append(allHosts, targetSpec{Host: h})
@@ -49,7 +47,7 @@ func buildHostsAndGroups(docHosts []hostsfile.Entry, docGroups []hostsfile.Group
 	for _, g := range docGroups {
 		startIdx := len(allHosts)
 		for _, h := range g.Hosts {
-			allHosts = append(allHosts, targetSpec{Host: h.Host, Name: h.Name, DSCP: h.DSCP})
+			allHosts = append(allHosts, targetSpec{Host: h.Host, Name: h.Name})
 		}
 		indices := make([]int, len(g.Hosts))
 		for j := range g.Hosts {

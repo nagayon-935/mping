@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/nagayon-935/mping/internal/pinger"
 	"gopkg.in/yaml.v3"
 )
 
@@ -60,7 +59,7 @@ func resolveIncludePath(baseDir, path string) string {
 }
 
 // readIncludeFile reads a host list file and returns its expanded entries.
-// Each non-blank line is "host[,name[,dscp]]"; '#' starts a comment; a first
+// Each non-blank line is "host[,name]"; '#' starts a comment; a first
 // line whose host column is "host" or "hostname" (any case) is a header and
 // skipped. Hosts may use the same range/CIDR/brace patterns as the YAML
 // file, and every expanded host must be an IP address or a hostname.
@@ -115,11 +114,6 @@ func parseIncludeData(path, kind string, data []byte) ([]Entry, error) {
 				continue
 			}
 		}
-		if entry.DSCP != "" {
-			if _, err := pinger.ParseDSCP(entry.DSCP); err != nil {
-				return nil, fmt.Errorf("%s %q line %d: invalid dscp (expected a DSCP name such as EF or a number 0-63)", kind, path, lineNo)
-			}
-		}
 		expanded, err := expandHostEntry(entry)
 		if err != nil {
 			return nil, fmt.Errorf("%s %q line %d: %w", kind, path, lineNo, err)
@@ -140,9 +134,8 @@ func parseIncludeData(path, kind string, data []byte) ([]Entry, error) {
 	return out, nil
 }
 
-// parseIncludeLine splits one include-file line into its columns (DSCP is
-// validated by the caller, after header detection). ok is false for blank
-// and comment-only lines. Errors never quote the line.
+// parseIncludeLine splits one include-file line into its columns. ok is
+// false for blank and comment-only lines. Errors never quote the line.
 func parseIncludeLine(line string) (entry Entry, ok bool, err error) {
 	if i := strings.IndexByte(line, '#'); i >= 0 {
 		line = line[:i]
@@ -152,8 +145,11 @@ func parseIncludeLine(line string) (entry Entry, ok bool, err error) {
 		return Entry{}, false, nil
 	}
 	cols := strings.Split(line, ",")
-	if len(cols) > 3 {
-		return Entry{}, false, fmt.Errorf("expected at most 3 columns (host,name,dscp), got %d", len(cols))
+	switch {
+	case len(cols) == 3:
+		return Entry{}, false, errors.New("the third (dscp) column was removed: DSCP marking is no longer supported")
+	case len(cols) > 3:
+		return Entry{}, false, fmt.Errorf("expected at most 2 columns (host,name), got %d", len(cols))
 	}
 	for i := range cols {
 		cols[i] = strings.TrimSpace(cols[i])
@@ -164,9 +160,6 @@ func parseIncludeLine(line string) (entry Entry, ok bool, err error) {
 	}
 	if len(cols) > 1 {
 		entry.Name = cols[1]
-	}
-	if len(cols) > 2 {
-		entry.DSCP = cols[2]
 	}
 	return entry, true, nil
 }
