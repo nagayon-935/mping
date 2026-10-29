@@ -55,15 +55,14 @@ func inferInitialTTL(lastTTL int) string {
 	}
 }
 
-func hopCountString(hops []string) string {
-	if len(hops) == 0 {
-		return "-"
+// hopLabels labels each hop as the route pane shows it: "IP(ASN Org) ptr",
+// or "*" for a hop that never answered.
+func hopLabels(hops []stats.HopView) []string {
+	labels := make([]string, len(hops))
+	for i, h := range hops {
+		labels[i] = stats.FormatHop(h.IP, h.ASN, h.Org, h.PTR)
 	}
-	// Status messages occupy the route field but are not measured hops.
-	if len(hops) == 1 && (hops[0] == "Tracing..." || hops[0] == "no route found" || strings.HasPrefix(hops[0], "error: ")) {
-		return "-"
-	}
-	return fmt.Sprintf("%d", len(hops))
+	return labels
 }
 
 // wrapHops splits hops into lines that fit within maxWidth display columns.

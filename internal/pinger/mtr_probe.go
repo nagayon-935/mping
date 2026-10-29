@@ -122,12 +122,8 @@ func (p *Pinger) OpenHopSocketContext(ctx context.Context, dest string) (*HopSoc
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", dest, err)
 	}
-	return openHopSocketFn(p, dstAddr)
+	return p.openHopSocketAddr(dstAddr)
 }
-
-// openHopSocketFn opens a hop socket; a variable so tests can substitute a
-// HopSocket over fake connections, since a real one needs a raw socket.
-var openHopSocketFn = (*Pinger).openHopSocketAddr
 
 func (p *Pinger) openHopSocketAddr(dstAddr *net.IPAddr) (*HopSocket, error) {
 	isV4 := dstAddr.IP.To4() != nil
@@ -187,8 +183,7 @@ func (p *Pinger) ProbeHop(ctx context.Context, sock *HopSocket, dest string, ttl
 }
 
 // probeHopAddr is ProbeHop's core logic operating on an already-resolved
-// address. TraceRoute uses this directly (resolving dest once for the whole
-// trace) rather than ProbeHop, which would re-resolve dest on every hop.
+// address.
 func (p *Pinger) probeHopAddr(ctx context.Context, sock *HopSocket, dstAddr *net.IPAddr, ttl, traceID int, timeout time.Duration) (HopReply, error) {
 	payload := make([]byte, 8)
 	copy(payload[0:4], traceSignature)

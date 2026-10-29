@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -38,6 +39,9 @@ func validateMergedHosts(cfg config, hosts []hostsfile.Entry, groups []hostsfile
 	}
 	if err := validateHostsDoc(doc); err != nil {
 		return err
+	}
+	if cfg.trace && cfg.mtr {
+		return errors.New("traceroute (-T) and mtr (-M) cannot be used together: -T shows the path only, -M also probes every hop each second")
 	}
 	if err := cfg.thresholds.Validate(); err != nil {
 		return err

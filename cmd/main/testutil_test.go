@@ -61,16 +61,6 @@ func pollUntil(timeout time.Duration, cond func() bool) bool {
 	return true
 }
 
-// waitFor fails the test if cond does not hold within timeout. It replaces
-// fixed time.Sleep calls wherever a test waits for a background goroutine to
-// reach an observable state.
-func waitFor(t *testing.T, timeout time.Duration, what string, cond func() bool) {
-	t.Helper()
-	if !pollUntil(timeout, cond) {
-		t.Fatalf("timed out after %s waiting for %s", timeout, what)
-	}
-}
-
 // closed reports, without blocking, whether ch has been closed.
 func closed(ch <-chan struct{}) bool {
 	select {
@@ -107,7 +97,8 @@ func stubRunSeams(t *testing.T, uiFn func(ui.RunOptions) error) (started func() 
 
 // fakePinger is the pingerController double shared by the whole package. The
 // zero value is a working, well-behaved pinger: Start succeeds, Wait returns
-// immediately and TraceRoute yields two hops. Tests opt into other behaviour
+// immediately and its route prober declines to open a hop socket. Tests opt
+// into other behaviour
 // through the exported-by-convention knobs below, set before the pinger is
 // handed to the code under test.
 //
@@ -120,16 +111,14 @@ type fakePinger struct {
 	discoverBottleneckIP string
 	discoverErr          error
 	discoverLogs         []string
-	traceErr             error
 
-	// blockTraceUntilCtxDone makes TraceRoute block on ctx.Done() (a slow,
-	// in-flight network trace) instead of returning immediately.
-	// traceRouteStarted, when non-nil, is closed as TraceRoute begins to block;
-	// traceRouteReturned, when non-nil, is closed right before it returns, so a
-	// test can observe when it actually exited.
-	blockTraceUntilCtxDone bool
-	traceRouteStarted      chan struct{}
-	traceRouteReturned     chan struct{}
+	// routeStarted and routeReturned, when set, make the route prober's
+	// OpenHopSocket block on ctx.Done() (a slow, in-flight lookup) instead
+	// of failing at once; it closes routeStarted as it begins to block and
+	// routeReturned right before it returns, so a test can observe when the
+	// route engine actually exited.
+	routeStarted  chan struct{}
+	routeReturned chan struct{}
 
 	// workersDone, when non-nil, makes WaitWorkers block until finish() is
 	// called, modelling a count-limited run whose probes complete on demand.
@@ -233,23 +222,6 @@ func (f *fakePinger) DiscoverMaxPayload(ctx context.Context, dest string, start 
 	return f.discoverMTU, f.discoverBottleneckIP, nil
 }
 
-func (f *fakePinger) TraceRoute(ctx context.Context, dest string, maxHops int, timeout time.Duration) ([]string, error) {
-	if f.blockTraceUntilCtxDone {
-		if f.traceRouteStarted != nil {
-			close(f.traceRouteStarted)
-		}
-		<-ctx.Done()
-		if f.traceRouteReturned != nil {
-			close(f.traceRouteReturned)
-		}
-		return nil, ctx.Err()
-	}
-	if f.traceErr != nil {
-		return nil, f.traceErr
-	}
-	return []string{"hop1", "hop2"}, nil
-}
-
 func (f *fakePinger) SetSource(ip string)                       {}
 func (f *fakePinger) SetSize(size int)                          {}
 func (f *fakePinger) SetCount(count int)                        {}
@@ -261,13 +233,32 @@ func (f *fakePinger) SetInterface(name string) {
 	f.interfaceSet = name
 }
 
-// MTRProber returns a stub prober rather than nil: cmdResetMTR starts an
+// MTRProber returns a stub prober rather than nil: cmdResetRoute starts an
 // mtr.Engine unconditionally whenever it is invoked, without checking
-// cfg.mtrEnabled itself (that gating lives at the call site), so the engine's
-// per-target goroutine really does call prober.OpenHopSocket. A nil
+// cfg.routeEnabled itself (that gating lives at the call site), so the
+// engine's per-target goroutine really does call prober.OpenHopSocket. A nil
 // mtr.HopProber is a nil interface value and calling a method on it panics;
 // noopHopProber gives it a safe implementation that declines to open a socket.
-func (f *fakePinger) MTRProber() mtr.HopProber { return noopHopProber{} }
+func (f *fakePinger) MTRProber() mtr.HopProber {
+	if f.routeStarted != nil {
+		return blockingHopProber{started: f.routeStarted, returned: f.routeReturned}
+	}
+	return noopHopProber{}
+}
+
+// blockingHopProber's OpenHopSocket blocks until ctx is cancelled; see
+// fakePinger.routeStarted. Use it with a single target.
+type blockingHopProber struct {
+	noopHopProber
+	started, returned chan struct{}
+}
+
+func (p blockingHopProber) OpenHopSocket(ctx context.Context, dest string) (mtr.HopSocket, error) {
+	close(p.started)
+	<-ctx.Done()
+	close(p.returned)
+	return nil, ctx.Err()
+}
 
 // noopHopProber is a minimal mtr.HopProber that always fails to open a hop
 // socket, so an mtr.Engine started against it exits its per-target goroutine

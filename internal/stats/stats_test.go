@@ -213,26 +213,6 @@ func TestPortCheckResult_SetResult_AllStatuses(t *testing.T) {
 	}
 }
 
-func TestTargetStats_SetTraceHops(t *testing.T) {
-	tgt := NewTargetStats("example.com")
-	hops := []string{"10.0.0.1", "10.0.0.2", "1.2.3.4"}
-	tgt.SetTraceHops(hops)
-	view := tgt.GetView()
-	if len(view.TraceHops) != len(hops) {
-		t.Fatalf("TraceHops len: got %d, want %d", len(view.TraceHops), len(hops))
-	}
-	for i, h := range hops {
-		if view.TraceHops[i] != h {
-			t.Errorf("TraceHops[%d]: got %q, want %q", i, view.TraceHops[i], h)
-		}
-	}
-	// Verify it's a copy (mutation should not affect stored value)
-	hops[0] = "mutated"
-	if tgt.GetView().TraceHops[0] == "mutated" {
-		t.Error("SetTraceHops should store a copy, not a reference")
-	}
-}
-
 // TestTargetStats_ScalarSetters verifies that each simple setter shows up
 // in the next GetView.
 func TestTargetStats_ScalarSetters(t *testing.T) {

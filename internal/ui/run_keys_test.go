@@ -80,7 +80,6 @@ func TestRunKeyboardReset(t *testing.T) {
 	target.SetIP("127.0.0.1")
 	target.IncSent()
 	target.OnSuccess(10*time.Millisecond, 64)
-	target.SetTraceHops([]string{"10.0.0.1", "1.1.1.1"})
 	target.MTR().EnsureLen(2)
 	target.MTR().RecordReply(1, "10.0.0.1", "", "", "", 5*time.Millisecond)
 	target.SetPortResults([]*stats.PortCheckResult{portResult(80, "tcp", "Open")})
@@ -88,26 +87,23 @@ func TestRunKeyboardReset(t *testing.T) {
 		t.Fatal("fixture did not record any hops")
 	}
 
-	resets := make(chan string, 3)
+	resets := make(chan string, 2)
 	h := startTUI(t, RunOptions{
 		Targets:      []*stats.TargetStats{target},
-		TraceEnabled: true, MTREnabled: true, PortEnabled: true,
-		OnResetTrace: func() { resets <- "trace" },
-		OnResetMTR:   func() { resets <- "mtr" },
+		Route:        RouteMonitor,
+		PortEnabled:  true,
+		OnResetRoute: func() { resets <- "route" },
 		OnResetPort:  func() { resets <- "port" },
 	}, 200, 50)
 	h.wait("Ping Monitor")
 	h.press('R')
-	for _, want := range []string{"trace", "mtr", "port"} {
+	for _, want := range []string{"route", "port"} {
 		if got := recvWithin(t, resets, "monitor reset "+want); got != want {
 			t.Fatalf("monitor reset %q, want %q", got, want)
 		}
 	}
 	if v := target.GetView(); v.Sent != 0 || v.Recv != 0 {
 		t.Errorf("counters not cleared after R: sent=%d recv=%d", v.Sent, v.Recv)
-	}
-	if hops := target.GetView().TraceHops; len(hops) != 0 {
-		t.Errorf("TraceHops not cleared after R: got %v", hops)
 	}
 	if hops := target.MTR().View(); len(hops) != 0 {
 		t.Errorf("MTR hop stats not cleared after R: got %d hops", len(hops))
@@ -165,9 +161,9 @@ func TestRunKeyboardScroll(t *testing.T) {
 func TestRunPaneControls(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	target.SetIP("127.0.0.1")
-	target.SetTraceHops([]string{"10.0.0.1", "1.1.1.1"})
+	setRouteHops(target, "10.0.0.1", "1.1.1.1")
 	target.SetPortResults([]*stats.PortCheckResult{portResult(443, "tcp", "Open")})
-	h := startTUI(t, RunOptions{Targets: []*stats.TargetStats{target}, TraceEnabled: true, PortEnabled: true}, 200, 50)
+	h := startTUI(t, RunOptions{Targets: []*stats.TargetStats{target}, Route: RoutePath, PortEnabled: true}, 200, 50)
 	h.wait("Port Monitor")
 
 	h.key(tcell.KeyTab) // Ping Monitor -> Traceroute Monitor

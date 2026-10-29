@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -250,27 +251,21 @@ func TestInferInitialTTL(t *testing.T) {
 	}
 }
 
-func TestHopCountString(t *testing.T) {
-	tests := []struct {
-		name string
-		hops []string
-		want string
-	}{
-		{"nil", nil, "-"},
-		{"empty", []string{}, "-"},
-		{"tracing", []string{"Tracing..."}, "-"},
-		{"no route", []string{"no route found"}, "-"},
-		{"socket error", []string{"error: socket: operation not permitted"}, "-"},
-		{"one hop", []string{"1.1.1.1"}, "1"},
-		{"three hops", []string{"1.1.1.1", "2.2.2.2", "3.3.3.3"}, "3"},
-		{"with unreachable", []string{"1.1.1.1", "*", "8.8.8.8"}, "3"},
+// setRouteHops gives target a discovered route of the given hop IPs; ""
+// is a hop that never answered.
+func setRouteHops(target *stats.TargetStats, ips ...string) {
+	m := target.MTR()
+	m.EnsureLen(len(ips))
+	for i, ip := range ips {
+		m.SetIP(i+1, ip, "", "", "")
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := hopCountString(tt.hops); got != tt.want {
-				t.Fatalf("hopCountString(%v) = %q, want %q", tt.hops, got, tt.want)
-			}
-		})
+}
+
+func TestHopLabels(t *testing.T) {
+	hops := []stats.HopView{{IP: "10.0.0.1", PTR: "gw.example"}, {}, {IP: "8.8.8.8", ASN: "AS15169", Org: "Google LLC"}}
+	want := []string{"10.0.0.1 gw.example", "*", "8.8.8.8(AS15169 Google LLC)"}
+	if got := hopLabels(hops); !slices.Equal(got, want) {
+		t.Fatalf("hopLabels = %q, want %q", got, want)
 	}
 }
 

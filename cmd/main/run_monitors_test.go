@@ -2,35 +2,60 @@ package main
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/ui"
 )
 
-// TestRunResetTrace verifies that run -T wires OnResetTrace into the UI and
-// that calling it re-triggers a traceroute and repopulates TraceHops.
-func TestRunResetTrace(t *testing.T) {
-	stubRunSeams(t, func(opts ui.RunOptions) error {
-		if opts.OnResetTrace == nil {
-			t.Error("OnResetTrace must not be nil when TraceEnabled=true")
-			return nil
-		}
-		// Simulate the UI clearing TraceHops before calling OnResetTrace (as 'R' does).
-		for _, tg := range opts.Targets {
-			tg.SetTraceHops(nil)
-		}
-		opts.OnResetTrace()
-		if !pollUntil(2*time.Second, func() bool { return len(opts.Targets[0].GetView().TraceHops) > 0 }) {
-			t.Error("TraceHops not repopulated after OnResetTrace()")
-		}
+// TestRunRouteModes verifies that -T and -M both run the route engine and
+// wire its reset into the UI. The fake pinger's prober cannot open a hop
+// socket, so a running engine records that failure on the target.
+func TestRunRouteModes(t *testing.T) {
+	for _, tt := range []struct {
+		flag string
+		want ui.RouteMode
+	}{{"-T", ui.RoutePath}, {"-M", ui.RouteMonitor}} {
+		t.Run(tt.flag, func(t *testing.T) {
+			stubRunSeams(t, func(opts ui.RunOptions) error {
+				if opts.Route != tt.want {
+					t.Errorf("Route = %v, want %v", opts.Route, tt.want)
+				}
+				if opts.OnResetRoute == nil {
+					t.Error("OnResetRoute must not be nil when the route pane is shown")
+					return nil
+				}
+				routeFailed := func() bool { return opts.Targets[0].GetView().MTRError != "" }
+				if !pollUntil(2*time.Second, routeFailed) {
+					t.Error("route engine did not run")
+				}
+				opts.OnResetRoute()
+				if !pollUntil(2*time.Second, routeFailed) {
+					t.Error("route engine did not run again after OnResetRoute()")
+				}
+				return nil
+			})
+
+			var out, errOut bytes.Buffer
+			if code := run([]string{tt.flag, "-S", "127.0.0.1", "example.com"}, &out, &errOut); code != 0 {
+				t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
+			}
+		})
+	}
+}
+
+func TestRunRejectsBothRouteModes(t *testing.T) {
+	stubRunSeams(t, func(ui.RunOptions) error {
+		t.Error("the UI started with both -T and -M")
 		return nil
 	})
-
 	var out, errOut bytes.Buffer
-	code := run([]string{"-T", "-S", "127.0.0.1", "example.com"}, &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
+	if code := run([]string{"-T", "-M", "-S", "127.0.0.1", "example.com"}, &out, &errOut); code == 0 {
+		t.Fatal("expected a non-zero exit code")
+	}
+	if got := errOut.String(); !strings.HasPrefix(got, "Error: ") || !strings.Contains(got, "cannot be used together") {
+		t.Fatalf("stderr = %q, want the -T/-M conflict without a hosts-file prefix", got)
 	}
 }
 

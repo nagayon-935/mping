@@ -39,8 +39,8 @@ func TestRunRendersMonitorPanes(t *testing.T) {
 			name: "traceroute",
 			opts: func() RunOptions {
 				target := stats.NewTargetStats("example.com")
-				target.SetTraceHops([]string{"10.0.0.1", "10.0.0.2", "1.1.1.1"})
-				return RunOptions{Targets: []*stats.TargetStats{target}, SourceIPv4: "10.0.0.1", TraceEnabled: true}
+				setRouteHops(target, "10.0.0.1", "10.0.0.2", "1.1.1.1")
+				return RunOptions{Targets: []*stats.TargetStats{target}, SourceIPv4: "10.0.0.1", Route: RoutePath}
 			},
 			wants: []string{"Traceroute Monitor", "10.0.0.1 -> 10.0.0.2 -> 1.1.1.1"},
 		},
@@ -83,13 +83,13 @@ func TestRunRendersMonitorPanes(t *testing.T) {
 			name: "traceroute and port for two targets",
 			opts: func() RunOptions {
 				first := ported("example.com", "127.0.0.1", 443, "Open")
-				first.SetTraceHops([]string{"10.0.0.1", "1.1.1.1"})
+				setRouteHops(first, "10.0.0.1", "1.1.1.1")
 				second := ported("example2.com", "8.8.8.8", 80, "Filtered")
-				second.SetTraceHops([]string{"10.0.0.9"})
+				setRouteHops(second, "10.0.0.9")
 				return RunOptions{
 					Targets:    []*stats.TargetStats{first, second},
 					SourceIPv4: "10.0.0.1", SourceIPv6: "2001::1",
-					TraceEnabled: true, PortEnabled: true,
+					Route: RoutePath, PortEnabled: true,
 				}
 			},
 			wants: []string{

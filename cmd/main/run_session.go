@@ -162,8 +162,6 @@ func (s *session) startIteration(first bool) (*iteration, bool) {
 		portSpecs:    env.portSpecs,
 		httpURLs:     cfg.httpURLs,
 		bind:         bind,
-		traceEnabled: cfg.trace,
-		mtrEnabled:   cfg.mtr,
 		countLimited: cfg.count > 0,
 		logCh:        it.logCh,
 	})

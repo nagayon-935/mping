@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/nagayon-935/mping/internal/stats"
 )
 
 func (r Report) Text() string {
@@ -14,12 +16,12 @@ func (r Report) Text() string {
 	fmt.Fprintf(&b, "\nMeasurement settings:\n%s\n", settings)
 	fmt.Fprintln(&b, "\nActive targets:")
 	for _, target := range r.Targets {
-		writeTarget(&b, target)
+		writeTarget(&b, target, r.Settings.MTR)
 	}
 	if len(r.RemovedTargets) > 0 {
 		fmt.Fprintln(&b, "\nRemoved targets (final measurements):")
 		for _, target := range r.RemovedTargets {
-			writeTarget(&b, target)
+			writeTarget(&b, target, r.Settings.MTR)
 		}
 	}
 	if r.RemovedTargetsDropped > 0 {
@@ -35,7 +37,9 @@ func (r Report) Text() string {
 	return b.String()
 }
 
-func writeTarget(b *strings.Builder, t Target) {
+// writeTarget writes one target's section. perHop selects MTR hop lines
+// (-M) over a single route line (-T).
+func writeTarget(b *strings.Builder, t Target, perHop bool) {
 	v := t.Statistics
 	fmt.Fprintf(b, "\n%s (%s) | Target #%d | Group %s\nStarted: %s | Ping statistics since: %s\n", v.Host, v.IP, v.ID, t.Group, v.StartedAt.Format(time.RFC3339), t.WindowStartedAt.Format(time.RFC3339))
 	if t.RemovedAt != nil {
@@ -53,16 +57,24 @@ func writeTarget(b *strings.Builder, t Target) {
 		fmt.Fprintf(b, "%d older IP history entries omitted.\n", t.IPHistoryDropped)
 	}
 	if t.MTRFlapCount > 0 {
-		fmt.Fprintf(b, "MTR route changes %d | Last %s: %s\n", t.MTRFlapCount, t.MTRLastFlapAt.Format(time.RFC3339), t.MTRLastFlapDesc)
+		fmt.Fprintf(b, "Route changes %d | Last %s: %s\n", t.MTRFlapCount, t.MTRLastFlapAt.Format(time.RFC3339), t.MTRLastFlapDesc)
 	}
 	for _, change := range t.IPHistory {
 		fmt.Fprintf(b, "  %s IP %s\n", change.At.Format(time.RFC3339), change.IP)
 	}
-	if len(v.TraceHops) > 0 {
-		fmt.Fprintf(b, "Route: %s\n", strings.Join(v.TraceHops, " -> "))
+	if v.MTRError != "" {
+		fmt.Fprintf(b, "Route discovery failed: %s\n", v.MTRError)
 	}
-	for _, hop := range v.MTRHops {
-		fmt.Fprintf(b, "MTR hop %d %s | Loss %.1f%% | Sent %d Recv %d | Last/Min/Avg/Max %.3f/%.3f/%.3f/%.3f ms | Jitter %.3f ms\n", hop.TTL, hop.IP, hop.LossPct, hop.Sent, hop.Recv, hop.LastRTTMs, hop.MinRTTMs, hop.AvgRTTMs, hop.MaxRTTMs, hop.JitterMs)
+	if perHop {
+		for _, hop := range v.MTRHops {
+			fmt.Fprintf(b, "MTR hop %d %s | Loss %.1f%% | Sent %d Recv %d | Last/Min/Avg/Max %.3f/%.3f/%.3f/%.3f ms | Jitter %.3f ms\n", hop.TTL, hop.IP, hop.LossPct, hop.Sent, hop.Recv, hop.LastRTTMs, hop.MinRTTMs, hop.AvgRTTMs, hop.MaxRTTMs, hop.JitterMs)
+		}
+	} else if len(v.MTRHops) > 0 {
+		labels := make([]string, len(v.MTRHops))
+		for i, hop := range v.MTRHops {
+			labels[i] = stats.FormatHop(hop.IP, hop.ASN, hop.Org, hop.PTR)
+		}
+		fmt.Fprintf(b, "Route: %s\n", strings.Join(labels, " -> "))
 	}
 	for _, port := range t.PortDetails {
 		fmt.Fprintf(b, "Port %d/%s %s | Last/Min/Avg/Max %.3f/%.3f/%.3f/%.3f ms | Open %d Closed/Filtered %d | Changed %s\n", port.Port, port.Protocol, port.Status, port.LastRTTMS, port.MinRTTMS, port.AvgRTTMS, port.MaxRTTMS, port.OpenCount, port.ClosedCount, port.LastChange.Format(time.RFC3339))

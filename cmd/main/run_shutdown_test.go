@@ -38,28 +38,28 @@ func TestRunStopRestart(t *testing.T) {
 	}
 }
 
-// TestRunStop_JoinsTracerouteBeforeStoppingPinger verifies that OnStop
-// (stopAll -> tearDownAll) actually waits for the background runTraceroutes
+// TestRunStop_JoinsRouteEngineBeforeStoppingPinger verifies that OnStop
+// (stopAll -> tearDownAll) actually waits for the route engine's per-target
 // goroutine to exit rather than just cancelling its context, and only then
 // stops the pinger. The onStop hook makes the ordering check deterministic
-// (not timing-based): tearDownAll() waits on <-s.traceDone before calling
+// (not timing-based): tearDownAll() joins the engine before calling
 // s.p.Stop(), so a violation can only be observed if a future refactor calls
-// Stop() without first joining the traceroute goroutine.
-func TestRunStop_JoinsTracerouteBeforeStoppingPinger(t *testing.T) {
+// Stop() without first joining the route engine.
+func TestRunStop_JoinsRouteEngineBeforeStoppingPinger(t *testing.T) {
 	started, returned := make(chan struct{}), make(chan struct{})
-	fp := &fakePinger{blockTraceUntilCtxDone: true, traceRouteStarted: started, traceRouteReturned: returned}
+	fp := &fakePinger{routeStarted: started, routeReturned: returned}
 	stoppedBeforeJoin := false
 	fp.onStop = func() { stoppedBeforeJoin = stoppedBeforeJoin || !closed(returned) }
 	stubRunSeams(t, func(opts ui.RunOptions) error {
 		select {
 		case <-started:
 		case <-time.After(time.Second):
-			t.Error("traceroute did not start")
+			t.Error("route engine did not start")
 			return nil
 		}
 		opts.OnStop()
 		if !closed(returned) {
-			t.Error("OnStop() returned before the in-flight traceroute goroutine exited")
+			t.Error("OnStop() returned before the in-flight route probe exited")
 		}
 		return nil
 	})
@@ -74,7 +74,7 @@ func TestRunStop_JoinsTracerouteBeforeStoppingPinger(t *testing.T) {
 		t.Error("expected the pinger to be stopped and closed")
 	}
 	if stoppedBeforeJoin {
-		t.Error("pinger.Stop() was called before the traceroute goroutine had joined (shutdown order violation)")
+		t.Error("pinger.Stop() was called before the route engine had joined (shutdown order violation)")
 	}
 }
 

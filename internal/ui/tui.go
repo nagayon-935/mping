@@ -17,6 +17,15 @@ const (
 
 var newApplication = tview.NewApplication
 
+// RouteMode selects what the route pane shows.
+type RouteMode int
+
+const (
+	RouteOff     RouteMode = iota
+	RoutePath              // each target's hops, rediscovered periodically (-T)
+	RouteMonitor           // the hops with per-hop loss and latency (-M)
+)
+
 type TargetSet struct {
 	Targets    []*stats.TargetStats
 	Groups     []TargetGroup
@@ -38,9 +47,8 @@ type RunOptions struct {
 	// WebControlURL is retained separately from the rotating Log. Empty disables
 	// the access dialog and header hint; never include it in exported reports.
 	WebControlURL string
-	TraceEnabled  bool
+	Route         RouteMode
 	MTUEnabled    bool
-	MTREnabled    bool
 	PortEnabled   bool
 	HTTPEnabled   bool
 	ASNEnabled    bool
@@ -71,8 +79,7 @@ type RunOptions struct {
 	// OnReset owns resetting statistics and monitors as one operation. When
 	// nil, Run resets statistics itself and uses the individual reset callbacks.
 	OnReset      func()
-	OnResetTrace func()
-	OnResetMTR   func()
+	OnResetRoute func()
 	OnResetPort  func()
 	OnResetHTTP  func()
 	// OnAddHost is called when the user adds a host via the 'a' key dialog.

@@ -73,7 +73,7 @@ var receiverV6Config = receiverConfig{
 }
 
 // icmpv6FilterSetter is satisfied by both PacketConnV6 (the main receiver
-// socket) and hopSendConnV6 (MTR/traceroute's HopSocket). Sharing it lets
+// socket) and hopSendConnV6 (the route engine's HopSocket). Sharing it lets
 // applyICMPv6Filter serve both call sites without a second interface.
 type icmpv6FilterSetter interface {
 	SetICMPFilter(f *ipv6.ICMPFilter) error
@@ -83,7 +83,7 @@ type icmpv6FilterSetter interface {
 // ICMPv6 type except cfg.echoReply and cfg.errorTypes. It is derived from
 // cfg rather than a second, independently-maintained type list, so a future
 // addition to receiverV6Config.errorTypes (e.g. another ICMP error type
-// needed for traceroute/MTR) automatically widens the kernel filter too -
+// needed for route probes) automatically widens the kernel filter too -
 // there is exactly one place that enumerates the types mping cares about.
 func icmpv6FilterFromConfig(cfg receiverConfig) ipv6.ICMPFilter {
 	var filt ipv6.ICMPFilter
@@ -107,7 +107,7 @@ func icmpv6FilterFromConfig(cfg receiverConfig) ipv6.ICMPFilter {
 // goroutine for a message it immediately discards. Mirrors Apple's ping6.c
 // (ICMP6_FILTER_SETBLOCKALL + SETPASS on ECHO_REPLY only), except mping
 // also passes the ICMP error types receiverV6Config needs for its error
-// column, traceroute, and MTR.
+// column and route probes.
 //
 // Non-fatal: ICMP6_FILTER is unsupported on some platforms (and by
 // definition on any non-syscall.Conn, such as the fakes used in tests),

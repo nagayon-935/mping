@@ -23,10 +23,10 @@ export function mtrColumns(features) {
   ].filter(Boolean);
 }
 
-function hopCell(key, hop) {
+function hopCell(key, hop, features) {
   switch (key) {
     case "ttl": return numCell(String(hop.ttl));
-    case "ip": return textCell(hop.ip || "No reply", "mono");
+    case "ip": return textCell([hop.ip || "No reply", features.ptr && hop.ip && hop.ptr].filter(Boolean).join(" "), "mono");
     case "asn": return textCell([hop.asn, hop.org].filter(Boolean).join(" ") || "–");
     case "hopLoss": return el("td", { className: "num" }, statusChip(hop.loss_level ?? "none", formatPct(hop.loss_pct)));
     case "sent": return countCell(hop.sent);
@@ -58,10 +58,12 @@ export function renderMTR(table, targets, meta, selectedId = null) {
           el("strong", { className: "cell-text", text: target.host }),
           el("span", { className: "mtr-target-count", text: hops.length ? `${hops.length} hops` : "Waiting" }),
           address && el("span", { className: "mtr-target-address cell-text", text: address })))));
-    if (!hops.length) body.append(el("tr", {}, el("td", { className: "mtr-waiting", text: "Waiting for hop replies. No MTR route data has been received yet.", attrs: { colspan: String(columns.length) } })));
+    if (!hops.length) body.append(el("tr", {}, el("td", { className: "mtr-waiting",
+      text: target.mtr_error ? `Route discovery failed: ${target.mtr_error}` : "Waiting for hop replies. No MTR route data has been received yet.",
+      attrs: { colspan: String(columns.length) } })));
     for (const hop of hops) {
       body.append(el("tr", {}, ...columns.map((c) => {
-        const cell = hopCell(c.key, hop);
+        const cell = hopCell(c.key, hop, meta.features);
         cell.classList.add(`col-${c.key}`);
         return cell;
       })));

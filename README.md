@@ -21,8 +21,7 @@
 * **Flexible configuration** — specify interface, source IP, packet size, send count, and more.
 * **YAML host list** — manage target hosts in a file.
 * **Host groups** — define named groups in the YAML file. Each group shows a header row with a member count, making it easy to visually separate sets of targets.
-* **Traceroute pane** — show the route to each target in a Host/Route table when `-T` is given. Multiple targets are traced concurrently and displayed together.
-* **MTR Monitor pane** — continuous per-hop loss/latency statistics when `-M` is given. Each hop is probed every second and displays Hop, Host, Loss%, Snt, Recv, Last, Avg, Min, Max, Jitter — the same columns as `mtr`. Can be used simultaneously with `-T`.
+* **Route monitoring in two modes** — `-T` shows the route to each target in a Host/Route table, rediscovered every 10 minutes at low probe load. `-M` additionally probes every hop each second and shows Hop, Host, Loss%, Snt, Recv, Last, Avg, Min, Max, Jitter — the same columns as `mtr`. Both modes detect route changes; choose one of them.
 * **HTTP(S) health check pane** — monitor HTTP/HTTPS endpoints when `-H` is given. Performs GET requests at the ping interval and tracks status code, response time (Last/Min/Avg/Max), and cumulative Up/Down counts. Status changes are logged to the Log pane.
 * **Port Monitor pane** — monitor TCP/UDP port reachability in real time with `-p`. Displays the estimated service name, **Last / Min / Avg / Max RTT** (measured from TCP connect or UDP round-trip), cumulative Open/Closed counts, and time since last status change. RTT statistics are collected for `Open` responses only.
 * **PMTU discovery** — probe maximum payload size using DF-bit ICMP packets.
@@ -172,9 +171,6 @@ mping -p 443/tcp,53/udp google.com 8.8.8.8
 # MTR-style per-hop monitor
 mping -M google.com
 
-# MTR + Traceroute simultaneously
-mping -T -M google.com
-
 # HTTP(S) health check
 mping -H https://example.com/health google.com
 
@@ -209,7 +205,6 @@ hosts:
   - 1.1.1.1
 interval: 500
 timeout: 2000
-traceroute: true
 mtr: true
 asn: true
 port:
@@ -289,8 +284,8 @@ See [examples/hosts-patterns.yaml](examples/hosts-patterns.yaml) and [examples/b
 | `--interval` | `-i` | Ping send interval (ms) | `1000` |
 | `--timeout` | `-t` | Ping timeout (ms) | `1000` |
 | `--file` | `-f` | Path to a YAML hosts file or a NetBox IP Addresses CSV export | `""` |
-| `--traceroute` | `-T` | Show Traceroute pane | `false` |
-| `--mtr` | `-M` | Show MTR Monitor pane (continuous per-hop loss/latency) | `false` |
+| `--traceroute` | `-T` | Show each target's route, rediscovered every 10 minutes (not with `-M`) | `false` |
+| `--mtr` | `-M` | Also probe every hop each second, MTR-style (not with `-T`) | `false` |
 | `--dns-server` | `-d` | Custom DNS server IP address to resolve target hostnames | `""` (OS default) |
 | `--resolve-all` | | Resolve target hostnames to all IP addresses and monitor them concurrently | `false` |
 | `--discovery-mtu` | `-m` | Discover max payload size with DF bit | `false` |
@@ -353,7 +348,7 @@ Backend health transitions reach TUI, Web and headless logs. Consecutive identic
 | **R** | Reset statistics and UI logs; remain stopped if measurements are stopped |
 | **a** | Open "Add host" dialog — type a hostname or IP and press Enter to add it at runtime |
 | **d** | Confirm deletion of the selected target, or the target currently shown in details |
-| **Tab** | Cycle focus: Ping Monitor → Traceroute Monitor → MTR Monitor → Port Monitor → HTTP Monitor → RTT Graphs → Log |
+| **Tab** | Cycle focus: Ping Monitor → Traceroute or MTR Monitor → Port Monitor → HTTP Monitor → RTT Graphs → Log |
 | **↑ / ↓ / PgUp / PgDn** | Select hosts in Ping Monitor; scroll other panes and host details |
 | **Enter** | Open selected host details: statistics, routes, MTR, ports, graphs, and target events |
 | **Esc** | Return from details, or restore the layout after maximizing a pane |
@@ -453,22 +448,22 @@ Regenerate saved scripts after upgrading mping to include new flags. To monitor 
 
 ## Traceroute Monitor pane
 
-* Shown only when `-T` / `--traceroute` is given.
-* Probes up to 30 hops and displays results in a Host / Route two-column table.
-* Multiple targets are traced concurrently and separated by divider rows.
-* One traceroute is run at startup, then automatically refreshed every 10 minutes.
+* Shown only when `-T` / `--traceroute` is given. `-T` and `-M` cannot be combined: `-T` discovers the route only, `-M` also measures every hop.
+* The route (up to 30 hops) is discovered at startup and rediscovered every 10 minutes, with no per-hop probes in between — about 30 probes per target every 10 minutes.
+* Results are shown in a Host / Hops / Init TTL / Route table, one row per target. Hops carry the AS (`-a`) and PTR name (`-r`) when enabled; `*` is a hop that did not answer.
+* **Route change detection** works as in the MTR pane: a changed path adds a `[FLAP ×N HH:MM:SS]` line under the route and a yellow alert in the Log pane.
+* When the route cannot be discovered (for example, the target does not resolve), the pane shows why and retries at the next rediscovery.
 
 ## MTR Monitor pane
 
 * Shown only when `-M` / `--mtr` is given.
 * Performs continuous TTL-limited ICMP probing to every hop on the path to each target.
-* The hop path is discovered at startup and re-discovered every 10 minutes to track route changes. Hops that miss discovery are still probed each round and appear as soon as they respond. Traceroute also uses the monitored IP when available, avoiding an independent DNS choice when comparing paths.
+* The hop path is discovered at startup and re-discovered every 10 minutes to track route changes. Hops that miss discovery are still probed each round and appear as soon as they respond. Route discovery probes the monitored IP, avoiding an independent DNS choice when comparing paths.
 * Each hop is probed once per second. Unresponsive hops (`*`) accumulate 100% loss.
 * The header row shows `SrcIP -> DstIP` (or `hostname (SrcIP -> DstIP)` for hostname targets).
-* Can be combined with `-T` (both panes are displayed side by side).
 * Columns:
   * **Hop** — TTL hop number
-  * **Host** — Responder IP with ASN and country code when `-a` is given (e.g., `1.2.3.4 (AS15169 US)`). `*` when no response.
+  * **Host** — Responder IP, followed by its PTR name when `-r` is given and its AS when `-a` is given (e.g., `8.8.8.8 dns.google (AS15169 Google LLC)`). `*` when no response.
   * **Loss%** — Packet loss percentage for this hop (green / orange / red)
   * **Snt** — Total probes sent
   * **Recv** — Total replies received
@@ -478,7 +473,7 @@ Regenerate saved scripts after upgrading mping to include new flags. To monitor 
   * **Max** — Maximum RTT
   * **Jitter** — Smoothed inter-packet delay variation (RFC 1889)
 * On narrow terminals, **Min**, **Max**, **Recv**, and **Jitter** columns are hidden automatically (compact mode).
-* MTR statistics are included in the `-j` JSON export as `mtr_hops` per target.
+* Hops are included in the `-j` JSON export as `mtr_hops` per target in both modes (with `-T`, their counters stay at zero), and a route discovery failure as `mtr_error`.
 * **Route flap detection** — when re-discovery detects that the hop path has changed, a `[FLAP ×N HH:MM:SS]` badge is appended to the target's header row and a yellow alert is written to the Log pane (e.g. `[route flap google.com: hop 3: 10.0.0.2 → 10.0.0.9]`).
 
 ## HTTP Monitor pane
@@ -533,7 +528,7 @@ mping --web google.com 1.1.1.1      # then open http://127.0.0.1:8080/
 - It listens on loopback only (`127.0.0.1`, plus `[::1]` when available) and is not reachable from other machines. Requests whose `Host` or `Origin` header is not this server are rejected (DNS-rebinding / cross-site protection).
 - `--web` / `--web-port` are read at startup; a hosts-file reload does not restart the server (changing them in the hosts file logs a restart-required warning).
 - The desktop dashboard fills the browser width and height. Ping monitor and the selected host's **Summary** occupy the upper row; route monitoring and **RTT graphs** share the lower row. Each pane scrolls internally. Narrower windows stack the panes; phone widths are not supported, and below 720px the page scrolls horizontally. Summary contains statistics, enabled port checks and target actions, with no tabs.
-- Route display follows the options: **Traceroute only → Traceroute pane**, **MTR only → MTR pane**, **both → MTR pane only**. Both route panes show all targets without requiring a selection, and follow the monitor filter. Traceroute uses a vertical numbered path with optional AS/PTR annotations. MTR has sticky target/column headings and internal scrolling; its probes use TTL/Hop Limit-limited ICMP Echo, with no UDP mode.
+- Route display follows the option: **`-T` → Traceroute pane**, **`-M` → MTR pane**. Both route panes show all targets without requiring a selection, and follow the monitor filter. Traceroute uses a vertical numbered path with optional AS/PTR annotations. MTR has sticky target/column headings and internal scrolling; its probes use TTL/Hop Limit-limited ICMP Echo, with no UDP mode.
 - **Log** is an independent page reached from the top navigation, listing the latest 200 events across all targets. It does not depend on the selected host or monitor filter. Enabled **HTTP** checks also have an independent page. Returning to Monitor restores the selected Summary and pane scroll positions.
 - RTT graphs share a time axis and default to a shared vertical scale with four rounded intervals and an explicit ms label. Per target scale remains available. Hovering any graph compares all targets at the same time.
 - The table shows as many columns as fit the window, dropping the least important first (Status, Host, Loss % and latest RTT are always kept). Each row explains its status, based on consecutive failures/replies, recent loss, latest RTT and jitter. Average/minimum/peak RTT describe the run since start/reset in Summary. RTT history appears only in the graphs, whose numeric readout is shown at the cursor. Wide screens show the list and details side by side. Click **Enable controls** to paste a token or the full URL copied from the TUI, without reloading. A token is stored only after successful verification; connection failures and rejected tokens have separate explanations.

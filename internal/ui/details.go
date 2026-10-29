@@ -78,19 +78,19 @@ func renderHostDetails(t *stats.TargetStats, opts RunOptions) string {
 	for _, change := range v.IPHistory {
 		fmt.Fprintf(&b, "  %s  IP %s\n", change.At.Local().Format("15:04:05"), tview.Escape(change.IP))
 	}
-	if opts.TraceEnabled {
+	switch {
+	case opts.Route != RouteOff && len(v.MTRHops) == 0:
 		fmt.Fprintln(&b, "\n[yellow]Route[-]")
-		if len(v.TraceHops) == 0 {
-			fmt.Fprintln(&b, "Traceroute not available.")
+		if v.MTRError != "" {
+			fmt.Fprintln(&b, "Route discovery failed: "+tview.Escape(v.MTRError))
 		} else {
-			fmt.Fprintln(&b, tview.Escape(strings.Join(v.TraceHops, " → ")))
+			fmt.Fprintln(&b, "Route not discovered yet.")
 		}
-	}
-	if opts.MTREnabled {
+	case opts.Route == RoutePath:
+		fmt.Fprintln(&b, "\n[yellow]Route[-]")
+		fmt.Fprintln(&b, tview.Escape(strings.Join(hopLabels(v.MTRHops), " → ")))
+	case opts.Route == RouteMonitor:
 		fmt.Fprintln(&b, "\n[yellow]MTR[-]")
-		if len(v.MTRHops) == 0 {
-			fmt.Fprintln(&b, "MTR not available.")
-		}
 		for _, hop := range v.MTRHops {
 			fmt.Fprintf(&b, "%2d  %-20s Loss %.1f%%  Sent %d  Last %s  Avg %s\n", hop.TTL, tview.Escape(hop.IP), hop.LossPct, hop.Sent, formatRTT(hop.LastRTT), formatRTT(hop.AvgRTT))
 		}

@@ -15,7 +15,7 @@ func fullReport() Report {
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	removed := now.Add(time.Minute)
 	full := Target{
-		Statistics:       stats.TargetSummary{Host: "example.com", IP: "192.0.2.1", ID: 1, TraceHops: []string{"a", "b"}, MTRHops: []stats.HopSummary{{TTL: 1, IP: "10.0.0.1"}}},
+		Statistics:       stats.TargetSummary{Host: "example.com", IP: "192.0.2.1", ID: 1, MTRHops: []stats.HopSummary{{TTL: 1, IP: "10.0.0.1", PTR: "gw.example"}, {TTL: 2}}, MTRError: "socket: permission denied"},
 		WindowStartedAt:  now,
 		Group:            "g",
 		IPChanges:        2,
@@ -45,12 +45,25 @@ func TestTextIncludesAllOptionalSections(t *testing.T) {
 	for _, want := range []string{
 		"Active targets:", "Removed targets (final measurements):", "5 older removed targets omitted.",
 		"Independent HTTP checks:", "https://example.com", "Removed: ", "Destination IP changed 2 times",
-		"1 older IP history entries omitted.", "MTR route changes 3", "Route: a -> b", "MTR hop 1 10.0.0.1",
+		"1 older IP history entries omitted.", "Route changes 3", "Route: 10.0.0.1 gw.example -> *",
+		"Route discovery failed: socket: permission denied",
 		"Port 443/tcp Open", "4 older target events omitted.", "k: m", "All *_ms fields are milliseconds.",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("Text() missing %q", want)
 		}
+	}
+}
+
+func TestTextListsMTRHopsInPerHopMode(t *testing.T) {
+	r := fullReport()
+	r.Settings.MTR = true
+	out := r.Text()
+	if !strings.Contains(out, "MTR hop 1 10.0.0.1") || !strings.Contains(out, "MTR hop 2 ") {
+		t.Errorf("Text() missing MTR hop lines:\n%s", out)
+	}
+	if strings.Contains(out, "Route: ") {
+		t.Errorf("Text() has a path-only route line in per-hop mode:\n%s", out)
 	}
 }
 

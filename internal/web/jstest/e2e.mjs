@@ -360,10 +360,13 @@ try {
   await check("Traceroute separates annotations and represents probe states without inventing hops", async () => {
     const result=await page.evaluate(async ()=>{
       const {tracePath}=await import("/js/traceroute.js");
-      const target={host:"route.example",ip:"2001:db8::10",trace_hops:["192.0.2.1(AS64500 Example Networks (Tokyo)) router.lab.example","*","","2001:db8::10(AS64501 Destination Network) destination.example"]};
+      const target={host:"route.example",ip:"2001:db8::10",mtr_hops:[
+        {ttl:1,ip:"192.0.2.1",asn:"AS64500",org:"Example Networks (Tokyo)",ptr:"router.lab.example",sent:0},
+        {ttl:2,ip:"",sent:0},{ttl:3,ip:"",sent:0},
+        {ttl:4,ip:"2001:db8::10",asn:"AS64501",org:"Destination Network",ptr:"destination.example",sent:0}]};
       const on=tracePath(target,{asn:true,ptr:true}),off=tracePath(target,{});
-      const states=[[],["Tracing..."],["no route found"],["error: <script>alert(1)</script>"]].map(trace_hops=>{
-        const path=tracePath({...target,trace_hops},{});
+      const states=[{},{mtr_error:"<script>alert(1)</script>"}].map(state=>{
+        const path=tracePath({...target,mtr_hops:[],...state},{});
         return {hops:path.querySelectorAll(".trace-hop").length,text:path.textContent,scripts:path.querySelectorAll("script").length};
       });
       return {on:on.textContent,off:off.textContent,addresses:[...on.querySelectorAll(".trace-address")].map(n=>n.textContent),
@@ -375,14 +378,15 @@ try {
     assert.deepEqual(result.addresses,["192.0.2.1","No reply","No reply","2001:db8::10"]);
     assert.equal(result.unanswered,2);assert.equal(result.destination,1);
     assert.ok(result.states.every(s=>s.hops===0&&s.scripts===0));
-    assert.match(result.states[1].text,/Tracing/);
-    assert.match(result.states[3].text,/Traceroute failed/);
+    assert.match(result.states[0].text,/Discovering/);
+    assert.match(result.states[1].text,/Route discovery failed/);
   });
 
   await check("Traceroute stays readable at the narrowest width and disabled MTR stays hidden with cached hops", async () => {
     const body=await (await fetch(`${base}api/v1/snapshot`)).json();
     const target={...body.snapshot.targets[2],host:"route.example",ip:"2001:db8::10",
-      trace_hops:["192.0.2.1(AS64500 Example Networks (Tokyo)) router.lab.example","*","2001:db8:ffff:ffff:ffff:ffff:192.0.2.10","2001:db8::10(AS64501 Destination Network) destination.example"]};
+      mtr_hops:[{ttl:1,ip:"192.0.2.1",asn:"AS64500",org:"Example Networks (Tokyo)",ptr:"router.lab.example",sent:0},{ttl:2,ip:"",sent:0},
+        {ttl:3,ip:"2001:db8:ffff:ffff:ffff:ffff:192.0.2.10",sent:0},{ttl:4,ip:"2001:db8::10",asn:"AS64501",org:"Destination Network",ptr:"destination.example",sent:0}]};
     body.snapshot.targets=[target];body.meta={...body.meta,groups:[],features:{traceroute:true,mtr:false,asn:true,ptr:true}};
     const route=await open({viewport:{width:1400,height:900}},browser,`${base}#target-${target.id}`,body);
     await route.waitForSelector("#pane-traceroute:not([hidden])");

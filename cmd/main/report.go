@@ -52,7 +52,7 @@ func (s *supervisor) captureReport(selectedID uint64) (report.Report, error) {
 		SourceIPv4Hint: s.cfg.sourceIPv4, SourceIPv6Hint: s.cfg.sourceIPv6, Network: s.cfg.network,
 		Count: cfg.count, Duration: s.cfg.durationLimit.String(),
 		DNSServer: cfg.dnsServer, ResolveAll: cfg.resolveAll,
-		Traceroute: s.cfg.traceEnabled, MTR: s.cfg.mtrEnabled, PMTUDiscovery: cfg.mtuEnabled,
+		Traceroute: cfg.trace, MTR: cfg.mtr, PMTUDiscovery: cfg.mtuEnabled,
 		HTTPURLs:       append([]string(nil), s.cfg.httpURLs...),
 		HealthFailures: healthPolicy(cfg).Failures, HealthRecoveries: healthPolicy(cfg).Recoveries, HealthWindowSeconds: healthPolicy(cfg).Window.Seconds(), HTTPFollowRedirects: cfg.httpFollowRedirects,
 		Thresholds: thresholdsMap(cfg.thresholds),

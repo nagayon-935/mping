@@ -79,14 +79,18 @@ func newHostInput(label string, labelColor tcell.Color) *tview.InputField {
 		SetLabelColor(labelColor)
 }
 
-// newSidePanes builds the Traceroute, MTR, Port and HTTP monitor panes.
-// currentTargets is read on every render, so hosts added or removed after
-// startup show up without rebuilding the panes.
+// newSidePanes builds the route (Traceroute or MTR), Port and HTTP monitor
+// panes. currentTargets is read on every render, so hosts added or removed
+// after startup show up without rebuilding the panes.
 func newSidePanes(opts RunOptions, currentTargets func() []*stats.TargetStats, vs *viewState) []*monitorPane {
-	trace := newMonitorPane(opts.TraceEnabled, " Traceroute Monitor ", func(availW int) string {
-		return renderTracerouteTable(currentTargets(), availW)
-	})
-	mtr := newMonitorPane(opts.MTREnabled, " MTR Monitor ", func(availW int) string {
+	title := " Traceroute Monitor "
+	if opts.Route == RouteMonitor {
+		title = " MTR Monitor "
+	}
+	route := newMonitorPane(opts.Route != RouteOff, title, func(availW int) string {
+		if opts.Route == RoutePath {
+			return renderTracerouteTable(currentTargets(), availW)
+		}
 		return renderMTRTable(currentTargets(), availW, opts.SourceIPv4, opts.SourceIPv6)
 	})
 	port := newMonitorPane(opts.PortEnabled, " Port Monitor ", func(availW int) string {
@@ -99,7 +103,7 @@ func newSidePanes(opts RunOptions, currentTargets func() []*stats.TargetStats, v
 		}
 		return renderHTTPMonitorTable(results, vs.thresholds, availW, vs.lastHTTPStatuses, &vs.errorLogs, vs.errorView)
 	})
-	return []*monitorPane{trace, mtr, port, http}
+	return []*monitorPane{route, port, http}
 }
 
 func newStyledModal(title, message string, buttons []string, done func(index int, label string)) *tview.Modal {

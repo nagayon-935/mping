@@ -115,18 +115,20 @@ func TestDetailsOptionalSectionsFollowOptionsEvenWithCachedData(t *testing.T) {
 	target.SetASNInfo("AS64500", "JP", "Example")
 	target.SetPTR("router.example")
 	target.SetPMTU(1400)
-	target.SetTraceHops([]string{"192.0.2.1"})
-	target.MTR().EnsureLen(1)
+	setRouteHops(target, "192.0.2.1")
 	target.SetPortResults([]*stats.PortCheckResult{stats.NewPortCheckResult(443, "tcp")})
 	off := renderHostDetails(target, RunOptions{})
-	on := renderHostDetails(target, RunOptions{ASNEnabled: true, PTREnabled: true, MTUEnabled: true, TraceEnabled: true, MTREnabled: true, PortEnabled: true})
-	for _, label := range []string{"ASN:", "PTR:", "PMTU payload:", "[yellow]Route", "[yellow]MTR", "[yellow]Ports"} {
+	on := renderHostDetails(target, RunOptions{ASNEnabled: true, PTREnabled: true, MTUEnabled: true, Route: RoutePath, PortEnabled: true})
+	for _, label := range []string{"ASN:", "PTR:", "PMTU payload:", "[yellow]Route", "[yellow]Ports"} {
 		if strings.Contains(off, label) {
 			t.Fatalf("disabled option shown: %s", label)
 		}
 		if !strings.Contains(on, label) {
 			t.Fatalf("enabled option hidden: %s", label)
 		}
+	}
+	if perHop := renderHostDetails(target, RunOptions{Route: RouteMonitor}); !strings.Contains(perHop, "[yellow]MTR") || strings.Contains(perHop, "[yellow]Route") {
+		t.Fatalf("per-hop mode should show the MTR section instead of the route line:\n%s", perHop)
 	}
 	if detailTimestamp(time.Time{}) != "–" {
 		t.Fatal("zero timestamp shown as a year-one date")

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rivo/tview"
+
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
@@ -132,13 +134,17 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, 
 	writeLabelledBoxTable(sb, boxCols, label, groups, " Discovering...")
 }
 
-// mtrIPStr returns the display string for a hop's IP/ASN/operator name.
+// mtrIPStr returns the display string for a hop's IP, PTR name and AS.
 func mtrIPStr(h stats.HopView) string {
 	if h.IP == "" {
 		return "*"
 	}
-	if annotation := stats.FormatASN(h.ASN, h.Org); annotation != "" {
-		return fmt.Sprintf("%s (%s)", h.IP, annotation)
+	out := h.IP
+	if h.PTR != "" {
+		out += " " + h.PTR
 	}
-	return h.IP
+	if annotation := stats.FormatASN(h.ASN, h.Org); annotation != "" {
+		out += " (" + annotation + ")"
+	}
+	return tview.Escape(out)
 }

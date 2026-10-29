@@ -30,7 +30,6 @@ type TargetView struct {
 	IfaceMTU         int
 	PMTU             int
 	PMTUBottleneckIP string
-	TraceHops        []string
 	PortResults      []PortCheckView
 	MTRHops          []HopView
 	MTRFlapCount     int
@@ -65,8 +64,6 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 	}
 
 	histCopy := historyFn()
-	traceCopy := make([]string, len(t.traceHops))
-	copy(traceCopy, t.traceHops)
 	portCopy := make([]PortCheckView, len(t.portResults))
 	for i, r := range t.portResults {
 		portCopy[i] = r.GetView()
@@ -103,7 +100,6 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 		IfaceMTU:         t.ifaceMTU,
 		PMTU:             t.pmtu,
 		PMTUBottleneckIP: t.pmtuBottleneckIP,
-		TraceHops:        traceCopy,
 		PortResults:      portCopy,
 		MTRHops:          mtrHops,
 		MTRFlapCount:     mtrFlapCount,

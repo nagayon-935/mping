@@ -2,7 +2,6 @@ package stats
 
 import (
 	"encoding/json"
-	"reflect"
 	"testing"
 	"time"
 )
@@ -160,19 +159,25 @@ func TestBuildSnapshot_NoLoss(t *testing.T) {
 	}
 }
 
-// TestBuildSnapshot_CopiesPathFields verifies that the traceroute hops and
-// the path MTU details reach the snapshot.
+// TestBuildSnapshot_CopiesPathFields verifies that the route hops, the route
+// error and the path MTU details reach the snapshot.
 func TestBuildSnapshot_CopiesPathFields(t *testing.T) {
 	ts := NewTargetStats("host.local")
-	ts.SetTraceHops([]string{"1.1.1.1", "2.2.2.2"})
+	ts.MTR().EnsureLen(1)
+	ts.MTR().SetIP(1, "1.1.1.1", "AS13335", "", "Cloudflare")
+	ts.MTR().SetPTR(1, "1.1.1.1", "one.one.one.one")
+	ts.MTR().SetError("resolve host.local: timeout")
 	ts.SetPMTU(1400)
 	ts.SetPMTUBottleneckIP("10.0.0.1")
 
 	snap := BuildSnapshot([]*TargetStats{ts}, nil)
 
 	st := snap.Targets[0]
-	if want := []string{"1.1.1.1", "2.2.2.2"}; !reflect.DeepEqual(st.TraceHops, want) {
-		t.Errorf("trace hops = %v, want %v", st.TraceHops, want)
+	if len(st.MTRHops) != 1 || st.MTRHops[0].IP != "1.1.1.1" || st.MTRHops[0].ASN != "AS13335" || st.MTRHops[0].PTR != "one.one.one.one" {
+		t.Errorf("route hops = %+v, want 1.1.1.1 with its AS and PTR", st.MTRHops)
+	}
+	if st.MTRError != "resolve host.local: timeout" {
+		t.Errorf("route error = %q", st.MTRError)
 	}
 	if st.PMTU != 1400 {
 		t.Errorf("expected PMTU=1400, got %d", st.PMTU)

@@ -148,12 +148,11 @@ func TestResetWithoutCallbackClearsStatsAndRestartsEnabledMonitors(t *testing.T)
 	d, build := newTestInputHandler(t)
 	target := stats.NewTargetStats("example.com")
 	target.IncSent()
-	target.SetTraceHops([]string{"192.0.2.1"})
+	setRouteHops(target, "192.0.2.1")
 	d.targets = []*stats.TargetStats{target}
-	d.traceEnabled, d.mtrEnabled, d.portEnabled, d.httpEnabled = true, true, true, true
-	calls := make(chan string, 4)
-	d.onResetTrace = func() { calls <- "trace" }
-	d.onResetMTR = func() { calls <- "mtr" }
+	d.routeEnabled, d.portEnabled, d.httpEnabled = true, true, true
+	calls := make(chan string, 3)
+	d.onResetRoute = func() { calls <- "route" }
 	d.onResetPort = func() { calls <- "port" }
 	d.onResetHTTP = func() { calls <- "http" }
 	h := build()
@@ -161,14 +160,14 @@ func TestResetWithoutCallbackClearsStatsAndRestartsEnabledMonitors(t *testing.T)
 	press(h, tcell.KeyRune, 'R')
 
 	var got []string
-	for range 4 {
-		got = append(got, recvWithin(t, calls, fmt.Sprintf("a monitor reset (got %v, want trace, mtr, port and http)", got)))
+	for range 3 {
+		got = append(got, recvWithin(t, calls, fmt.Sprintf("a monitor reset (got %v, want route, port and http)", got)))
 	}
-	if strings.Join(got, ",") != "trace,mtr,port,http" {
-		t.Fatalf("monitor resets = %v, want trace,mtr,port,http", got)
+	if strings.Join(got, ",") != "route,port,http" {
+		t.Fatalf("monitor resets = %v, want route,port,http", got)
 	}
-	if v := target.GetView(); v.Sent != 0 || len(v.TraceHops) != 0 {
-		t.Fatalf("target after reset: sent=%d hops=%v, want 0 and no hops", v.Sent, v.TraceHops)
+	if v := target.GetView(); v.Sent != 0 || len(v.MTRHops) != 0 {
+		t.Fatalf("target after reset: sent=%d hops=%v, want 0 and no hops", v.Sent, v.MTRHops)
 	}
 }
 

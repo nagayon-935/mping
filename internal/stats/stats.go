@@ -44,7 +44,6 @@ type TargetStats struct {
 	ifaceMTU         int
 	pmtu             int
 	pmtuBottleneckIP string
-	traceHops        []string
 	portResults      []*PortCheckResult
 	mtrStats         *MTRStats
 	sent             int
@@ -154,14 +153,6 @@ func (t *TargetStats) SetDNSServer(dnsServer string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.dnsServer = dnsServer
-}
-
-func (t *TargetStats) SetTraceHops(hops []string) {
-	defer bumpGeneration()
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.traceHops = make([]string, len(hops))
-	copy(t.traceHops, hops)
 }
 
 func (t *TargetStats) SetIfaceMTU(mtu int) {

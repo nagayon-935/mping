@@ -11,3 +11,19 @@ func FormatASN(number, org string) string {
 	}
 	return number + " " + org
 }
+
+// FormatHop labels a route hop as "IP(ASN Org) ptr", leaving out the parts
+// that are unknown; a hop with no responder is "*".
+func FormatHop(ip, asn, org, ptr string) string {
+	if ip == "" {
+		return "*"
+	}
+	out := ip
+	if annotation := FormatASN(asn, org); annotation != "" {
+		out += "(" + annotation + ")"
+	}
+	if ptr != "" {
+		out += " " + ptr
+	}
+	return out
+}

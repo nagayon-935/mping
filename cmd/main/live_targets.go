@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -81,11 +80,8 @@ func (s *supervisor) attachTargetMonitors(t *stats.TargetStats) {
 		t.SetMeasurementState("stopped")
 		return
 	}
-	if s.cfg.traceEnabled {
-		s.startTargetTrace(s.p, t)
-	}
-	if s.mtrEngine != nil {
-		s.mtrEngine.AddTarget(t)
+	if s.routeEngine != nil {
+		s.routeEngine.AddTarget(t)
 	}
 	if s.portChecker != nil {
 		s.portChecker.AddTarget(t)
@@ -94,9 +90,8 @@ func (s *supervisor) attachTargetMonitors(t *stats.TargetStats) {
 
 func (s *supervisor) detachTargetMonitors(p dynamicPinger, t *stats.TargetStats, reason string) {
 	if p != nil {
-		s.stopTargetTrace(t)
-		if s.mtrEngine != nil {
-			s.mtrEngine.RemoveTarget(t)
+		if s.routeEngine != nil {
+			s.routeEngine.RemoveTarget(t)
 		}
 		if s.portChecker != nil {
 			s.portChecker.RemoveTarget(t)
@@ -217,43 +212,6 @@ func (s *supervisor) removeTarget(i int) error {
 	newTargets := append([]*stats.TargetStats(nil), s.cfg.targets[:i]...)
 	s.cfg.targets = append(newTargets, s.cfg.targets[i+1:]...)
 	return nil
-}
-
-type traceRun struct {
-	cancel context.CancelFunc
-	done   chan struct{}
-}
-
-func (s *supervisor) startTargetTrace(p tracer, t *stats.TargetStats) {
-	if s.traces == nil {
-		s.traces = make(map[*stats.TargetStats]*traceRun)
-	}
-	parent := s.traceCtx
-	if parent == nil {
-		parent = context.Background()
-	}
-	ctx, cancel := context.WithCancel(parent)
-	r := &traceRun{cancel: cancel, done: make(chan struct{})}
-	s.traces[t] = r
-	wg := s.traceWG
-	if wg != nil {
-		wg.Add(1)
-	}
-	go func() {
-		defer close(r.done)
-		if wg != nil {
-			defer wg.Done()
-		}
-		runTraceroutes(ctx, p, t)
-	}()
-}
-
-func (s *supervisor) stopTargetTrace(t *stats.TargetStats) {
-	if r := s.traces[t]; r != nil {
-		r.cancel()
-		<-r.done
-		delete(s.traces, t)
-	}
 }
 
 func (s *supervisor) deleteTargetID(id uint64) error {

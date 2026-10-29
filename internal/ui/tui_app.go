@@ -253,16 +253,14 @@ func (t *tui) inputDeps() inputHandlerDeps {
 				t.app.SetFocus(t.deleteHostInput)
 			}
 		},
-		traceEnabled:     opts.TraceEnabled,
-		mtrEnabled:       opts.MTREnabled,
+		routeEnabled:     opts.Route != RouteOff,
 		portEnabled:      opts.PortEnabled,
 		httpEnabled:      opts.HTTPEnabled,
 		onStop:           opts.OnStop,
 		measurementState: opts.MeasurementState,
 		onRestart:        opts.OnRestart,
 		onReset:          opts.OnReset,
-		onResetTrace:     opts.OnResetTrace,
-		onResetMTR:       opts.OnResetMTR,
+		onResetRoute:     opts.OnResetRoute,
 		onResetPort:      opts.OnResetPort,
 		onResetHTTP:      opts.OnResetHTTP,
 		onAddHost:        opts.OnAddHost,

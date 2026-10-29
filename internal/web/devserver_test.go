@@ -119,10 +119,10 @@ func newSimulation(includeUntrusted, longValues bool) *simulation {
 		client.ts.SetASNInfo("AS4294967295", "JP", strings.Repeat("Long organization name ", 20))
 		client.baseMs, client.jitterMs = 1e9, 1e8
 	}
-	hops := []string{"192.0.2.254", "198.51.100.1", "", "198.51.100.10"}
-	sim.targets[2].ts.SetTraceHops(hops)
 	m := sim.targets[2].ts.MTR()
-	m.EnsureLen(len(hops))
+	m.EnsureLen(4)
+	m.SetIP(1, "192.0.2.254", "", "", "")
+	m.SetPTR(1, "192.0.2.254", "gw1.lab.example")
 	firstPort := 443
 	if longValues {
 		firstPort = 65535
@@ -244,7 +244,7 @@ func (s *simulation) Meta() Meta {
 	}
 	return Meta{
 		IntervalMs: 250,
-		Features:   Features{Traceroute: true, MTR: true, Port: true, HTTP: true, ASN: true, PTR: true},
+		Features:   Features{MTR: true, Port: true, HTTP: true, ASN: true, PTR: true},
 		Thresholds: Thresholds{RTTWarnMs: 50, RTTCritMs: 200, JitterWarnMs: 10, JitterCritMs: 50, LossWarnPct: 20, LossCritPct: 80},
 		Groups: []Group{
 			{Name: "core", TargetIDs: ids("core-rtr1.example", "core-rtr2.example")},

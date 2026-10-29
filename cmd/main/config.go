@@ -9,6 +9,10 @@ import (
 	"github.com/spf13/pflag"
 )
 
+// routeEnabled reports whether the route engine runs: traceroute (-T)
+// discovers the path only, mtr (-M) also probes every hop.
+func (c config) routeEnabled() bool { return c.trace || c.mtr }
+
 type config struct {
 	intervalMs     int
 	timeoutMs      int

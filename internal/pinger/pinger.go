@@ -24,11 +24,11 @@ const (
 	receiverBufferSize  = 65535                  // max IPv4 packet size; large enough for any ICMP message
 	probeBufferSize     = 1500                   // typical Ethernet MTU; sufficient for PMTU probe responses
 	replyChanBuffer     = 100                    // allow burst of replies without blocking the receiver
-	traceChanBuffer     = 200                    // larger buffer for concurrent TraceRoute calls
+	traceChanBuffer     = 200                    // larger buffer for concurrent route probes
 	receiverReadTimeout = 1 * time.Second        // poll interval for checking done channel in receiver loop
 	pmtuProbeTimeout    = 300 * time.Millisecond // generous enough for WAN RTTs, short enough for interactive use
 	payloadSignature    = "MPING"                // identifies our probes in packet captures
-	traceSignature      = "TRC-"                 // 4-byte prefix distinguishing traceroute probes from ping probes
+	traceSignature      = "TRC-"                 // 4-byte prefix distinguishing route probes from ping probes
 
 	// seqMask masks a logical (unbounded) seq counter down to the 16-bit
 	// range the ICMP echo Seq field occupies on the wire: icmp.Echo.Marshal
@@ -462,7 +462,7 @@ func (p *Pinger) Wait() {
 }
 
 // WaitWorkers waits for all targets to finish their outstanding probes. Unlike
-// Wait, it can return on Count completion while receivers serve MTR/traceroute.
+// Wait, it can return on Count completion while receivers serve route probes.
 // Call only after Start has returned.
 func (p *Pinger) WaitWorkers() {
 	p.workers.Wait()

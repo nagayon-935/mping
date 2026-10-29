@@ -9,7 +9,7 @@ import (
 )
 
 // TestHandle_CommandTable walks every (state, command) cell of the design's
-// command table, so resetTrace/resetMTR/resetPort/resetHTTP all follow one
+// command table, so resetRoute/resetPort/resetHTTP all follow one
 // rule set (in particular, no reset resurrects a component after shutdown).
 func TestHandle_CommandTable(t *testing.T) {
 	tests := []struct {
@@ -23,8 +23,7 @@ func TestHandle_CommandTable(t *testing.T) {
 		{"stop from stopped", stateStopped, cmdStop, stateStopped, nil},
 		{"restart from stopped", stateStopped, cmdRestart, stateRunning, nil},
 		{"resetStats from stopped", stateStopped, cmdResetStats, stateStopped, nil},
-		{"resetTrace from stopped", stateStopped, cmdResetTrace, stateStopped, nil},
-		{"resetMTR from stopped", stateStopped, cmdResetMTR, stateStopped, nil},
+		{"resetRoute from stopped", stateStopped, cmdResetRoute, stateStopped, nil},
 		{"resetPort from stopped", stateStopped, cmdResetPort, stateStopped, nil},
 		{"resetHTTP from stopped", stateStopped, cmdResetHTTP, stateStopped, nil},
 		{"terminate from stopped", stateStopped, cmdTerminate, stateTerminated, nil},
@@ -33,8 +32,7 @@ func TestHandle_CommandTable(t *testing.T) {
 		{"stop from running", stateRunning, cmdStop, stateStopped, nil},
 		{"restart from running", stateRunning, cmdRestart, stateRunning, nil},
 		{"resetStats from running", stateRunning, cmdResetStats, stateRunning, nil},
-		{"resetTrace from running", stateRunning, cmdResetTrace, stateRunning, nil},
-		{"resetMTR from running", stateRunning, cmdResetMTR, stateRunning, nil},
+		{"resetRoute from running", stateRunning, cmdResetRoute, stateRunning, nil},
 		{"resetPort from running", stateRunning, cmdResetPort, stateRunning, nil},
 		{"resetHTTP from running", stateRunning, cmdResetHTTP, stateRunning, nil},
 		{"terminate from running", stateRunning, cmdTerminate, stateTerminated, nil},
@@ -44,8 +42,7 @@ func TestHandle_CommandTable(t *testing.T) {
 		{"stop from terminated", stateTerminated, cmdStop, stateTerminated, nil},
 		{"restart from terminated", stateTerminated, cmdRestart, stateTerminated, errSupervisorTerminated},
 		{"resetStats from terminated", stateTerminated, cmdResetStats, stateTerminated, nil},
-		{"resetTrace from terminated", stateTerminated, cmdResetTrace, stateTerminated, nil},
-		{"resetMTR from terminated", stateTerminated, cmdResetMTR, stateTerminated, nil},
+		{"resetRoute from terminated", stateTerminated, cmdResetRoute, stateTerminated, nil},
 		{"resetPort from terminated", stateTerminated, cmdResetPort, stateTerminated, nil},
 		{"resetHTTP from terminated", stateTerminated, cmdResetHTTP, stateTerminated, nil},
 		{"terminate from terminated", stateTerminated, cmdTerminate, stateTerminated, nil},
@@ -82,12 +79,11 @@ func TestHandle_CommandTable(t *testing.T) {
 
 // TestHandle_ResetAfterTerminateCreatesNothing is the D1 regression guard.
 // Reproduction was: press 'R' then 's'. The reset goroutines landed after
-// stopAll and installed a fresh MTR engine and traceroute goroutine probing
-// an already-Closed pinger.
+// stopAll and installed a fresh route engine probing an already-Closed
+// pinger.
 func TestHandle_ResetAfterTerminateCreatesNothing(t *testing.T) {
 	sup, _ := newStateTestSupervisor(t)
-	sup.cfg.mtrEnabled = true
-	sup.cfg.traceEnabled = true
+	sup.cfg.config.mtr = true
 	// portSpecs/httpURLs must be non-empty so startAll actually creates a
 	// port checker and an HTTP checker below — otherwise cmdResetPort/
 	// cmdResetHTTP would have nothing to (wrongly) replace and the guard
@@ -108,8 +104,7 @@ func TestHandle_ResetAfterTerminateCreatesNothing(t *testing.T) {
 		t.Fatalf("cmdTerminate: %v", err)
 	}
 
-	engineAfter := sup.mtrEngine
-	traceDoneAfter := sup.traceDone
+	engineAfter := sup.routeEngine
 	portCheckerAfter := sup.portChecker
 	httpCheckerAfter := sup.httpChecker
 	if portCheckerAfter == nil || httpCheckerAfter == nil {
@@ -117,17 +112,14 @@ func TestHandle_ResetAfterTerminateCreatesNothing(t *testing.T) {
 			portCheckerAfter, httpCheckerAfter)
 	}
 
-	for _, k := range []cmdKind{cmdResetStats, cmdResetTrace, cmdResetMTR, cmdResetPort, cmdResetHTTP} {
+	for _, k := range []cmdKind{cmdResetStats, cmdResetRoute, cmdResetPort, cmdResetHTTP} {
 		if err := doCmd(t, sup, k); err != nil {
 			t.Fatalf("reset %v after terminate: %v", k, err)
 		}
 	}
 
-	if sup.mtrEngine != engineAfter {
-		t.Error("resetMTR after terminate installed a new MTR engine")
-	}
-	if sup.traceDone != traceDoneAfter {
-		t.Error("resetTrace after terminate started a new traceroute goroutine")
+	if sup.routeEngine != engineAfter {
+		t.Error("resetRoute after terminate installed a new route engine")
 	}
 	if sup.portChecker != portCheckerAfter {
 		t.Error("resetPort after terminate installed a new port checker")

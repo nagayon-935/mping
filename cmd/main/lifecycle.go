@@ -58,7 +58,13 @@ func parseAndLoadHosts(args []string, out, errOut io.Writer) (p startupParams, e
 	var groups []ui.TargetGroup
 	hosts, groups, cfg, err := mergeHosts(cfg, fs, cliHostsRaw)
 	if err != nil {
-		fmt.Fprintf(errOut, "Error reading hosts file: %v\n", err)
+		// mergeHosts also validates the effective configuration, which
+		// fails without any hosts file for a bad combination of flags.
+		prefix := "Error reading hosts file"
+		if cfg.hostsFile == "" {
+			prefix = "Error"
+		}
+		fmt.Fprintf(errOut, "%s: %v\n", prefix, err)
 		return startupParams{}, 1, false
 	}
 	hosts, groups, err = expandTargets(hosts, groups, cfg)
@@ -325,6 +331,17 @@ type runOptionsParams struct {
 	currentGroups []ui.TargetGroup
 }
 
+// uiRouteMode is what the TUI's route pane shows for cfg.
+func uiRouteMode(cfg config) ui.RouteMode {
+	switch {
+	case cfg.mtr:
+		return ui.RouteMonitor
+	case cfg.trace:
+		return ui.RoutePath
+	}
+	return ui.RouteOff
+}
+
 // buildRunOptions assembles the ui.RunOptions for one loop iteration. Every
 // operation goes to the iteration's supervisor; host edits apply live,
 // without a reload. Reset callbacks exist only for the monitors running.
@@ -339,9 +356,8 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 		SourceIPv6:       p.dispV6,
 		PacketSize:       p.packetSize,
 		InitialLogs:      p.preLogs,
-		TraceEnabled:     p.cfg.trace,
+		Route:            uiRouteMode(p.cfg),
 		MTUEnabled:       p.cfg.mtuEnabled,
-		MTREnabled:       p.cfg.mtr,
 		PortEnabled:      len(p.cfg.portSpecs) > 0,
 		HTTPEnabled:      len(p.cfg.httpURLs) > 0,
 		HTTPResults:      p.sup.httpResults,
@@ -356,15 +372,14 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 			return p.sup.do(cmdRestart)
 		},
 		OnReset:        p.sup.resetStats,
-		OnResetTrace:   p.sup.resetTrace,
 		OnAddHost:      p.sup.addHost,
 		OnDeleteHost:   p.sup.deleteHost,
 		OnDeleteTarget: p.sup.deleteTargetID,
 		OnSaveReport:   p.sup.saveReport,
 		Groups:         p.currentGroups,
 	}
-	if p.cfg.mtr {
-		opts.OnResetMTR = p.sup.resetMTR
+	if p.cfg.routeEnabled() {
+		opts.OnResetRoute = p.sup.resetRoute
 	}
 	if len(p.cfg.httpURLs) > 0 {
 		opts.OnResetHTTP = p.sup.resetHTTP

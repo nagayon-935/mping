@@ -1,7 +1,6 @@
 package pinger
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -72,29 +71,4 @@ func (p *Pinger) getPTR(ipStr string) string {
 // explicitly injected context-free hooks use the legacy bounded adapter.
 func (p *Pinger) lookupAddrBounded(ipStr string) ([]string, error) {
 	return lookupBounded(p, ptrLookupTimeout, "ptr", ipStr, p.lookupAddrContext, p.lookupAddr)
-}
-
-// annotateHopIP formats a traceroute/MTR-style hop responder IP, optionally
-// appending an ASN annotation (in TraceRoute's "IP(ASxxx Org)" format)
-// and/or a PTR reverse-DNS name. ip == "" or "*" is returned unchanged since
-// there is no responder to annotate. Kept separate from TraceRoute's hop loop
-// so the annotation logic can be unit tested without simulating ICMP wire
-// traffic.
-func annotateHopIP(ip string, asnEnabled bool, getASN func(string) ASNInfo, ptrEnabled bool, getPTR func(string) string) string {
-	if ip == "" || ip == "*" {
-		return ip
-	}
-	out := ip
-	if asnEnabled {
-		info := getASN(ip)
-		if annotation := stats.FormatASN(info.Number, info.Org); annotation != "" {
-			out = fmt.Sprintf("%s(%s)", out, annotation)
-		}
-	}
-	if ptrEnabled {
-		if name := getPTR(ip); name != "" {
-			out = fmt.Sprintf("%s %s", out, name)
-		}
-	}
-	return out
 }
