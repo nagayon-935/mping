@@ -14,6 +14,8 @@ import (
 	"github.com/nagayon-935/mping/internal/mtr"
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
+	"github.com/nagayon-935/mping/internal/ui"
+	"github.com/nagayon-935/mping/internal/web"
 )
 
 // hostEntries builds a []hostEntry from bare hostnames, for tests written
@@ -39,18 +41,61 @@ func writeHostsYAML(t *testing.T, content string) string {
 	return path
 }
 
-// waitFor polls cond every few milliseconds until it holds, failing the test
-// if timeout elapses first. It replaces fixed time.Sleep calls wherever a test
-// waits for a background goroutine to reach an observable state.
-func waitFor(t *testing.T, timeout time.Duration, what string, cond func() bool) {
-	t.Helper()
+// pollUntil polls cond every few milliseconds until it holds and reports
+// whether it did within timeout.
+func pollUntil(timeout time.Duration, cond func() bool) bool {
 	deadline := time.Now().Add(timeout)
 	for !cond() {
 		if time.Now().After(deadline) {
-			t.Fatalf("timed out after %s waiting for %s", timeout, what)
+			return false
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+	return true
+}
+
+// waitFor fails the test if cond does not hold within timeout. It replaces
+// fixed time.Sleep calls wherever a test waits for a background goroutine to
+// reach an observable state.
+func waitFor(t *testing.T, timeout time.Duration, what string, cond func() bool) {
+	t.Helper()
+	if !pollUntil(timeout, cond) {
+		t.Fatalf("timed out after %s waiting for %s", timeout, what)
+	}
+}
+
+// closed reports, without blocking, whether ch has been closed.
+func closed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+// stubRunSeams swaps newPinger/uiRun/webStart/openBrowser for the duration of a
+// test: every pinger is a fresh fakePinger and uiRun is uiFn (tests that need
+// their own pinger or to set uiRun later assign newPinger / uiRun after the
+// call). webStart is wrapped so the real server binds a kernel-chosen port
+// instead of the configured one, keeping tests independent of what is free
+// locally. The returned func yields the web server once run() has started it.
+func stubRunSeams(t *testing.T, uiFn func(ui.RunOptions) error) (started func() *web.Server) {
+	t.Helper()
+	origPinger, origUI, origWeb, origBrowser := newPinger, uiRun, webStart, openBrowser
+	t.Cleanup(func() { newPinger, uiRun, webStart, openBrowser = origPinger, origUI, origWeb, origBrowser })
+
+	newPinger = func([]*stats.TargetStats, pinger.Options) pingerController { return &fakePinger{} }
+	uiRun = uiFn
+	openBrowser = func(string) {}
+	var srv *web.Server
+	webStart = func(opts web.Options) (*web.Server, error) {
+		opts.Port = 0
+		s, err := web.Start(opts)
+		srv = s
+		return s, err
+	}
+	return func() *web.Server { return srv }
 }
 
 // fakePinger is the pingerController double shared by the whole package. The

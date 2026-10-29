@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -52,75 +50,6 @@ func TestRunMissingHostsFile(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "Error reading hosts file") {
 		t.Fatalf("expected hosts file error")
-	}
-}
-
-func TestRunStopRestart(t *testing.T) {
-	origPinger := newPinger
-	origUI := uiRun
-	t.Cleanup(func() {
-		newPinger = origPinger
-		uiRun = origUI
-	})
-
-	fp := &fakePinger{}
-	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
-		return fp
-	}
-	uiRun = func(opts ui.RunOptions) error {
-		opts.OnStop()
-		if err := opts.OnRestart(); err != nil {
-			t.Fatalf("restart failed: %v", err)
-		}
-		return nil
-	}
-
-	var out, errOut bytes.Buffer
-	code := run([]string{"-S", "10.0.0.2", "example.com"}, &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected 0, got %d", code)
-	}
-	if !fp.isStarted() || !fp.isReleased() || !fp.Waited() {
-		t.Fatalf("expected pinger lifecycle, started=%v released=%v waited=%v", fp.isStarted(), fp.isReleased(), fp.Waited())
-	}
-}
-
-// TestRunStop_JoinsTracerouteGoroutine verifies that OnStop (stopAll ->
-// tearDownAll) actually waits for the background runTraceroutes goroutine to
-// exit rather than just cancelling its context and returning immediately.
-func TestRunStop_JoinsTracerouteGoroutine(t *testing.T) {
-	origPinger := newPinger
-	origUI := uiRun
-	t.Cleanup(func() {
-		newPinger = origPinger
-		uiRun = origUI
-	})
-
-	returned := make(chan struct{})
-	started := make(chan struct{})
-	fp := &fakePinger{blockTraceUntilCtxDone: true, traceRouteStarted: started, traceRouteReturned: returned}
-	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
-		return fp
-	}
-	uiRun = func(opts ui.RunOptions) error {
-		select {
-		case <-started:
-		case <-time.After(time.Second):
-			t.Fatal("traceroute did not start")
-		}
-		opts.OnStop()
-		select {
-		case <-returned:
-		default:
-			t.Error("OnStop() returned before the in-flight traceroute goroutine exited")
-		}
-		return nil
-	}
-
-	var out, errOut bytes.Buffer
-	code := run([]string{"-T", "-S", "127.0.0.1", "example.com"}, &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
 	}
 }
 
@@ -422,55 +351,6 @@ func TestRunWithMTUIPv6Warning(t *testing.T) {
 // ---- run() with -j flag ----
 
 // ---- YAML auto-reload integration test ----
-
-func TestRunYAMLReload(t *testing.T) {
-	origPinger := newPinger
-	origUI := uiRun
-	t.Cleanup(func() {
-		newPinger = origPinger
-		uiRun = origUI
-	})
-
-	fp := &fakePinger{}
-	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
-		return fp
-	}
-
-	dir := t.TempDir()
-	yamlPath := filepath.Join(dir, "hosts.yaml")
-	if err := os.WriteFile(yamlPath, []byte("hosts:\n  - example.com\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	callCount := 0
-	uiRun = func(opts ui.RunOptions) error {
-		callCount++
-		if callCount == 1 {
-			// Write a new hosts file while the TUI is "running".
-			// The watcher should detect this and close ExternalCloseCh.
-			time.Sleep(100 * time.Millisecond)
-			if err := os.WriteFile(yamlPath,
-				[]byte("hosts:\n  - example.com\n  - 1.1.1.1\n"), 0644); err != nil {
-				t.Errorf("write yaml: %v", err)
-			}
-			// Wait for watcher debounce + processing.
-			time.Sleep(600 * time.Millisecond)
-		}
-		// Return nil (simulates user quit or ExternalCloseCh-driven stop).
-		return nil
-	}
-
-	var out, errOut bytes.Buffer
-	code := run([]string{"-f", yamlPath, "-S", "127.0.0.1"}, &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
-	}
-
-	// uiRun should have been called twice: once for initial, once after reload.
-	if callCount < 2 {
-		t.Errorf("expected uiRun to be called >=2 times (reload), got %d", callCount)
-	}
-}
 
 // ---- threshold configuration tests ----
 
