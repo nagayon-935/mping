@@ -12,6 +12,7 @@ type ExportSnapshot struct {
 // TargetSummary is a JSON-serialisable summary for a single ping target.
 type TargetSummary struct {
 	Health           Health    `json:"health"`
+	Levels           Levels    `json:"levels"`
 	MeasurementState string    `json:"measurement_state"`
 	ID               uint64    `json:"id"`
 	StartedAt        time.Time `json:"started_at"`
@@ -26,9 +27,9 @@ type TargetSummary struct {
 	Recv             int       `json:"recv"`
 	Loss             int       `json:"loss"`
 	// Duplicates and LateReplies are omitempty since the overwhelming
-	// majority of runs never see either; see stats.TargetStats' fields of
-	// the same name for what each counts and why neither is folded into
-	// Recv or Loss.
+	// majority of runs never see either; see the stats.TargetStats fields
+	// duplicates and lateReplies for what each counts and why neither is
+	// folded into Recv or Loss.
 	Duplicates  int     `json:"duplicates,omitempty"`
 	LateReplies int     `json:"late_replies,omitempty"`
 	LossRatePct float64 `json:"loss_rate_pct"`
@@ -39,7 +40,7 @@ type TargetSummary struct {
 	JitterMs    float64 `json:"jitter_ms"`
 	LastTTL     int     `json:"last_ttl"`
 	// LastDSCP is the TOS (IPv4) / TrafficClass (IPv6) byte observed on the
-	// most recent reply's own IP header (see stats.TargetStats.LastDSCP).
+	// most recent reply's own IP header (see TargetView.LastDSCP).
 	// Always 0 for IPv4 targets: x/net's ipv4.ControlMessage has no TOS
 	// field, so IPv4 has no receive-side DSCP observation at all.
 	LastDSCP         int           `json:"last_dscp"`
@@ -62,6 +63,7 @@ type HopSummary struct {
 	Sent      int     `json:"sent"`
 	Recv      int     `json:"recv"`
 	LossPct   float64 `json:"loss_pct"`
+	LossLevel Level   `json:"loss_level"`
 	LastRTTMs float64 `json:"last_rtt_ms"`
 	AvgRTTMs  float64 `json:"avg_rtt_ms"`
 	MinRTTMs  float64 `json:"min_rtt_ms"`
@@ -74,6 +76,7 @@ type PortSummary struct {
 	Port        int     `json:"port"`
 	Protocol    string  `json:"protocol"`
 	Status      string  `json:"status"`
+	Level       Level   `json:"level"`
 	RTTMs       float64 `json:"rtt_ms"`
 	OpenCount   int     `json:"open_count"`
 	ClosedCount int     `json:"closed_count"`
@@ -83,6 +86,7 @@ type PortSummary struct {
 type HTTPCheckSummary struct {
 	URL        string  `json:"url"`
 	Status     string  `json:"status"`
+	Level      Level   `json:"level"`
 	StatusCode int     `json:"status_code"`
 	LastRTTMs  float64 `json:"last_rtt_ms"`
 	MinRTTMs   float64 `json:"min_rtt_ms,omitempty"`
@@ -138,6 +142,7 @@ func BuildSnapshotFromViews(targets []TargetView, httpResults []HTTPCheckView) E
 				Port:        p.Port,
 				Protocol:    p.Protocol,
 				Status:      p.Status,
+				Level:       PortStatusLevel(p.Status),
 				RTTMs:       durationMs(p.RTT),
 				OpenCount:   p.OpenCount,
 				ClosedCount: p.ClosedCount,
@@ -155,6 +160,7 @@ func BuildSnapshotFromViews(targets []TargetView, httpResults []HTTPCheckView) E
 				Sent:      h.Sent,
 				Recv:      h.Recv,
 				LossPct:   h.LossPct,
+				LossLevel: v.Thresholds.HopLoss(h.LossPct),
 				LastRTTMs: durationMs(h.LastRTT),
 				AvgRTTMs:  durationMs(h.AvgRTT),
 				MinRTTMs:  durationMs(h.MinRTT),
@@ -164,7 +170,7 @@ func BuildSnapshotFromViews(targets []TargetView, httpResults []HTTPCheckView) E
 		}
 
 		snap.Targets = append(snap.Targets, TargetSummary{
-			Health: v.Health, MeasurementState: v.MeasurementState,
+			Health: v.Health, Levels: v.Levels, MeasurementState: v.MeasurementState,
 			ID: v.ID, StartedAt: v.StartedAt, Cancelled: v.Cancelled,
 			Host:             v.Host,
 			IP:               v.IP,
@@ -199,6 +205,7 @@ func BuildSnapshotFromViews(targets []TargetView, httpResults []HTTPCheckView) E
 		snap.HTTPChecks = append(snap.HTTPChecks, HTTPCheckSummary{
 			URL:        v.URL,
 			Status:     v.Status,
+			Level:      HTTPStatusLevel(v.Status),
 			StatusCode: v.StatusCode,
 			LastRTTMs:  durationMs(v.RTT),
 			MinRTTMs:   durationMs(v.MinRTT),

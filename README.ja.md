@@ -328,6 +328,8 @@ groups:
 
 JSONの `health` には状態・理由・応答不能判定・連続回数・直近ロス率・最終計測時刻・最終応答時刻を含みます。直近の集計値は `evaluated_at` (最後の計測完了または判定ルールの変更時点) の窓を表し、一時停止中も判定理由と集計値をそろえて保持します。`measurement_state` (`running` / `finished` / `stopped`) はICMP計測の状態で、Webサーバーの `state` とは別です。TUIでは送信回数の上限到達後も補助監視を継続できます。グラフは実際の計測時刻を使い、一時停止中は空白として表示します。
 
+JSONの各ターゲットには `levels` (`loss` / `last_rtt` / `jitter`) も含まれ、設定された閾値に対する判定を `none` / `ok` / `warn` / `crit` で表します。MTR の各ホップには `loss_level`、ポート・HTTP チェックには `level` (最初の結果が出るまでは `pending`) が付きます。TUI と Web UI はこの値で色分けします。
+
 ```bash
 mping --check-config -f examples/monitoring.yaml --interval 500
 ```

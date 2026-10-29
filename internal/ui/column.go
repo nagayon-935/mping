@@ -124,7 +124,7 @@ func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled, dscpEnabled bool) []co
 			shrinkPriority: 70, growPriority: 80, bold: true,
 			render: func(ctx columnRowContext) string { return fmt.Sprintf("%.1f%%", ctx.lossRate) },
 			color: func(ctx columnRowContext, text string) (tcell.Color, bool) {
-				return lossColorForRate(ctx.lossRate), true
+				return levelColor(ctx.view.Levels.Loss), true
 			},
 		},
 		column{
@@ -132,7 +132,7 @@ func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled, dscpEnabled bool) []co
 			shrinkPriority: 60, growPriority: 50,
 			render: func(ctx columnRowContext) string { return formatRTT(ctx.view.LastRTT) },
 			color: func(ctx columnRowContext, text string) (tcell.Color, bool) {
-				return rttColorForRTT(ctx.view.LastRTT), true
+				return levelColor(ctx.view.Levels.LastRTT), true
 			},
 		},
 		column{
@@ -145,7 +145,7 @@ func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled, dscpEnabled bool) []co
 			shrinkPriority: 40, growPriority: 70,
 			render: func(ctx columnRowContext) string { return formatRTT(ctx.view.Jitter) },
 			color: func(ctx columnRowContext, text string) (tcell.Color, bool) {
-				return jitterColorForJitter(ctx.view.Jitter), true
+				return levelColor(ctx.view.Levels.Jitter), true
 			},
 		},
 		column{

@@ -171,6 +171,7 @@ func TestRenderRowCells(t *testing.T) {
 		LastRTT: 300 * time.Millisecond, AvgRTT: 300 * time.Millisecond, Jitter: 60 * time.Millisecond,
 		IfaceMTU: 1500, LastTTL: 64,
 		LastError: "err",
+		Levels:    stats.Levels{Loss: stats.LevelCrit, LastRTT: stats.LevelCrit, Jitter: stats.LevelCrit},
 	}
 	ctx := columnRowContext{view: view, packetSize: 56, lossRate: 90.0}
 
@@ -193,26 +194,24 @@ func TestRenderRowCells(t *testing.T) {
 			if len(cells) != len(cols) {
 				t.Fatalf("cells len = %d, want %d", len(cells), len(cols))
 			}
-			withThresholds(DefaultThresholds(), func() {
-				// Columns that own a color override the row color; the others
-				// keep it.
-				wantColor := map[string]tcell.Color{
-					"Error":      vividRed,
-					"Loss Ratio": lossColorForRate(90),
-					"RTT":        rttColorForRTT(300 * time.Millisecond),
-					"Jitter":     jitterColorForJitter(60 * time.Millisecond),
-					"Size":       tcell.ColorWhite,
+			// Columns that own a color override the row color; the others
+			// keep it.
+			wantColor := map[string]tcell.Color{
+				"Error":      vividRed,
+				"Loss Ratio": vividRed,
+				"RTT":        vividRed,
+				"Jitter":     vividRed,
+				"Size":       tcell.ColorWhite,
+			}
+			for name, want := range wantColor {
+				idx := columnsByName(cols, name)
+				if idx < 0 {
+					t.Fatalf("column %q missing", name)
 				}
-				for name, want := range wantColor {
-					idx := columnsByName(cols, name)
-					if idx < 0 {
-						t.Fatalf("column %q missing", name)
-					}
-					if got := cellForeground(cells[idx]); got != want {
-						t.Errorf("%s cell color = %v, want %v", name, got, want)
-					}
+				if got := cellForeground(cells[idx]); got != want {
+					t.Errorf("%s cell color = %v, want %v", name, got, want)
 				}
-			})
+			}
 		})
 	}
 }

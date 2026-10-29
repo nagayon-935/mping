@@ -13,7 +13,6 @@ import (
 
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
-	ui "github.com/nagayon-935/mping/internal/ui"
 	"github.com/spf13/pflag"
 )
 
@@ -24,9 +23,7 @@ func healthPolicy(cfg config) stats.HealthPolicy {
 		p.Failures, p.Recoveries, p.Window = cfg.healthFailures, cfg.healthRecoveries, cfg.healthWindow
 	}
 	if cfg.thresholds.RTTCrit != 0 {
-		p.RTTWarn, p.RTTCrit = cfg.thresholds.RTTWarn, cfg.thresholds.RTTCrit
-		p.JitterWarn, p.JitterCrit = cfg.thresholds.JitterWarn, cfg.thresholds.JitterCrit
-		p.LossWarn, p.LossCrit = cfg.thresholds.LossWarn, cfg.thresholds.LossCrit
+		p.Thresholds = cfg.thresholds
 	}
 	return p
 }
@@ -173,7 +170,7 @@ func printCheckedConfig(out io.Writer, sp startupParams) error {
 	})
 }
 
-func thresholdsMap(th ui.Thresholds) map[string]float64 {
+func thresholdsMap(th stats.Thresholds) map[string]float64 {
 	return map[string]float64{
 		"rtt_warn_ms":    durationMs(th.RTTWarn),
 		"rtt_crit_ms":    durationMs(th.RTTCrit),

@@ -6,14 +6,14 @@ import (
 	"time"
 
 	"github.com/nagayon-935/mping/internal/pinger"
-	ui "github.com/nagayon-935/mping/internal/ui"
+	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/spf13/pflag"
 )
 
 // thresholdFlags holds the raw ms/pct values pflag fills in for the
 // colour-coding / alert thresholds (warn = orange, crit = red). These are
 // bound to local vars rather than cfg directly since cfg.thresholds is a
-// ui.Thresholds: the raw values are converted to ui.Thresholds once,
+// stats.Thresholds: the raw values are converted to stats.Thresholds once,
 // right after a successful parse (see parseArgs).
 type thresholdFlags struct {
 	rttWarnMs, rttCritMs, jitterWarnMs, jitterCritMs int
@@ -89,7 +89,7 @@ func parseArgs(args []string) (config, []string, *pflag.FlagSet, string, error) 
 		return config{}, nil, nil, usageBuf.String(), err
 	}
 
-	cfg.thresholds = ui.Thresholds{
+	cfg.thresholds = stats.Thresholds{
 		RTTWarn:    time.Duration(th.rttWarnMs) * time.Millisecond,
 		RTTCrit:    time.Duration(th.rttCritMs) * time.Millisecond,
 		JitterWarn: time.Duration(th.jitterWarnMs) * time.Millisecond,

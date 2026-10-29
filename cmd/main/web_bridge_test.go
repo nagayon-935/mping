@@ -136,7 +136,7 @@ func TestWebMetaReflectsConfig(t *testing.T) {
 	cfg := config{
 		intervalMs: 500, trace: true, mtr: true, asnEnabled: true, ptrEnabled: true, mtuEnabled: true,
 		httpURLs: []string{"https://example.com/"}, dscp: "EF",
-		thresholds: ui.Thresholds{
+		thresholds: stats.Thresholds{
 			RTTWarn: 40 * time.Millisecond, RTTCrit: 150 * time.Millisecond,
 			JitterWarn: 5 * time.Millisecond, JitterCrit: 25 * time.Millisecond,
 			LossWarn: 10, LossCrit: 50,
@@ -156,7 +156,7 @@ func TestWebMetaReflectsConfig(t *testing.T) {
 }
 
 func TestWebMetaLeavesOptionalFeaturesOffByDefault(t *testing.T) {
-	got := webMeta(config{intervalMs: 1000, thresholds: ui.DefaultThresholds()}, nil, 0)
+	got := webMeta(config{intervalMs: 1000, thresholds: stats.DefaultThresholds()}, nil, 0)
 
 	if got.Features != (web.Features{}) {
 		t.Fatalf("features = %+v, want all off", got.Features)

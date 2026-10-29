@@ -335,6 +335,8 @@ Current health is separate from lifetime loss and RTT statistics. By default, **
 
 `health` in snapshots/reports includes status, reason, unavailability, consecutive counts, recent loss, and last probe/reply timestamps. Recent counters describe the window at `evaluated_at` (the last completed probe or policy change), so stopping preserves the judgment and its inputs together. `measurement_state` (`running`, `finished`, `stopped`) describes ICMP measurement separately from the Web server's `state`; after `--count` completes, auxiliary monitors may continue in the TUI. Graphs use actual timestamps and leave pauses blank instead of shifting an old reply to now.
 
+Each target in snapshots/reports also carries `levels` (`loss`, `last_rtt`, `jitter`), each `none`, `ok`, `warn` or `crit` against the configured thresholds; MTR hops carry `loss_level`, and port and HTTP checks `level` (`pending` before the first result). These are the values the TUI and Web UI colour by.
+
 ```bash
 mping --check-config -f examples/monitoring.yaml --interval 500
 ```

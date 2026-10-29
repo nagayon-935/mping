@@ -2,37 +2,29 @@ package ui
 
 import (
 	"testing"
-	"time"
+
+	"github.com/nagayon-935/mping/internal/stats"
 
 	"github.com/gdamore/tcell/v2"
 )
 
-// TestMetricColors checks the green/orange/red banding of each metric
-// against the default thresholds (loss 20/80 %, RTT 50/200 ms, jitter
-// 10/50 ms). TestColorFns_UseActiveThresholds covers custom thresholds.
-func TestMetricColors(t *testing.T) {
+// TestLevelColor checks the colour each level is drawn in.
+func TestLevelColor(t *testing.T) {
 	tests := []struct {
-		name string
-		got  func() tcell.Color
-		want tcell.Color
+		level stats.Level
+		want  tcell.Color
 	}{
-		{"low loss is green", func() tcell.Color { return lossColorForRate(10) }, tcell.ColorGreen},
-		{"mid loss is orange", func() tcell.Color { return lossColorForRate(50) }, tcell.ColorOrange},
-		{"high loss is red", func() tcell.Color { return lossColorForRate(90) }, vividRed},
-		{"zero RTT is white", func() tcell.Color { return rttColorForRTT(0) }, tcell.ColorWhite},
-		{"low RTT is green", func() tcell.Color { return rttColorForRTT(10 * time.Millisecond) }, tcell.ColorGreen},
-		{"mid RTT is orange", func() tcell.Color { return rttColorForRTT(100 * time.Millisecond) }, tcell.ColorOrange},
-		{"zero jitter is white", func() tcell.Color { return jitterColorForJitter(0) }, tcell.ColorWhite},
-		{"low jitter is green", func() tcell.Color { return jitterColorForJitter(5 * time.Millisecond) }, tcell.ColorGreen},
-		{"mid jitter is orange", func() tcell.Color { return jitterColorForJitter(20 * time.Millisecond) }, tcell.ColorOrange},
+		{stats.LevelNone, tcell.ColorWhite},
+		{stats.LevelPending, tcell.ColorWhite},
+		{stats.LevelOK, tcell.ColorGreen},
+		{stats.LevelWarn, tcell.ColorOrange},
+		{stats.LevelCrit, vividRed},
 	}
-	withThresholds(DefaultThresholds(), func() {
-		for _, tt := range tests {
-			if got := tt.got(); got != tt.want {
-				t.Errorf("%s: got %v, want %v", tt.name, got, tt.want)
-			}
+	for _, tt := range tests {
+		if got := levelColor(tt.level); got != tt.want {
+			t.Errorf("levelColor(%q) = %v, want %v", tt.level, got, tt.want)
 		}
-	})
+	}
 }
 
 func TestStatusColorTag(t *testing.T) {

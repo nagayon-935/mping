@@ -109,7 +109,7 @@ type hostsFileYAML struct {
 	HTTPHeaders         []string        `yaml:"http-header"`
 }
 
-// thresholdsYAML mirrors the ui.Thresholds boundaries in the YAML config.
+// thresholdsYAML mirrors the stats.Thresholds boundaries in the YAML config.
 // RTT/Jitter values are milliseconds; loss values are percentages.
 type thresholdsYAML struct {
 	RTTWarn    *int     `yaml:"rtt-warn"`

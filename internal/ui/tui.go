@@ -21,7 +21,7 @@ var newApplication = tview.NewApplication
 type TargetSet struct {
 	Targets    []*stats.TargetStats
 	Groups     []TargetGroup
-	Thresholds *Thresholds
+	Thresholds *stats.Thresholds
 }
 
 // RunOptions contains all parameters for the Run function.
@@ -57,9 +57,10 @@ type RunOptions struct {
 	// reflects a checker swapped in by OnResetHTTP after Run has started.
 	// Nil when HTTPEnabled is false.
 	HTTPResults func() []*stats.HTTPCheckResult
-	// Thresholds overrides the colour-coding / alert boundaries. Nil keeps the
+	// Thresholds colour the HTTP checks, which belong to no target; targets
+	// are coloured by the thresholds in their own TargetView. Nil keeps the
 	// built-in defaults.
-	Thresholds *Thresholds
+	Thresholds *stats.Thresholds
 	// ExternalCloseCh, when closed, causes the TUI to display a reload message
 	// and stop. Nil is safe: a nil receive channel blocks forever in select,
 	// effectively disabling the case (normal mode).
@@ -96,9 +97,6 @@ type RunOptions struct {
 
 // Run starts the TUI application with the given options.
 func Run(opts RunOptions) error {
-	if opts.Thresholds != nil {
-		setActiveThresholds(*opts.Thresholds)
-	}
 	targets := opts.Targets // replaced by TargetSource before each update
 	currentTargets := func() []*stats.TargetStats { return targets }
 
@@ -122,6 +120,9 @@ func Run(opts RunOptions) error {
 	// Render state shared between tableRenderer, the key handler, and the
 	// monitor pane render closures.
 	vs := newViewState(newLogView())
+	if opts.Thresholds != nil {
+		vs.thresholds = *opts.Thresholds
+	}
 	errorView := vs.errorView
 	sidePanes := newSidePanes(opts, currentTargets, vs)
 
@@ -133,7 +134,7 @@ func Run(opts RunOptions) error {
 		tr.beforeUpdate = func() {
 			set := opts.TargetSource()
 			if set.Thresholds != nil && set.Thresholds.RTTCrit > 0 {
-				setActiveThresholds(*set.Thresholds)
+				vs.thresholds = *set.Thresholds
 			}
 			targets = set.Targets
 			tr.targets = targets

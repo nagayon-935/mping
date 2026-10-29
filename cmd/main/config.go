@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	ui "github.com/nagayon-935/mping/internal/ui"
+	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/spf13/pflag"
 )
 
@@ -50,7 +50,7 @@ type config struct {
 
 	// thresholds holds the colour-coding / alert boundaries (warn = orange,
 	// crit = red), already converted from the raw ms/pct flag values.
-	thresholds                       ui.Thresholds
+	thresholds                       stats.Thresholds
 	healthFailures, healthRecoveries int
 	healthWindow                     time.Duration
 	eventOutput                      string
@@ -161,7 +161,7 @@ func syncDuration(fs *pflag.FlagSet, flag string, docVal *string, cfgField *time
 // keep winning). When fs is nil, every non-nil doc field is applied
 // unconditionally (used by validateHostsDoc, which checks a doc's raw values
 // against a baseline and has no fs to consult).
-func overlayThresholdsDoc(base ui.Thresholds, fs *pflag.FlagSet, th *thresholdsYAML) ui.Thresholds {
+func overlayThresholdsDoc(base stats.Thresholds, fs *pflag.FlagSet, th *thresholdsYAML) stats.Thresholds {
 	if th == nil {
 		return base
 	}

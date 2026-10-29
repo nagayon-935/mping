@@ -64,7 +64,6 @@ func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, 
 	if view.Health.Configured {
 		return state, nil
 	} // backend events are delivered through ExternalLogCh
-	th := getActiveThresholds()
 	var msgs []string
 	// edge logs a message when a metric newly crosses its critical threshold
 	// (red was false, over is true) and records whether it is over.
@@ -74,9 +73,9 @@ func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, 
 		}
 		*red = over
 	}
-	edge(&state.lossRed, lossRate > th.LossCrit, func() string { return fmt.Sprintf("Loss Ratio %.1f%%", lossRate) })
-	edge(&state.rttRed, view.LastRTT > th.RTTCrit, func() string { return fmt.Sprintf("RTT %v", view.LastRTT.Round(time.Microsecond)) })
-	edge(&state.jitterRed, view.Jitter > th.JitterCrit, func() string { return fmt.Sprintf("Jitter %v", view.Jitter.Round(time.Microsecond)) })
+	edge(&state.lossRed, view.Levels.Loss == stats.LevelCrit, func() string { return fmt.Sprintf("Loss Ratio %.1f%%", lossRate) })
+	edge(&state.rttRed, view.Levels.LastRTT == stats.LevelCrit, func() string { return fmt.Sprintf("RTT %v", view.LastRTT.Round(time.Microsecond)) })
+	edge(&state.jitterRed, view.Levels.Jitter == stats.LevelCrit, func() string { return fmt.Sprintf("Jitter %v", view.Jitter.Round(time.Microsecond)) })
 
 	return state, msgs
 }

@@ -20,6 +20,7 @@
 | CLI 出力 | `cmd/main/output.go` | ログ、JSON スナップショット、終了サマリー |
 | 監視 | `internal/pinger/periodic.go` | HTTP・ポート監視の共通定期実行。プロトコル固有の処理は各 checker に保持 |
 | 統計 | `internal/stats/stats.go`, `view.go`, `export.go` | 状態更新、読み取り用ビュー、JSON 向け変換を分離 |
+| 閾値 | `internal/stats/thresholds.go` | 閾値と判定レベル。TUI・Web・JSON・health はすべてここで判定し、表示側はレベルを色に写すだけにする |
 | TUI | `internal/ui/graph.go`, `graph_layout.go` | グラフの描画・入力と配置・履歴投影を分離 |
 | Web | `internal/web/api.go`, `snapshot.go` | HTTP ハンドラーと複数クライアント向けスナップショットキャッシュを分離 |
 | レポート | `internal/report/report.go`, `text.go`, `write.go` | データ構造、テキスト整形、安全なファイル公開を分離 |

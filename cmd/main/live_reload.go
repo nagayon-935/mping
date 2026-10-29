@@ -12,7 +12,7 @@ import (
 // These settings do not change a probe's identity or transport. Everything
 // else deliberately takes the existing full-rebuild path.
 func probeConfig(cfg config) config {
-	cfg.thresholds = ui.Thresholds{}
+	cfg.thresholds = stats.Thresholds{}
 	cfg.healthFailures, cfg.healthRecoveries, cfg.healthWindow = 0, 0, 0
 	cfg.webEnabled, cfg.webPort, cfg.noTUI, cfg.checkConfig = false, 0, false, false
 	cfg.eventOutput = ""

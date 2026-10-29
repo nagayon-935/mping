@@ -2,7 +2,6 @@ package stats
 
 import (
 	"fmt"
-	"math"
 	"strings"
 	"time"
 )
@@ -10,18 +9,14 @@ import (
 // HealthPolicy is shared by every presentation. Lifetime counters are never
 // used to decide whether a previously healthy target is responding now.
 type HealthPolicy struct {
-	Failures                                 int
-	Recoveries                               int
-	Window                                   time.Duration
-	RTTWarn, RTTCrit, JitterWarn, JitterCrit time.Duration
-	LossWarn, LossCrit                       float64
+	Failures   int
+	Recoveries int
+	Window     time.Duration
+	Thresholds
 }
 
 func DefaultHealthPolicy() HealthPolicy {
-	return HealthPolicy{Failures: 3, Recoveries: 2, Window: time.Minute,
-		RTTWarn: 50 * time.Millisecond, RTTCrit: 200 * time.Millisecond,
-		JitterWarn: 10 * time.Millisecond, JitterCrit: 50 * time.Millisecond,
-		LossWarn: 20, LossCrit: 80}
+	return HealthPolicy{Failures: 3, Recoveries: 2, Window: time.Minute, Thresholds: DefaultThresholds()}
 }
 
 func (p HealthPolicy) Validate() error {
@@ -31,9 +26,8 @@ func (p HealthPolicy) Validate() error {
 	if p.Window < time.Second || p.Window > time.Hour {
 		return fmt.Errorf("health window must be between 1s and 1h")
 	}
-	if p.RTTWarn <= 0 || p.RTTCrit <= p.RTTWarn || p.JitterWarn <= 0 || p.JitterCrit <= p.JitterWarn ||
-		math.IsNaN(p.LossWarn) || math.IsNaN(p.LossCrit) || p.LossWarn < 0 || p.LossCrit > 100 || p.LossCrit <= p.LossWarn {
-		return fmt.Errorf("health thresholds must be positive, ordered warn < crit; loss must be between 0 and 100")
+	if err := p.Thresholds.Validate(); err != nil {
+		return fmt.Errorf("health thresholds: %w", err)
 	}
 	return nil
 }

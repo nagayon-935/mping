@@ -224,7 +224,8 @@ func TestBuildSnapshot_HTTPChecksSummarizeEachResult(t *testing.T) {
 
 func TestBuildSnapshotFromViews_PortsAndMTRHopsUseMilliseconds(t *testing.T) {
 	view := TargetView{
-		Host: "router.example",
+		Host:       "router.example",
+		Thresholds: DefaultThresholds(),
 		PortResults: []PortCheckView{
 			{Port: 443, Protocol: "tcp", Status: "Open", RTT: 2500 * time.Microsecond, OpenCount: 3, ClosedCount: 1},
 		},
@@ -238,12 +239,12 @@ func TestBuildSnapshotFromViews_PortsAndMTRHopsUseMilliseconds(t *testing.T) {
 	snap := BuildSnapshotFromViews([]TargetView{view}, nil)
 
 	target := snap.Targets[0]
-	wantPort := PortSummary{Port: 443, Protocol: "tcp", Status: "Open", RTTMs: 2.5, OpenCount: 3, ClosedCount: 1}
+	wantPort := PortSummary{Port: 443, Protocol: "tcp", Status: "Open", Level: LevelOK, RTTMs: 2.5, OpenCount: 3, ClosedCount: 1}
 	if len(target.PortResults) != 1 || target.PortResults[0] != wantPort {
 		t.Errorf("PortResults = %+v, want [%+v]", target.PortResults, wantPort)
 	}
 	wantHop := HopSummary{TTL: 1, IP: "192.0.2.1", ASN: "AS64500", Country: "JP", Org: "Example", Sent: 10, Recv: 9,
-		LossPct: 10, LastRTTMs: 1, AvgRTTMs: 2, MinRTTMs: 0.5, MaxRTTMs: 4, JitterMs: 0.25}
+		LossPct: 10, LossLevel: LevelWarn, LastRTTMs: 1, AvgRTTMs: 2, MinRTTMs: 0.5, MaxRTTMs: 4, JitterMs: 0.25}
 	if len(target.MTRHops) != 1 || target.MTRHops[0] != wantHop {
 		t.Errorf("MTRHops = %+v, want [%+v]", target.MTRHops, wantHop)
 	}

@@ -97,7 +97,7 @@ func newSidePanes(opts RunOptions, currentTargets func() []*stats.TargetStats, v
 		if opts.HTTPResults != nil {
 			results = opts.HTTPResults()
 		}
-		return renderHTTPMonitorTable(results, availW, vs.lastHTTPStatuses, &vs.errorLogs, vs.errorView)
+		return renderHTTPMonitorTable(results, vs.thresholds, availW, vs.lastHTTPStatuses, &vs.errorLogs, vs.errorView)
 	})
 	return []*monitorPane{trace, mtr, port, http}
 }

@@ -6,7 +6,12 @@ import (
 
 // TargetView represents a read-only snapshot of the stats for UI rendering.
 type TargetView struct {
-	Health           Health
+	Health Health
+	// Thresholds are the ones this target is judged by (its health policy's),
+	// and Levels classify the latest statistics against them, so every
+	// presentation colours the same values the same way.
+	Thresholds       Thresholds
+	Levels           Levels
 	MeasurementState string
 	ID               uint64
 	StartedAt        time.Time
@@ -79,8 +84,10 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 		mtrFlapCount, mtrLastFlapAt, mtrLastFlapDesc = t.mtrStats.FlapInfo()
 	}
 
+	th := t.healthPolicyLocked().Thresholds
 	return TargetView{
 		Health: t.healthViewLocked(), MeasurementState: t.measurementState,
+		Thresholds: th, Levels: th.levels(t.recv, t.loss, t.lastRTT, time.Duration(t.jitter)),
 		DSCP: t.dscp, IPHistory: append([]IPChange(nil), t.ipHistory...), IPChanges: t.ipChanges,
 		ID:               t.id,
 		StartedAt:        t.startedAt,

@@ -17,31 +17,30 @@ const (
 	minMTRHostW = 16
 )
 
-// mtrLossColorTag returns a tview color tag string based on loss percentage.
-func mtrLossColorTag(pct float64) string {
-	th := getActiveThresholds()
-	if pct >= th.LossCrit {
+// mtrLossColorTag returns the tview color tag for a hop's loss level.
+func mtrLossColorTag(l stats.Level) string {
+	switch l {
+	case stats.LevelCrit:
 		return "[red::b]"
-	}
-	if pct > 0 {
+	case stats.LevelWarn:
 		return "[orange]"
+	default:
+		return "[green]"
 	}
-	return "[green]"
 }
 
-// mtrRTTColorTag returns a tview color tag string based on RTT.
-func mtrRTTColorTag(rtt time.Duration) string {
-	if rtt == 0 {
+// rttColorTag returns the tview color tag for an RTT level.
+func rttColorTag(l stats.Level) string {
+	switch l {
+	case stats.LevelCrit:
+		return "[red]"
+	case stats.LevelWarn:
+		return "[orange]"
+	case stats.LevelOK:
+		return "[green]"
+	default:
 		return "[white]"
 	}
-	th := getActiveThresholds()
-	if rtt > th.RTTCrit {
-		return "[red]"
-	}
-	if rtt > th.RTTWarn {
-		return "[orange]"
-	}
-	return "[green]"
 }
 
 // mtrFixedW is the width taken by every MTR column but Host, separators
@@ -103,13 +102,13 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, 
 	// Compact: Hop | Host | Loss% | Snt | Last | Avg
 	// Full:    Hop | Host | Loss% | Snt | Recv | Last | Avg | Min | Max | Jitter
 	rtt := func(get func(stats.HopView) time.Duration) func(stats.HopView) boxCell {
-		return rttCell(get, formatRTT)
+		return rttCell(get, formatRTT, view.Thresholds.RTT)
 	}
 	all := []monitorColumn[stats.HopView]{
 		{boxColumn{header: "Hop", width: mtrHopColW}, plainCell(func(h stats.HopView) string { return fmt.Sprintf("%3d.", h.TTL) }), false},
 		{boxColumn{header: "Host", width: hostW}, plainCell(mtrIPStr), false},
 		{boxColumn{header: "Loss%", width: mtrLossColW}, func(h stats.HopView) boxCell {
-			return boxCell{text: fmt.Sprintf("%.1f%%", h.LossPct), tag: mtrLossColorTag(h.LossPct)}
+			return boxCell{text: fmt.Sprintf("%.1f%%", h.LossPct), tag: mtrLossColorTag(view.Thresholds.HopLoss(h.LossPct))}
 		}, false},
 		{boxColumn{header: "Snt", width: mtrSntColW}, plainCell(func(h stats.HopView) string { return fmt.Sprintf("%d", h.Sent) }), false},
 		{boxColumn{header: "Recv", width: mtrRecvColW}, plainCell(func(h stats.HopView) string { return fmt.Sprintf("%d", h.Recv) }), true},

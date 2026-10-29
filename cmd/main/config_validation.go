@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/nagayon-935/mping/internal/pinger"
-	ui "github.com/nagayon-935/mping/internal/ui"
+	"github.com/nagayon-935/mping/internal/stats"
 )
 
 // Interval bounds shared by the YAML validator and the -i flag check, so the
@@ -177,7 +177,7 @@ func validateHostsDoc(doc hostsFileYAML) error {
 		}
 	}
 	if doc.Thresholds != nil {
-		th := overlayThresholdsDoc(ui.DefaultThresholds(), nil, doc.Thresholds)
+		th := overlayThresholdsDoc(stats.DefaultThresholds(), nil, doc.Thresholds)
 		if err := th.Validate(); err != nil {
 			return fmt.Errorf("thresholds: %w", err)
 		}

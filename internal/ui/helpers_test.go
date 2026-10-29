@@ -405,6 +405,7 @@ func TestUpdateAlertState(t *testing.T) {
 		Host:    "example.com",
 		LastRTT: 300 * time.Millisecond,
 		Jitter:  60 * time.Millisecond,
+		Levels:  stats.Levels{Loss: stats.LevelCrit, LastRTT: stats.LevelCrit, Jitter: stats.LevelCrit},
 	}
 	state, msgs := updateAlertState(view, "10.0.0.2", 90.0, time.Now(), alertFlags{})
 	if !state.lossRed || !state.rttRed || !state.jitterRed {

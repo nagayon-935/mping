@@ -1,7 +1,7 @@
 package ui
 
 import (
-	"time"
+	"github.com/nagayon-935/mping/internal/stats"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -18,50 +18,29 @@ var (
 	vividCyan = tcell.NewRGBColor(0, 255, 255)
 )
 
-func lossColorForRate(lossRate float64) tcell.Color {
-	th := getActiveThresholds()
-	if lossRate > th.LossCrit {
+// levelColor is the TUI colour of a stats.Level: red when critical, orange
+// for a warning, green when fine and white while there is nothing to judge.
+func levelColor(l stats.Level) tcell.Color {
+	switch l {
+	case stats.LevelCrit:
 		return vividRed
-	}
-	if lossRate > th.LossWarn {
+	case stats.LevelWarn:
 		return tcell.ColorOrange
-	}
-	return tcell.ColorGreen
-}
-
-// durationColor colours d against its thresholds: red above crit, orange
-// above warn, green when positive, and white when unset (zero).
-func durationColor(d, warn, crit time.Duration) tcell.Color {
-	switch {
-	case d > crit:
-		return vividRed
-	case d > warn:
-		return tcell.ColorOrange
-	case d > 0:
+	case stats.LevelOK:
 		return tcell.ColorGreen
 	default:
 		return tcell.ColorWhite
 	}
 }
 
-func rttColorForRTT(rtt time.Duration) tcell.Color {
-	th := getActiveThresholds()
-	return durationColor(rtt, th.RTTWarn, th.RTTCrit)
-}
-
-func jitterColorForJitter(jitter time.Duration) tcell.Color {
-	th := getActiveThresholds()
-	return durationColor(jitter, th.JitterWarn, th.JitterCrit)
-}
-
 // statusColorTag returns a tview color tag for the given port status.
 func statusColorTag(status string) string {
-	switch status {
-	case "Open":
+	switch stats.PortStatusLevel(status) {
+	case stats.LevelOK:
 		return "[green]"
-	case "Closed":
+	case stats.LevelCrit:
 		return "[red]"
-	case "Filtered", "Open|Filtered":
+	case stats.LevelWarn:
 		return "[yellow]"
 	default:
 		return "[white]"

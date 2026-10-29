@@ -20,11 +20,7 @@ func formatRTT(d time.Duration) string {
 }
 
 func calcLossRate(view stats.TargetView) float64 {
-	totalAttempts := view.Recv + view.Loss
-	if totalAttempts == 0 {
-		return 0.0
-	}
-	return (float64(view.Loss) / float64(totalAttempts)) * 100
+	return stats.LossRatio(view.Recv, view.Loss)
 }
 
 func formatLossAgo(lastLossTime time.Time) string {

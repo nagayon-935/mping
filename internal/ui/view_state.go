@@ -3,6 +3,8 @@ package ui
 import (
 	"time"
 
+	"github.com/nagayon-935/mping/internal/stats"
+
 	"github.com/rivo/tview"
 )
 
@@ -25,11 +27,15 @@ type viewState struct {
 	alertState       map[string]alertFlags
 	lastPortStatuses map[string]string
 	lastHTTPStatuses map[string]string
+	// thresholds are the run's current thresholds, for the HTTP checks,
+	// which belong to no target (targets carry their own in TargetView).
+	thresholds stats.Thresholds
 }
 
 func newViewState(errorView *tview.TextView) *viewState {
 	return &viewState{
 		errorView:        errorView,
+		thresholds:       stats.DefaultThresholds(),
 		lastLossTimes:    make(map[string]time.Time),
 		alertState:       make(map[string]alertFlags),
 		lastPortStatuses: make(map[string]string),
@@ -43,7 +49,8 @@ func (vs *viewState) appendLog(msg string) {
 	appendErrorLog(&vs.errorLogs, vs.errorView, msg)
 }
 
-// reset clears all five containers — the 'R' key handler's log/state wipe.
+// reset clears the log and the status caches — the 'R' key handler's
+// log/state wipe. The thresholds are configuration and stay.
 func (vs *viewState) reset() {
 	vs.errorLogs = []string{}
 	vs.errorView.SetText("")
