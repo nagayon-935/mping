@@ -160,9 +160,9 @@ func TestTraceRoute_RouteProbeIDs(t *testing.T) {
 
 // TestTraceRoute_RecordsHopReplies drives TraceRoute's reply handling through
 // a fake hop socket, both reading replies off that socket and receiving them
-// from a running pinger's shared receiver: a responding router is annotated,
-// a silent hop and a reply without a source become "*", and the trace stops
-// at the destination's echo reply.
+// from a running pinger's shared receiver: a responding router is annotated
+// with its ASN and PTR name, a silent hop and a reply without a source become
+// "*", and the trace stops at the destination's echo reply.
 func TestTraceRoute_RecordsHopReplies(t *testing.T) {
 	router := &net.IPAddr{IP: net.IPv4(10, 0, 0, 1)}
 	dest := &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}
@@ -170,11 +170,19 @@ func TestTraceRoute_RecordsHopReplies(t *testing.T) {
 		t.Run(map[bool]string{false: "own socket", true: "shared receiver"}[shared], func(t *testing.T) {
 			p := NewPingerWithOptions(nil, Options{
 				ResolveIPAddr: resolveTo("1.1.1.1"),
-				PtrEnabled:    true,
+				AsnEnabled:    true,
+				LookupTXTContext: func(_ context.Context, name string) ([]string, error) {
+					return map[string][]string{
+						"1.0.0.10.origin.asn.cymru.com": {"64500 | 10.0.0.0/8 | JP | apnic | 2000-01-01"},
+						"64500.asn.cymru.com":           {"64500 | EXAMPLE - Example Net, JP | 2000-01-01"},
+					}[name], nil
+				},
+				PtrEnabled: true,
 				LookupAddrContext: func(_ context.Context, ip string) ([]string, error) {
 					return map[string][]string{"10.0.0.1": {"router.example."}}[ip], nil
 				},
 			})
+			p.asnJitter = func() time.Duration { return 0 }
 			p.ptrJitter = func() time.Duration { return 0 }
 			if shared {
 				p.connV4 = &fakePacketConn{}
@@ -213,7 +221,7 @@ func TestTraceRoute_RecordsHopReplies(t *testing.T) {
 			if err != nil {
 				t.Fatalf("TraceRoute: %v", err)
 			}
-			want := []string{"10.0.0.1 router.example", "*", "*", "1.1.1.1"}
+			want := []string{"10.0.0.1(AS64500 Example Net) router.example", "*", "*", "1.1.1.1"}
 			if !slices.Equal(hops, want) {
 				t.Fatalf("hops = %q, want %q", hops, want)
 			}
