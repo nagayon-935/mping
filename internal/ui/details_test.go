@@ -133,3 +133,26 @@ func TestDetailsOptionalSectionsFollowOptionsEvenWithCachedData(t *testing.T) {
 		t.Fatal("zero timestamp shown as a year-one date")
 	}
 }
+
+// TestDetailsPageKeyRouting checks the details page's own keys: Tab moves
+// between its panes, other keys stay with the page, the global R shortcut
+// still reaches the reset callback, and Esc returns to the overview.
+func TestDetailsPageKeyRouting(t *testing.T) {
+	target := stats.NewTargetStats("router")
+	resets := make(chan struct{}, 1)
+	h := startTUI(t, RunOptions{Targets: []*stats.TargetStats{target}, OnReset: func() { resets <- struct{}{} }}, 140, 45)
+	h.wait("router")
+	h.key(tcell.KeyEnter)
+	h.wait(fmt.Sprintf("Target #%d", target.ID()))
+
+	h.key(tcell.KeyTab) // to the graph
+	h.key(tcell.KeyTab) // and back to the text
+	h.press('x')        // not a details or global key: no effect
+	h.press('R')
+	recvWithin(t, resets, "the reset callback")
+	h.wait(fmt.Sprintf("Target #%d", target.ID()))
+
+	h.key(tcell.KeyEscape)
+	h.waitWithout("Ping Monitor", fmt.Sprintf("Target #%d", target.ID()))
+	h.quit()
+}

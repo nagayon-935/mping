@@ -521,3 +521,24 @@ func TestLightweightReadAccessors(t *testing.T) {
 		t.Fatalf("CurrentStatus() after SetResult = %q, want %q", got, "Open")
 	}
 }
+
+func TestTargetStatsIdentityAndConfiguredDSCP(t *testing.T) {
+	a, b := NewTargetStats("192.0.2.1"), NewTargetStats("192.0.2.1")
+	if a.ID() == 0 || a.ID() == b.ID() {
+		t.Fatalf("IDs = %d, %d; want distinct non-zero IDs", a.ID(), b.ID())
+	}
+
+	a.SetDisplayName("edge")
+	if a.Host() != "192.0.2.1" || a.DisplayName() != "edge" {
+		t.Fatalf("Host() = %q, DisplayName() = %q; want the configured host kept apart from the label", a.Host(), a.DisplayName())
+	}
+
+	gen := Generation()
+	a.SetDSCP("EF")
+	if v := a.GetView(); v.DSCP != "EF" || v.ID != a.ID() {
+		t.Fatalf("view DSCP/ID = %q/%d, want EF/%d", v.DSCP, v.ID, a.ID())
+	}
+	if Generation() == gen {
+		t.Fatal("SetDSCP did not bump the generation, so the UI would not redraw")
+	}
+}
