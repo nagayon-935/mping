@@ -10,6 +10,16 @@ import (
 	"time"
 )
 
+// Watch is WatchPaths with a single fixed path.
+func Watch(ctx context.Context, path string, onChange func()) error {
+	return WatchFiles(ctx, []string{path}, onChange)
+}
+
+// WatchFiles is WatchPaths with a fixed path set.
+func WatchFiles(ctx context.Context, paths []string, onChange func()) error {
+	return WatchPaths(ctx, func() []string { return paths }, onChange)
+}
+
 // startWatch runs fn in a goroutine and returns once the watcher has
 // registered its initial directories (watchingHook), so any change the test
 // makes from then on is seen. The returned stop func cancels the watcher,

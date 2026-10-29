@@ -14,9 +14,6 @@ type HTTPOptions struct {
 	Headers         http.Header
 }
 
-func DefaultHTTPOptions() HTTPOptions {
-	return HTTPOptions{ExpectedStatus: []StatusRange{{200, 399}}, FollowRedirects: true}
-}
 func (o HTTPOptions) Clone() HTTPOptions {
 	o.ExpectedStatus = append([]StatusRange(nil), o.ExpectedStatus...)
 	o.Headers = o.Headers.Clone()

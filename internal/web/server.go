@@ -130,9 +130,6 @@ func start(opts Options, token string) (*Server, error) {
 	return s, nil
 }
 
-// Addr is the bound host:port.
-func (s *Server) Addr() string { return s.addr }
-
 // URL is the read-only address to open in a browser.
 func (s *Server) URL() string {
 	_, port, _ := net.SplitHostPort(s.addr)

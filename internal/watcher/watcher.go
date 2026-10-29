@@ -38,25 +38,13 @@ var newEventSource = func() (*eventSource, error) {
 	return &eventSource{add: w.Add, close: w.Close, events: w.Events, errors: w.Errors}, nil
 }
 
-// Watch monitors the file at path for content changes (Write or Create events).
-// It is WatchFiles with a single path.
-func Watch(ctx context.Context, path string, onChange func()) error {
-	return WatchFiles(ctx, []string{path}, onChange)
-}
-
-// WatchFiles monitors every file in paths for content changes (Write or
+// WatchPaths monitors every file paths returns for content changes (Write or
 // Create events) and calls onChange once per debounced burst of changes to
 // any of them. A listed file need not exist yet: creating it counts as a
-// change. Duplicate paths are watched once. It is WatchPaths with a fixed
-// path set.
-func WatchFiles(ctx context.Context, paths []string, onChange func()) error {
-	return WatchPaths(ctx, func() []string { return paths }, onChange)
-}
-
-// WatchPaths is WatchFiles with a path set that may change: paths is called
-// at startup and again after every onChange, so a change that names new
-// files (e.g. a hosts file gaining an include) widens the watch without a
-// restart. Paths dropped from the set stop triggering onChange.
+// change. Duplicate paths are watched once. paths is called at startup and
+// again after every onChange, so a change that names new files (e.g. a
+// hosts file gaining an include) widens the watch without a restart. Paths
+// dropped from the set stop triggering onChange.
 //
 // The parent directories are watched rather than the files themselves so
 // that editor save patterns that atomically replace a file via rename are

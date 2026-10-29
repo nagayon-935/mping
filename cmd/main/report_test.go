@@ -62,7 +62,7 @@ func TestReportKeepsRemovedIdentityAndActualSettings(t *testing.T) {
 	a.IncSent()
 	a.OnSuccess(time.Millisecond, 64)
 	s := newSupervisor(supervisorConfig{targets: []*stats.TargetStats{a, b}, specs: []targetSpec{{Host: "same"}, {Host: "same"}}, groups: []ui.TargetGroup{{Name: "first", Indices: []int{0}}}, interval: 2 * time.Second, timeout: 3 * time.Second, packetSize: 123, network: "ip4", sourceIPv4: "192.0.2.1", bind: pinger.BindConfig{Interface: "test0", Source: "192.0.2.1"}, portSpecs: []pinger.PortSpec{{Port: 443, Protocol: "tcp"}}, config: config{packetSize: 999, intervalMs: 999}})
-	s.httpChecker = pinger.NewHTTPChecker([]string{"https://same.example/health"}, time.Second, time.Second, pinger.BindConfig{})
+	s.httpChecker = pinger.NewHTTPCheckerWithOptions([]string{"https://same.example/health"}, time.Second, time.Second, pinger.BindConfig{}, pinger.HTTPOptions{})
 	s.httpChecker.Results()[0].SetResult(200, 2*time.Millisecond, nil)
 	s.Start()
 	t.Cleanup(s.Shutdown)

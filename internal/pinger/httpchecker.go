@@ -42,14 +42,10 @@ type HTTPChecker struct {
 	options  HTTPOptions
 }
 
-// NewHTTPChecker creates an HTTPChecker for the given URLs. bind carries the
-// -S source address and -I interface name so HTTP checks leave the host by the
-// same path as the ICMP probes; a zero BindConfig leaves http.DefaultTransport
-// in place, exactly as before those flags were wired in.
-func NewHTTPChecker(urls []string, interval, timeout time.Duration, bind BindConfig) *HTTPChecker {
-	return NewHTTPCheckerWithOptions(urls, interval, timeout, bind, DefaultHTTPOptions())
-}
-
+// NewHTTPCheckerWithOptions creates an HTTPChecker for the given URLs. bind
+// carries the -S source address and -I interface name so HTTP checks leave
+// the host by the same path as the ICMP probes; a zero BindConfig leaves
+// http.DefaultTransport in place.
 func NewHTTPCheckerWithOptions(urls []string, interval, timeout time.Duration, bind BindConfig, options HTTPOptions) *HTTPChecker {
 	results := make([]*stats.HTTPCheckResult, len(urls))
 	for i, u := range urls {

@@ -303,14 +303,6 @@ type Options struct {
 	TargetDSCP map[int]int
 }
 
-// NewPinger creates a Pinger with default options for the given targets.
-// Production code always goes through NewPingerWithOptions (to inject
-// resolver/listener test doubles); this constructor exists for tests that
-// don't need to override any Options.
-func NewPinger(targets []*stats.TargetStats) *Pinger {
-	return NewPingerWithOptions(targets, Options{})
-}
-
 // NewPingerWithOptions creates a Pinger with the provided options.
 func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 	resolve := opts.ResolveIPAddr
