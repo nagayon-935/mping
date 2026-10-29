@@ -28,7 +28,7 @@ func registerFlags(fs *pflag.FlagSet, cfg *config, th *thresholdFlags) {
 	fs.IntVarP(&cfg.intervalMs, "interval", "i", 1000, "ping interval in ms")
 	fs.IntVarP(&cfg.timeoutMs, "timeout", "t", 1000, "ping timeout in ms")
 	fs.StringVarP(&cfg.outputFile, "output", "o", "", "log output file path (csv format)")
-	fs.StringVarP(&cfg.hostsFile, "file", "f", "", "hosts list YAML file path")
+	fs.StringVarP(&cfg.hostsFile, "file", "f", "", "hosts YAML file, or a NetBox IP addresses CSV export")
 	fs.BoolVarP(&cfg.mtuEnabled, "discovery-mtu", "m", false, "discover maximum payload size using DF probes (IPv4 only)")
 	fs.BoolVarP(&cfg.trace, "traceroute", "T", false, "enable traceroute pane and run traceroute")
 	fs.BoolVarP(&cfg.asnEnabled, "asn", "a", false, "lookup and display AS numbers for target IPs")

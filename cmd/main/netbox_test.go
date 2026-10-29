@@ -245,8 +245,7 @@ func TestNetBoxCSV_NamesAcrossIncludes(t *testing.T) {
 func TestNetBoxCSV_ReservesExplicitNamesAndHosts(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "netbox.csv", "IP Address,DNS name,Interface\n10.0.0.1/24,router,eth0\n10.0.0.2/24,other-host,eth1\n")
-	writeTestFile(t, dir, "manual.csv", "10.0.0.9,router (eth0)\n")
-	path := writeTestFile(t, dir, "hosts.yaml", "hosts:\n  - host: 10.0.0.8\n    name: router\n  - other-host\ninclude: [manual.csv, netbox.csv]\n")
+	path := writeTestFile(t, dir, "hosts.yaml", "hosts:\n  - host: 10.0.0.8\n    name: router\n  - other-host\n  - {host: 10.0.0.9, name: router (eth0)}\ninclude: netbox.csv\n")
 	doc, err := hostsfile.Parse(path)
 	if err != nil {
 		t.Fatal(err)

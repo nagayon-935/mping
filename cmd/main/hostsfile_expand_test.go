@@ -10,18 +10,19 @@ import (
 
 func TestParseHostsFile_Include(t *testing.T) {
 	dir := t.TempDir()
-	writeTestFile(t, dir, "top.txt", "192.0.2.1\n")
-	writeTestFile(t, dir, "branch-a.csv", "host,name\n198.51.100.1,branch-a\n")
-	writeTestFile(t, dir, "branch-b.csv", "198.51.100.2,branch-b\n")
+	const header = "IP Address,Status,DNS Name\n"
+	writeTestFile(t, dir, "top.csv", header+"192.0.2.1/24,Active,\n")
+	writeTestFile(t, dir, "branch-a.csv", header+"198.51.100.1/24,Active,branch-a\n")
+	writeTestFile(t, dir, "branch-b.csv", header+"198.51.100.2/24,Active,branch-b\n")
 	path := writeTestFile(t, dir, "hosts.yaml", `hosts:
   - 8.8.8.8
-include: top.txt
+include: top.csv
 groups:
   - name: Branches
     include: [branch-a.csv, branch-b.csv]
   - name: Mixed
     hosts: [1.1.1.1]
-    include: top.txt
+    include: top.csv
 `)
 
 	doc, err := hostsfile.Parse(path)

@@ -252,7 +252,7 @@ See [examples/hosts-groups.yaml](examples/hosts-groups.yaml) for a runnable exam
 
 ### Adding many hosts: patterns, names, and include files
 
-Host entries (in `hosts:`, `groups[].hosts:`, and include files) may be patterns that expand to several hosts:
+Host entries (in `hosts:` and `groups[].hosts:`) may be patterns that expand to several hosts:
 
 | Pattern | Expands to |
 |---|---|
@@ -270,16 +270,14 @@ hosts:
   - {host: 10.0.0.1, name: core-sw01}
 ```
 
-`include:` (top level or per group) appends hosts from text/CSV files, resolved relative to the YAML file (`.csv` files and NetBox CSV exports can also be passed directly via `mping -f hosts.csv`). Each line is `host[,name]`; `#` starts a comment and a first line whose first column is `host` or `hostname` is treated as a header. Every host must be an IP address or a hostname (letters, digits, `.`, `-`, `_`), and the file must be readable by the user running mping. Include files are watched for changes like the YAML file itself, including ones added to the YAML before they exist.
-
-NetBox IP Addresses CSV exports (CSVs with an `IP Address` column) are also accepted both directly via `-f` / `--file` and through `include:`. Prefix lengths (such as `/23`) are stripped automatically, only rows whose `Status` is `Active` (or blank) are loaded, and display names prefer `DNS name` (falling back to `Parent`), automatically disambiguating duplicates with the `Interface` and/or IP address.
+`include:` (top level or per group) appends the hosts from NetBox IP Addresses CSV exports (CSVs with an `IP Address` column), resolved relative to the YAML file; a single export can also be passed directly via `mping -f netbox.csv`. Plain host lists (one host per line, or `host,name` CSV files) are not supported and are rejected — list those hosts in the YAML file. Prefix lengths (such as `/23`) are stripped automatically, only rows whose `Status` is `Active` (or blank) are loaded, and display names prefer `DNS name` (falling back to `Parent`), automatically disambiguating duplicates with the `Interface` and/or IP address. The file must be readable by the user running mping. Include files are watched for changes like the YAML file itself, including ones added to the YAML before they exist.
 
 ```yaml
 groups:
   - name: Core
     hosts: ["core-sw{01..04}.lab"]
   - name: Branches
-    include: [branches.csv, more-branches.txt]
+    include: [tokyo-netbox.csv, osaka-netbox.csv]
 ```
 
 See [examples/hosts-patterns.yaml](examples/hosts-patterns.yaml) and [examples/branches.csv](examples/branches.csv).
@@ -290,7 +288,7 @@ See [examples/hosts-patterns.yaml](examples/hosts-patterns.yaml) and [examples/b
 | :--- | :--- | :--- | :--- |
 | `--interval` | `-i` | Ping send interval (ms) | `1000` |
 | `--timeout` | `-t` | Ping timeout (ms) | `1000` |
-| `--file` | `-f` | Path to YAML or CSV host list file | `""` |
+| `--file` | `-f` | Path to a YAML hosts file or a NetBox IP Addresses CSV export | `""` |
 | `--traceroute` | `-T` | Show Traceroute pane | `false` |
 | `--mtr` | `-M` | Show MTR Monitor pane (continuous per-hop loss/latency) | `false` |
 | `--dns-server` | `-d` | Custom DNS server IP address to resolve target hostnames | `""` (OS default) |

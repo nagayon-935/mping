@@ -1,6 +1,7 @@
 package hostsfile
 
 import (
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -14,49 +15,17 @@ func TestReadIncludeFile(t *testing.T) {
 		want    []Entry
 	}{
 		{
-			name:    "one host per line with comments and blanks",
-			content: "# core routers\n10.0.0.1\n\n  gw.example.com   # inline comment\n",
-			want:    []Entry{{Host: "10.0.0.1"}, {Host: "gw.example.com"}},
-		},
-		{
-			name:    "CSV columns host,name",
-			content: "10.0.0.1,core-sw01\n10.0.0.2, core-sw02 \n10.0.0.3,\n",
-			want: []Entry{
-				{Host: "10.0.0.1", Name: "core-sw01"},
-				{Host: "10.0.0.2", Name: "core-sw02"},
-				{Host: "10.0.0.3"},
-			},
-		},
-		{
-			name:    "header row is skipped",
-			content: "Host,Name\n10.0.0.1,core\n",
-			want:    []Entry{{Host: "10.0.0.1", Name: "core"}},
-		},
-		{
-			name:    "hostname header row is skipped",
-			content: "HOSTNAME,name\n10.0.0.1,core\n",
-			want:    []Entry{{Host: "10.0.0.1", Name: "core"}},
-		},
-		{
-			name:    "IPv6 with zone and underscores in hostnames are valid",
-			content: "fe80::1%en0\n_srv.example.com\n",
-			want:    []Entry{{Host: "fe80::1%en0"}, {Host: "_srv.example.com"}},
-		},
-		{
-			name:    "patterns are expanded",
-			content: "10.0.0.1-2\nsw{1..2}.lab\n",
-			want: []Entry{
-				{Host: "10.0.0.1"}, {Host: "10.0.0.2"},
-				{Host: "sw1.lab"}, {Host: "sw2.lab"},
-			},
+			name:    "NetBox export",
+			content: netBoxCSV("10.0.0.1/24,Active,core-sw01", "10.0.0.2/24,Active,"),
+			want:    []Entry{{Host: "10.0.0.1", Name: "core-sw01"}, {Host: "10.0.0.2"}},
 		},
 		{
 			name:    "CRLF line endings",
-			content: "10.0.0.1,a\r\n10.0.0.2,b\r\n",
+			content: "IP Address,Status,DNS Name\r\n10.0.0.1/24,Active,a\r\n10.0.0.2/24,Active,b\r\n",
 			want:    []Entry{{Host: "10.0.0.1", Name: "a"}, {Host: "10.0.0.2", Name: "b"}},
 		},
 		{
-			name:    "empty file yields no hosts",
+			name:    "a file with only comments yields no hosts",
 			content: "# nothing yet\n",
 			want:    []Entry{},
 		},
@@ -69,6 +38,9 @@ func TestReadIncludeFile(t *testing.T) {
 
 			if err != nil {
 				t.Fatalf("readIncludeFile: %v", err)
+			}
+			for i := range got {
+				got[i].netBox = nil // name resolution state, checked via Parse
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("got %#v, want %#v", got, tt.want)
@@ -83,14 +55,9 @@ func TestReadIncludeFile_Errors(t *testing.T) {
 		content string
 		wantErr string
 	}{
-		{name: "removed dscp column", content: "10.0.0.1\n10.0.0.2,a,EF\n", wantErr: "line 2: the third (dscp) column was removed"},
-		{name: "too many columns", content: "10.0.0.2,a,b,c\n", wantErr: "line 1: expected at most 2 columns"},
-		{name: "empty host column", content: ",name-only\n", wantErr: "line 1: host column is empty"},
-		{name: "invalid pattern", content: "10.0.0.0/16\n", wantErr: "line 1: expands to more than"},
-		{name: "name on multi-host pattern", content: "10.0.0.1-5,pair\n", wantErr: "line 1: name cannot be used"},
-		{name: "host with a space", content: "10.0.0.1\nsw 01.lab\n", wantErr: "line 2: host is not a valid IP address or hostname"},
-		{name: "host with shell characters", content: "a;b\n", wantErr: "line 1: host is not a valid IP address or hostname"},
-		{name: "overlong hostname", content: strings.Repeat("a", 254) + "\n", wantErr: "line 1: host is not a valid IP address or hostname"},
+		{name: "plain host per line", content: "10.0.0.1\ngw.example.com\n", wantErr: "not a NetBox IP addresses CSV export"},
+		{name: "plain host,name CSV", content: "host,name\n10.0.0.1,core\n", wantErr: "not a NetBox IP addresses CSV export"},
+		{name: "invalid NetBox row", content: netBoxCSV("10.0.0.1/24,Active,a", "not-an-ip,Active,b"), wantErr: "line 3: invalid IP address"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -139,11 +106,11 @@ func TestReadIncludeFile_RejectsNonRegularFiles(t *testing.T) {
 }
 
 func TestReadIncludeFile_StopsAtTotalLimit(t *testing.T) {
-	var b strings.Builder
-	for range 5 {
-		b.WriteString("10.0.0.0/22\n") // 1022 hosts each → 5110 total
+	rows := make([]string, 4097)
+	for i := range rows {
+		rows[i] = fmt.Sprintf("10.0.%d.%d/16,Active,", i/256, i%256)
 	}
-	path := writeTestFile(t, t.TempDir(), "big.txt", b.String())
+	path := writeTestFile(t, t.TempDir(), "big.csv", netBoxCSV(rows...))
 
 	_, err := readIncludeFile(path)
 
@@ -162,8 +129,8 @@ func TestReadIncludeFile_MissingFile(t *testing.T) {
 func TestParse_IncludeTildePathIsRelativeToHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	writeTestFile(t, home, "list.txt", "192.0.2.1\n192.0.2.2,edge\n")
-	path := writeTestFile(t, t.TempDir(), "hosts.yaml", "include: ~/list.txt\n")
+	writeTestFile(t, home, "list.csv", netBoxCSV("192.0.2.1/24,Active,", "192.0.2.2/24,Active,edge"))
+	path := writeTestFile(t, t.TempDir(), "hosts.yaml", "include: ~/list.csv\n")
 
 	doc, err := Parse(path)
 

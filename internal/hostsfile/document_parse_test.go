@@ -96,9 +96,10 @@ func TestParseHostsFile_ExpansionErrors(t *testing.T) {
 			wantErr: "include: line 2: empty file path",
 		},
 		{
-			name:    "whole-file limit spans includes and inline hosts",
-			yaml:    "hosts: [10.0.0.0/22, 10.0.4.0/22, 10.0.8.0/22]\ninclude: more.txt\n",
-			files:   map[string]string{"more.txt": "10.0.12.0/22\n10.0.16.0/22\n"},
+			name: "whole-file limit spans includes and inline hosts",
+			yaml: "hosts: [10.0.0.0/22, 10.0.4.0/22, 10.0.8.0/22, 10.0.12.0/22]\ninclude: more.csv\n",
+			// 4 x 1022 inline hosts plus 9 NetBox rows: 4097 targets.
+			files:   map[string]string{"more.csv": netBoxCSV("10.0.16.1/22,Active,", "10.0.16.2/22,Active,", "10.0.16.3/22,Active,", "10.0.16.4/22,Active,", "10.0.16.5/22,Active,", "10.0.16.6/22,Active,", "10.0.16.7/22,Active,", "10.0.16.8/22,Active,", "10.0.16.9/22,Active,")},
 			wantErr: "more than 4096 targets",
 		},
 	}
@@ -121,7 +122,7 @@ func TestParseHostsFile_ExpansionErrors(t *testing.T) {
 
 func TestParseHostsFile_IncludeAbsolutePath(t *testing.T) {
 	incDir := t.TempDir()
-	inc := writeTestFile(t, incDir, "list.txt", "192.0.2.9\n")
+	inc := writeTestFile(t, incDir, "list.csv", netBoxCSV("192.0.2.9/24,Active,"))
 	path := writeTestFile(t, t.TempDir(), "hosts.yaml", "include: "+inc+"\n")
 
 	doc, err := Parse(path)

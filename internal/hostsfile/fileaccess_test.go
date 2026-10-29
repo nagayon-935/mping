@@ -27,14 +27,14 @@ func skipAsRealUser(t *testing.T) {
 
 func TestFileAccessCallsAsRealUser(t *testing.T) {
 	dir := t.TempDir()
-	writeTestFile(t, dir, "list.txt", "192.0.2.1\n")
-	hostsPath := writeTestFile(t, dir, "hosts.yaml", "hosts: [192.0.2.9]\ninclude: list.txt\n")
+	writeTestFile(t, dir, "list.csv", netBoxCSV("192.0.2.1/24,Active,"))
+	hostsPath := writeTestFile(t, dir, "hosts.yaml", "hosts: [192.0.2.9]\ninclude: list.csv\n")
 	tests := []struct {
 		name string
 		run  func() error
 	}{
 		{name: "hosts file", run: func() error { _, err := Parse(hostsPath); return err }},
-		{name: "include file", run: func() error { _, err := readIncludeFile(filepath.Join(dir, "list.txt")); return err }},
+		{name: "include file", run: func() error { _, err := readIncludeFile(filepath.Join(dir, "list.csv")); return err }},
 		{name: "watch path discovery", run: func() error { WatchPaths(hostsPath); return nil }},
 	}
 	for _, tt := range tests {

@@ -16,7 +16,7 @@ groups:
       - "dns.google"
 
   - name: Branches
-    include: branches.csv    # host[,name] per line, relative to this file
+    include: branches.csv    # NetBox IP Addresses CSV export, relative to this file
 
 interval: 1000
 timeout: 2000

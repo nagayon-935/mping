@@ -152,8 +152,8 @@ type Thresholds struct {
 
 // Parse reads, decodes, and expands a hosts file: host patterns
 // (ranges, CIDRs, {N..M}) become concrete hosts and include files are read
-// relative to the hosts file's directory. A CSV host list or NetBox IP
-// addresses CSV export may also be passed directly via -f / --file.
+// relative to the hosts file's directory. A NetBox IP addresses CSV export
+// may also be passed directly via -f / --file.
 func Parse(path string) (Document, error) {
 	data, err := readFileAsRealUser(path)
 	if err != nil {
@@ -161,7 +161,7 @@ func Parse(path string) (Document, error) {
 	}
 
 	if len(data) > 0 && (strings.EqualFold(filepath.Ext(path), ".csv") || isNetBoxCSVData(data)) {
-		entries, err := parseIncludeData(path, "hosts file", data)
+		entries, err := parseNetBoxCSV(path, "hosts file", data)
 		if err != nil {
 			return Document{}, err
 		}

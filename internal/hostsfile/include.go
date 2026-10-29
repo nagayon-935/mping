@@ -1,11 +1,7 @@
 package hostsfile
 
 import (
-	"bufio"
-	"bytes"
-	"errors"
 	"fmt"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,16 +54,12 @@ func resolveIncludePath(baseDir, path string) string {
 	return filepath.Join(baseDir, path)
 }
 
-// readIncludeFile reads a host list file and returns its expanded entries.
-// Each non-blank line is "host[,name]"; '#' starts a comment; a first
-// line whose host column is "host" or "hostname" (any case) is a header and
-// skipped. Hosts may use the same range/CIDR/brace patterns as the YAML
-// file, and every expanded host must be an IP address or a hostname.
+// readIncludeFile reads a NetBox IP addresses CSV export named by include:
+// and returns its entries; plain host lists are rejected.
 //
 // mping may run setuid root (macOS install.sh), so the file is read as the
-// invoking user (asRealUser), errors report the file and line number but
-// never the line's text, and the hostname check keeps arbitrary text lines
-// from being displayed as targets.
+// invoking user (asRealUser), and errors report the file and line number but
+// never a line's text.
 func readIncludeFile(path string) ([]Entry, error) {
 	var out []Entry
 	err := asRealUser(func() error {
@@ -90,98 +82,7 @@ func readIncludeFileUnprivileged(path string) ([]Entry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("include %q: %w", path, err)
 	}
-	return parseIncludeData(path, "include", data)
-}
-
-func parseIncludeData(path, kind string, data []byte) ([]Entry, error) {
-	if isNetBoxCSVData(data) {
-		return parseNetBoxCSV(path, kind, data)
-	}
-	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
-	out := []Entry{}
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	for lineNo, sawData := 1, false; sc.Scan(); lineNo++ {
-		entry, ok, err := parseIncludeLine(sc.Text())
-		if err != nil {
-			return nil, fmt.Errorf("%s %q line %d: %w", kind, path, lineNo, err)
-		}
-		if !ok {
-			continue
-		}
-		if !sawData {
-			sawData = true
-			if strings.EqualFold(entry.Host, "host") || strings.EqualFold(entry.Host, "hostname") {
-				continue
-			}
-		}
-		expanded, err := expandHostEntry(entry)
-		if err != nil {
-			return nil, fmt.Errorf("%s %q line %d: %w", kind, path, lineNo, err)
-		}
-		for _, e := range expanded {
-			if !isHostSyntax(e.Host) {
-				return nil, fmt.Errorf("%s %q line %d: host is not a valid IP address or hostname", kind, path, lineNo)
-			}
-		}
-		if len(out)+len(expanded) > maxHostsFileTargets {
-			return nil, fmt.Errorf("%s %q: expands to more than %d targets", kind, path, maxHostsFileTargets)
-		}
-		out = append(out, expanded...)
-	}
-	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("%s %q: %w", kind, path, err)
-	}
-	return out, nil
-}
-
-// parseIncludeLine splits one include-file line into its columns. ok is
-// false for blank and comment-only lines. Errors never quote the line.
-func parseIncludeLine(line string) (entry Entry, ok bool, err error) {
-	if i := strings.IndexByte(line, '#'); i >= 0 {
-		line = line[:i]
-	}
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return Entry{}, false, nil
-	}
-	cols := strings.Split(line, ",")
-	switch {
-	case len(cols) == 3:
-		return Entry{}, false, errors.New("the third (dscp) column was removed: DSCP marking is no longer supported")
-	case len(cols) > 3:
-		return Entry{}, false, fmt.Errorf("expected at most 2 columns (host,name), got %d", len(cols))
-	}
-	for i := range cols {
-		cols[i] = strings.TrimSpace(cols[i])
-	}
-	entry.Host = cols[0]
-	if entry.Host == "" {
-		return Entry{}, false, errors.New("host column is empty")
-	}
-	if len(cols) > 1 {
-		entry.Name = cols[1]
-	}
-	return entry, true, nil
-}
-
-// isHostSyntax reports whether s is an IP address (optionally with an IPv6
-// zone) or a plausible hostname: 1-253 characters of letters, digits, '.',
-// '-' and '_' (the last for SRV-style labels).
-func isHostSyntax(s string) bool {
-	if _, err := netip.ParseAddr(s); err == nil {
-		return true
-	}
-	if len(s) == 0 || len(s) > 253 {
-		return false
-	}
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-', r == '_':
-		default:
-			return false
-		}
-	}
-	return true
+	return parseNetBoxCSV(path, "include", data)
 }
 
 // expandHostsDoc expands every host pattern in doc and appends each list's

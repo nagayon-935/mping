@@ -114,6 +114,9 @@ func parseNetBoxHeader(header []string) (netBoxColumns, bool) {
 	return cols, cols.ipIdx >= 0 && hasMarker
 }
 
+// parseNetBoxCSV reads a NetBox IP addresses CSV export. A file with nothing
+// but comments and blank lines has no hosts; anything else must start with a
+// NetBox header row.
 func parseNetBoxCSV(path, kind string, data []byte) ([]Entry, error) {
 	trimmed, lineOffset := trimLeadingCommentsAndBlanks(data)
 	if len(trimmed) == 0 {
@@ -128,7 +131,7 @@ func parseNetBoxCSV(path, kind string, data []byte) ([]Entry, error) {
 	}
 	cols, ok := parseNetBoxHeader(header)
 	if !ok {
-		return nil, fmt.Errorf("%s %q: missing NetBox IP Address header", kind, path)
+		return nil, fmt.Errorf("%s %q: not a NetBox IP addresses CSV export (plain host lists are no longer supported; list the hosts in the YAML file)", kind, path)
 	}
 
 	var rows []netBoxRow

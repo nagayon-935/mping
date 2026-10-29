@@ -244,7 +244,7 @@ groups:
 
 ### 大量のホストを追加する: パターン・表示名・include
 
-ホストの指定（`hosts:`・`groups[].hosts:`・include ファイル）には、複数ホストに展開されるパターンを書けます。
+ホストの指定（`hosts:`・`groups[].hosts:`）には、複数ホストに展開されるパターンを書けます。
 
 | パターン | 展開結果 |
 |---|---|
@@ -262,16 +262,14 @@ hosts:
   - {host: 10.0.0.1, name: core-sw01}
 ```
 
-`include:`（トップレベルまたはグループごと）で、テキスト / CSV ファイルからホストを追加できます（`.csv` ファイルや NetBox CSV は `mping -f hosts.csv` のように `-f` で直接指定することも可能です）。パスは YAML ファイルからの相対パスです。各行は `host[,name]` 形式で、`#` 以降はコメントです。先頭行の1列目が `host` または `hostname` の場合はヘッダとして読み飛ばします。ホストは IP アドレスかホスト名（英数字・`.`・`-`・`_`）である必要があり、ファイルは mping を実行するユーザーが読める必要があります。include ファイルも YAML と同様に変更が監視され、自動で反映されます（まだ存在しないファイルを YAML に追加した場合も、作成した時点で反映されます）。
-
-NetBox の IP Addresses CSV エクスポート（`IP Address` 列を含む CSV）も、`-f` / `--file` での直接指定および `include:` の両方でそのまま読み込めます。プレフィックス長（`/23` など）は自動的に除去され、`Status` が `Active`（または空）の行が対象になります。表示名には `DNS name`（空なら `Parent`）が使用され、同名になる場合は `Interface` や IP アドレスを付与して自動的に一意化されます。
+`include:`（トップレベルまたはグループごと）で、NetBox の IP Addresses CSV エクスポート（`IP Address` 列を含む CSV）からホストを追加できます。パスは YAML ファイルからの相対パスです。エクスポート1つだけなら `mping -f netbox.csv` のように `-f` で直接指定することもできます。単純なホスト一覧（1行1ホストや `host,name` 形式の CSV）には対応しておらず、エラーになります。そうしたホストは YAML ファイルに書いてください。プレフィックス長（`/23` など）は自動的に除去され、`Status` が `Active`（または空）の行が対象になります。表示名には `DNS name`（空なら `Parent`）が使用され、同名になる場合は `Interface` や IP アドレスを付与して自動的に一意化されます。ファイルは mping を実行するユーザーが読める必要があります。include ファイルも YAML と同様に変更が監視され、自動で反映されます（まだ存在しないファイルを YAML に追加した場合も、作成した時点で反映されます）。
 
 ```yaml
 groups:
   - name: Core
     hosts: ["core-sw{01..04}.lab"]
   - name: Branches
-    include: [branches.csv, more-branches.txt]
+    include: [tokyo-netbox.csv, osaka-netbox.csv]
 ```
 
 サンプルは [examples/hosts-patterns.yaml](examples/hosts-patterns.yaml) と [examples/branches.csv](examples/branches.csv) を参照。
@@ -283,7 +281,7 @@ groups:
 | :--- | :--- | :--- | :--- |
 | `--interval` | `-i` | Ping の送信間隔 (ミリ秒) | `1000` |
 | `--timeout` | `-t` | Ping のタイムアウト (ミリ秒) | `1000` |
-| `--file` | `-f` | ホスト一覧の YAML / CSV ファイルパス | `""` |
+| `--file` | `-f` | ホスト一覧の YAML ファイル、または NetBox の IP Addresses CSV エクスポートのパス | `""` |
 | `--traceroute` | `-T` | Traceroute ペインを表示する | `false` |
 | `--mtr` | `-M` | MTR Monitor ペインを表示する (経路別ロス/レイテンシの継続計測) | `false` |
 | `--dns-server` | `-d` | 名前解決に使用するカスタム DNS サーバー IP アドレス | `""` (OSデフォルト) |
