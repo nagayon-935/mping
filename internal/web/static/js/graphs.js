@@ -17,7 +17,7 @@ import { agoLabel, alignSamples, downsample, padTo, sharedMax } from "./timeline
  * @param {{grid: HTMLElement, cursorNote: HTMLElement, onSelect: (id: number) => void}} dom
  */
 export function createGraphs(dom) {
-  const cards = new Map(); // target id -> {root, title, value, canvas, geo}
+  const cards = new Map(); // target id -> {root, status, title, value, canvas, readout, empty, geo}
   let state = { targets: [], history: new Map(), meta: null, points: 0, shared: true, selectedId: null };
   let cursor = -1; // shared point index into every reduced series
   let reduced = { points: 0, size: 1 }; // shape of the last drawn series
@@ -51,7 +51,6 @@ export function createGraphs(dom) {
       // Numeric values belong to the point being inspected. The monitor
       // already shows latest RTT, so idle cards show only their history.
       const v = cursor >= 0 ? values[cursor] : undefined;
-      card.value.hidden = false;
       card.value.textContent = cursor < 0 ? "" : v === null ? "Lost" : v === undefined ? "–" : formatRTT(v);
       card.value.classList.toggle("is-lost", v === null);
       const at = formatTime((state.now ?? Date.now()) - (values.length - 1 - Math.max(cursor,0)) * size * state.meta.interval_ms);

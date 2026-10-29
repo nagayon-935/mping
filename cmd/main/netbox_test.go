@@ -308,7 +308,7 @@ func TestNetBoxCSV_NamesAcrossIncludes(t *testing.T) {
 			writeTestFile(t, dir, "first.csv", "IP Address,"+field+",Interface\n10.0.0.1/24,router,eth0\n")
 			writeTestFile(t, dir, "second.csv", "IP Address,"+field+",Interface\n10.0.0.2/24,router,eth0\n")
 			path := writeTestFile(t, dir, "hosts.yaml", "include: first.csv\ngroups:\n  - name: site\n    include: second.csv\n")
-			for i := 0; i < 2; i++ { // Startup and reload use the same deterministic names.
+			for range 2 { // Startup and reload use the same deterministic names.
 				doc, err := parseHostsFile(path)
 				if err != nil {
 					t.Fatal(err)

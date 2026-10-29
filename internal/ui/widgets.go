@@ -57,9 +57,12 @@ func newHeader(interval time.Duration) *tview.TextView {
 	return header
 }
 
+// footerHelpText is the key help shown in the footer while measurement runs.
+const footerHelpText = "Enter Detail | Tab Pane | f Fold | z Max | w Save | a Add | d Del | s Stop | q Quit"
+
 func newFooter() *tview.TextView {
 	footer := tview.NewTextView().
-		SetText("Enter Detail | Tab Pane | f Fold | z Max | w Save | a Add | d Del | s Stop | q Quit").
+		SetText(footerHelpText).
 		SetTextAlign(tview.AlignCenter).
 		SetTextColor(tcell.ColorYellow).
 		SetWrap(false)

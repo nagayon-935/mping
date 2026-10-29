@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/nagayon-935/mping/internal/report"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -91,9 +92,7 @@ func send(t *testing.T, base string, r req) (int, string) {
 
 func authed(extra map[string]string) map[string]string {
 	h := map[string]string{"X-Mping-Token": testToken, "Content-Type": "application/json"}
-	for k, v := range extra {
-		h[k] = v
-	}
+	maps.Copy(h, extra)
 	return h
 }
 

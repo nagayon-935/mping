@@ -77,9 +77,6 @@ func (p *Pinger) getASNInfo(ipStr string) ASNInfo {
 
 	// Response example: "15169 | 8.8.8.0/24 | US | arin | 1992-12-01"
 	parts := strings.Split(txts[0], "|")
-	if len(parts) == 0 {
-		return ASNInfo{}
-	}
 
 	asnRaw := strings.TrimSpace(parts[0])
 	if asnRaw == "NA" || asnRaw == "" {

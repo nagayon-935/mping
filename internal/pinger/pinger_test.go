@@ -286,7 +286,6 @@ func TestRunReceiverDispatchesReply(t *testing.T) {
 		},
 	}
 	p.connV4 = fake
-	p.targetMap[id] = target
 	p.targetChans[id] = make(chan Reply, 1)
 
 	done := make(chan struct{})
@@ -351,7 +350,6 @@ func TestRunReceiverDispatchesICMPError(t *testing.T) {
 		},
 	}
 	p.connV4 = fake
-	p.targetMap[id] = target
 	p.targetChans[id] = make(chan Reply, 1)
 
 	done := make(chan struct{})
@@ -405,7 +403,6 @@ func TestRunReceiverDispatchesReplyV6(t *testing.T) {
 		},
 	}
 	p.connV6 = fake
-	p.targetMap[id] = target
 	p.targetChans[id] = make(chan Reply, 1)
 
 	done := make(chan struct{})
@@ -470,7 +467,6 @@ func TestRunReceiverDispatchesICMPErrorV6(t *testing.T) {
 		},
 	}
 	p.connV6 = fake
-	p.targetMap[id] = target
 	p.targetChans[id] = make(chan Reply, 1)
 
 	done := make(chan struct{})
@@ -546,7 +542,6 @@ func TestRunReceiverDispatchesPacketTooBigV6(t *testing.T) {
 		},
 	}
 	p.connV6 = fake
-	p.targetMap[id] = target
 	p.targetChans[id] = make(chan Reply, 1)
 
 	done := make(chan struct{})
@@ -1097,28 +1092,28 @@ func TestIsIPv4(t *testing.T) {
 
 func TestDestUnreachStrings(t *testing.T) {
 	for code := 0; code <= 15; code++ {
-		if destUnreachString(code) == "" {
-			t.Fatalf("expected destUnreachString for code %d", code)
+		if icmpErrorString(ipv4.ICMPTypeDestinationUnreachable, code) == "" {
+			t.Fatalf("expected destUnreach string for code %d", code)
 		}
 	}
 	for _, code := range []int{0, 1, 2, 3, 4, 5, 6} {
-		if destUnreachV6String(code) == "" {
+		if icmpV6ErrorString(ipv6.ICMPTypeDestinationUnreachable, code) == "" {
 			t.Fatalf("expected v6 destUnreach string for code %d", code)
 		}
 	}
-	if destUnreachV6String(99) != "Destination Unreachable" {
+	if icmpV6ErrorString(ipv6.ICMPTypeDestinationUnreachable, 99) != "Destination Unreachable" {
 		t.Fatal("expected default v6 destUnreach string")
 	}
 }
 
 func TestParamProblemStringDefaults(t *testing.T) {
-	if paramProblemString(0) != "Parameter Problem" {
+	if icmpErrorString(ipv4.ICMPTypeParameterProblem, 0) != "Parameter Problem" {
 		t.Fatal("expected default param problem")
 	}
-	if paramProblemString(1) != "Missing Required Option" {
+	if icmpErrorString(ipv4.ICMPTypeParameterProblem, 1) != "Missing Required Option" {
 		t.Fatal("expected missing required option")
 	}
-	if paramProblemString(2) != "Bad Length" {
+	if icmpErrorString(ipv4.ICMPTypeParameterProblem, 2) != "Bad Length" {
 		t.Fatal("expected bad length")
 	}
 }
@@ -1304,10 +1299,10 @@ func TestParseInnerEchoIDSeqIPv6(t *testing.T) {
 }
 
 func TestTimeExceededString(t *testing.T) {
-	if timeExceededString(1) != "Fragment Reassembly Time Exceeded" {
+	if icmpErrorString(ipv4.ICMPTypeTimeExceeded, 1) != "Fragment Reassembly Time Exceeded" {
 		t.Fatal("expected fragment reassembly")
 	}
-	if timeExceededString(99) != "Time Exceeded" {
+	if icmpErrorString(ipv4.ICMPTypeTimeExceeded, 99) != "Time Exceeded" {
 		t.Fatal("expected default time exceeded")
 	}
 }
@@ -1413,17 +1408,15 @@ func TestPingerStopConcurrent(t *testing.T) {
 	const iterations = 200
 	const goroutines = 4
 
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		p := NewPinger(nil)
 		start := make(chan struct{})
 		var wg sync.WaitGroup
-		for g := 0; g < goroutines; g++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range goroutines {
+			wg.Go(func() {
 				<-start
 				p.Stop()
-			}()
+			})
 		}
 		close(start)
 		wg.Wait()
@@ -1543,6 +1536,35 @@ func TestExtractEchoIDSeqTRCPattern(t *testing.T) {
 	}
 	if id != 0xAB || seq != 0xCD {
 		t.Errorf("TRC- pattern: got id=%d seq=%d, want id=171 seq=205", id, seq)
+	}
+}
+
+func TestExtractEchoIDSeqTRCPatternBounds(t *testing.T) {
+	tests := []struct {
+		name    string
+		data    []byte
+		wantOK  bool
+		wantID  int
+		wantSeq int
+	}{
+		{"signature at offset with trailing bytes", []byte("\x00\x00TRC-\x01\x02\x03\x04\xff"), true, 0x0102, 0x0304},
+		{"signature ends exactly at the end", []byte("zzTRC-\x00\x07\x00\x09"), true, 7, 9},
+		{"signature with 3 trailing bytes", []byte("TRC-\x00\x07\x00"), false, 0, 0},
+		{"signature without trailing bytes", []byte("xxxxTRC-"), false, 0, 0},
+		{"no signature", []byte("xxxxxxxxxxxx"), false, 0, 0},
+		{"first occurrence is the only candidate", []byte("TRC-\x00\x01\x00\x02TRC-\x00\x03\x00\x04"), true, 1, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := icmp.Message{
+				Type: ipv4.ICMPTypeDestinationUnreachable,
+				Body: &icmp.DstUnreach{Data: tt.data},
+			}
+			id, seq, ok := extractEchoIDSeq(&msg)
+			if ok != tt.wantOK || id != tt.wantID || seq != tt.wantSeq {
+				t.Fatalf("got id=%d seq=%d ok=%v, want id=%d seq=%d ok=%v", id, seq, ok, tt.wantID, tt.wantSeq, tt.wantOK)
+			}
+		})
 	}
 }
 
@@ -1848,7 +1870,6 @@ func TestHandleEchoReply(t *testing.T) {
 		target := stats.NewTargetStats("example.com")
 		p := NewPinger([]*stats.TargetStats{target})
 		id := p.baseID & 0xffff
-		p.targetMap[id] = target
 		ch := make(chan Reply, 1)
 		p.targetChans[id] = ch
 
@@ -1896,7 +1917,6 @@ func TestHandleICMPError(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	p := NewPinger([]*stats.TargetStats{target})
 	id := p.baseID & 0xffff
-	p.targetMap[id] = target
 	ch := make(chan Reply, 1)
 	p.targetChans[id] = ch
 
@@ -1943,7 +1963,6 @@ func TestHandleICMPErrorPacketTooBigV6(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	p := NewPinger([]*stats.TargetStats{target})
 	id := p.baseID & 0xffff
-	p.targetMap[id] = target
 	ch := make(chan Reply, 1)
 	p.targetChans[id] = ch
 
@@ -2526,7 +2545,7 @@ func TestTraceRouteWithTraceCh_TimeExceeded(t *testing.T) {
 
 	// Wait for traceCh to be registered.
 	var ch chan traceMsg
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		p.traceChansMu.RLock()
 		if len(p.traceChans) > 0 {
 			for _, val := range p.traceChans {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -164,7 +165,7 @@ func expandIPv4Range(start netip.Addr, endStr string) ([]string, error) {
 		return nil, errors.New("invalid range: end must not be below start")
 	}
 	sb, eb := start.As4(), end.As4()
-	count := uint64(ipv4ToUint32(eb)) - uint64(ipv4ToUint32(sb)) + 1
+	count := uint64(binary.BigEndian.Uint32(eb[:])) - uint64(binary.BigEndian.Uint32(sb[:])) + 1
 	if count > maxPatternExpansion {
 		return nil, errExpansionTooLarge
 	}
@@ -188,10 +189,6 @@ func parseOctet(s string) (byte, bool) {
 		return 0, false
 	}
 	return byte(n), true
-}
-
-func ipv4ToUint32(b [4]byte) uint32 {
-	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
 }
 
 // expandHostEntries expands every YAML entry's host pattern, copying the

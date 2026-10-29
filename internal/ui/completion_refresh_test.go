@@ -24,7 +24,7 @@ func TestCountCompletionKeepsExternalCloseActive(t *testing.T) {
 		app.SetAfterDrawFunc(func(screen tcell.Screen) {
 			_, height := screen.Size()
 			var line []rune
-			for x := 0; x < 100; x++ {
+			for x := range 100 {
 				r, _, _, _ := screen.GetContent(x, height-1)
 				line = append(line, r)
 			}

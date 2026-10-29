@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -146,7 +147,7 @@ func (c *paneControls) fit(width, height int) {
 			spare -= grow
 		}
 		if spare > 0 {
-			switch i := indexOfPane(others, c.graph); {
+			switch i := slices.Index(others, c.graph); {
 			case i >= 0:
 				sizes[i] += spare
 			case logOpen:
@@ -178,15 +179,6 @@ func (c *paneControls) fit(width, height int) {
 // after the final newline that appendErrorLog ends every message with.
 func logContentLines(log *tview.TextView) int {
 	return max(log.GetWrappedLineCount()-1, 0)
-}
-
-func indexOfPane(panes []*paneControl, target *paneControl) int {
-	for i, pane := range panes {
-		if pane == target {
-			return i
-		}
-	}
-	return -1
 }
 
 func (c *paneControls) current() *paneControl {
@@ -247,11 +239,9 @@ func (c *paneControls) handle(event *tcell.EventKey) bool {
 		if c.maximized != nil {
 			return true
 		}
-		for i, p := range c.panes {
-			if p == pane {
-				c.focus(c.panes[(i+1)%len(c.panes)])
-				return true
-			}
+		if i := slices.Index(c.panes, pane); i >= 0 {
+			c.focus(c.panes[(i+1)%len(c.panes)])
+			return true
 		}
 	}
 	switch event.Rune() {

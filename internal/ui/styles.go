@@ -29,32 +29,29 @@ func lossColorForRate(lossRate float64) tcell.Color {
 	return tcell.ColorGreen
 }
 
+// durationColor colours d against its thresholds: red above crit, orange
+// above warn, green when positive, and white when unset (zero).
+func durationColor(d, warn, crit time.Duration) tcell.Color {
+	switch {
+	case d > crit:
+		return vividRed
+	case d > warn:
+		return tcell.ColorOrange
+	case d > 0:
+		return tcell.ColorGreen
+	default:
+		return tcell.ColorWhite
+	}
+}
+
 func rttColorForRTT(rtt time.Duration) tcell.Color {
 	th := getActiveThresholds()
-	if rtt > th.RTTCrit {
-		return vividRed
-	}
-	if rtt > th.RTTWarn {
-		return tcell.ColorOrange
-	}
-	if rtt > 0 {
-		return tcell.ColorGreen
-	}
-	return tcell.ColorWhite
+	return durationColor(rtt, th.RTTWarn, th.RTTCrit)
 }
 
 func jitterColorForJitter(jitter time.Duration) tcell.Color {
 	th := getActiveThresholds()
-	if jitter > th.JitterCrit {
-		return vividRed
-	}
-	if jitter > th.JitterWarn {
-		return tcell.ColorOrange
-	}
-	if jitter > 0 {
-		return tcell.ColorGreen
-	}
-	return tcell.ColorWhite
+	return durationColor(jitter, th.JitterWarn, th.JitterCrit)
 }
 
 // statusColorTag returns a tview color tag for the given port status.

@@ -4,7 +4,7 @@
 // target added after the window began) and are left blank.
 import { cssVar } from "./dom.js";
 import { formatMs } from "./model.js";
-import { agoLabel } from "./timeline.js";
+import { agoLabel, sharedMax } from "./timeline.js";
 
 function setupCanvas(canvas) {
   const dpr = window.devicePixelRatio || 1;
@@ -18,12 +18,6 @@ function setupCanvas(canvas) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
   return { ctx, w, h };
-}
-
-function seriesMax(series) {
-  let max = 0;
-  for (const v of series) if (v != null && v > max) max = v;
-  return max;
 }
 
 /** Axis/threshold label: whole numbers stay whole ("50", not "50.0"). */
@@ -103,7 +97,7 @@ function endDot(ctx, x, y, colour) {
  */
 export function drawChart(canvas, series, th, intervalMs, opts = {}) {
   const { ctx, w, h } = setupCanvas(canvas);
-  const { max, ticks } = rttAxis(opts.yMax ?? seriesMax(series));
+  const { max, ticks } = rttAxis(opts.yMax ?? sharedMax([series]));
   ctx.font = `11px ${cssVar("--font")}`;
   const left = Math.max(44, ...ticks.map(v => ctx.measureText(tickLabel(v)).width + 12));
   const right = 12, top = 20, bottom = 24;
@@ -116,7 +110,6 @@ export function drawChart(canvas, series, th, intervalMs, opts = {}) {
   const yAt = (v) => top + plotH - (Math.min(v, max) / max) * plotH;
   const baseY = top + plotH;
 
-  ctx.font = `11px ${cssVar("--font")}`;
   ctx.textBaseline = "middle";
   ctx.lineWidth = 1;
   ctx.fillStyle = cssVar("--muted");

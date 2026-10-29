@@ -14,30 +14,18 @@ import (
 // depending on the host's real network interfaces.
 var interfaceByNameFn = net.InterfaceByName
 
-// bindToInterface binds the underlying socket of c to the network interface
-// named ifaceName using IP_BOUND_IF (IPv4) / IPV6_BOUND_IF (IPv6) — macOS's
-// setsockopt equivalent of ping(8)'s -b and ping6(8)'s -B flags. Unlike a
-// source-address bind (net.ListenPacket's bindAddr), this pins the physical
-// egress interface itself, ignoring the routing table and unaffected by the
-// same address being assigned to more than one interface.
+// bindRawConnToInterface binds a socket, already reduced to its
+// syscall.RawConn, to the network interface named ifaceName using IP_BOUND_IF
+// (IPv4) / IPV6_BOUND_IF (IPv6) - macOS's setsockopt equivalent of ping(8)'s
+// -b and ping6(8)'s -B flags. Unlike a source-address bind (net.ListenPacket's
+// bindAddr), this pins the physical egress interface itself, ignoring the
+// routing table and unaffected by the same address being assigned to more than
+// one interface.
 //
-// Failures are non-fatal, mirroring bindif_linux.go's rationale: if the
-// interface name doesn't resolve, c doesn't expose a raw socket, or the
-// setsockopt call fails, mping silently falls back to the source-IP bind
-// Pinger.Start already performs via p.Source.
-func bindToInterface(c net.PacketConn, ifaceName string, isIPv6 bool) {
-	rawConn, ok := rawConnOf(c)
-	if !ok {
-		return
-	}
-	bindRawConnToInterface(rawConn, ifaceName, isIPv6)
-}
-
-// bindRawConnToInterface is bindToInterface for a socket already reduced to
-// its syscall.RawConn — the form net.Dialer.Control hands us, used by the port
-// and HTTP checkers (see dialbind.go) so their TCP/UDP connections leave via
-// the same physical interface as the ICMP sockets above. Failures stay
-// non-fatal for the reasons documented on bindToInterface.
+// The RawConn form is what net.Dialer.Control hands us, used by the port and
+// HTTP checkers (see dialbind.go) so their TCP/UDP connections leave via the
+// same physical interface as the ICMP sockets (see bindToInterface in
+// bindif.go). Failures stay non-fatal for the reasons documented there.
 func bindRawConnToInterface(rawConn syscall.RawConn, ifaceName string, isIPv6 bool) {
 	if ifaceName == "" || rawConn == nil {
 		return

@@ -83,7 +83,7 @@ func handleSnapshot(cache *snapshotCache) http.HandlerFunc {
 
 func handleHistory(src *Source) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		n, ok := historyPoints(w, r)
+		n, ok := queryInt(w, r, "n", defaultHistoryPoints, maxHistoryPoints)
 		if !ok {
 			return
 		}
@@ -99,7 +99,7 @@ func handleHistory(src *Source) http.HandlerFunc {
 // so a dashboard of N sparklines costs one request instead of N.
 func handleBulkHistory(src *Source) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		n, ok := historyPoints(w, r)
+		n, ok := queryInt(w, r, "n", defaultHistoryPoints, maxHistoryPoints)
 		if !ok {
 			return
 		}
@@ -115,11 +115,6 @@ func handleBulkHistory(src *Source) http.HandlerFunc {
 		out.CapturedAt = time.Now().UTC()
 		writeJSON(w, out)
 	}
-}
-
-// historyPoints parses ?n=, writing a 400 itself when it returns ok=false.
-func historyPoints(w http.ResponseWriter, r *http.Request) (int, bool) {
-	return queryInt(w, r, "n", defaultHistoryPoints, maxHistoryPoints)
 }
 
 // queryInt parses an optional query parameter in [1, maxValue], answering
@@ -163,10 +158,9 @@ func historyOf(t *stats.TargetStats, n int) HistoryResponse {
 	samples := t.HistorySamples(n)
 	rtt := make([]*float64, len(samples))
 	for i, sample := range samples {
-		if sample.RTTMS != nil {
-			ms := *sample.RTTMS
-			rtt[i] = &ms
-		}
+		// HistorySamples builds a fresh slice with fresh RTT pointers per
+		// call and nothing mutates them afterwards, so sharing is safe.
+		rtt[i] = sample.RTTMS
 	}
 	return HistoryResponse{ID: t.ID, RTTMs: rtt, Samples: samples, CapturedAt: time.Now().UTC()}
 }

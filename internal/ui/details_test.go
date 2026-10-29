@@ -78,7 +78,7 @@ func TestDetailsSimulationSelectsDuplicateAndReturnsAfterDeletion(t *testing.T) 
 		app.SetAfterDrawFunc(func(screen tcell.Screen) {
 			var b strings.Builder
 			w, h := screen.Size()
-			for y := 0; y < h; y++ {
+			for y := range h {
 				b.WriteString(screenVisibleRow(screen, y, w))
 				b.WriteByte('\n')
 			}

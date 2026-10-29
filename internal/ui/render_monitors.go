@@ -114,10 +114,12 @@ func maxPortColumnWidth(header string, views []stats.TargetView, extractor func(
 	return w + 2
 }
 
-// portColumn is a port monitor column with the cell it shows per result.
-type portColumn struct {
-	boxColumn
-	cell func(stats.PortCheckView) boxCell
+// portRow is one port result of a target. first marks the target's first
+// row, which is the only one that names the target.
+type portRow struct {
+	host  string
+	pr    stats.PortCheckView
+	first bool
 }
 
 func portLabel(pr stats.PortCheckView) string { return fmt.Sprintf("%d/%s", pr.Port, pr.Protocol) }
@@ -141,46 +143,52 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 		}
 	}
 
+	// col is a plain column of the given width showing text per port result.
+	col := func(header string, width int, text func(stats.PortCheckView) string, full bool) monitorColumn[portRow] {
+		return monitorColumn[portRow]{boxColumn{header: header, width: width},
+			plainCell(func(r portRow) string { return text(r.pr) }), full}
+	}
 	// sized fits a plain column to its widest value.
-	sized := func(header string, text func(stats.PortCheckView) string) portColumn {
-		return portColumn{boxColumn{header: header, width: maxPortColumnWidth(header, views, text)},
-			func(pr stats.PortCheckView) boxCell { return boxCell{text: text(pr)} }}
+	sized := func(header string, text func(stats.PortCheckView) string, full bool) monitorColumn[portRow] {
+		return col(header, maxPortColumnWidth(header, views, text), text, full)
 	}
 	rtt := func(get func(stats.PortCheckView) time.Duration) func(stats.PortCheckView) string {
 		return func(pr stats.PortCheckView) string { return formatRTT(get(pr)) }
 	}
-	fixed := func(header, widest string, text func(stats.PortCheckView) string) portColumn {
-		return portColumn{boxColumn{header: header, width: runewidth.StringWidth(widest) + 2},
-			func(pr stats.PortCheckView) boxCell { return boxCell{text: text(pr)} }}
+	fixed := func(header, widest string, text func(stats.PortCheckView) string, full bool) monitorColumn[portRow] {
+		return col(header, runewidth.StringWidth(widest)+2, text, full)
 	}
-	target := portColumn{boxColumn: boxColumn{header: "Target", width: maxHostWidth("Target", targets)}}
-	port := sized("Port", portLabel)
-	service := sized("Service", func(pr stats.PortCheckView) string { return portServiceName(pr.Port, pr.Protocol) })
-	status := portColumn{boxColumn{header: "Status", width: runewidth.StringWidth("Open|Filtered") + 2},
-		func(pr stats.PortCheckView) boxCell { return boxCell{text: pr.Status, tag: statusColorTag(pr.Status)} }}
-	last := sized("Last", rtt(func(pr stats.PortCheckView) time.Duration { return pr.RTT }))
-	minC := sized("Min", rtt(func(pr stats.PortCheckView) time.Duration { return pr.MinRTT }))
-	avg := sized("Avg", rtt(func(pr stats.PortCheckView) time.Duration { return pr.AvgRTT }))
-	maxC := sized("Max", rtt(func(pr stats.PortCheckView) time.Duration { return pr.MaxRTT }))
+	// The target name is shown on the target's first port only.
+	target := monitorColumn[portRow]{boxColumn: boxColumn{header: "Target", width: maxHostWidth("Target", targets)},
+		cell: func(r portRow) boxCell {
+			if r.first {
+				return boxCell{text: tview.Escape(r.host)}
+			}
+			return boxCell{}
+		}}
+	port := sized("Port", portLabel, false)
+	service := sized("Service", func(pr stats.PortCheckView) string { return portServiceName(pr.Port, pr.Protocol) }, true)
+	status := monitorColumn[portRow]{boxColumn{header: "Status", width: runewidth.StringWidth("Open|Filtered") + 2},
+		func(r portRow) boxCell { return boxCell{text: r.pr.Status, tag: statusColorTag(r.pr.Status)} }, false}
+	last := sized("Last", rtt(func(pr stats.PortCheckView) time.Duration { return pr.RTT }), false)
+	minC := sized("Min", rtt(func(pr stats.PortCheckView) time.Duration { return pr.MinRTT }), true)
+	avg := sized("Avg", rtt(func(pr stats.PortCheckView) time.Duration { return pr.AvgRTT }), true)
+	maxC := sized("Max", rtt(func(pr stats.PortCheckView) time.Duration { return pr.MaxRTT }), true)
 	count := fixed("Open/Closed", "Open/Closed", func(pr stats.PortCheckView) string {
 		return fmt.Sprintf("%d/%d", pr.OpenCount, pr.ClosedCount)
-	})
+	}, true)
 	change := fixed("Last Change", "Last Change", func(pr stats.PortCheckView) string {
 		if pr.LastChange.IsZero() {
 			return "-"
 		}
 		return formatLossAgo(pr.LastChange)
-	})
+	}, true)
 
-	cols := []portColumn{target, port, status, last}
-	if availW-target.width-port.width-status.width-last.width-5 >= minPortContentWidth {
-		cols = []portColumn{target, port, service, status, last, minC, avg, maxC, count, change}
-	}
-	boxCols := make([]boxColumn, len(cols))
-	for i, c := range cols {
-		boxCols[i] = c.boxColumn
-	}
-	if len(cols) > 4 {
+	// The extra columns need room beyond the four that always show.
+	compact := availW-target.width-port.width-status.width-last.width-5 < minPortContentWidth
+	all := []monitorColumn[portRow]{target, port, service, status, last, minC, avg, maxC, count, change}
+	cols, boxCols := layoutColumns(all, compact)
+	if !compact {
 		// The last column takes any spare width.
 		if spare := availW - (boxInnerWidth(boxCols) + 2); spare > 0 {
 			boxCols[len(boxCols)-1].width += spare
@@ -190,16 +198,7 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 	groups := make([][][]boxCell, len(views))
 	for ti, view := range views {
 		for i, pr := range view.PortResults {
-			cells := make([]boxCell, len(cols))
-			for ci, c := range cols {
-				switch {
-				case c.cell != nil:
-					cells[ci] = c.cell(pr)
-				case i == 0: // the target name, on its first port only
-					cells[ci] = boxCell{text: tview.Escape(view.Host)}
-				}
-			}
-			groups[ti] = append(groups[ti], cells)
+			groups[ti] = append(groups[ti], rowCells(cols, portRow{host: view.Host, pr: pr, first: i == 0}))
 		}
 	}
 

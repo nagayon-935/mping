@@ -47,7 +47,7 @@ type supervisorConfig struct {
 	mtrEnabled   bool
 	countLimited bool
 	logCh        chan string
-	eventSink    func(uint64, string, stats.Event)
+	eventSink    func(string, stats.Event)
 }
 
 // supervisorState tracks whether this supervisor's components are running.
@@ -221,11 +221,7 @@ func (s *supervisor) startTraceroutes(pr tracer) {
 
 // onFlap is the shared callback for MTR route-flap events.
 func (s *supervisor) onFlap(host, desc string) {
-	select {
-	case s.cfg.logCh <- fmt.Sprintf("[yellow][%s] Route flap %s: %s[-]",
-		time.Now().Format("15:04:05"), host, desc):
-	default:
-	}
+	postLog(s.cfg.logCh, fmt.Sprintf("[yellow][%s] Route flap %s: %s[-]", clock(), host, desc))
 }
 
 // handle executes one command against the current state. It is the single
@@ -358,13 +354,19 @@ func (s *supervisor) handle(c command) error {
 	return fmt.Errorf("supervisor: unknown command %d", c.kind)
 }
 
-// startAll runs only in stateStopped, after the previous measurement has
-// been joined. A failed Start is released here and leaves the state stopped.
-func (s *supervisor) startAll() error {
+// clearFinished drops a pending count-completion notification so a membership
+// or restart change is not mistaken for a run that just finished.
+func (s *supervisor) clearFinished() {
 	select {
 	case <-s.finished:
 	default:
 	}
+}
+
+// startAll runs only in stateStopped, after the previous measurement has
+// been joined. A failed Start is released here and leaves the state stopped.
+func (s *supervisor) startAll() error {
+	s.clearFinished()
 	var next pingerController
 	if s.cfg.makeTargetPinger != nil {
 		next = s.cfg.makeTargetPinger(s.cfg.packetSize, s.cfg.targets, s.cfg.specs)
@@ -398,9 +400,7 @@ func (s *supervisor) startAll() error {
 }
 
 func (s *supervisor) startCountObserver(next pingerController) {
-	s.observers.Add(1)
-	go func() {
-		defer s.observers.Done()
+	s.observers.Go(func() {
 		notify := func() bool {
 			select {
 			case s.cmds <- command{kind: cmdProbesFinished, pinger: next}:
@@ -426,22 +426,19 @@ func (s *supervisor) startCountObserver(next pingerController) {
 			next.WaitWorkers()
 			notify()
 		}
-	}()
+	})
 }
 
 func (s *supervisor) configureTarget(t *stats.TargetStats) {
 	t.ConfigureHealth(healthPolicy(s.cfg.config))
-	id, host := t.ID, t.DisplayName()
+	host := t.DisplayName()
 	sink, logCh := s.cfg.eventSink, s.cfg.logCh
 	t.SetEventSink(func(e stats.Event) {
 		if sink != nil {
-			sink(id, host, e)
+			sink(host, e)
 		}
 		if e.Kind == "health" {
-			select {
-			case logCh <- fmt.Sprintf("[%s] %s: %s", e.At.Format("15:04:05"), tview.Escape(host), tview.Escape(e.Message)):
-			default:
-			}
+			postLog(logCh, fmt.Sprintf("[%s] %s: %s", e.At.Format("15:04:05"), tview.Escape(host), tview.Escape(e.Message)))
 		}
 	})
 }

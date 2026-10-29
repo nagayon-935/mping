@@ -1,5 +1,5 @@
 // Pure dashboard logic: no DOM, so it can be unit-tested under node.
-// Threshold semantics mirror internal/ui (tui_helpers.go, mtr_view.go).
+// Threshold semantics mirror internal/ui (styles.go, mtr_view.go).
 
 /** Level for a value against warn/crit, strictly greater-than like the TUI. */
 export function levelAbove(value, warn, crit) {
@@ -68,9 +68,6 @@ export function cellLevels(t, th) {
   return {
     loss: t.recv + t.loss === 0 ? "none" : lossLevel(t, th),
     last: rtt(t.last_rtt_ms),
-    avg: rtt(t.avg_rtt_ms),
-    min: rtt(t.min_rtt_ms),
-    max: rtt(t.max_rtt_ms),
     jitter: levelAbove(t.jitter_ms, th.jitter_warn_ms, th.jitter_crit_ms),
   };
 }
@@ -214,25 +211,6 @@ export function validateHost(raw) {
   if (host.length > MAX_HOST_LEN) return { error: `Host is longer than ${MAX_HOST_LEN} characters.` };
   if (/[\s\p{Cc}]/u.test(host)) return { error: "Host must not contain spaces or control characters." };
   return { host };
-}
-
-/** Header summary as [count, label] pairs; "waiting" only when non-zero. */
-export function summaryItems(s) {
-  const items = [[s.total, "targets"], [s.ok, "OK"], [s.warn, "warn"], [s.crit, "crit"]];
-  if (s.pending > 0) items.push([s.pending, "waiting"]);
-  return items;
-}
-
-/**
- * Read-only badge text and tooltip. The token is stored per origin and the
- * Log pane links to localhost, so a page opened under another host name
- * (e.g. 127.0.0.1) never sees it.
- */
-export function readOnlyHint(hostname) {
-  const base = "To enable browser controls, press b in mping's TUI, choose Copy URL, and open that link";
-  return hostname === "localhost"
-    ? { text: "Read-only", title: `${base}.` }
-    : { text: "Read-only", title: `${base} (it uses localhost; open that address instead of ${hostname}).` };
 }
 
 /**

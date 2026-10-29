@@ -52,8 +52,8 @@ type TargetView struct {
 
 // viewLocked builds a TargetView, obtaining the History field from
 // historyFn. Caller must already hold t.mu (a read lock is sufficient).
-// Shared by GetView (full history) and GetViewWindow (trailing window
-// only) so the two stay in sync automatically.
+// Shared by GetView (full history), GetViewWindow (trailing window only) and
+// ReportData (full history plus events) so they stay in sync automatically.
 func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 	var avg time.Duration
 	if t.Recv > 0 {

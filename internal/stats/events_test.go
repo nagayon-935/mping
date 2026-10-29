@@ -7,7 +7,7 @@ import (
 
 func TestTargetEventsAreBoundedAndIndependentOfView(t *testing.T) {
 	target := NewTargetStats("same")
-	for i := 0; i < maxTargetEvents+5; i++ {
+	for range maxTargetEvents + 5 {
 		target.RecordEvent("test", "event")
 	}
 	events, dropped := target.Events()

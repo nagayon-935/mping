@@ -31,10 +31,7 @@ func isNetBoxCSVData(data []byte) bool {
 	if len(trimmed) == 0 {
 		return false
 	}
-	firstLine := trimmed
-	if i := bytes.IndexByte(trimmed, '\n'); i >= 0 {
-		firstLine = trimmed[:i]
-	}
+	firstLine, _, _ := bytes.Cut(trimmed, []byte{'\n'})
 	r := csv.NewReader(bytes.NewReader(firstLine))
 	r.FieldsPerRecord = -1
 	header, err := r.Read()
@@ -52,17 +49,10 @@ func trimLeadingCommentsAndBlanks(data []byte) ([]byte, int) {
 	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	skippedLines := 0
 	for len(data) > 0 {
-		line := data
-		var rest []byte
-		hasNewline := false
-		if i := bytes.IndexByte(data, '\n'); i >= 0 {
-			line = data[:i]
-			rest = data[i+1:]
-			hasNewline = true
-		}
+		line, rest, found := bytes.Cut(data, []byte{'\n'})
 		trimmed := bytes.TrimSpace(line)
 		if len(trimmed) == 0 || trimmed[0] == '#' {
-			if !hasNewline {
+			if !found {
 				return nil, skippedLines
 			}
 			data = rest
@@ -222,8 +212,7 @@ func parseNetBoxIP(s string) (string, error) {
 }
 
 func formatCSVError(path, kind string, lineOffset int, err error) error {
-	var pe *csv.ParseError
-	if errors.As(err, &pe) {
+	if pe, ok := errors.AsType[*csv.ParseError](err); ok {
 		return fmt.Errorf("%s %q line %d: %w", kind, path, lineOffset+pe.Line, pe.Err)
 	}
 	return fmt.Errorf("%s %q: %w", kind, path, err)

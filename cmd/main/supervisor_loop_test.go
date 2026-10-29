@@ -60,19 +60,17 @@ func TestDo_AfterShutdownReturnsSentinel(t *testing.T) {
 // TestDo_ConcurrentSendersDuringShutdown is the stress form: many senders
 // racing a Shutdown must all return and none may panic or hang.
 func TestDo_ConcurrentSendersDuringShutdown(t *testing.T) {
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		sup := newLoopTestSupervisor(t)
 		sup.Start()
 
 		var wg sync.WaitGroup
 		start := make(chan struct{})
-		for g := 0; g < 8; g++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range 8 {
+			wg.Go(func() {
 				<-start
 				_ = sup.do(cmdResetPort)
-			}()
+			})
 		}
 		close(start)
 		sup.Shutdown()

@@ -33,17 +33,15 @@ type tableRenderer struct {
 	packetSize int
 	groups     []TargetGroup
 
-	cols                    []column
-	fullHeaders             []string
-	fullAligns              []int
-	baseWidths              []int
-	minWidths               []int
-	maxWidths               []int
-	shrinkPriorities        []int
-	growPriorities          []int
-	compactShrinkPriorities []int
-	compactGrowPriorities   []int
-	lastLossBase            int
+	cols             []column
+	fullHeaders      []string
+	fullAligns       []int
+	baseWidths       []int
+	minWidths        []int
+	maxWidths        []int
+	shrinkPriorities []int
+	growPriorities   []int
+	lastLossBase     int
 
 	headerColor tcell.Color
 	rowColor    tcell.Color
@@ -113,17 +111,6 @@ func newTableRenderer(
 		tr.growPriorities[i] = c.growPriority
 	}
 
-	// compactCols mirrors buildCompactLayout's fixed Host/Path/Stats/Error
-	// schema; only its priorities are needed here since headers/min/max come
-	// from buildCompactLayout itself (recomputed every tick from live data).
-	compactCols := compactTableColumns()
-	tr.compactShrinkPriorities = make([]int, len(compactCols))
-	tr.compactGrowPriorities = make([]int, len(compactCols))
-	for i, c := range compactCols {
-		tr.compactShrinkPriorities[i] = c.shrinkPriority
-		tr.compactGrowPriorities[i] = c.growPriority
-	}
-
 	// The Error column's max grows to fit the widest known error string
 	// rather than staying at its static base.
 	errorIdx := columnsByName(cols, "Error")
@@ -173,10 +160,10 @@ func (tr *tableRenderer) calcColumnWidths(views []stats.TargetView) []int {
 }
 
 // rowRenderMargin extends the rendered row window beyond what's strictly
-// visible on each side, so a single scroll step (input_handler.go's
-// Up/Down/PgUp/PgDn) lands within an already-rendered range even before
-// its forced synchronous update() call (see inputHandlerDeps.forceUpdate)
-// completes — a cheap extra safety net, not the primary mechanism.
+// visible on each side, so a small offset change between two update() calls
+// (a selection move re-renders through moveSelection→update, but the table
+// can also scroll on its own) never exposes unrendered rows — a cheap extra
+// safety net, not the primary mechanism.
 const rowRenderMargin = 5
 
 // tableInnerHeight returns the inner height available to the Ping Monitor
@@ -184,10 +171,8 @@ const rowRenderMargin = 5
 // laid out by Flex.Draw.
 func (tr *tableRenderer) tableInnerHeight() int {
 	_, _, _, h := tr.table.GetInnerRect()
-	if tr.tablePane != nil {
-		if _, _, _, paneH := tr.tablePane.GetInnerRect(); paneH > h {
-			h = paneH
-		}
+	if _, _, _, paneH := tr.tablePane.GetInnerRect(); paneH > h {
+		h = paneH
 	}
 	return h
 }
@@ -199,42 +184,29 @@ func (tr *tableRenderer) visibleDataRows() int {
 	return max(tableMaxRows, (tr.tableInnerHeight()-2)/2)
 }
 
-func (tr *tableRenderer) visibleRowWindow(offsetRow, totalDataRows int) (start, end int) {
-	return visibleRowWindowForHeight(offsetRow, totalDataRows, tr.visibleDataRows())
-}
-
-// ensureRenderedForSize re-renders the table when the Ping Monitor pane's
-// inner dimensions have changed since the last update() call (e.g. initial
-// layout, terminal resize, pane fold/maximize).
-func (tr *tableRenderer) ensureRenderedForSize() {
-	if tr.tablePane == nil {
-		return
-	}
-	_, _, w, h := tr.tablePane.GetInnerRect()
-	if w != tr.lastRenderWidth || h != tr.lastRenderHeight {
-		tr.update()
-	}
-}
-
-// visibleRowWindowForHeight returns the [start, end) range of data-row indices
+// visibleRowWindow returns the [start, end) range of data-row indices
 // (0-based — matching indices into tr.targets, tr.groupRowMap, or
 // compactRows depending on layout) that should actually be rendered this
 // tick, given the table's current scroll offset. offsetRow is the table's
 // GetOffset() row (0-based, counting from the first data row below the
 // fixed header). totalDataRows is the logical total row count for whichever
 // layout is active — tr.rowCount minus 1, i.e. NOT reduced by windowing,
-// so input_handler.go's maxOffset scroll math (which reads tr.rowCount)
-// stays correct regardless of how few rows are actually rendered.
-func visibleRowWindowForHeight(offsetRow, totalDataRows, visibleRows int) (start, end int) {
-	start = offsetRow - rowRenderMargin
-	if start < 0 {
-		start = 0
-	}
-	end = offsetRow + max(visibleRows, tableMaxRows) + 1 + rowRenderMargin
-	if end > totalDataRows {
-		end = totalDataRows
-	}
+// so reconcileSelection's offset clamping (which reads tr.rowCount) stays
+// correct regardless of how few rows are actually rendered.
+func (tr *tableRenderer) visibleRowWindow(offsetRow, totalDataRows int) (start, end int) {
+	start = max(offsetRow-rowRenderMargin, 0)
+	end = min(offsetRow+tr.visibleDataRows()+1+rowRenderMargin, totalDataRows)
 	return start, end
+}
+
+// ensureRenderedForSize re-renders the table when the Ping Monitor pane's
+// inner dimensions have changed since the last update() call (e.g. initial
+// layout, terminal resize, pane fold/maximize).
+func (tr *tableRenderer) ensureRenderedForSize() {
+	_, _, w, h := tr.tablePane.GetInnerRect()
+	if w != tr.lastRenderWidth || h != tr.lastRenderHeight {
+		tr.update()
+	}
 }
 
 // fetchViews takes one GetView() snapshot per target, in order. Called once
@@ -255,11 +227,8 @@ func (tr *tableRenderer) update() {
 	if tr.beforeUpdate != nil {
 		tr.beforeUpdate()
 	}
-	if tr.tablePane != nil {
-		_, _, tr.lastRenderWidth, tr.lastRenderHeight = tr.tablePane.GetInnerRect()
-	}
+	_, _, tr.lastRenderWidth, tr.lastRenderHeight = tr.tablePane.GetInnerRect()
 	tr.table.Clear()
-	tr.tablePane.SetTitle(" Ping Monitor ")
 
 	// One GetView() snapshot per target for this whole tick — width calc,
 	// compact layout, and row rendering all read from this same slice
@@ -273,7 +242,7 @@ func (tr *tableRenderer) update() {
 	}
 	// Only the visible (plus margin) row window is rendered — see
 	// visibleRowWindow. rowCount stays the full logical count regardless,
-	// so input_handler.go's scroll math is unaffected.
+	// so reconcileSelection's offset clamping is unaffected.
 	offsetRow, _ := tr.table.GetOffset()
 
 	setHeaderRow(tr.table, 0, tr.activeHeaders, tr.widths, tr.activeAligns, tr.headerColor)
@@ -325,7 +294,7 @@ func (tr *tableRenderer) chooseLayout(views []stats.TargetView) []compactRow {
 		compact := buildCompactLayout(views, tr.packetSize, tr.sourceIPv4, tr.sourceIPv6, tr.lastLossBase)
 		compactRows = compact.rows
 		compactAvailableColumnsWidth := max(availableTableWidth-(len(compact.headers)+1), 0)
-		if widths, fits := fitWidthsToAvailable(compact.desired, compact.min, compact.max, tr.compactShrinkPriorities, tr.compactGrowPriorities, compactAvailableColumnsWidth); fits {
+		if widths, fits := fitWidthsToAvailable(compact.desired, compact.min, compact.max, compact.shrink, compact.grow, compactAvailableColumnsWidth); fits {
 			tr.compactLayout = true
 			tr.widths = widths
 			tr.activeHeaders = append([]string(nil), compact.headers...)
@@ -382,17 +351,9 @@ func (tr *tableRenderer) scanTargets(views []stats.TargetView) ([]columnRowConte
 }
 
 func (tr *tableRenderer) renderCompactRows(rows []compactRow, offsetRow int) {
-	pick := func(right, left string) string {
-		if right != "" {
-			return right
-		}
-		return left
-	}
 	start, end := tr.visibleRowWindow(offsetRow, len(rows))
 	for i := start; i < end; i++ {
-		r := rows[i]
-		values := []string{pick(r.hostR, r.hostL), pick(r.pathR, r.pathL), pick(r.statR, r.statL), pick(r.errR, r.errL)}
-		tr.setRow(i+1, buildCompactRowCells(values, tr.widths, tr.activeAligns, tr.rowColor))
+		tr.setRow(i+1, buildCompactRowCells(rows[i][:], tr.widths, tr.activeAligns, tr.rowColor))
 	}
 }
 

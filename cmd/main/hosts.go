@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -127,12 +126,7 @@ type thresholdsYAML struct {
 // relative to the hosts file's directory. A CSV host list or NetBox IP
 // addresses CSV export may also be passed directly via -f / --file.
 func parseHostsFile(path string) (hostsFileYAML, error) {
-	var data []byte
-	err := asRealUser(func() error {
-		var err error
-		data, err = os.ReadFile(path)
-		return err
-	})
+	data, err := readFileAsRealUser(path)
 	if err != nil {
 		return hostsFileYAML{}, fmt.Errorf("read hosts file %q: %w", path, err)
 	}

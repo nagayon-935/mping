@@ -33,14 +33,14 @@ const (
 	// seqMask masks a logical (unbounded) seq counter down to the 16-bit
 	// range the ICMP echo Seq field occupies on the wire: icmp.Echo.Marshal
 	// truncates via uint16(p.Seq), and icmp.ParseMessage never returns a Seq
-	// outside [0, 65535]. runWorker's seq counter is a plain int that grows
+	// outside [0, 65535]. runTargetWorker's seq counter is a plain int that grows
 	// forever, so it must be masked both when building the outgoing Echo
 	// and when matching an incoming reply — otherwise, once the counter
 	// exceeds 65535, replies (correctly wrapped by the peer) never compare
 	// equal to it again and every subsequent probe times out permanently.
 	seqMask = 0xffff
 
-	// recentSeqHistoryCap bounds recentSeqHistory, the FIFO runWorker keeps
+	// recentSeqHistoryCap bounds recentSeqHistory, the FIFO runTargetWorker keeps
 	// of recently-resolved wire seqs (see recentSeqHistory's doc) so it can
 	// classify a reply that no longer matches `unacked` as a duplicate or a
 	// late arrival instead of silently discarding it.
@@ -74,7 +74,7 @@ const (
 	// minTimestampPayloadSize is the smallest -s payload size with room for
 	// both payloadSignature and the embedded timestamp (5 + 8 = 13 bytes).
 	// Below it, embedSendTimestamp/extractSendTimestamp are no-ops and
-	// runWorker falls back to its own start-time bookkeeping in `unacked`.
+	// runTargetWorker falls back to its own start-time bookkeeping in `unacked`.
 	minTimestampPayloadSize = timestampOffset + timestampSize
 )
 
@@ -119,10 +119,10 @@ type Reply struct {
 	// RTT is computed in the receiver goroutine from the timestamp
 	// embedSendTimestamp wrote into the probe's own payload (see
 	// handleEchoReply/extractSendTimestamp), avoiding the scheduling delay
-	// of also crossing into runWorker's goroutine to compute it there. It
+	// of also crossing into runTargetWorker's goroutine to compute it there. It
 	// is left at its zero value whenever that timestamp couldn't be
 	// trusted — payload too small for -s, signature mismatch, or a
-	// suspicious result caught by isPlausibleRTT — in which case runWorker
+	// suspicious result caught by isPlausibleRTT — in which case runTargetWorker
 	// falls back to its own start-time bookkeeping in `unacked`.
 	RTT time.Duration
 	TTL int
@@ -149,7 +149,7 @@ type Pinger struct {
 	Source string // Source IP address to bind to
 
 	// Interface is the network interface name requested via -I. When set,
-	// Start() and OpenHopSocket() additionally bind each socket to this
+	// Start() and OpenHopSocketContext() additionally bind each socket to this
 	// physical interface (SO_BINDTODEVICE on Linux, IP_BOUND_IF/
 	// IPV6_BOUND_IF on Darwin — see bindif_linux.go/bindif_darwin.go),
 	// on top of the source-IP bind Source already performs. This enforces
@@ -181,7 +181,6 @@ type Pinger struct {
 
 	connV4           PacketConnV4
 	connV6           PacketConnV6
-	targetMap        map[int]*stats.TargetStats
 	targetChans      map[int]chan Reply
 	mapMu            sync.RWMutex
 	baseID           int
@@ -203,7 +202,7 @@ type Pinger struct {
 	// every worker.
 	probeTimeout time.Duration
 
-	// initialSeq is the value runWorker's logical seq counter starts from
+	// initialSeq is the value runTargetWorker's logical seq counter starts from
 	// (before the first seq++). Always 0 in production; tests override it
 	// via Options.InitialSeq to reach the 16-bit wraparound boundary
 	// without waiting for 65535 real probes.
@@ -259,7 +258,7 @@ func privilegedListenPacket(network, address string) (net.PacketConn, error) {
 
 // bindToInterfaceFn is a seam over the platform-specific bindToInterface
 // implementation (bindif_linux.go / bindif_darwin.go / bindif_other.go),
-// letting tests verify that Start() and OpenHopSocket() dispatch to it with
+// letting tests verify that Start() and openHopSocketAddr() dispatch to it with
 // the correct interface name and address family without requiring root
 // privileges, real sockets, or real network interfaces.
 var bindToInterfaceFn = func(c net.PacketConn, ifaceName string, isIPv6 bool) {
@@ -289,7 +288,7 @@ type Options struct {
 	AsnEnabled           bool
 	PtrEnabled           bool
 
-	// InitialSeq overrides the starting value of runWorker's logical seq
+	// InitialSeq overrides the starting value of runTargetWorker's logical seq
 	// counter. Zero value matches production behavior (start at 0); tests
 	// set it to exercise the 16-bit ICMP seq wraparound boundary.
 	InitialSeq int
@@ -365,7 +364,6 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		workerStates:       make(map[*stats.TargetStats]*targetWorker),
 		workerEvents:       make(chan struct{}, 1),
 		resolveAddresses:   make(map[*stats.TargetStats]string),
-		targetMap:          make(map[int]*stats.TargetStats),
 		targetChans:        make(map[int]chan Reply),
 		asnCache:           make(map[string]ASNInfo),
 		ptrCache:           make(map[string]string),
@@ -439,6 +437,20 @@ func (p *Pinger) Stop() {
 	})
 }
 
+// listenICMP opens a raw ICMP (v4) or ICMPv6 (v6) socket bound to the
+// configured Source address, or to the wildcard address when none is set.
+// Interface binding is left to the caller via bindToInterfaceFn.
+func (p *Pinger) listenICMP(v6 bool) (net.PacketConn, error) {
+	network, bindAddr := "ip4:icmp", "0.0.0.0"
+	if v6 {
+		network, bindAddr = "ip6:ipv6-icmp", "::"
+	}
+	if p.Source != "" {
+		bindAddr = p.Source
+	}
+	return p.listenPacket(network, bindAddr)
+}
+
 func (p *Pinger) Start(interval, timeout time.Duration) error {
 	p.probeTimeout = timeout
 	p.interval = interval
@@ -447,13 +459,7 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 
 	// Initialize IPv4
 	if p.Source == "" || isIPv4(p.Source) {
-		network := "ip4:icmp"
-		bindAddr := "0.0.0.0"
-		if p.Source != "" {
-			bindAddr = p.Source
-		}
-
-		c, err := p.listenPacket(network, bindAddr)
+		c, err := p.listenICMP(false)
 		if err == nil {
 			// Non-fatal: true interface binding may be unsupported on this
 			// platform, or fail (e.g. missing privileges); the source-IP
@@ -469,13 +475,7 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 
 	// Initialize IPv6
 	if p.Source == "" || !isIPv4(p.Source) {
-		network := "ip6:ipv6-icmp"
-		bindAddr := "::"
-		if p.Source != "" {
-			bindAddr = p.Source
-		}
-
-		c, err := p.listenPacket(network, bindAddr)
+		c, err := p.listenICMP(true)
 		if err == nil {
 			// Non-fatal, same rationale as the IPv4 block above.
 			bindToInterfaceFn(c, p.Interface, true)
@@ -510,12 +510,10 @@ func (p *Pinger) Start(interval, timeout time.Duration) error {
 
 	// Start Receivers
 	if p.connV4 != nil {
-		p.wg.Add(1)
-		go func() { defer p.wg.Done(); p.runReceiverV4() }()
+		p.wg.Go(p.runReceiverV4)
 	}
 	if p.connV6 != nil {
-		p.wg.Add(1)
-		go func() { defer p.wg.Done(); p.runReceiverV6() }()
+		p.wg.Go(p.runReceiverV6)
 	}
 
 	return nil

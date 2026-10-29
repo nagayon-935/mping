@@ -58,7 +58,7 @@ func renderHostDetails(t *stats.TargetStats, opts RunOptions) string {
 	}
 	fmt.Fprint(&b, "\n\n")
 	fmt.Fprintf(&b, "[yellow]Ping[-]\nSent: %d | Received: %d | Loss: %d | Cancelled: %d\nLoss ratio (completed attempts): %.1f%% | DUP: %d | Late: %d\n", v.Sent, v.Recv, v.Loss, v.Cancelled, calcLossRate(v), v.Duplicates, v.LateReplies)
-	fmt.Fprintf(&b, "RTT last/min/avg/max: %s / %s / %s / %s\nJitter: %s | TTL: %s | Last loss: %s\nError: %s\n", formatRTT(v.LastRTT), formatRTT(v.MinRTT), formatRTT(v.AvgRTT), formatRTT(v.MaxRTT), formatRTT(v.Jitter), ttlString(v.LastTTL), formatLossAgo(v.LastLossTime), tview.Escape(v.LastError))
+	fmt.Fprintf(&b, "RTT last/min/avg/max: %s / %s / %s / %s\nJitter: %s | TTL: %s | Last loss: %s\nError: %s\n", formatRTT(v.LastRTT), formatRTT(v.MinRTT), formatRTT(v.AvgRTT), formatRTT(v.MaxRTT), formatRTT(v.Jitter), intOrDash(v.LastTTL), formatLossAgo(v.LastLossTime), tview.Escape(v.LastError))
 	var annotations []string
 	if opts.ASNEnabled {
 		annotations = append(annotations, fmt.Sprintf("ASN: %s %s", tview.Escape(v.ASN), tview.Escape(v.Org)))

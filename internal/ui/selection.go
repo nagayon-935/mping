@@ -1,26 +1,21 @@
 package ui
 
 import (
+	"slices"
+
 	"github.com/gdamore/tcell/v2"
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
 func (tr *tableRenderer) selectedTarget() *stats.TargetStats {
-	for _, t := range tr.targets {
-		if t.ID == tr.selectedID {
-			return t
-		}
+	if i := tr.selectedIndex(); i >= 0 {
+		return tr.targets[i]
 	}
 	return nil
 }
 
 func (tr *tableRenderer) selectedIndex() int {
-	for i, t := range tr.targets {
-		if t.ID == tr.selectedID {
-			return i
-		}
-	}
-	return -1
+	return slices.IndexFunc(tr.targets, func(t *stats.TargetStats) bool { return t.ID == tr.selectedID })
 }
 
 func (tr *tableRenderer) selectedRow() int {
@@ -86,13 +81,7 @@ func (tr *tableRenderer) moveSelection(key tcell.Key) {
 	if len(order) == 0 {
 		return
 	}
-	i := 0
-	for n, index := range order {
-		if tr.targets[index].ID == tr.selectedID {
-			i = n
-			break
-		}
-	}
+	i := max(slices.IndexFunc(order, func(index int) bool { return tr.targets[index].ID == tr.selectedID }), 0)
 	pageStep := max(tableMaxRows, (tr.tableInnerHeight()-3)/2)
 	delta := 1
 	switch key {

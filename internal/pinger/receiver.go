@@ -3,6 +3,7 @@ package pinger
 import (
 	"errors"
 	"net"
+	"slices"
 	"time"
 
 	"golang.org/x/net/icmp"
@@ -131,17 +132,16 @@ func (p *Pinger) runReceiverV4() {
 		return n, ttl, 0, src, err
 	}, func(t time.Time) error {
 		return p.connV4.SetReadDeadline(t)
-	}, func(buf []byte, n int, msg *icmp.Message) *icmp.Message {
-		// Try parsing as IP packet with header
-		if msg == nil && n > 0 && buf[0] == 0x45 {
-			ihl := int(buf[0]&0x0f) * 4
-			if n > ihl {
-				if msg2, err2 := icmp.ParseMessage(1, buf[ihl:n]); err2 == nil {
-					return msg2
-				}
+	}, func(buf []byte, n int) *icmp.Message {
+		// Try parsing as IP packet with header. 0x45 is IPv4 with a 5-word
+		// (20-byte) header, so the ICMP message starts at offset 20.
+		const ihl = 20
+		if n > 0 && buf[0] == 0x45 && n > ihl {
+			if msg, err := icmp.ParseMessage(1, buf[ihl:n]); err == nil {
+				return msg
 			}
 		}
-		return msg
+		return nil
 	})
 }
 
@@ -161,12 +161,14 @@ func (p *Pinger) runReceiverV6() {
 
 // runReceiver is the unified receiver loop for both IPv4 and IPv6.
 // readFrom returns (bytesRead, ttlOrHopLimit, dscp, srcAddr, error).
-// fallbackParse is an optional fallback parser for raw IP packets (used by IPv4).
+// fallbackParse is an optional fallback parser for raw IP packets (used by
+// IPv4), tried when buf[:n] does not parse as a bare ICMP message; it returns
+// nil when it cannot parse the packet either.
 func (p *Pinger) runReceiver(
 	cfg receiverConfig,
 	readFrom func(buf []byte) (int, int, int, net.Addr, error),
 	setDeadline func(time.Time) error,
-	fallbackParse func(buf []byte, n int, msg *icmp.Message) *icmp.Message,
+	fallbackParse func(buf []byte, n int) *icmp.Message,
 ) {
 	buf := make([]byte, receiverBufferSize)
 	for {
@@ -189,7 +191,7 @@ func (p *Pinger) runReceiver(
 			msg, err := icmp.ParseMessage(cfg.protocol, buf[:n])
 			if err != nil {
 				if fallbackParse != nil {
-					msg = fallbackParse(buf, n, nil)
+					msg = fallbackParse(buf, n)
 				}
 				if msg == nil {
 					continue
@@ -208,12 +210,7 @@ func (p *Pinger) runReceiver(
 }
 
 func isErrorType(t icmp.Type, errorTypes []icmp.Type) bool {
-	for _, et := range errorTypes {
-		if t == et {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(errorTypes, t)
 }
 
 func (p *Pinger) handleEchoReply(msg *icmp.Message, ttl, dscp int) {

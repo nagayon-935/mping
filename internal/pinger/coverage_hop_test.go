@@ -135,11 +135,9 @@ func TestOpenHopSocket_ListenPacketFailureV6(t *testing.T) {
 
 // TestHopSocket_CloseV6 covers the v6 branch of HopSocket.Close.
 func TestHopSocket_CloseV6(t *testing.T) {
-	p := NewPingerWithOptions(nil, Options{})
 	sock := &HopSocket{
 		isV4:   false,
 		sendV6: &fakeHopConnV6{},
-		pinger: p,
 	}
 	sock.Close()
 }
@@ -184,7 +182,7 @@ func TestProbeHop_ResolveFailure(t *testing.T) {
 			return nil, fmt.Errorf("resolve failed")
 		},
 	})
-	sock := &HopSocket{isV4: true, sendV4: &fakeHopConn{}, pinger: p}
+	sock := &HopSocket{isV4: true, sendV4: &fakeHopConn{}}
 	_, err := p.ProbeHop(context.Background(), sock, "8.8.8.8", 1, 0x1234, time.Second)
 	if err == nil {
 		t.Fatal("expected error when resolve fails")
@@ -202,7 +200,6 @@ func TestProbeHop_NoTraceCh_V4(t *testing.T) {
 	sock := &HopSocket{
 		isV4:   true,
 		sendV4: &fakeHopConn{},
-		pinger: p,
 		// traceCh intentionally nil to exercise receiveViaSocket
 	}
 	reply, err := p.ProbeHop(context.Background(), sock, "8.8.8.8", 1, 0x1234, 50*time.Millisecond)
@@ -224,7 +221,6 @@ func TestProbeHop_NoTraceCh_V6(t *testing.T) {
 	sock := &HopSocket{
 		isV4:   false,
 		sendV6: &fakeHopConnV6{},
-		pinger: p,
 	}
 	reply, err := p.ProbeHop(context.Background(), sock, "2001:4860:4860::8888", 1, 0x1234, 50*time.Millisecond)
 	if err != nil {
@@ -249,7 +245,6 @@ func TestProbeHop_ContextCancelled(t *testing.T) {
 	sock := &HopSocket{
 		isV4:   true,
 		sendV4: &fakeHopConn{},
-		pinger: p,
 	}
 	_, err := p.ProbeHop(ctx, sock, "8.8.8.8", 1, 0x1234, time.Second)
 	if err == nil {

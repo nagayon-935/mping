@@ -130,7 +130,7 @@ func TestRunWorker_LateReply_DoesNotChangeLoss(t *testing.T) {
 func TestRecentSeqHistory_BoundedEviction(t *testing.T) {
 	h := newRecentSeqHistory()
 	const n = recentSeqHistoryCap * 3
-	for i := 0; i < n; i++ {
+	for i := range n {
 		h.record(i%(seqMask+1), i, resolvedAcked, time.Now(), stats.Probe{})
 	}
 	if got := h.order.Len(); got > recentSeqHistoryCap {
@@ -161,7 +161,7 @@ func TestRecentSeqHistory_WraparoundSafety(t *testing.T) {
 	// Fill the cache with recentSeqHistoryCap other, distinct entries -- more
 	// than enough to evict the stale one above, but nowhere near a full
 	// 65536-wide wraparound cycle.
-	for i := 0; i < recentSeqHistoryCap; i++ {
+	for i := range recentSeqHistoryCap {
 		wire := (i + 1000) % (seqMask + 1)
 		if wire == staleWireSeq {
 			continue

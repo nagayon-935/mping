@@ -35,9 +35,8 @@ type rttAccumulator struct {
 }
 
 // record updates min/max/sum/samples for a successful RTT measurement.
-// No-op for rtt <= 0 (mirrors the guard every prior recordRTT had); the
-// Welford variance state must stay inside this guard too, so a failed
-// probe (rtt <= 0) never perturbs stddev().
+// No-op for rtt <= 0; the Welford variance state must stay inside this
+// guard too, so a failed probe (rtt <= 0) never perturbs stddev().
 func (a *rttAccumulator) record(rtt time.Duration) {
 	if rtt <= 0 {
 		return
@@ -149,10 +148,7 @@ func reconstructHistoryWindow(buf []time.Duration, idx, length, n int) []time.Du
 		return nil
 	}
 	size := len(buf)
-	effLen := length
-	if n < effLen {
-		effLen = n
-	}
+	effLen := min(n, length)
 	if length < size {
 		// No wraparound yet: buf[:length] is already chronological order.
 		out := make([]time.Duration, effLen)
