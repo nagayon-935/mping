@@ -45,7 +45,7 @@ func TestLiveTargetRemovalRejectsOldRepliesAndPreservesSurvivor(t *testing.T) {
 	p.Size = 0
 	a, b := stats.NewTargetStats("same"), stats.NewTargetStats("other")
 	for _, target := range []*stats.TargetStats{a, b} {
-		if err := p.AddTarget(target, target.Host, nil); err != nil {
+		if err := p.AddTarget(target, target.Host(), nil); err != nil {
 			t.Fatal(err)
 		}
 		awaitTarget(t, target, func(v stats.TargetView) bool { return v.Sent == 1 })

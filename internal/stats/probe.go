@@ -35,14 +35,14 @@ func (p Probe) update(f func(*TargetStats)) bool {
 
 // IncSent records a successful send in this probe's window.
 func (p Probe) IncSent() bool {
-	return p.update(func(t *TargetStats) { t.Sent++ })
+	return p.update(func(t *TargetStats) { t.sent++ })
 }
 
 // OnSuccess records the reply and its traffic class in one atomic update.
 func (p Probe) OnSuccess(rtt time.Duration, ttl, dscp int) bool {
 	return p.update(func(t *TargetStats) {
 		t.onSuccessLocked(rtt, ttl)
-		t.LastDSCP = dscp
+		t.lastDSCP = dscp
 	})
 }
 
@@ -53,16 +53,16 @@ func (p Probe) OnFailure(reason string) bool {
 
 // OnDuplicate records a duplicate belonging to this probe's window.
 func (p Probe) OnDuplicate() bool {
-	return p.update(func(t *TargetStats) { t.Duplicates++ })
+	return p.update(func(t *TargetStats) { t.duplicates++ })
 }
 
 // OnLateReply records a late reply belonging to this probe's window.
 func (p Probe) OnLateReply() bool {
-	return p.update(func(t *TargetStats) { t.LateReplies++ })
+	return p.update(func(t *TargetStats) { t.lateReplies++ })
 }
 
 // OnCancelled accounts for an outstanding probe discarded by a user operation.
 // It does not alter loss, RTT, or last-error state.
 func (p Probe) OnCancelled() bool {
-	return p.update(func(t *TargetStats) { t.Cancelled++ })
+	return p.update(func(t *TargetStats) { t.cancelled++ })
 }

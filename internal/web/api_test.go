@@ -56,8 +56,8 @@ func TestSnapshotReturnsTargetsMetaAndState(t *testing.T) {
 	if !body.Meta.Features.MTR || body.Meta.IntervalMs != 1000 {
 		t.Errorf("meta = %+v, want MTR feature and 1000ms interval", body.Meta)
 	}
-	if len(body.Meta.Groups) != 1 || body.Meta.Groups[0].TargetIDs[0] != ts.ID {
-		t.Errorf("groups = %+v, want core group holding target %d", body.Meta.Groups, ts.ID)
+	if len(body.Meta.Groups) != 1 || body.Meta.Groups[0].TargetIDs[0] != ts.ID() {
+		t.Errorf("groups = %+v, want core group holding target %d", body.Meta.Groups, ts.ID())
 	}
 }
 
@@ -86,14 +86,14 @@ func TestHistoryReturnsRTTSeriesWithNullForLoss(t *testing.T) {
 	src.Set(p)
 	srv := newTestServer(t, src, defaultTestConfig())
 
-	resp := get(t, fmt.Sprintf("%s/api/v1/targets/%d/history", srv.URL, ts.ID))
+	resp := get(t, fmt.Sprintf("%s/api/v1/targets/%d/history", srv.URL, ts.ID()))
 	body := decode[HistoryResponse](t, resp)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	if body.ID != ts.ID {
-		t.Errorf("id = %d, want %d", body.ID, ts.ID)
+	if body.ID != ts.ID() {
+		t.Errorf("id = %d, want %d", body.ID, ts.ID())
 	}
 	if len(body.RTTMs) != 3 {
 		t.Fatalf("rtt_ms = %v, want 3 points", body.RTTMs)
@@ -118,7 +118,7 @@ func TestHistoryLimitsToTrailingNPoints(t *testing.T) {
 	src.Set(p)
 	srv := newTestServer(t, src, defaultTestConfig())
 
-	body := decode[HistoryResponse](t, get(t, fmt.Sprintf("%s/api/v1/targets/%d/history?n=2", srv.URL, ts.ID)))
+	body := decode[HistoryResponse](t, get(t, fmt.Sprintf("%s/api/v1/targets/%d/history?n=2", srv.URL, ts.ID())))
 
 	if len(body.RTTMs) != 2 || *body.RTTMs[0] != 4 || *body.RTTMs[1] != 5 {
 		t.Fatalf("rtt_ms = %v, want the trailing [4 5]", body.RTTMs)
@@ -163,7 +163,7 @@ func TestEndpointsRejectBadInputAndMissingProvider(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path := strings.ReplaceAll(tt.path, "{id}", fmt.Sprint(ts.ID))
+			path := strings.ReplaceAll(tt.path, "{id}", fmt.Sprint(ts.ID()))
 
 			resp := get(t, tt.srv.URL+path)
 
@@ -181,7 +181,7 @@ func TestEventsReturnsTargetEvents(t *testing.T) {
 	src.Set(p)
 	srv := newTestServer(t, src, defaultTestConfig())
 
-	resp := get(t, fmt.Sprintf("%s/api/v1/targets/%d/events", srv.URL, ts.ID))
+	resp := get(t, fmt.Sprintf("%s/api/v1/targets/%d/events", srv.URL, ts.ID()))
 	body := decode[EventsResponse](t, resp)
 
 	if resp.StatusCode != http.StatusOK {
@@ -286,11 +286,11 @@ func TestBulkHistoryReturnsEveryTargetsTrailingSeries(t *testing.T) {
 	if len(body.Targets) != 2 {
 		t.Fatalf("targets = %+v, want 2 series", body.Targets)
 	}
-	if got := body.Targets[0]; got.ID != a.ID || len(got.RTTMs) != 2 || *got.RTTMs[0] != 2 || *got.RTTMs[1] != 3 {
-		t.Errorf("a series = %+v, want id %d with [2 3]", got, a.ID)
+	if got := body.Targets[0]; got.ID != a.ID() || len(got.RTTMs) != 2 || *got.RTTMs[0] != 2 || *got.RTTMs[1] != 3 {
+		t.Errorf("a series = %+v, want id %d with [2 3]", got, a.ID())
 	}
-	if got := body.Targets[1]; got.ID != b.ID || len(got.RTTMs) != 1 || got.RTTMs[0] != nil {
-		t.Errorf("b series = %+v, want id %d with [null]", got, b.ID)
+	if got := body.Targets[1]; got.ID != b.ID() || len(got.RTTMs) != 1 || got.RTTMs[0] != nil {
+		t.Errorf("b series = %+v, want id %d with [null]", got, b.ID())
 	}
 }
 
@@ -323,8 +323,8 @@ func TestBulkEventsMergesTargetsNewestFirstWithHosts(t *testing.T) {
 			t.Errorf("events[%d] = %s %q, want %s %q", i, got.Host, got.Message, w.host, w.msg)
 		}
 	}
-	if got := body.Events[1].TargetID; got != b.ID {
-		t.Errorf("events[1].target_id = %d, want %d", got, b.ID)
+	if got := body.Events[1].TargetID; got != b.ID() {
+		t.Errorf("events[1].target_id = %d, want %d", got, b.ID())
 	}
 }
 
@@ -366,7 +366,7 @@ func TestHistoryIncludesActualSampleTimesAndNullLoss(t *testing.T) {
 	src := NewSource()
 	src.Set(p)
 	base := newTestServer(t, src, defaultTestConfig()).URL
-	body := decode[HistoryResponse](t, get(t, fmt.Sprintf("%s/api/v1/targets/%d/history?n=2", base, target.ID)))
+	body := decode[HistoryResponse](t, get(t, fmt.Sprintf("%s/api/v1/targets/%d/history?n=2", base, target.ID())))
 	if len(body.Samples) != 2 || len(body.RTTMs) != 2 || body.Samples[0].RTTMS == nil || *body.Samples[0].RTTMS != 1.5 || body.Samples[1].RTTMS != nil {
 		t.Fatalf("samples=%+v", body.Samples)
 	}

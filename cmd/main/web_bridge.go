@@ -143,7 +143,7 @@ func (c webController) AddHost(host string) error {
 func (c webController) DeleteTarget(id uint64) error {
 	host := fmt.Sprintf("#%d", id)
 	for _, t := range c.sup.liveTargets().Targets {
-		if t.ID == id {
+		if t.ID() == id {
 			host = t.DisplayName()
 		}
 	}
@@ -237,7 +237,7 @@ func webGroups(set ui.TargetSet) []web.Group {
 		ids := make([]uint64, 0, len(g.Indices))
 		for _, i := range g.Indices {
 			if i >= 0 && i < len(set.Targets) {
-				ids = append(ids, set.Targets[i].ID)
+				ids = append(ids, set.Targets[i].ID())
 			}
 		}
 		groups = append(groups, web.Group{Name: g.Name, TargetIDs: ids})

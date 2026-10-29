@@ -65,7 +65,7 @@ func (s *supervisor) captureReport(selectedID uint64) (report.Report, error) {
 		r.Settings.Ports = append(r.Settings.Ports, fmt.Sprintf("%d/%s", port.Port, port.Protocol))
 	}
 	for i, t := range s.cfg.targets {
-		if selectedID != 0 && t.ID != selectedID {
+		if selectedID != 0 && t.ID() != selectedID {
 			continue
 		}
 		record := report.NewTarget(t)

@@ -41,7 +41,7 @@ func TestLiveEditsKeepStatisticsAndStoppedState(t *testing.T) {
 	if err := s.addHost("b"); err != nil {
 		t.Fatal(err)
 	}
-	if s.liveTargets().Targets[2].ID == b.ID {
+	if s.liveTargets().Targets[2].ID() == b.ID() {
 		t.Fatal("re-added target reused identity")
 	}
 	if !reflect.DeepEqual(a.GetView(), before) {

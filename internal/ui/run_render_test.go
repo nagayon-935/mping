@@ -29,7 +29,7 @@ func TestRunRendersMonitorPanes(t *testing.T) {
 		target.SetIP(ip)
 		result := &stats.PortCheckResult{Port: port, Protocol: "tcp"}
 		result.SetResult(status, 5*time.Millisecond)
-		target.PortResults = []*stats.PortCheckResult{result}
+		target.SetPortResults([]*stats.PortCheckResult{result})
 		return target
 	}
 	tests := []struct {
@@ -51,10 +51,10 @@ func TestRunRendersMonitorPanes(t *testing.T) {
 			opts: func() RunOptions {
 				target := stats.NewTargetStats("example.com")
 				target.SetIP("127.0.0.1")
-				target.PortResults = []*stats.PortCheckResult{
+				target.SetPortResults([]*stats.PortCheckResult{
 					{Port: 443, Protocol: "tcp", Status: "Open"},
 					{Port: 80, Protocol: "tcp", Status: "Closed"},
-				}
+				})
 				return RunOptions{Targets: []*stats.TargetStats{target}, SourceIPv4: "10.0.0.1", PortEnabled: true}
 			},
 			wants: []string{"Port Monitor", "443/tcp", "HTTPS", "Open", "80/tcp", "Closed"},
@@ -74,7 +74,7 @@ func TestRunRendersMonitorPanes(t *testing.T) {
 				target := stats.NewTargetStats("example.com")
 				target.SetIP("127.0.0.1")
 				result := &stats.PortCheckResult{Port: 443, Protocol: "tcp", Status: "Checking..."}
-				target.PortResults = []*stats.PortCheckResult{result}
+				target.SetPortResults([]*stats.PortCheckResult{result})
 				result.SetResult("Open", 10*time.Millisecond)
 				result.SetResult("Closed", 5*time.Millisecond) // the status change sets LastChange
 				return RunOptions{Targets: []*stats.TargetStats{target}, PortEnabled: true}
@@ -195,7 +195,7 @@ func TestRunPortStatusChangeLogged(t *testing.T) {
 	target.SetIP("127.0.0.1")
 	result := &stats.PortCheckResult{Port: 443, Protocol: "tcp"}
 	result.SetResult("Open", 5*time.Millisecond)
-	target.PortResults = []*stats.PortCheckResult{result}
+	target.SetPortResults([]*stats.PortCheckResult{result})
 	h := startTUI(t, RunOptions{Targets: []*stats.TargetStats{target}, PortEnabled: true}, 200, 50)
 	// The first render records the initial status; only then is a change visible.
 	h.wait("Open")

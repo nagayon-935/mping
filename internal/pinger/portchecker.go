@@ -43,8 +43,8 @@ type PortChecker struct {
 	targets []*stats.TargetStats
 	specs   []PortSpec
 	// results[i][j] is the PortCheckResult for targets[i] × specs[j].
-	// Stored here so Start() never reads t.PortResults directly, eliminating
-	// the data race between NewPortChecker and concurrent GetView() calls.
+	// Kept here because a target's own results are private to stats: the
+	// loops need the live *PortCheckResult, not a view.
 	results  [][]*stats.PortCheckResult
 	interval time.Duration
 	timeout  time.Duration

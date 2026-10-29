@@ -55,7 +55,7 @@ func TestDeleteDialogShowsAndConfirmsFrozenTarget(t *testing.T) {
 	app.SetFocus(table)
 	a, b := stats.NewTargetStats("same"), stats.NewTargetStats("same")
 	b.SetIP("192.0.2.2")
-	b.DSCP = "EF"
+	b.SetDSCP("EF")
 	var confirmed uint64
 	dialog := newDeleteDialog(app, root, func(id uint64, host string) { confirmed = id }, setFocus)
 	dialog.show(b, false)
@@ -70,7 +70,7 @@ func TestDeleteDialogShowsAndConfirmsFrozenTarget(t *testing.T) {
 	root.SetRect(0, 0, 140, 45)
 	root.Draw(screen)
 	text := screenText(screen)
-	for _, expected := range []string{"このホストを削除しますか？", fmt.Sprintf("対象: #%d", b.ID), "192.0.2.2", "EF", "キャンセル", "削除"} {
+	for _, expected := range []string{"このホストを削除しますか？", fmt.Sprintf("対象: #%d", b.ID()), "192.0.2.2", "EF", "キャンセル", "削除"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("dialog missing %q: %s", expected, text)
 		}
@@ -80,7 +80,7 @@ func TestDeleteDialogShowsAndConfirmsFrozenTarget(t *testing.T) {
 		event := dialog.handle(tcell.NewEventKey(k, 0, tcell.ModNone))
 		app.GetFocus().InputHandler()(event, setFocus)
 	}
-	if confirmed != b.ID || dialog.open || app.GetFocus() != table {
+	if confirmed != b.ID() || dialog.open || app.GetFocus() != table {
 		t.Fatal("confirmed target changed or dialog failed to close")
 	}
 }

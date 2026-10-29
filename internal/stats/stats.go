@@ -11,7 +11,7 @@ const (
 	jitterDivisor = 16   // RFC 1889 §A.8 smoothing factor: J = J + (|D| - J) / 16
 )
 
-// targetIDs allocates TargetStats.ID values.
+// targetIDs allocates TargetStats.ID() values.
 var targetIDs atomic.Uint64
 
 type IPChange struct {
@@ -20,56 +20,62 @@ type IPChange struct {
 }
 
 // TargetStats holds the statistics for a single ping target.
+//
+// Every field is unexported and guarded by mu: writers go through the
+// Set*/On*/Inc* methods, and readers take a consistent copy through GetView
+// (or one of the narrower accessors below), so no caller can read or write a
+// counter without holding the lock. id and host never change after
+// NewTargetStats and are exposed through ID() and Host().
 type TargetStats struct {
-	ID              uint64 // Immutable identity; never reused within this process.
-	StartedAt       time.Time
-	WindowStartedAt time.Time
-	DSCP            string
-	IPHistory       []IPChange
-	IPChanges       int
-	Cancelled       int
+	id              uint64 // never reused within this process
+	host            string // as configured; the display label is displayNameLocked
+	startedAt       time.Time
+	windowStartedAt time.Time
+	dscp            string
+	ipHistory       []IPChange
+	ipChanges       int
+	cancelled       int
 
-	Host             string
-	IP               string
-	ASN              string
-	Country          string
-	Org              string
-	PTR              string // reverse DNS (PTR) hostname for IP, when --ptr is enabled
-	DNSServer        string
-	IfaceMTU         int
-	PMTU             int
-	PMTUBottleneckIP string
-	TraceHops        []string
-	PortResults      []*PortCheckResult
+	ip               string
+	asn              string
+	country          string
+	org              string
+	ptr              string // reverse DNS (PTR) hostname for IP, when --ptr is enabled
+	dnsServer        string
+	ifaceMTU         int
+	pmtu             int
+	pmtuBottleneckIP string
+	traceHops        []string
+	portResults      []*PortCheckResult
 	mtrStats         *MTRStats
-	Sent             int
-	Recv             int
-	Loss             int
-	// Duplicates counts replies that repeat a seq already resolved (either
+	sent             int
+	recv             int
+	loss             int
+	// duplicates counts replies that repeat a seq already resolved (either
 	// by a successful reply or an ICMP error) -- a network-level dup
 	// (routing loop, L2 duplication, NAT/load-balancer anomaly), not a
-	// second successful probe. Never folded into Recv: doing so would
+	// second successful probe. Never folded into recv: doing so would
 	// understate the real loss rate, exactly the reason Apple's ping.c
 	// decrements nreceived when it detects a dup.
-	Duplicates int
-	// LateReplies counts replies that arrive for a seq whose `unacked`
+	duplicates int
+	// lateReplies counts replies that arrive for a seq whose `unacked`
 	// entry was already swept as a timeout (and so already counted in
-	// Loss). Tracked separately so a target that's simply slow can be told
+	// loss). Tracked separately so a target that's simply slow can be told
 	// apart from one that's truly dropping packets -- mirrors ping.c's
-	// -W/nrcvtimeout. The Loss already recorded for that probe is left
+	// -W/nrcvtimeout. The loss already recorded for that probe is left
 	// standing; a late reply never decrements it.
-	LateReplies int
-	LastRTT     time.Duration
-	LastTTL     int
-	// LastDSCP is the TOS (IPv4) / TrafficClass (IPv6) byte observed on the
+	lateReplies int
+	lastRTT     time.Duration
+	lastTTL     int
+	// lastDSCP is the TOS (IPv4) / TrafficClass (IPv6) byte observed on the
 	// most recent successful reply's own IP header — i.e. what DSCP marking
 	// actually arrived, after any re-marking or bleaching along the return
 	// path. Zero both as the pre-first-reply default and when the platform
-	// didn't supply a control message; same ambiguity as LastTTL's zero
+	// didn't supply a control message; same ambiguity as lastTTL's zero
 	// value, and for the same reason (see pinger.Reply.DSCP).
-	LastDSCP     int
-	LastLossTime time.Time
-	LastError    string
+	lastDSCP     int
+	lastLossTime time.Time
+	lastError    string
 
 	// RTT statistics and history (ring buffer for Sparkline).
 	rtt rttAccumulator
@@ -92,12 +98,28 @@ type TargetStats struct {
 func NewTargetStats(host string) *TargetStats {
 	now := time.Now()
 	return &TargetStats{
-		Host:             host,
-		ID:               targetIDs.Add(1),
-		StartedAt:        now,
-		WindowStartedAt:  now,
+		host:             host,
+		id:               targetIDs.Add(1),
+		startedAt:        now,
+		windowStartedAt:  now,
 		measurementState: "running",
 	}
+}
+
+// ID returns the target's immutable identity.
+func (t *TargetStats) ID() uint64 { return t.id }
+
+// Host returns the host exactly as configured (hostname or literal IP). It
+// never changes; the label shown to the user is DisplayName.
+func (t *TargetStats) Host() string { return t.host }
+
+// SetDSCP records the configured outbound DSCP marking (a codepoint name or
+// number) shown in the target's details. It does not change what is sent.
+func (t *TargetStats) SetDSCP(dscp string) {
+	defer bumpGeneration()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.dscp = dscp
 }
 
 // MTR returns the MTRStats for this target, creating it lazily on first call.
@@ -114,26 +136,26 @@ func (t *TargetStats) SetIP(ip string) {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.IP != ip {
-		t.recordEventLocked("dns", "IP: "+t.IP+" → "+ip)
-		if t.IP != "" {
-			t.IPChanges++
+	if t.ip != ip {
+		t.recordEventLocked("dns", "IP: "+t.ip+" → "+ip)
+		if t.ip != "" {
+			t.ipChanges++
 		}
-		t.IPHistory = append(t.IPHistory, IPChange{At: time.Now(), IP: ip})
-		if len(t.IPHistory) > 64 {
-			t.IPHistory = append([]IPChange(nil), t.IPHistory[len(t.IPHistory)-64:]...)
+		t.ipHistory = append(t.ipHistory, IPChange{At: time.Now(), IP: ip})
+		if len(t.ipHistory) > 64 {
+			t.ipHistory = append([]IPChange(nil), t.ipHistory[len(t.ipHistory)-64:]...)
 		}
 	}
-	t.IP = ip
+	t.ip = ip
 }
 
 func (t *TargetStats) SetASNInfo(number, country, org string) {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.ASN = number
-	t.Country = country
-	t.Org = org
+	t.asn = number
+	t.country = country
+	t.org = org
 }
 
 // SetPTR records the resolved PTR (reverse DNS) hostname for t's IP.
@@ -141,43 +163,43 @@ func (t *TargetStats) SetPTR(name string) {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.PTR = name
+	t.ptr = name
 }
 
 func (t *TargetStats) SetDNSServer(dnsServer string) {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.DNSServer = dnsServer
+	t.dnsServer = dnsServer
 }
 
 func (t *TargetStats) SetTraceHops(hops []string) {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.TraceHops = make([]string, len(hops))
-	copy(t.TraceHops, hops)
+	t.traceHops = make([]string, len(hops))
+	copy(t.traceHops, hops)
 }
 
 func (t *TargetStats) SetIfaceMTU(mtu int) {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.IfaceMTU = mtu
+	t.ifaceMTU = mtu
 }
 
 func (t *TargetStats) SetPMTU(pmtu int) {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.PMTU = pmtu
+	t.pmtu = pmtu
 }
 
 func (t *TargetStats) SetPMTUBottleneckIP(ip string) {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.PMTUBottleneckIP = ip
+	t.pmtuBottleneckIP = ip
 }
 
 // SetPortResults replaces the port check results slice atomically.
@@ -185,14 +207,14 @@ func (t *TargetStats) SetPortResults(results []*PortCheckResult) {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.PortResults = results
+	t.portResults = results
 }
 
 func (t *TargetStats) IncSent() {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.Sent++
+	t.sent++
 }
 
 func (t *TargetStats) OnSuccess(rtt time.Duration, ttl int) {
@@ -203,23 +225,23 @@ func (t *TargetStats) OnSuccess(rtt time.Duration, ttl int) {
 }
 
 func (t *TargetStats) onSuccessLocked(rtt time.Duration, ttl int) {
-	if t.LastError != "" {
+	if t.lastError != "" {
 		t.recordEventLocked("recovery", "Ping replies resumed")
 	}
 	// RFC 1889 Jitter Calculation: J = J + (|D| - J) / 16
-	if t.Recv > 0 {
-		t.jitter = updateJitter(t.jitter, rtt, t.LastRTT)
+	if t.recv > 0 {
+		t.jitter = updateJitter(t.jitter, rtt, t.lastRTT)
 	}
 
-	t.Recv++
-	t.LastRTT = rtt
-	t.LastTTL = ttl
+	t.recv++
+	t.lastRTT = rtt
+	t.lastTTL = ttl
 	t.rtt.record(rtt)
 	now := time.Now()
 	t.appendHistoryLocked(rtt, now)
 	t.recordOutcomeLocked(now, true)
 
-	t.LastError = ""
+	t.lastError = ""
 }
 
 // OnDuplicate records a reply that repeats a seq already resolved. See the
@@ -228,7 +250,7 @@ func (t *TargetStats) OnDuplicate() {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.Duplicates++
+	t.duplicates++
 }
 
 // OnLateReply records a reply that arrived after its probe's `unacked`
@@ -238,7 +260,7 @@ func (t *TargetStats) OnLateReply() {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.LateReplies++
+	t.lateReplies++
 }
 
 func (t *TargetStats) OnFailure(reason string) {
@@ -249,12 +271,12 @@ func (t *TargetStats) OnFailure(reason string) {
 }
 
 func (t *TargetStats) onFailureLocked(reason string) {
-	t.Loss++
-	t.LastLossTime = time.Now()
-	t.LastError = reason
+	t.loss++
+	t.lastLossTime = time.Now()
+	t.lastError = reason
 	t.recordEventLocked("ping", reason)
-	t.appendHistoryLocked(0, t.LastLossTime)
-	t.recordOutcomeLocked(t.LastLossTime, false)
+	t.appendHistoryLocked(0, t.lastLossTime)
+	t.recordOutcomeLocked(t.lastLossTime, false)
 }
 
 func (t *TargetStats) Reset() {
@@ -262,19 +284,19 @@ func (t *TargetStats) Reset() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.probeEpoch++
-	t.WindowStartedAt = time.Now()
+	t.windowStartedAt = time.Now()
 	t.recordEventLocked("reset", "Statistics reset")
-	t.Sent = 0
-	t.Cancelled = 0
-	t.Recv = 0
-	t.Loss = 0
-	t.Duplicates = 0
-	t.LateReplies = 0
-	t.LastRTT = 0
-	t.LastTTL = 0
-	t.LastDSCP = 0
-	t.LastLossTime = time.Time{}
-	t.LastError = ""
+	t.sent = 0
+	t.cancelled = 0
+	t.recv = 0
+	t.loss = 0
+	t.duplicates = 0
+	t.lateReplies = 0
+	t.lastRTT = 0
+	t.lastTTL = 0
+	t.lastDSCP = 0
+	t.lastLossTime = time.Time{}
+	t.lastError = ""
 	t.rtt = rttAccumulator{}
 	t.historyTimes = nil
 	policy, configured := t.health.policy, t.health.configured
@@ -285,13 +307,14 @@ func (t *TargetStats) Reset() {
 	}
 }
 
-// Host stays immutable for older callers. The display label may be changed
+// displayNameLocked returns the label shown to the user: the display name
+// when one was set, otherwise the configured host. The label may change
 // while probes keep using their original transport address.
 func (t *TargetStats) displayNameLocked() string {
 	if t.displayName != "" {
 		return t.displayName
 	}
-	return t.Host
+	return t.host
 }
 
 func (t *TargetStats) SetDisplayName(name string) {
@@ -317,7 +340,7 @@ func (t *TargetStats) ResolveAddress() string {
 	if t.resolveAddress != "" {
 		return t.resolveAddress
 	}
-	return t.Host
+	return t.host
 }
 
 // DisplayName returns the target's display label (matching TargetView.Host)
@@ -333,7 +356,7 @@ func (t *TargetStats) DisplayName() string {
 func (t *TargetStats) CurrentIP() string {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	return t.IP
+	return t.ip
 }
 
 // HostAndIP returns the target's display label and currently resolved IP
@@ -341,14 +364,14 @@ func (t *TargetStats) CurrentIP() string {
 func (t *TargetStats) HostAndIP() (host, ip string) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	return t.displayNameLocked(), t.IP
+	return t.displayNameLocked(), t.ip
 }
 
 // PortCount returns the number of port check results without copying them.
 func (t *TargetStats) PortCount() int {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	return len(t.PortResults)
+	return len(t.portResults)
 }
 
 // EffectiveAddress returns the resolved IP when available, falling back to
@@ -357,11 +380,11 @@ func (t *TargetStats) PortCount() int {
 func (t *TargetStats) EffectiveAddress() string {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	if t.IP != "" {
-		return t.IP
+	if t.ip != "" {
+		return t.ip
 	}
 	if t.resolveAddress != "" {
 		return t.resolveAddress
 	}
-	return t.Host
+	return t.host
 }

@@ -46,7 +46,7 @@ func TestTargetSnapshotRemainsImmutableAcrossResetAndUpdates(t *testing.T) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Targets[0].PortDetails[0].LastRTTMS != 3.5 || decoded.Targets[0].Statistics.ID != target.ID {
+	if decoded.Targets[0].PortDetails[0].LastRTTMS != 3.5 || decoded.Targets[0].Statistics.ID != target.ID() {
 		t.Fatal("JSON units or identity changed")
 	}
 }

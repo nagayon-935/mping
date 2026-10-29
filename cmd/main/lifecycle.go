@@ -158,10 +158,11 @@ func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetSta
 	for i, t := range targets {
 		t.SetResolveAddress(specs[i].resolveAddr())
 		t.ConfigureHealth(healthPolicy(cfg))
-		t.DSCP = cfg.dscp
+		dscp := cfg.dscp
 		if specs[i].DSCP != "" {
-			t.DSCP = specs[i].DSCP
+			dscp = specs[i].DSCP
 		}
+		t.SetDSCP(dscp)
 		hostName := specs[i].Host
 		if net.ParseIP(hostName) == nil {
 			if cfg.dnsServer != "" {
@@ -178,7 +179,7 @@ func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetSta
 
 // buildPingerOptions constructs the pinger.Options for one loop iteration,
 // including the address resolver. specs supplies an address lookup (keyed
-// by targetSpec.display(), the same string used for stats.TargetStats.Host)
+// by targetSpec.display(), the same string as stats.TargetStats.Host())
 // so --resolve-all entries resolve straight to their pinned IP and named
 // entries resolve to their configured host rather than their name.
 //

@@ -172,7 +172,7 @@ func (t *TargetStats) evaluateHealthLocked(now time.Time) {
 				unit              string
 			}{
 				{"Recent loss", rate, p.LossWarn, p.LossCrit, "%"},
-				{"RTT", float64(t.LastRTT) / float64(time.Millisecond), float64(p.RTTWarn) / float64(time.Millisecond), float64(p.RTTCrit) / float64(time.Millisecond), "ms"},
+				{"RTT", float64(t.lastRTT) / float64(time.Millisecond), float64(p.RTTWarn) / float64(time.Millisecond), float64(p.RTTCrit) / float64(time.Millisecond), "ms"},
 				{"Jitter", float64(t.jitter) / float64(time.Millisecond), float64(p.JitterWarn) / float64(time.Millisecond), float64(p.JitterCrit) / float64(time.Millisecond), "ms"},
 			}
 			for _, c := range checks {

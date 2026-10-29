@@ -92,7 +92,7 @@ func providerWithTarget(host string) (*fakeProvider, *stats.TargetStats) {
 			IntervalMs: 1000,
 			Features:   Features{MTR: true},
 			Thresholds: Thresholds{RTTWarnMs: 50, RTTCritMs: 200},
-			Groups:     []Group{{Name: "core", TargetIDs: []uint64{ts.ID}}},
+			Groups:     []Group{{Name: "core", TargetIDs: []uint64{ts.ID()}}},
 		},
 	}, ts
 }

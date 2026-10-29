@@ -178,11 +178,11 @@ func TestWebGroupsMapsIndicesToTargetIDs(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("groups = %+v, want 2", got)
 	}
-	if got[0].Name != "core" || len(got[0].TargetIDs) != 2 || got[0].TargetIDs[0] != a.ID || got[0].TargetIDs[1] != c.ID {
-		t.Errorf("core = %+v, want IDs [%d %d]", got[0], a.ID, c.ID)
+	if got[0].Name != "core" || len(got[0].TargetIDs) != 2 || got[0].TargetIDs[0] != a.ID() || got[0].TargetIDs[1] != c.ID() {
+		t.Errorf("core = %+v, want IDs [%d %d]", got[0], a.ID(), c.ID())
 	}
-	if got[1].Name != "edge" || len(got[1].TargetIDs) != 1 || got[1].TargetIDs[0] != b.ID {
-		t.Errorf("edge = %+v, want only ID %d (out-of-range indices dropped)", got[1], b.ID)
+	if got[1].Name != "edge" || len(got[1].TargetIDs) != 1 || got[1].TargetIDs[0] != b.ID() {
+		t.Errorf("edge = %+v, want only ID %d (out-of-range indices dropped)", got[1], b.ID())
 	}
 }
 
@@ -337,12 +337,12 @@ func TestRunWebControlEditsTheLiveRunAndLogsToTUI(t *testing.T) {
 		before[0].IncSent()
 		statuses = append(statuses,
 			webDo(t, srv, http.MethodPost, "api/v1/targets", `{"host":"added.example"}`),
-			webDo(t, srv, http.MethodDelete, fmt.Sprintf("api/v1/targets/%d", before[1].ID), ""),
+			webDo(t, srv, http.MethodDelete, fmt.Sprintf("api/v1/targets/%d", before[1].ID()), ""),
 			webDo(t, srv, http.MethodPost, "api/v1/reset", ""),
 		)
 		resetSent = before[0].GetView().Sent
 		for _, ts := range opts.TargetSource().Targets {
-			hostsAfter = append(hostsAfter, ts.Host)
+			hostsAfter = append(hostsAfter, ts.Host())
 		}
 		for {
 			select {
@@ -468,7 +468,7 @@ func TestWebControllerReportsRejectionsWithoutLogging(t *testing.T) {
 	c := webController{sup: sup, logCh: logCh}
 
 	addErr := c.AddHost("only.example")
-	delErr := c.DeleteTarget(only.ID)
+	delErr := c.DeleteTarget(only.ID())
 
 	if addErr == nil || !strings.Contains(addErr.Error(), "already in the list") {
 		t.Errorf("AddHost duplicate err = %v, want already-in-the-list", addErr)

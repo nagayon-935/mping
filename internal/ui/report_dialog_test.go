@@ -76,12 +76,12 @@ func TestReportSimulationSavesSessionAndSelectedDuplicate(t *testing.T) {
 	wait("Saved report: qfwz.json")
 	h.key(tcell.KeyDown)
 	h.key(tcell.KeyEnter)
-	wait(fmt.Sprintf("Target #%d", b.ID))
+	wait(fmt.Sprintf("Target #%d", b.ID()))
 	h.press('w')
-	wait(fmt.Sprintf("Save target #%d report", b.ID))
+	wait(fmt.Sprintf("Save target #%d report", b.ID()))
 	h.key(tcell.KeyTab)
 	h.key(tcell.KeyEnter)
-	if r := recvWithin(t, requests, "the target save callback"); r.format != "text" || r.id != b.ID {
+	if r := recvWithin(t, requests, "the target save callback"); r.format != "text" || r.id != b.ID() {
 		t.Fatalf("incorrect target save: %+v", r)
 	}
 	// The background save is deliberately blocked: navigation must still work.

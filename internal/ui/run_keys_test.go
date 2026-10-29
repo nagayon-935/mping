@@ -83,7 +83,7 @@ func TestRunKeyboardReset(t *testing.T) {
 	target.SetTraceHops([]string{"10.0.0.1", "1.1.1.1"})
 	target.MTR().EnsureLen(2)
 	target.MTR().RecordReply(1, "10.0.0.1", "", "", "", 5*time.Millisecond)
-	target.PortResults = []*stats.PortCheckResult{{Port: 80, Protocol: "tcp", Status: "Open"}}
+	target.SetPortResults([]*stats.PortCheckResult{{Port: 80, Protocol: "tcp", Status: "Open"}})
 	if len(target.MTR().View()) == 0 {
 		t.Fatal("fixture did not record any hops")
 	}
@@ -166,7 +166,7 @@ func TestRunPaneControls(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	target.SetIP("127.0.0.1")
 	target.SetTraceHops([]string{"10.0.0.1", "1.1.1.1"})
-	target.PortResults = []*stats.PortCheckResult{{Port: 443, Protocol: "tcp", Status: "Open"}}
+	target.SetPortResults([]*stats.PortCheckResult{{Port: 443, Protocol: "tcp", Status: "Open"}})
 	h := startTUI(t, RunOptions{Targets: []*stats.TargetStats{target}, TraceEnabled: true, PortEnabled: true}, 200, 50)
 	h.wait("Port Monitor")
 

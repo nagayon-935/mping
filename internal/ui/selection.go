@@ -15,7 +15,7 @@ func (tr *tableRenderer) selectedTarget() *stats.TargetStats {
 }
 
 func (tr *tableRenderer) selectedIndex() int {
-	return slices.IndexFunc(tr.targets, func(t *stats.TargetStats) bool { return t.ID == tr.selectedID })
+	return slices.IndexFunc(tr.targets, func(t *stats.TargetStats) bool { return t.ID() == tr.selectedID })
 }
 
 func (tr *tableRenderer) selectedRow() int {
@@ -39,7 +39,7 @@ func (tr *tableRenderer) selectedRow() int {
 
 func (tr *tableRenderer) reconcileSelection() {
 	if tr.selectedTarget() == nil && len(tr.targets) > 0 {
-		tr.selectedID = tr.targets[0].ID
+		tr.selectedID = tr.targets[0].ID()
 		tr.scrollToSelection = true
 	}
 	offset, col := tr.table.GetOffset()
@@ -81,7 +81,7 @@ func (tr *tableRenderer) moveSelection(key tcell.Key) {
 	if len(order) == 0 {
 		return
 	}
-	i := max(slices.IndexFunc(order, func(index int) bool { return tr.targets[index].ID == tr.selectedID }), 0)
+	i := max(slices.IndexFunc(order, func(index int) bool { return tr.targets[index].ID() == tr.selectedID }), 0)
 	pageStep := max(tableMaxRows, (tr.tableInnerHeight()-3)/2)
 	delta := 1
 	switch key {
@@ -93,7 +93,7 @@ func (tr *tableRenderer) moveSelection(key tcell.Key) {
 		delta = pageStep
 	}
 	i = max(0, min(len(order)-1, i+delta))
-	tr.selectedID = tr.targets[order[i]].ID
+	tr.selectedID = tr.targets[order[i]].ID()
 	tr.scrollToSelection = true
 	tr.update()
 }

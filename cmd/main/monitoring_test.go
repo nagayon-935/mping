@@ -73,7 +73,7 @@ func TestLiveReloadPreservesIDsHistoryNamesAndStoppedState(t *testing.T) {
 	specs := []targetSpec{{Host: "192.0.2.1", Name: "before"}, {Host: "192.0.2.2"}}
 	targets := buildTargetsForIteration(specs, cfg)
 	targets[0].OnSuccess(3*time.Millisecond, 64)
-	firstID := targets[0].ID
+	firstID := targets[0].ID()
 	s := newSupervisor(supervisorConfig{config: cfg, specs: specs, targets: targets})
 	s.Start()
 	defer s.Shutdown()

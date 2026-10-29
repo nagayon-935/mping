@@ -212,7 +212,7 @@ func Run(opts RunOptions) error {
 					notifyResult(host+" を削除しました", false)
 				}
 				tr.update()
-				if err != nil && len(targets) == 1 && targets[0].ID == id {
+				if err != nil && len(targets) == 1 && targets[0].ID() == id {
 					deleteConfirmation.show(targets[0], true)
 				}
 			})
@@ -237,7 +237,7 @@ func Run(opts RunOptions) error {
 			id = tr.selectedID
 		}
 		for _, target := range targets {
-			if target.ID == id {
+			if target.ID() == id {
 				deleteConfirmation.show(target, len(targets) == 1)
 				return
 			}
@@ -258,7 +258,7 @@ func Run(opts RunOptions) error {
 		openDetails: func() {
 			tr.update()
 			if target := tr.selectedTarget(); target != nil {
-				details.targetID = target.ID
+				details.targetID = target.ID()
 				details.open = true
 				details.refresh(targets)
 				details.text.ScrollToBeginning()

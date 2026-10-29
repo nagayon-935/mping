@@ -104,7 +104,7 @@ func TestRenderPortMonitorTable(t *testing.T) {
 		target.SetIP("1.1.1.1")
 		result := &stats.PortCheckResult{Port: 443, Protocol: "tcp"}
 		result.SetResult("Open", 5*time.Millisecond)
-		target.PortResults = []*stats.PortCheckResult{result}
+		target.SetPortResults([]*stats.PortCheckResult{result})
 
 		lastStatuses := make(map[string]string)
 		errorLogs := []string{}
@@ -123,7 +123,7 @@ func TestRenderPortMonitorTable(t *testing.T) {
 		target.SetIP("1.1.1.1")
 		result := &stats.PortCheckResult{Port: 80, Protocol: "tcp"}
 		result.SetResult("Closed", 0)
-		target.PortResults = []*stats.PortCheckResult{result}
+		target.SetPortResults([]*stats.PortCheckResult{result})
 
 		lastStatuses := make(map[string]string)
 		errorLogs := []string{}
@@ -142,7 +142,7 @@ func TestRenderPortMonitorTable(t *testing.T) {
 		target.SetIP("1.1.1.1")
 		result := &stats.PortCheckResult{Port: 443, Protocol: "tcp"}
 		result.SetResult("Open", 5*time.Millisecond)
-		target.PortResults = []*stats.PortCheckResult{result}
+		target.SetPortResults([]*stats.PortCheckResult{result})
 
 		lastStatuses := map[string]string{
 			targetViewKey(target.GetView()) + "|443/tcp": "Closed",

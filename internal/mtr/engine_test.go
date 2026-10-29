@@ -273,7 +273,7 @@ func TestEngine_MultipleTargets(t *testing.T) {
 	for _, ts := range []*stats.TargetStats{t1, t2} {
 		hops := ts.MTR().View()
 		if len(hops) == 0 {
-			t.Errorf("%s: no hops", ts.Host)
+			t.Errorf("%s: no hops", ts.Host())
 		}
 	}
 }

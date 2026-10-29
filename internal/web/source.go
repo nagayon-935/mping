@@ -49,7 +49,7 @@ type Thresholds struct {
 	LossCritPct  float64 `json:"loss_crit_pct"`
 }
 
-// Group is a named set of targets, identified by stats.TargetStats.ID so the
+// Group is a named set of targets, identified by stats.TargetStats.ID() so the
 // grouping stays valid while hosts are added or removed at runtime.
 type Group struct {
 	Name      string   `json:"name"`

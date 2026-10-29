@@ -48,7 +48,7 @@ func TestInitTargets(t *testing.T) {
 	if len(targets) != 2 {
 		t.Fatalf("expected 2 targets, got %d", len(targets))
 	}
-	if targets[0].Host != "a" || targets[1].Host != "b" {
+	if targets[0].Host() != "a" || targets[1].Host() != "b" {
 		t.Errorf("targets host mismatch")
 	}
 }

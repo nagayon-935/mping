@@ -20,25 +20,25 @@ func TestSelectionKeepsIdentityAndSkipsGroupHeadings(t *testing.T) {
 	table.SetRect(0, 0, 218, 38)
 	tr := newTableRenderer([]*stats.TargetStats{a, b, c}, "", "", 56, false, false, false, []TargetGroup{{Name: "group", Indices: []int{0, 1}}}, table, pane, nil, newViewState(tview.NewTextView()))
 	tr.selectionEnabled = true
-	tr.selectedID = c.ID
+	tr.selectedID = c.ID()
 	tr.update()
 	tr.moveSelection(tcell.KeyDown)
-	if tr.selectedID != a.ID {
+	if tr.selectedID != a.ID() {
 		t.Fatal("selection did not follow displayed group order")
 	}
 	tr.moveSelection(tcell.KeyDown)
-	if tr.selectedID != b.ID {
+	if tr.selectedID != b.ID() {
 		t.Fatal("duplicate names conflated")
 	}
 	tr.targets = []*stats.TargetStats{c, b, a}
 	tr.groups = nil
 	tr.update()
-	if tr.selectedID != b.ID {
+	if tr.selectedID != b.ID() {
 		t.Fatal("selection changed during reorder")
 	}
 	tr.targets = []*stats.TargetStats{c, a}
 	tr.update()
-	if tr.selectedTarget() == nil || tr.selectedID == b.ID {
+	if tr.selectedTarget() == nil || tr.selectedID == b.ID() {
 		t.Fatal("removed selection remained active")
 	}
 	pane.SetRect(0, 0, 70, 30)
@@ -48,7 +48,7 @@ func TestSelectionKeepsIdentityAndSkipsGroupHeadings(t *testing.T) {
 		t.Fatal("fixture did not enter compact layout")
 	}
 	tr.moveSelection(tcell.KeyDown)
-	if tr.selectedID != a.ID || tr.selectedRow() != 3 {
+	if tr.selectedID != a.ID() || tr.selectedRow() != 3 {
 		t.Fatal("compact two-row selection incorrect")
 	}
 }
@@ -84,7 +84,7 @@ func TestDetailsSimulationSelectsDuplicateAndReturnsAfterDeletion(t *testing.T) 
 	h.wait("same")
 	h.key(tcell.KeyDown)
 	h.key(tcell.KeyEnter)
-	h.wait(fmt.Sprintf("Target #%d", b.ID))
+	h.wait(fmt.Sprintf("Target #%d", b.ID()))
 	h.key(tcell.KeyPgDn)
 	h.wait("Selected B event")
 	h.press('d')
@@ -103,7 +103,7 @@ func TestDetailsSimulationSelectsDuplicateAndReturnsAfterDeletion(t *testing.T) 
 	h.wait("このホストを削除しますか？")
 	h.key(tcell.KeyTab)
 	h.key(tcell.KeyEnter)
-	if id := recvWithin(t, deleted, "the delete callback"); id != b.ID {
+	if id := recvWithin(t, deleted, "the delete callback"); id != b.ID() {
 		t.Fatal("deleted wrong duplicate")
 	}
 	h.wait("Ping Monitor")
@@ -114,7 +114,7 @@ func TestDetailsOptionalSectionsFollowOptionsEvenWithCachedData(t *testing.T) {
 	target := stats.NewTargetStats("router")
 	target.SetASNInfo("AS64500", "JP", "Example")
 	target.SetPTR("router.example")
-	target.DSCP = "EF"
+	target.SetDSCP("EF")
 	target.SetPMTU(1400)
 	target.SetTraceHops([]string{"192.0.2.1"})
 	target.MTR().EnsureLen(1)

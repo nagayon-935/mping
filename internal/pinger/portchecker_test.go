@@ -83,10 +83,11 @@ func TestNewPortChecker_InitializesPortResults(t *testing.T) {
 		t.Fatal("NewPortChecker returned nil")
 	}
 	for _, tgt := range targets {
-		if len(tgt.PortResults) != len(specs) {
-			t.Errorf("target %q: got %d PortResults, want %d", tgt.Host, len(tgt.PortResults), len(specs))
+		results := tgt.GetView().PortResults
+		if len(results) != len(specs) {
+			t.Errorf("target %q: got %d PortResults, want %d", tgt.Host(), len(results), len(specs))
 		}
-		for i, r := range tgt.PortResults {
+		for i, r := range results {
 			if r.Port != specs[i].Port {
 				t.Errorf("PortResult[%d].Port: got %d, want %d", i, r.Port, specs[i].Port)
 			}
@@ -146,7 +147,7 @@ func TestPortChecker_Wait(t *testing.T) {
 		tgt := tgt
 		for i := range specs {
 			eventually(t, 5*time.Second, "first port check", func() bool {
-				return tgt.PortResults[i].GetView().Status != "Checking..."
+				return tgt.GetView().PortResults[i].Status != "Checking..."
 			})
 		}
 	}
@@ -168,8 +169,8 @@ func TestPortChecker_Wait(t *testing.T) {
 	snapshot := func() []string {
 		out := make([]string, 0, len(targets)*len(specs))
 		for _, tgt := range targets {
-			for _, r := range tgt.PortResults {
-				out = append(out, r.GetView().Status)
+			for _, r := range tgt.GetView().PortResults {
+				out = append(out, r.Status)
 			}
 		}
 		return out
@@ -368,7 +369,6 @@ func TestPortChecker_CheckWithIP(t *testing.T) {
 	tgt.SetIP("127.0.0.1")
 	spec := PortSpec{Port: port, Protocol: "tcp"}
 	result := &stats.PortCheckResult{Port: port, Protocol: "tcp", Status: "Checking..."}
-	tgt.PortResults = []*stats.PortCheckResult{result}
 
 	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Second, time.Second, BindConfig{})
 	pc.check(tgt, spec, result)
@@ -384,7 +384,6 @@ func TestPortChecker_CheckSkipsEmptyIP(t *testing.T) {
 	// IP not set (empty string)
 	spec := PortSpec{Port: 80, Protocol: "tcp"}
 	result := &stats.PortCheckResult{Port: 80, Protocol: "tcp", Status: "Checking..."}
-	tgt.PortResults = []*stats.PortCheckResult{result}
 
 	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Second, time.Second, BindConfig{})
 	pc.check(tgt, spec, result)
@@ -408,19 +407,19 @@ func TestPortChecker_LoopWaitsForIP(t *testing.T) {
 	pc.Start()
 	defer pc.Stop()
 
-	if status := tgt.PortResults[0].GetView().Status; status != "Checking..." {
+	if status := tgt.GetView().PortResults[0].Status; status != "Checking..." {
 		t.Fatalf("expected Checking... immediately, got %q", status)
 	}
 
 	// Without an IP the first check is deferred, not run and not skipped.
 	time.Sleep(20 * time.Millisecond)
-	if status := tgt.PortResults[0].GetView().Status; status != "Checking..." {
+	if status := tgt.GetView().PortResults[0].Status; status != "Checking..." {
 		t.Fatalf("check ran before the IP was resolved: %q", status)
 	}
 	tgt.SetIP("127.0.0.1")
 
 	eventually(t, 2*time.Second, "status leaves Checking... once the IP is set", func() bool {
-		return tgt.PortResults[0].GetView().Status != "Checking..."
+		return tgt.GetView().PortResults[0].Status != "Checking..."
 	})
 }
 
@@ -455,13 +454,14 @@ func TestPortTargetEditsKeepSurvivingResult(t *testing.T) {
 	pc.Start()
 	defer func() { pc.Stop(); pc.Wait() }()
 	awaitTarget(t, a, func(v stats.TargetView) bool { return v.PortResults[0].ClosedCount > 0 })
-	result := a.PortResults[0]
-	before := result.GetView()
+	before := a.GetView().PortResults[0]
 	pc.AddTarget(b)
 	awaitTarget(t, b, func(v stats.TargetView) bool { return v.PortResults[0].ClosedCount > 0 })
 	pc.RemoveTarget(b)
-	if a.PortResults[0] != result || a.GetView().PortResults[0].ClosedCount != before.ClosedCount {
-		t.Fatal("surviving port statistics were reset")
+	// The interval is an hour, so a's result cannot change on its own; a
+	// replaced result would differ at least in LastChange.
+	if after := a.GetView().PortResults[0]; !reflect.DeepEqual(after, before) {
+		t.Fatalf("surviving port statistics were reset: %+v -> %+v", before, after)
 	}
 }
 
@@ -497,7 +497,7 @@ func TestPortChecker_StopDuringCheckKeepsLastResult(t *testing.T) {
 	tgt.SetIP("127.0.0.1")
 	spec := PortSpec{Port: port, Protocol: "udp"}
 	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Hour, time.Minute, BindConfig{})
-	r := tgt.PortResults[0]
+	r := pc.results[0][0]
 	before := r.GetView()
 
 	go func() {

@@ -260,7 +260,7 @@ func (s *supervisor) stopTargetTrace(t *stats.TargetStats) {
 func (s *supervisor) deleteTargetID(id uint64) error {
 	return s.editTargets(func(s *supervisor) error {
 		for i, t := range s.cfg.targets {
-			if t.ID == id {
+			if t.ID() == id {
 				return s.removeTarget(i)
 			}
 		}

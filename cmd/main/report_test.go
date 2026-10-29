@@ -66,29 +66,29 @@ func TestReportKeepsRemovedIdentityAndActualSettings(t *testing.T) {
 	s.httpChecker.Results()[0].SetResult(200, 2*time.Millisecond, nil)
 	s.Start()
 	t.Cleanup(s.Shutdown)
-	if err := s.deleteTargetID(a.ID); err != nil {
+	if err := s.deleteTargetID(a.ID()); err != nil {
 		t.Fatal(err)
 	}
 	a.Reset()
 	all := captureTestReport(t, s, 0)
-	if all.Scope != "session" || all.State != "stopped" || len(all.Targets) != 1 || all.Targets[0].Statistics.ID != b.ID || len(all.RemovedTargets) != 1 {
+	if all.Scope != "session" || all.State != "stopped" || len(all.Targets) != 1 || all.Targets[0].Statistics.ID != b.ID() || len(all.RemovedTargets) != 1 {
 		t.Fatalf("incorrect report membership: %+v", all)
 	}
 	if len(all.HTTPChecks) != 1 || all.HTTPChecks[0].UpCount != 1 || all.HTTPChecks[0].LastRTTMs != 2 {
 		t.Fatal("independent HTTP results missing")
 	}
 	removed := all.RemovedTargets[0]
-	if removed.Statistics.ID != a.ID || removed.Statistics.Recv != 1 || removed.Group != "first" || removed.RemovedAt == nil {
+	if removed.Statistics.ID != a.ID() || removed.Statistics.Recv != 1 || removed.Group != "first" || removed.RemovedAt == nil {
 		t.Fatalf("removed target was not frozen: %+v", removed)
 	}
 	if all.Settings.PayloadBytes != 123 || all.Settings.IntervalMS != 2000 || all.Settings.TimeoutMS != 3000 || all.Settings.BoundSource != "192.0.2.1" || all.Settings.Ports[0] != "443/tcp" || all.CaptureCompletedAt.Before(all.CapturedAt) {
 		t.Fatal("report used stale configuration")
 	}
-	one := captureTestReport(t, s, b.ID)
+	one := captureTestReport(t, s, b.ID())
 	if one.Scope != "target" || len(one.RemovedTargets) != 0 || len(one.HTTPChecks) != 0 || len(one.Targets) != 1 {
 		t.Fatal("selected target report included unrelated results")
 	}
-	if err := s.editTargets(func(s *supervisor) error { _, err := s.captureReport(a.ID); return err }); err == nil {
+	if err := s.editTargets(func(s *supervisor) error { _, err := s.captureReport(a.ID()); return err }); err == nil {
 		t.Fatal("removed selection accepted")
 	}
 }
@@ -137,7 +137,7 @@ func TestReportBoundsArchiveAndRejectsActiveWriterPaths(t *testing.T) {
 	if err := json.Unmarshal(data, &saved); err != nil {
 		t.Fatal(err)
 	}
-	if saved.RemovedTargetsDropped != 3 || saved.Targets[0].Statistics.ID != base.ID {
+	if saved.RemovedTargetsDropped != 3 || saved.Targets[0].Statistics.ID != base.ID() {
 		t.Fatal("saved report lost snapshot data")
 	}
 }
@@ -200,7 +200,7 @@ func TestReportsSerializeWithLiveEditsAndReset(t *testing.T) {
 				}
 				seen[target.Statistics.ID] = true
 			}
-			if !seen[base.ID] {
+			if !seen[base.ID()] {
 				t.Error("surviving target missing")
 			}
 		}

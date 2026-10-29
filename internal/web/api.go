@@ -162,7 +162,7 @@ func historyOf(t *stats.TargetStats, n int) HistoryResponse {
 		// call and nothing mutates them afterwards, so sharing is safe.
 		rtt[i] = sample.RTTMS
 	}
-	return HistoryResponse{ID: t.ID, RTTMs: rtt, Samples: samples, CapturedAt: time.Now().UTC()}
+	return HistoryResponse{ID: t.ID(), RTTMs: rtt, Samples: samples, CapturedAt: time.Now().UTC()}
 }
 
 // handleBulkEvents merges every live target's events into one newest-first
@@ -203,7 +203,7 @@ func handleEvents(src *Source) http.HandlerFunc {
 		if events == nil {
 			events = []stats.Event{}
 		}
-		writeJSON(w, EventsResponse{ID: t.ID, Events: events, Dropped: dropped})
+		writeJSON(w, EventsResponse{ID: t.ID(), Events: events, Dropped: dropped})
 	}
 }
 
@@ -219,7 +219,7 @@ func lookupTarget(w http.ResponseWriter, r *http.Request, src *Source) (*stats.T
 		return nil, false
 	}
 	for _, t := range p.Targets() {
-		if t.ID == id {
+		if t.ID() == id {
 			return t, true
 		}
 	}

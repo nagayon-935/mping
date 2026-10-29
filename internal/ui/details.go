@@ -33,7 +33,7 @@ func newHostDetails(opts RunOptions) *hostDetails {
 
 func (d *hostDetails) refresh(targets []*stats.TargetStats) bool {
 	for _, t := range targets {
-		if t.ID != d.targetID {
+		if t.ID() != d.targetID {
 			continue
 		}
 		d.text.SetText(renderHostDetails(t, d.opts))

@@ -172,7 +172,7 @@ func TestTableRendererUpdate_TallPaneRendersAllVisibleRows(t *testing.T) {
 	}
 
 	// Scroll selection to the very last target (#72) and verify the bottom visible rows and selection render.
-	tr.selectedID = targets[numTargets-1].ID
+	tr.selectedID = targets[numTargets-1].ID()
 	tr.scrollToSelection = true
 	tr.update()
 	if got := tr.table.GetCell(numTargets, 1).Text; got == "" {

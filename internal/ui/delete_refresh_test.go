@@ -40,7 +40,7 @@ func TestDeleteConfirmationDoesNotReplaceDisappearingTarget(t *testing.T) {
 	recvWithin(t, refreshed, "the target list refresh")
 	h.key(tcell.KeyRight)
 	h.key(tcell.KeyEnter)
-	if id := recvWithin(t, deleted, "the delete confirmation callback"); id != b.ID {
+	if id := recvWithin(t, deleted, "the delete confirmation callback"); id != b.ID() {
 		t.Fatal("confirmation substituted another target")
 	}
 	h.wait("Delete target: selected target is no longer active")

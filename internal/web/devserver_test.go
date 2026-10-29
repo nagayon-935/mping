@@ -190,7 +190,7 @@ func (s *simulation) AddHost(host string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, st := range s.targets {
-		if st.ts.Host == host {
+		if st.ts.Host() == host {
 			return fmt.Errorf("host %q is already in the list", host)
 		}
 	}
@@ -211,7 +211,7 @@ func (s *simulation) DeleteTarget(id uint64) error {
 		return errors.New("cannot delete the last host")
 	}
 	for i, st := range s.targets {
-		if st.ts.ID == id {
+		if st.ts.ID() == id {
 			s.targets = slices.Delete(slices.Clone(s.targets), i, i+1)
 			return nil
 		}
@@ -235,8 +235,8 @@ func (s *simulation) Meta() Meta {
 	ids := func(hosts ...string) []uint64 {
 		var out []uint64
 		for _, st := range s.targets {
-			if slices.Contains(hosts, st.ts.Host) {
-				out = append(out, st.ts.ID)
+			if slices.Contains(hosts, st.ts.Host()) {
+				out = append(out, st.ts.ID())
 			}
 		}
 		return out
