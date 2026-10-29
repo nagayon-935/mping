@@ -117,9 +117,11 @@ func TestLookupPTR_ReturnsEarlyAfterStop(t *testing.T) {
 func TestLookupAddrBoundedUnblocksOnStop(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
+	entered := make(chan struct{})
 
 	p := NewPingerWithOptions(nil, Options{
 		LookupAddr: func(string) ([]string, error) {
+			close(entered)
 			<-release // simulates a DNS server that never answers
 			return nil, nil
 		},
@@ -131,8 +133,7 @@ func TestLookupAddrBoundedUnblocksOnStop(t *testing.T) {
 		returned <- err
 	}()
 
-	// Let the lookup goroutine get into its blocking call.
-	time.Sleep(20 * time.Millisecond)
+	<-entered // the lookup goroutine is inside its blocking call
 	p.Stop()
 
 	select {
@@ -279,4 +280,29 @@ func TestAnnotateHopIP(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetPTR_JitterAndEmptyName(t *testing.T) {
+	t.Run("stopping during the jitter delay abandons the lookup", func(t *testing.T) {
+		p := NewPingerWithOptions(nil, Options{LookupAddr: func(string) ([]string, error) {
+			t.Error("lookup issued after Stop")
+			return nil, nil
+		}})
+		p.ptrJitter = func() time.Duration { return time.Hour }
+		p.Stop()
+		if got := p.getPTR("8.8.8.8"); got != "" {
+			t.Fatalf("getPTR = %q, want empty", got)
+		}
+	})
+
+	t.Run("a bare root label is not a name and is not cached", func(t *testing.T) {
+		p := NewPingerWithOptions(nil, Options{LookupAddr: func(string) ([]string, error) { return []string{"."}, nil }})
+		p.ptrJitter = func() time.Duration { return time.Millisecond }
+		if got := p.getPTR("8.8.8.8"); got != "" {
+			t.Fatalf("getPTR = %q, want empty", got)
+		}
+		if _, cached := p.ptrCache["8.8.8.8"]; cached {
+			t.Fatal("empty name was cached")
+		}
+	})
 }

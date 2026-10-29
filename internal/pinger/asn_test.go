@@ -248,9 +248,11 @@ func TestLookupASN_ReturnsEarlyAfterStop(t *testing.T) {
 func TestLookupTXTBoundedUnblocksOnStop(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
+	entered := make(chan struct{})
 
 	p := NewPingerWithOptions(nil, Options{
 		LookupTXT: func(string) ([]string, error) {
+			close(entered)
 			<-release // simulates a DNS server that never answers
 			return nil, nil
 		},
@@ -262,8 +264,7 @@ func TestLookupTXTBoundedUnblocksOnStop(t *testing.T) {
 		returned <- err
 	}()
 
-	// Let the lookup goroutine get into its blocking call.
-	time.Sleep(20 * time.Millisecond)
+	<-entered // the lookup goroutine is inside its blocking call
 	p.Stop()
 
 	select {
@@ -284,6 +285,7 @@ func TestLookupTXTBoundedUnblocksOnStop(t *testing.T) {
 func TestGetASNInfo_StopDuringOrgLookupDoesNotCache(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
+	orgEntered := make(chan struct{})
 
 	mockLookup := func(query string) ([]string, error) {
 		if strings.Contains(query, "origin") {
@@ -291,6 +293,7 @@ func TestGetASNInfo_StopDuringOrgLookupDoesNotCache(t *testing.T) {
 		}
 		// org lookup: simulate a DNS server that never answers, so it is
 		// still in flight when Stop() fires below.
+		close(orgEntered)
 		<-release
 		return []string{"15169 | GOOGLE - Google LLC, US | 1992-12-01"}, nil
 	}
@@ -303,9 +306,7 @@ func TestGetASNInfo_StopDuringOrgLookupDoesNotCache(t *testing.T) {
 		returned <- p.getASNInfo("8.8.8.8")
 	}()
 
-	// Let the origin lookup complete and the org lookup get into its
-	// blocking call.
-	time.Sleep(20 * time.Millisecond)
+	<-orgEntered // origin lookup completed; the org lookup is in flight
 	p.Stop()
 
 	select {
@@ -397,6 +398,43 @@ func TestGetASNInfoFor(t *testing.T) {
 
 		if info.Number != "AS15169" || info.Country != "US" {
 			t.Errorf("GetASNInfoFor = %+v, want AS15169 / US", info)
+		}
+	})
+}
+
+func TestGetASNInfo_IPv6AndJitter(t *testing.T) {
+	var queries []string
+	p := NewPingerWithOptions(nil, Options{
+		LookupTXT: func(q string) ([]string, error) {
+			queries = append(queries, q)
+			if strings.Contains(q, "origin6") {
+				return []string{"15169 | 2001:4860::/32 | US | arin | 2005-01-01"}, nil
+			}
+			return []string{"15169"}, nil // org record without a description column
+		},
+	})
+
+	t.Run("IPv6 uses the nibble-reversed origin6 zone", func(t *testing.T) {
+		p.asnJitter = func() time.Duration { return time.Millisecond }
+		info := p.getASNInfo("2001:4860:4860::8888")
+		if info.Number != "AS15169" || info.Org != "" {
+			t.Fatalf("info = %+v, want AS15169 with no org", info)
+		}
+		want := "8.8.8.8.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.6.8.4.0.6.8.4.1.0.0.2.origin6.asn.cymru.com"
+		if queries[0] != want {
+			t.Fatalf("origin query = %q, want %q", queries[0], want)
+		}
+	})
+
+	t.Run("stopping during the jitter delay abandons the lookup", func(t *testing.T) {
+		q := NewPingerWithOptions(nil, Options{LookupTXT: func(string) ([]string, error) {
+			t.Error("lookup issued after Stop")
+			return nil, nil
+		}})
+		q.asnJitter = func() time.Duration { return time.Hour }
+		q.Stop()
+		if info := q.getASNInfo("8.8.8.8"); info != (ASNInfo{}) {
+			t.Fatalf("info = %+v, want zero value", info)
 		}
 	})
 }

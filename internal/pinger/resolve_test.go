@@ -2,6 +2,8 @@ package pinger
 
 import (
 	"context"
+	"errors"
+	"github.com/nagayon-935/mping/internal/stats"
 	"net"
 	"slices"
 	"sync"
@@ -175,5 +177,62 @@ func TestResolveIPAddrContext_Literals(t *testing.T) {
 				t.Errorf("got %s%%%s, want %s%%%s", addr.IP, addr.Zone, tt.wantIP, tt.wantZone)
 			}
 		})
+	}
+}
+
+func TestResolveTarget(t *testing.T) {
+	tests := []struct {
+		name      string
+		resolve   func(network, address string) (*net.IPAddr, error)
+		wantIP    string // empty means resolution must fail
+		wantError string
+	}{
+		{"success records the address", resolveTo("1.2.3.4"), "1.2.3.4", ""},
+		{"resolver error is a DNS Error", func(string, string) (*net.IPAddr, error) { return nil, errors.New("dns failure") }, "", "DNS Error"},
+		{"resolver returning no address is a DNS Error", func(string, string) (*net.IPAddr, error) { return nil, nil }, "", "DNS Error"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := stats.NewTargetStats("example.com")
+			p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{ResolveIPAddr: tt.resolve})
+
+			addr := p.resolveTarget(target)
+
+			view := target.GetView()
+			if tt.wantIP == "" {
+				if addr != nil || view.LastError != tt.wantError {
+					t.Fatalf("addr=%v LastError=%q, want nil and %q", addr, view.LastError, tt.wantError)
+				}
+				return
+			}
+			if addr == nil || addr.IP.String() != tt.wantIP || view.IP != tt.wantIP {
+				t.Fatalf("addr=%v target IP=%q, want %s", addr, view.IP, tt.wantIP)
+			}
+		})
+	}
+}
+
+func TestResolveIPAddrContext_UnknownNetworkAndDefaultResolver(t *testing.T) {
+	if _, err := ResolveIPAddrContext(context.Background(), nil, "tcp", "127.0.0.1"); err == nil {
+		t.Error("expected an error for an unsupported network")
+	}
+	// A nil resolver falls back to net.DefaultResolver; a cancelled context
+	// makes that lookup fail immediately, without touching the network.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := ResolveIPAddrContext(ctx, nil, "ip4", "host.invalid"); err == nil {
+		t.Error("expected the cancelled lookup to fail")
+	}
+}
+
+func TestResolveIPAddrContext_PingerCancelled(t *testing.T) {
+	p := NewPingerWithOptions(nil, Options{ResolveIPAddrContext: func(context.Context, string, string) (*net.IPAddr, error) {
+		t.Error("lookup started on a cancelled context")
+		return nil, nil
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := p.resolveIPAddrContext(ctx, "ip", "example.com"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }
