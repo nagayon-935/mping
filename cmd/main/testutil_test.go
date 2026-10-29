@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nagayon-935/mping/internal/hostsfile"
 	"github.com/nagayon-935/mping/internal/mtr"
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
@@ -18,16 +19,22 @@ import (
 	"github.com/nagayon-935/mping/internal/web"
 )
 
-// hostEntries builds a []hostEntry from bare hostnames, for tests written
-// before hostsFileYAML.Hosts/groupYAML.Hosts gained per-target DSCP
-// overrides (hostEntry) and still want the old "just a list of strings"
-// shorthand.
-func hostEntries(hosts ...string) []hostEntry {
-	entries := make([]hostEntry, len(hosts))
+// hostEntries builds a []hostsfile.Entry from bare hostnames.
+func hostEntries(hosts ...string) []hostsfile.Entry {
+	entries := make([]hostsfile.Entry, len(hosts))
 	for i, h := range hosts {
-		entries[i] = hostEntry{Host: h}
+		entries[i] = hostsfile.Entry{Host: h}
 	}
 	return entries
+}
+
+func writeTestFile(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+	return path
 }
 
 // writeHostsYAML writes content to hosts.yaml in a fresh temp dir and returns

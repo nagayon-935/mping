@@ -1,4 +1,4 @@
-package main
+package hostsfile
 
 import (
 	"bytes"
@@ -114,10 +114,10 @@ func parseNetBoxHeader(header []string) (netBoxColumns, bool) {
 	return cols, cols.ipIdx >= 0 && hasMarker
 }
 
-func parseNetBoxCSV(path, kind string, data []byte) ([]hostEntry, error) {
+func parseNetBoxCSV(path, kind string, data []byte) ([]Entry, error) {
 	trimmed, lineOffset := trimLeadingCommentsAndBlanks(data)
 	if len(trimmed) == 0 {
-		return []hostEntry{}, nil
+		return []Entry{}, nil
 	}
 	r := csv.NewReader(bytes.NewReader(trimmed))
 	r.FieldsPerRecord = -1
@@ -222,9 +222,9 @@ func formatCSVError(path, kind string, lineOffset int, err error) error {
 // over Parent and disambiguating duplicates with the interface name and/or IP
 // address so every non-empty Name is unique and never collides with another
 // row's Host or an explicitly reserved name or host.
-func resolveNetBoxNames(rows []netBoxRow, reserved []hostEntry) []hostEntry {
+func resolveNetBoxNames(rows []netBoxRow, reserved []Entry) []Entry {
 	if len(rows) == 0 {
-		return []hostEntry{}
+		return []Entry{}
 	}
 	hostCount := make(map[string]int, len(rows))
 	baseCount := make(map[string]int, len(rows))
@@ -272,7 +272,7 @@ func resolveNetBoxNames(rows []netBoxRow, reserved []hostEntry) []hostEntry {
 		}
 	}
 
-	out := make([]hostEntry, len(rows))
+	out := make([]Entry, len(rows))
 	seen := make(map[string]int, len(rows))
 	for i, r := range rows {
 		name := cand[i]
@@ -297,18 +297,18 @@ func resolveNetBoxNames(rows []netBoxRow, reserved []hostEntry) []hostEntry {
 				}
 			}
 		}
-		out[i] = hostEntry{Host: r.host, Name: name}
+		out[i] = Entry{Host: r.host, Name: name}
 	}
 	return out
 }
 
 // resolveNetBoxDocNames resolves generated names across all lists, reserving
 // explicit names and hosts without changing user-supplied display names.
-func resolveNetBoxDocNames(doc *hostsFileYAML) {
-	var entries []*hostEntry
+func resolveNetBoxDocNames(doc *Document) {
+	var entries []*Entry
 	var rows []netBoxRow
-	var reserved []hostEntry
-	collect := func(hosts []hostEntry) {
+	var reserved []Entry
+	collect := func(hosts []Entry) {
 		for i := range hosts {
 			h := &hosts[i]
 			if h.netBox == nil {

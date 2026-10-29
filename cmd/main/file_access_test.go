@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -49,15 +48,10 @@ func assertNotExist(t *testing.T, path string) {
 
 func TestFileOperationsCallAsRealUser(t *testing.T) {
 	dir := t.TempDir()
-	writeTestFile(t, dir, "list.txt", "192.0.2.1\n")
-	hostsPath := writeTestFile(t, dir, "hosts.yaml", "hosts: [192.0.2.9]\ninclude: list.txt\n")
 	tests := []struct {
 		name string
 		run  func() error
 	}{
-		{name: "hosts file", run: func() error { _, err := parseHostsFile(hostsPath); return err }},
-		{name: "include file", run: func() error { _, err := readIncludeFile(filepath.Join(dir, "list.txt")); return err }},
-		{name: "watch path discovery", run: func() error { hostsFileWatchPaths(hostsPath); return nil }},
 		{name: "CSV log", run: func() error {
 			f, err := setupLogger(filepath.Join(dir, "log.csv"))
 			if err == nil {
@@ -88,53 +82,9 @@ func TestFileOperationsCallAsRealUser(t *testing.T) {
 
 // TestFileOperationsDoAllIOInsideAsRealUser proves the I/O itself — not
 // just a call to asRealUser — happens inside the callback: with the
-// callback skipped, nothing may be read or written.
+// callback skipped, nothing may be written. Hosts and include files are
+// covered by internal/hostsfile's own tests.
 func TestFileOperationsDoAllIOInsideAsRealUser(t *testing.T) {
-	t.Run("hosts file is not read", func(t *testing.T) {
-		dir := t.TempDir()
-		path := writeTestFile(t, dir, "hosts.yaml", "hosts: [192.0.2.9]\n")
-		skipAsRealUser(t)
-
-		doc, err := parseHostsFile(path)
-
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(doc.Hosts) != 0 {
-			t.Fatalf("hosts file was read outside asRealUser: %v", doc.Hosts)
-		}
-	})
-	t.Run("missing files are not even looked up", func(t *testing.T) {
-		missing := filepath.Join(t.TempDir(), "missing")
-		skipAsRealUser(t)
-
-		if _, err := parseHostsFile(missing + ".yaml"); err != nil {
-			t.Fatalf("hosts file was looked up outside asRealUser: %v", err)
-		}
-		if _, err := readIncludeFile(missing + ".txt"); err != nil {
-			t.Fatalf("include file was looked up outside asRealUser: %v", err)
-		}
-	})
-	t.Run("include file is not read", func(t *testing.T) {
-		path := writeTestFile(t, t.TempDir(), "list.txt", "192.0.2.1\n")
-		skipAsRealUser(t)
-
-		got, err := readIncludeFile(path)
-
-		if err != nil || len(got) != 0 {
-			t.Fatalf("include file was read outside asRealUser: %v, %v", got, err)
-		}
-	})
-	t.Run("watch paths come only from a read done as the user", func(t *testing.T) {
-		path := writeTestFile(t, t.TempDir(), "hosts.yaml", "include: a.csv\n")
-		skipAsRealUser(t)
-
-		got := hostsFileWatchPaths(path)
-
-		if want := []string{path}; !reflect.DeepEqual(got, want) {
-			t.Fatalf("got %v, want %v", got, want)
-		}
-	})
 	t.Run("CSV log is not created", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "log.csv")
 		skipAsRealUser(t)
@@ -212,15 +162,11 @@ func TestSupervisorSaveReportResolvesPathAsRealUser(t *testing.T) {
 func TestFileOperationsFailWhenPrivilegesCannotBeDropped(t *testing.T) {
 	swapAsRealUser(t, func(func() error) error { return errors.New("drop privileges: operation not permitted") })
 	dir := t.TempDir()
-	hostsPath := writeTestFile(t, dir, "hosts.yaml", "hosts: [192.0.2.9]\n")
-	incPath := writeTestFile(t, dir, "list.txt", "192.0.2.1\n")
 
 	tests := []struct {
 		name string
 		run  func() error
 	}{
-		{name: "hosts file", run: func() error { _, err := parseHostsFile(hostsPath); return err }},
-		{name: "include file", run: func() error { _, err := readIncludeFile(incPath); return err }},
 		{name: "CSV log", run: func() error { _, err := setupLogger(filepath.Join(dir, "log.csv")); return err }},
 		{name: "JSON snapshot", run: func() error { return writeJSONSnapshot(filepath.Join(dir, "s.json"), nil, nil) }},
 		{name: "report", run: func() error {
@@ -236,14 +182,4 @@ func TestFileOperationsFailWhenPrivilegesCannotBeDropped(t *testing.T) {
 			}
 		})
 	}
-	t.Run("watch path discovery falls back to the hosts file", func(t *testing.T) {
-		// The include would be listed if the read had succeeded.
-		withInclude := writeTestFile(t, dir, "with-include.yaml", "include: a.csv\n")
-
-		got := hostsFileWatchPaths(withInclude)
-
-		if want := []string{withInclude}; !reflect.DeepEqual(got, want) {
-			t.Fatalf("got %v, want %v", got, want)
-		}
-	})
 }

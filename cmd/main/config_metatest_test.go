@@ -4,23 +4,24 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/nagayon-935/mping/internal/hostsfile"
 	"github.com/spf13/pflag"
 )
 
 // TestApplyDocToCfg_EveryFieldHasEffect guards against adding a field to
-// hostsFileYAML without wiring it into applyDocToCfg. For every pointer/
-// slice field on hostsFileYAML (excluding Hosts/Groups/Thresholds, which are
+// hostsfile.Document without wiring it into applyDocToCfg. For every pointer/
+// slice field on hostsfile.Document (excluding Hosts/Groups/Thresholds, which are
 // structurally different and returned/handled separately), it builds a doc
 // with only that field set to a distinguishing sentinel value, applies it to
 // a zero-value config with an empty (nothing-changed) FlagSet, and asserts
 // the resulting config differs from the zero value. A field that
 // applyDocToCfg forgot to read would leave cfg unchanged and fail this test.
 func TestApplyDocToCfg_EveryFieldHasEffect(t *testing.T) {
-	docType := reflect.TypeFor[hostsFileYAML]()
+	docType := reflect.TypeFor[hostsfile.Document]()
 	skip := map[string]bool{
 		"Hosts":      true, // returned directly, not merged into cfg
 		"Groups":     true, // returned directly, not merged into cfg
-		"Include":    true, // resolved into Hosts by parseHostsFile
+		"Include":    true, // resolved into Hosts by hostsfile.Parse
 		"Thresholds": true, // covered by TestApplyThresholdsDoc_EveryFieldHasEffect
 	}
 
@@ -30,7 +31,7 @@ func TestApplyDocToCfg_EveryFieldHasEffect(t *testing.T) {
 			continue
 		}
 		t.Run(field.Name, func(t *testing.T) {
-			doc := hostsFileYAML{}
+			doc := hostsfile.Document{}
 			docVal := reflect.ValueOf(&doc).Elem()
 			if !setSentinel(field.Name, docVal.FieldByName(field.Name)) {
 				t.Fatalf("no sentinel setter for field %s (kind %s) — extend setSentinel", field.Name, field.Type.Kind())
@@ -43,21 +44,21 @@ func TestApplyDocToCfg_EveryFieldHasEffect(t *testing.T) {
 				t.Fatalf("applyDocToCfg: %v", err)
 			}
 			if reflect.DeepEqual(got, zero) {
-				t.Errorf("setting hostsFileYAML.%s had no observable effect on config — is it wired into applyDocToCfg?", field.Name)
+				t.Errorf("setting hostsfile.Document.%s had no observable effect on config — is it wired into applyDocToCfg?", field.Name)
 			}
 		})
 	}
 }
 
 // TestOverlayThresholdsDoc_EveryFieldHasEffect is TestApplyDocToCfg_EveryFieldHasEffect's
-// counterpart for thresholdsYAML, which overlayThresholdsDoc merges separately.
+// counterpart for hostsfile.Thresholds, which overlayThresholdsDoc merges separately.
 func TestOverlayThresholdsDoc_EveryFieldHasEffect(t *testing.T) {
-	thType := reflect.TypeFor[thresholdsYAML]()
+	thType := reflect.TypeFor[hostsfile.Thresholds]()
 
 	for field := range thType.Fields() {
 		field := field
 		t.Run(field.Name, func(t *testing.T) {
-			th := thresholdsYAML{}
+			th := hostsfile.Thresholds{}
 			thVal := reflect.ValueOf(&th).Elem()
 			if !setSentinel(field.Name, thVal.FieldByName(field.Name)) {
 				t.Fatalf("no sentinel setter for field %s (kind %s) — extend setSentinel", field.Name, field.Type.Kind())
@@ -68,7 +69,7 @@ func TestOverlayThresholdsDoc_EveryFieldHasEffect(t *testing.T) {
 			got := zero
 			got.thresholds = overlayThresholdsDoc(got.thresholds, fs, &th)
 			if reflect.DeepEqual(got, zero) {
-				t.Errorf("setting thresholdsYAML.%s had no observable effect on config — is it wired into overlayThresholdsDoc?", field.Name)
+				t.Errorf("setting hostsfile.Thresholds.%s had no observable effect on config — is it wired into overlayThresholdsDoc?", field.Name)
 			}
 		})
 	}

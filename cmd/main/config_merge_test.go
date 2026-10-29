@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nagayon-935/mping/internal/hostsfile"
 	"github.com/spf13/pflag"
 )
 
@@ -31,7 +32,7 @@ func TestApplyDocToCfg_Duration(t *testing.T) {
 				t.Fatalf("parseArgs: %v", err)
 			}
 			v := tt.yaml
-			_, _, gotCfg, err := applyDocToCfg(cfg, fs, hostsFileYAML{Hosts: hostEntries("example.com"), Duration: &v})
+			_, _, gotCfg, err := applyDocToCfg(cfg, fs, hostsfile.Document{Hosts: hostEntries("example.com"), Duration: &v})
 			if tt.wantFail {
 				if err == nil {
 					t.Fatal("expected error for malformed duration in YAML doc")
@@ -56,7 +57,7 @@ func TestOverlayThresholdsDoc_YAMLApplied(t *testing.T) {
 	}
 	mi := func(v int) *int { return &v }
 	mf := func(v float64) *float64 { return &v }
-	cfg.thresholds = overlayThresholdsDoc(cfg.thresholds, fs, &thresholdsYAML{
+	cfg.thresholds = overlayThresholdsDoc(cfg.thresholds, fs, &hostsfile.Thresholds{
 		RTTWarn: mi(25), RTTCrit: mi(90),
 		LossWarn: mf(15), LossCrit: mf(60),
 	})
@@ -79,7 +80,7 @@ func TestOverlayThresholdsDoc_FlagOverridesYAML(t *testing.T) {
 		t.Fatalf("parseArgs: %v", err)
 	}
 	mi := func(v int) *int { return &v }
-	cfg.thresholds = overlayThresholdsDoc(cfg.thresholds, fs, &thresholdsYAML{
+	cfg.thresholds = overlayThresholdsDoc(cfg.thresholds, fs, &hostsfile.Thresholds{
 		RTTWarn: mi(25), RTTCrit: mi(90),
 	})
 	if cfg.thresholds.RTTWarn != 40*time.Millisecond {

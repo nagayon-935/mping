@@ -4,7 +4,7 @@
 
 ## 処理の流れ
 
-1. `cmd/main` が CLI と設定ファイルを読み、include を展開し、設定を検証する。
+1. `cmd/main` が CLI を読み、`internal/hostsfile` が設定ファイルを読んでホストパターン・include（NetBox CSV を含む）を展開する。`cmd/main` はその結果を設定に適用し、検証する。
 2. 起動時のネットワーク設定・プローブ構築を経て、supervisor が監視の開始、停止、再読み込みを管理する。
 3. `internal/pinger` と `internal/mtr` が計測し、`internal/stats` に結果を記録する。
 4. TUI、Web、レポートは統計のスナップショットを読み、表示・出力する。
@@ -15,6 +15,7 @@
 | 領域 | 主なファイル | 責務 |
 |---|---|---|
 | CLI | `cmd/main/mping.go` | アプリケーションの起動手順と UI 接続 |
+| 設定ファイル | `internal/hostsfile` | YAML 文書の構造、ホストパターン展開、include・NetBox CSV の読み込み。ファイルはすべて起動ユーザーの権限で読む |
 | 設定 | `cmd/main/config.go`, `config_validation.go` | 設定の適用と意味的検証を分離 |
 | 起動準備 | `cmd/main/startup_network.go`, `startup_probes.go` | ネットワーク選択・DNS・送信元とプローブの構築 |
 | CLI 出力 | `cmd/main/output.go` | ログ、JSON スナップショット、終了サマリー |

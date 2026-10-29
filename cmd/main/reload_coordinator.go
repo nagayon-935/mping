@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/nagayon-935/mping/internal/hostsfile"
 	ui "github.com/nagayon-935/mping/internal/ui"
 	"github.com/spf13/pflag"
 )
@@ -58,7 +59,7 @@ func newReloadCoordinator(fs *pflag.FlagSet, cliCfg config, cliHosts []string) *
 // parses and validates the hosts file; on failure it logs to logCh and
 // leaves the running instance untouched.
 func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile string, logCh chan<- string) {
-	doc, err := parseHostsFile(hostsFile)
+	doc, err := hostsfile.Parse(hostsFile)
 	if err != nil {
 		postLog(logCh, fmt.Sprintf("[red][%s] Reload error: %v[-]", clock(), err))
 		return

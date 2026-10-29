@@ -1,4 +1,4 @@
-package main
+package hostsfile
 
 import (
 	"bufio"
@@ -14,20 +14,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// includeList is a hosts-file include: value — one path or a list of paths.
-type includeList []string
+// IncludeList is a hosts-file include: value — one path or a list of paths.
+type IncludeList []string
 
 // UnmarshalYAML accepts either a scalar or a sequence of scalars.
-func (l *includeList) UnmarshalYAML(value *yaml.Node) error {
+func (l *IncludeList) UnmarshalYAML(value *yaml.Node) error {
 	switch value.Kind {
 	case yaml.ScalarNode:
 		if value.Value == "" {
 			return fmt.Errorf("include: line %d: empty file path", value.Line)
 		}
-		*l = includeList{value.Value}
+		*l = IncludeList{value.Value}
 		return nil
 	case yaml.SequenceNode:
-		paths := make(includeList, 0, len(value.Content))
+		paths := make(IncludeList, 0, len(value.Content))
 		for _, item := range value.Content {
 			if item.Kind != yaml.ScalarNode {
 				return fmt.Errorf("include: line %d: expected a file path", item.Line)
@@ -69,8 +69,8 @@ func resolveIncludePath(baseDir, path string) string {
 // invoking user (asRealUser), errors report the file and line number but
 // never the line's text, and the hostname check keeps arbitrary text lines
 // from being displayed as targets.
-func readIncludeFile(path string) ([]hostEntry, error) {
-	var out []hostEntry
+func readIncludeFile(path string) ([]Entry, error) {
+	var out []Entry
 	err := asRealUser(func() error {
 		var err error
 		out, err = readIncludeFileUnprivileged(path)
@@ -79,7 +79,7 @@ func readIncludeFile(path string) ([]hostEntry, error) {
 	return out, err
 }
 
-func readIncludeFileUnprivileged(path string) ([]hostEntry, error) {
+func readIncludeFileUnprivileged(path string) ([]Entry, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("include %q: %w", path, err)
@@ -94,12 +94,12 @@ func readIncludeFileUnprivileged(path string) ([]hostEntry, error) {
 	return parseIncludeData(path, "include", data)
 }
 
-func parseIncludeData(path, kind string, data []byte) ([]hostEntry, error) {
+func parseIncludeData(path, kind string, data []byte) ([]Entry, error) {
 	if isNetBoxCSVData(data) {
 		return parseNetBoxCSV(path, kind, data)
 	}
 	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
-	out := []hostEntry{}
+	out := []Entry{}
 	sc := bufio.NewScanner(bytes.NewReader(data))
 	for lineNo, sawData := 1, false; sc.Scan(); lineNo++ {
 		entry, ok, err := parseIncludeLine(sc.Text())
@@ -143,24 +143,24 @@ func parseIncludeData(path, kind string, data []byte) ([]hostEntry, error) {
 // parseIncludeLine splits one include-file line into its columns (DSCP is
 // validated by the caller, after header detection). ok is false for blank
 // and comment-only lines. Errors never quote the line.
-func parseIncludeLine(line string) (entry hostEntry, ok bool, err error) {
+func parseIncludeLine(line string) (entry Entry, ok bool, err error) {
 	if i := strings.IndexByte(line, '#'); i >= 0 {
 		line = line[:i]
 	}
 	line = strings.TrimSpace(line)
 	if line == "" {
-		return hostEntry{}, false, nil
+		return Entry{}, false, nil
 	}
 	cols := strings.Split(line, ",")
 	if len(cols) > 3 {
-		return hostEntry{}, false, fmt.Errorf("expected at most 3 columns (host,name,dscp), got %d", len(cols))
+		return Entry{}, false, fmt.Errorf("expected at most 3 columns (host,name,dscp), got %d", len(cols))
 	}
 	for i := range cols {
 		cols[i] = strings.TrimSpace(cols[i])
 	}
 	entry.Host = cols[0]
 	if entry.Host == "" {
-		return hostEntry{}, false, errors.New("host column is empty")
+		return Entry{}, false, errors.New("host column is empty")
 	}
 	if len(cols) > 1 {
 		entry.Name = cols[1]
@@ -194,30 +194,30 @@ func isHostSyntax(s string) bool {
 // expandHostsDoc expands every host pattern in doc and appends each list's
 // include files (resolved against baseDir) after its inline entries. The
 // returned doc lists concrete hosts only and has no includes left.
-func expandHostsDoc(doc hostsFileYAML, baseDir string) (hostsFileYAML, error) {
+func expandHostsDoc(doc Document, baseDir string) (Document, error) {
 	hosts, err := collectHosts(doc.Hosts, doc.Include, "hosts", baseDir)
 	if err != nil {
-		return hostsFileYAML{}, err
+		return Document{}, err
 	}
 	total := len(hosts)
-	groups := make([]groupYAML, 0, len(doc.Groups))
+	groups := make([]Group, 0, len(doc.Groups))
 	for _, g := range doc.Groups {
 		groupHosts, err := collectHosts(g.Hosts, g.Include, fmt.Sprintf("groups[%q]", g.Name), baseDir)
 		if err != nil {
-			return hostsFileYAML{}, err
+			return Document{}, err
 		}
 		total += len(groupHosts)
-		groups = append(groups, groupYAML{Name: g.Name, Hosts: groupHosts})
+		groups = append(groups, Group{Name: g.Name, Hosts: groupHosts})
 	}
 	if total > maxHostsFileTargets {
-		return hostsFileYAML{}, fmt.Errorf("hosts file expands to %d targets, more than %d targets allowed", total, maxHostsFileTargets)
+		return Document{}, fmt.Errorf("hosts file expands to %d targets, more than %d targets allowed", total, maxHostsFileTargets)
 	}
 	doc.Hosts, doc.Groups, doc.Include = hosts, groups, nil
 	resolveNetBoxDocNames(&doc)
 	return doc, nil
 }
 
-func collectHosts(entries []hostEntry, includes includeList, location, baseDir string) ([]hostEntry, error) {
+func collectHosts(entries []Entry, includes IncludeList, location, baseDir string) ([]Entry, error) {
 	hosts, err := expandHostEntries(entries, location)
 	if err != nil {
 		return nil, err
@@ -232,28 +232,28 @@ func collectHosts(entries []hostEntry, includes includeList, location, baseDir s
 	return hosts, nil
 }
 
-// hostsFileWatchPaths returns the hosts file plus every include file it
+// WatchPaths returns the hosts file plus every include file it
 // names (deduplicated, in order of appearance), for the reload watcher.
 // Include files that don't exist yet are still listed so that creating one
 // triggers a reload. If the hosts file can't be read or parsed, only the
 // hosts file itself is returned — fixing it triggers the reload that
 // re-derives the include set.
-func hostsFileWatchPaths(path string) []string {
+func WatchPaths(path string) []string {
 	paths := []string{path}
 	data, err := readFileAsRealUser(path)
 	if err != nil {
 		return paths
 	}
 	var doc struct {
-		Include includeList `yaml:"include"`
+		Include IncludeList `yaml:"include"`
 		Groups  []struct {
-			Include includeList `yaml:"include"`
+			Include IncludeList `yaml:"include"`
 		} `yaml:"groups"`
 	}
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return paths
 	}
-	all := append(includeList(nil), doc.Include...)
+	all := append(IncludeList(nil), doc.Include...)
 	for _, g := range doc.Groups {
 		all = append(all, g.Include...)
 	}

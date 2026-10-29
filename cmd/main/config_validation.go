@@ -5,6 +5,7 @@ import (
 	"net"
 	"strings"
 
+	"github.com/nagayon-935/mping/internal/hostsfile"
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 )
@@ -22,13 +23,13 @@ const (
 
 // Validate the effective configuration after CLI overrides are applied. This
 // is shared by initial loading and reload admission, before any probes stop.
-func validateMergedHosts(cfg config, hosts []hostEntry, groups []groupYAML, cliHosts []string) error {
-	allHosts := append([]hostEntry(nil), hosts...)
+func validateMergedHosts(cfg config, hosts []hostsfile.Entry, groups []hostsfile.Group, cliHosts []string) error {
+	allHosts := append([]hostsfile.Entry(nil), hosts...)
 	for _, host := range cliHosts {
-		allHosts = append(allHosts, hostEntry{Host: host})
+		allHosts = append(allHosts, hostsfile.Entry{Host: host})
 	}
 	duration := cfg.duration.String()
-	doc := hostsFileYAML{
+	doc := hostsfile.Document{
 		Hosts: allHosts, Groups: groups,
 		IntervalMs: &cfg.intervalMs, TimeoutMs: &cfg.timeoutMs,
 		PacketSize: &cfg.packetSize, Count: &cfg.count,
@@ -64,7 +65,7 @@ func validateMergedHosts(cfg config, hosts []hostEntry, groups []groupYAML, cliH
 
 // validateHostEntries checks the rules shared by grouped and ungrouped hosts.
 // location identifies the containing list in validation errors.
-func validateHostEntries(hosts []hostEntry, location string) error {
+func validateHostEntries(hosts []hostsfile.Entry, location string) error {
 	for i, h := range hosts {
 		if strings.TrimSpace(h.Host) == "" {
 			return fmt.Errorf("%s[%d]: empty host entry", location, i)
@@ -83,8 +84,8 @@ func validateHostEntries(hosts []hostEntry, location string) error {
 // host. A name is the target's identity in the UI and the key of the
 // display→address map (buildPingerOptions), so either would make one
 // target resolve to the other's address.
-func validateHostNames(doc hostsFileYAML) error {
-	all := append([]hostEntry(nil), doc.Hosts...)
+func validateHostNames(doc hostsfile.Document) error {
+	all := append([]hostsfile.Entry(nil), doc.Hosts...)
 	for _, g := range doc.Groups {
 		all = append(all, g.Hosts...)
 	}
@@ -112,9 +113,9 @@ func validateHostNames(doc hostsFileYAML) error {
 	return nil
 }
 
-// validateHostsDoc checks a hostsFileYAML for semantic errors.
+// validateHostsDoc checks a hostsfile.Document for semantic errors.
 // Returns a non-nil error if any field is out of range or logically invalid.
-func validateHostsDoc(doc hostsFileYAML) error {
+func validateHostsDoc(doc hostsfile.Document) error {
 	totalHosts := len(doc.Hosts)
 	for _, g := range doc.Groups {
 		totalHosts += len(g.Hosts)

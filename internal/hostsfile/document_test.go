@@ -1,4 +1,4 @@
-package main
+package hostsfile
 
 import (
 	"reflect"
@@ -8,11 +8,11 @@ import (
 func TestParseHostsFile_Mapping(t *testing.T) {
 	path := writeHostsYAML(t, "hosts:\n  - example.com\n  - 8.8.8.8\n")
 
-	got, err := parseHostsFile(path)
+	got, err := Parse(path)
 	if err != nil {
-		t.Fatalf("parseHostsFile: %v", err)
+		t.Fatalf("Parse: %v", err)
 	}
-	want := []hostEntry{{Host: "example.com"}, {Host: "8.8.8.8"}}
+	want := []Entry{{Host: "example.com"}, {Host: "8.8.8.8"}}
 	if !reflect.DeepEqual(got.Hosts, want) {
 		t.Fatalf("hosts: got %v, want %v", got.Hosts, want)
 	}
@@ -26,11 +26,11 @@ func TestParseHostsFile_PerHostDSCPMapping(t *testing.T) {
 		"  - host: 2001:db8::1\n    dscp: CS0\n"+
 		"  - plain.example.com\n")
 
-	got, err := parseHostsFile(path)
+	got, err := Parse(path)
 	if err != nil {
-		t.Fatalf("parseHostsFile: %v", err)
+		t.Fatalf("Parse: %v", err)
 	}
-	want := []hostEntry{
+	want := []Entry{
 		{Host: "2001:db8::1", DSCP: "EF"},
 		{Host: "2001:db8::1", DSCP: "CS0"},
 		{Host: "plain.example.com"},
@@ -43,9 +43,9 @@ func TestParseHostsFile_PerHostDSCPMapping(t *testing.T) {
 func TestParseHostsFile_GroupsYAML(t *testing.T) {
 	path := writeHostsYAML(t, "groups:\n  - name: \"Site A\"\n    hosts:\n      - 1.1.1.1\n      - 8.8.8.8\n")
 
-	doc, err := parseHostsFile(path)
+	doc, err := Parse(path)
 	if err != nil {
-		t.Fatalf("parseHostsFile: %v", err)
+		t.Fatalf("Parse: %v", err)
 	}
 	if len(doc.Groups) != 1 {
 		t.Fatalf("Groups: want 1, got %d", len(doc.Groups))
@@ -61,9 +61,9 @@ func TestParseHostsFile_GroupsYAML(t *testing.T) {
 func TestParseHostsFile_EmptyFileIsNotAnError(t *testing.T) {
 	path := writeHostsYAML(t, "")
 
-	got, err := parseHostsFile(path)
+	got, err := Parse(path)
 	if err != nil {
-		t.Fatalf("parseHostsFile on empty file: unexpected error: %v", err)
+		t.Fatalf("Parse on empty file: unexpected error: %v", err)
 	}
 	if len(got.Hosts) != 0 {
 		t.Errorf("hosts: got %v, want empty", got.Hosts)
@@ -84,8 +84,8 @@ func TestParseHostsFile_RejectsInvalidDocuments(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := parseHostsFile(writeHostsYAML(t, tt.content)); err == nil {
-				t.Fatal("parseHostsFile: expected an error, got nil")
+			if _, err := Parse(writeHostsYAML(t, tt.content)); err == nil {
+				t.Fatal("Parse: expected an error, got nil")
 			}
 		})
 	}

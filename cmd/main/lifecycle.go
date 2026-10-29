@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nagayon-935/mping/internal/hostsfile"
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 	ui "github.com/nagayon-935/mping/internal/ui"
@@ -268,7 +269,7 @@ func startWatcher(hostsFile string, onFileChange func(), logCh chan<- string) (c
 	watchCtx, cancelFn := context.WithCancel(context.Background())
 	go func() {
 		defer close(innerDone)
-		paths := func() []string { return hostsFileWatchPaths(hostsFile) }
+		paths := func() []string { return hostsfile.WatchPaths(hostsFile) }
 		if err := watcher.WatchPaths(watchCtx, paths, onFileChange); err != nil {
 			postLog(logCh, fmt.Sprintf("[red][%s] Watcher error: %v — auto-reload disabled, restart mping to re-enable[-]",
 				clock(), err))

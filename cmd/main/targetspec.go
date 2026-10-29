@@ -17,13 +17,13 @@ import (
 type targetSpec struct {
 	Host     string
 	PinnedIP string
-	// Name is an optional display name from the hosts file (hostEntry.Name).
+	// Name is an optional display name from the hosts file (hostsfile.Entry.Name).
 	// When set it replaces Host in display(); the pinger still reaches
 	// Host, via the display→address map built by buildPingerOptions.
 	Name string
 	// DSCP is this target's raw per-target dscp: override (a name like
 	// "EF" or a bare number), sourced from a hosts-file mapping entry
-	// (hostEntry.DSCP). "" means no override — the target falls back to
+	// (hostsfile.Entry.DSCP). "" means no override — the target falls back to
 	// config.dscp, mping's global default. Parsed lazily by
 	// buildPingerOptions, same rationale as config.dscp.
 	DSCP string

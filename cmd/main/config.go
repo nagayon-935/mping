@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/nagayon-935/mping/internal/hostsfile"
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/spf13/pflag"
 )
@@ -64,7 +65,7 @@ type config struct {
 // overrides (a field is only applied when the CLI flag was not explicitly set).
 // Returns the ungrouped hosts listed in the document, the raw group definitions,
 // and the updated cfg.
-func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]hostEntry, []groupYAML, config, error) {
+func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsfile.Document) ([]hostsfile.Entry, []hostsfile.Group, config, error) {
 	syncField(fs, "interval", doc.IntervalMs, &cfg.intervalMs)
 	syncField(fs, "timeout", doc.TimeoutMs, &cfg.timeoutMs)
 	syncField(fs, "output", doc.OutputFile, &cfg.outputFile)
@@ -161,7 +162,7 @@ func syncDuration(fs *pflag.FlagSet, flag string, docVal *string, cfgField *time
 // keep winning). When fs is nil, every non-nil doc field is applied
 // unconditionally (used by validateHostsDoc, which checks a doc's raw values
 // against a baseline and has no fs to consult).
-func overlayThresholdsDoc(base stats.Thresholds, fs *pflag.FlagSet, th *thresholdsYAML) stats.Thresholds {
+func overlayThresholdsDoc(base stats.Thresholds, fs *pflag.FlagSet, th *hostsfile.Thresholds) stats.Thresholds {
 	if th == nil {
 		return base
 	}
