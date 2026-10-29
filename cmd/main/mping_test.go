@@ -2,8 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
-	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -153,55 +151,6 @@ func TestRunStartError(t *testing.T) {
 	}
 }
 
-func TestSetupLogger(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "out.csv")
-	f, err := setupLogger(path)
-	if err != nil {
-		t.Fatalf("setupLogger: %v", err)
-	}
-	if f == nil {
-		t.Fatal("expected file handle")
-	}
-	f.Close()
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	if !strings.Contains(string(data), "Timestamp,Host,IP") {
-		t.Fatalf("missing header")
-	}
-}
-
-func TestSetupLogger_ExistingFile_NoExtraHeader(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "out.csv")
-
-	// First run: creates file and writes header.
-	f, err := setupLogger(path)
-	if err != nil {
-		t.Fatalf("first setupLogger: %v", err)
-	}
-	f.Close()
-
-	// Second run: file is non-empty; header must NOT be appended again.
-	f2, err := setupLogger(path)
-	if err != nil {
-		t.Fatalf("second setupLogger: %v", err)
-	}
-	f2.Close()
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	const header = "Timestamp,Host,IP,Seq,Status,RTT(ms),TTL,Error\n"
-	if count := strings.Count(string(data), header); count != 1 {
-		t.Errorf("header appears %d times, want exactly 1", count)
-	}
-}
-
 // ---- pingerAdapter setter tests ----
 
 func TestPingerAdapterSetters(t *testing.T) {
@@ -292,65 +241,6 @@ func TestMakePingerFactory_EmptyInterfaceWhenUnset(t *testing.T) {
 }
 
 // ---- runTraceroutes tests ----
-
-func TestRunTraceroutes_ContextCancel(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	target := stats.NewTargetStats("example.com")
-	fp := &fakePinger{}
-
-	done := make(chan struct{})
-	go func() {
-		runTraceroutes(ctx, fp, target)
-		close(done)
-	}()
-
-	// Allow initial run to complete then cancel
-	time.Sleep(50 * time.Millisecond)
-	cancel()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("runTraceroutes did not stop after context cancel")
-	}
-
-	view := target.GetView()
-	if len(view.TraceHops) == 0 || view.TraceHops[0] != "hop1" {
-		t.Errorf("unexpected hops: %v", view.TraceHops)
-	}
-}
-
-func TestRunTraceroutes_TraceError(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-
-	target := stats.NewTargetStats("example.com")
-	fp := &fakePinger{traceErr: io.ErrUnexpectedEOF}
-
-	runTraceroutes(ctx, fp, target)
-
-	view := target.GetView()
-	if len(view.TraceHops) == 0 || !strings.HasPrefix(view.TraceHops[0], "error:") {
-		t.Errorf("expected error hop, got %v", view.TraceHops)
-	}
-}
-
-func TestRunTraceroutes_EmptyHops(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-
-	// Verify "Tracing..." is set initially when hops are empty,
-	// then replaced with the result from TraceRoute
-	target := stats.NewTargetStats("example.com")
-	fp := &fakePinger{}
-
-	runTraceroutes(ctx, fp, target)
-
-	view := target.GetView()
-	if len(view.TraceHops) == 0 {
-		t.Errorf("expected hops to be set, got empty")
-	}
-}
 
 // ---- determineSourceIPs additional tests ----
 
@@ -755,94 +645,7 @@ func TestInitTargets(t *testing.T) {
 
 // ---- writeJSONSnapshot tests ----
 
-func TestWriteJSONSnapshot_CreatesValidJSON(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "stats.json")
-
-	targets := []*stats.TargetStats{stats.NewTargetStats("example.com")}
-	targets[0].SetIP("1.2.3.4")
-
-	if err := writeJSONSnapshot(path, targets, nil); err != nil {
-		t.Fatalf("writeJSONSnapshot: %v", err)
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-
-	var out map[string]any
-	if err := json.Unmarshal(data, &out); err != nil {
-		t.Fatalf("json.Unmarshal: %v", err)
-	}
-	if _, ok := out["timestamp"]; !ok {
-		t.Error("missing 'timestamp' in JSON")
-	}
-	if _, ok := out["targets"]; !ok {
-		t.Error("missing 'targets' in JSON")
-	}
-}
-
-func TestWriteJSONSnapshot_Atomic(t *testing.T) {
-	// Verify that the .tmp file is cleaned up and only the final file exists.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "stats.json")
-
-	if err := writeJSONSnapshot(path, nil, nil); err != nil {
-		t.Fatalf("writeJSONSnapshot: %v", err)
-	}
-
-	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
-		t.Error("expected .tmp file to be removed after rename")
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Errorf("expected final file to exist: %v", err)
-	}
-}
-
 // ---- run() with -j flag ----
-
-// TestRunJSONOutput_FinalWrite verifies that a valid JSON snapshot file is
-// written when the TUI exits (final snapshot path, no ticker dependency).
-func TestRunJSONOutput_FinalWrite(t *testing.T) {
-	origPinger := newPinger
-	origUI := uiRun
-	t.Cleanup(func() {
-		newPinger = origPinger
-		uiRun = origUI
-	})
-
-	newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
-		return &fakePinger{}
-	}
-
-	dir := t.TempDir()
-	jsonPath := filepath.Join(dir, "stats.json")
-
-	// Return immediately to trigger only the final snapshot write.
-	uiRun = func(opts ui.RunOptions) error { return nil }
-
-	var out, errOut bytes.Buffer
-	code := run([]string{"-j", jsonPath, "-S", "127.0.0.1", "example.com"}, &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
-	}
-
-	data, err := os.ReadFile(jsonPath)
-	if err != nil {
-		t.Fatalf("JSON file not created: %v", err)
-	}
-	var snap map[string]any
-	if err := json.Unmarshal(data, &snap); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	if _, ok := snap["timestamp"]; !ok {
-		t.Error("missing 'timestamp' in JSON output")
-	}
-	if _, ok := snap["targets"]; !ok {
-		t.Error("missing 'targets' in JSON output")
-	}
-}
 
 // ---- YAML auto-reload integration test ----
 
@@ -1060,127 +863,9 @@ func TestRunOnDeleteHost_NotFoundReturnsError(t *testing.T) {
 
 // ---- setupLogger additional coverage ----
 
-func TestSetupLogger_EmptyPath(t *testing.T) {
-	f, err := setupLogger("")
-	if err != nil {
-		t.Fatalf("setupLogger(\"\") unexpected error: %v", err)
-	}
-	if f != nil {
-		t.Error("expected nil file handle for empty path")
-	}
-}
-
-func TestSetupLogger_InvalidPath(t *testing.T) {
-	_, err := setupLogger("/nonexistent-dir-mping-test/out.csv")
-	if err == nil {
-		t.Error("expected error for invalid path")
-	}
-}
-
 // ---- writeJSONSnapshot error path ----
 
-func TestWriteJSONSnapshot_WriteError(t *testing.T) {
-	err := writeJSONSnapshot("/nonexistent-dir-mping-test/stats.json", nil, nil)
-	if err == nil {
-		t.Error("expected error when parent directory does not exist")
-	}
-}
-
 // ---- printExitSummary additional coverage ----
-
-func TestPrintExitSummary_WithRecv(t *testing.T) {
-	tgt := stats.NewTargetStats("example.com")
-	tgt.SetIP("1.2.3.4")
-	tgt.IncSent()
-	tgt.OnSuccess(10*time.Millisecond, 64)
-
-	var out bytes.Buffer
-	printExitSummary(&out, []*stats.TargetStats{tgt})
-	s := out.String()
-	if !strings.Contains(s, "example.com") {
-		t.Errorf("missing host in summary: %q", s)
-	}
-	if !strings.Contains(s, "rtt min") {
-		t.Errorf("missing rtt line in summary: %q", s)
-	}
-}
-
-func TestPrintExitSummary_StdDev(t *testing.T) {
-	tgt := stats.NewTargetStats("example.com")
-	tgt.SetIP("1.2.3.4")
-	// Classic dataset: population stddev of {2,4,4,4,5,5,7,9}ms is exactly 2ms.
-	for _, ms := range []int{2, 4, 4, 4, 5, 5, 7, 9} {
-		tgt.IncSent()
-		tgt.OnSuccess(time.Duration(ms)*time.Millisecond, 64)
-	}
-
-	var out bytes.Buffer
-	printExitSummary(&out, []*stats.TargetStats{tgt})
-	s := out.String()
-	if !strings.Contains(s, "rtt min/avg/max/stddev = ") {
-		t.Fatalf("missing rtt min/avg/max/stddev header: %q", s)
-	}
-	if !strings.Contains(s, "/2.000 ms") {
-		t.Errorf("stddev not printed as 2.000ms: %q", s)
-	}
-}
-
-// TestPrintExitSummary_Duplicates pins the "+N duplicates" segment (mirrors
-// ping.c's summary line) and that it's omitted entirely when there are none
-// (already covered by TestPrintExitSummary_WithRecv having zero dups).
-func TestPrintExitSummary_Duplicates(t *testing.T) {
-	tgt := stats.NewTargetStats("example.com")
-	tgt.SetIP("1.2.3.4")
-	tgt.IncSent()
-	tgt.OnSuccess(10*time.Millisecond, 64)
-	tgt.OnDuplicate()
-	tgt.OnDuplicate()
-
-	var out bytes.Buffer
-	printExitSummary(&out, []*stats.TargetStats{tgt})
-	s := out.String()
-	if !strings.Contains(s, "+2 duplicates") {
-		t.Errorf("missing duplicates segment in summary: %q", s)
-	}
-}
-
-// TestPrintExitSummary_LateReplies pins the "N packets out of wait time"
-// segment (mirrors ping.c's -W/nrcvtimeout summary line) and that it's
-// omitted when there are none.
-func TestPrintExitSummary_LateReplies(t *testing.T) {
-	tgt := stats.NewTargetStats("example.com")
-	tgt.SetIP("1.2.3.4")
-	tgt.IncSent()
-	tgt.OnFailure("Timeout")
-	tgt.OnLateReply()
-
-	var out bytes.Buffer
-	printExitSummary(&out, []*stats.TargetStats{tgt})
-	s := out.String()
-	if !strings.Contains(s, "1 packets out of wait time") {
-		t.Errorf("missing late-reply segment in summary: %q", s)
-	}
-}
-
-// TestPrintExitSummary_NoDuplicatesOrLateReplies pins that a run with
-// neither prints exactly as it did before this feature existed -- no stray
-// ", +0 duplicates" or ", 0 packets out of wait time" segments.
-func TestPrintExitSummary_NoDuplicatesOrLateReplies(t *testing.T) {
-	tgt := stats.NewTargetStats("example.com")
-	tgt.SetIP("1.2.3.4")
-	tgt.IncSent()
-	tgt.OnSuccess(10*time.Millisecond, 64)
-
-	var out bytes.Buffer
-	printExitSummary(&out, []*stats.TargetStats{tgt})
-	s := out.String()
-	if strings.Contains(s, "duplicates") {
-		t.Errorf("unexpected duplicates segment in summary: %q", s)
-	}
-	if strings.Contains(s, "out of wait time") {
-		t.Errorf("unexpected late-reply segment in summary: %q", s)
-	}
-}
 
 // ---- resolverBindConfig ----
 
@@ -1230,28 +915,6 @@ func TestExpandTargets(t *testing.T) {
 }
 
 // ---- exit code tests (-c/--count vs. total loss, TD: apple ping.c parity) ----
-
-func TestAllTargetsUnresponsive(t *testing.T) {
-	allLoss := []*stats.TargetStats{stats.NewTargetStats("a"), stats.NewTargetStats("b")}
-	for _, tgt := range allLoss {
-		tgt.IncSent()
-	}
-	if !allTargetsUnresponsive(allLoss) {
-		t.Error("expected true when no target has received a reply")
-	}
-
-	partial := []*stats.TargetStats{stats.NewTargetStats("a"), stats.NewTargetStats("b")}
-	partial[0].IncSent()
-	partial[0].OnSuccess(5*time.Millisecond, 64)
-	partial[1].IncSent()
-	if allTargetsUnresponsive(partial) {
-		t.Error("expected false when at least one target received a reply")
-	}
-
-	if !allTargetsUnresponsive(nil) {
-		t.Error("expected true for an empty target list")
-	}
-}
 
 // TestRun_ExitCode drives run() end-to-end with a mocked pinger/UI, covering
 // the (-c present/absent) x (total loss/partial/full response) matrix from

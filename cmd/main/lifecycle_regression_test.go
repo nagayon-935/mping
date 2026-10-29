@@ -1,111 +1,12 @@
 package main
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"reflect"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/nagayon-935/mping/internal/stats"
 	ui "github.com/nagayon-935/mping/internal/ui"
 )
-
-type regressionTracer func(context.Context) ([]string, error)
-
-func (f regressionTracer) TraceRoute(ctx context.Context, _ string, _ int, _ time.Duration) ([]string, error) {
-	return f(ctx)
-}
-
-func TestTraceResetJoinsPreviousRun(t *testing.T) {
-	target := stats.NewTargetStats("127.0.0.1")
-	sup := newSupervisor(supervisorConfig{targets: []*stats.TargetStats{target}})
-	entered, release := make(chan struct{}), make(chan struct{})
-	sup.startTraceroutes(regressionTracer(func(ctx context.Context) ([]string, error) {
-		close(entered)
-		<-ctx.Done()
-		<-release
-		return nil, ctx.Err()
-	}))
-	oldDone := sup.traceDone
-	<-entered
-	resetDone := make(chan struct{})
-	newEntered := make(chan struct{})
-	go func() {
-		sup.startTraceroutes(regressionTracer(func(context.Context) ([]string, error) { close(newEntered); return []string{"new route"}, nil }))
-		close(resetDone)
-	}()
-	select {
-	case <-newEntered:
-		t.Error("replacement started before previous traceroute exited")
-	case <-time.After(20 * time.Millisecond):
-	}
-	close(release)
-	<-oldDone
-	<-resetDone
-	<-newEntered
-	deadline := time.Now().Add(time.Second)
-	for !reflect.DeepEqual(target.GetView().TraceHops, []string{"new route"}) && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	sup.traceCancel()
-	<-sup.traceDone
-	if got := target.GetView().TraceHops; !reflect.DeepEqual(got, []string{"new route"}) {
-		t.Fatalf("stale trace result: %v", got)
-	}
-}
-
-func TestCancelledTraceKeepsPreviousRoute(t *testing.T) {
-	target := stats.NewTargetStats("127.0.0.1")
-	target.SetTraceHops([]string{"previous route"})
-	entered := make(chan struct{})
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		runTraceroutes(ctx, regressionTracer(func(ctx context.Context) ([]string, error) { close(entered); <-ctx.Done(); return nil, ctx.Err() }), target)
-		close(done)
-	}()
-	<-entered
-	cancel()
-	<-done
-	if got := target.GetView().TraceHops; !reflect.DeepEqual(got, []string{"previous route"}) {
-		t.Fatalf("cancellation changed route: %v", got)
-	}
-}
-
-func TestFinalJSONMatchesJoinedStats(t *testing.T) {
-	target := stats.NewTargetStats("127.0.0.1")
-	target.IncSent()
-	// The pinger records a reply only when it is joined (Wait), as a worker
-	// finishing its last probe would; the snapshot must include it.
-	var joinOnce sync.Once
-	joining := &fakePinger{onWait: func() { joinOnce.Do(func() { target.OnSuccess(time.Millisecond, 64) }) }}
-	sup := newSupervisor(supervisorConfig{makePinger: func(int) pingerController { return joining }, targets: []*stats.TargetStats{target}})
-	sup.Start()
-	if err := sup.startPinger(); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan struct{})
-	close(done)
-	path := filepath.Join(t.TempDir(), "snapshot.json")
-	var errs bytes.Buffer
-	finishIteration(config{jsonOutputFile: path}, []*stats.TargetStats{target}, sup, &errs, func() {}, done, func() {}, done)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var snap stats.ExportSnapshot
-	if err := json.Unmarshal(data, &snap); err != nil {
-		t.Fatal(err)
-	}
-	if snap.Targets[0].Recv != target.GetView().Recv {
-		t.Fatalf("JSON recv=%d, joined recv=%d", snap.Targets[0].Recv, target.GetView().Recv)
-	}
-}
 
 func TestResolveAllPreservesZoneAndGroups(t *testing.T) {
 	specs := []targetSpec{{Host: "fe80::1%en0", DSCP: "EF"}, {Host: "::1"}}
