@@ -48,7 +48,6 @@ func registerFlags(fs *pflag.FlagSet, cfg *config, th *thresholdFlags) {
 	fs.BoolVar(&cfg.resolveAll, "resolve-all", false, "resolve target hostname to all IP addresses and monitor them concurrently")
 	fs.BoolVar(&cfg.webEnabled, "web", false, "serve a browser dashboard on http://127.0.0.1:<web-port>/ (this machine only)")
 	fs.IntVar(&cfg.webPort, "web-port", 8080, "port for --web (1-65535)")
-	fs.BoolVar(&cfg.noTUI, "no-tui", false, "run without the terminal UI: print log lines to stdout and exit on Ctrl-C/SIGTERM, --count completion or --duration")
 	fs.BoolVar(&cfg.checkConfig, "check-config", false, "validate and print effective configuration without starting measurements or writing files")
 	fs.IntVar(&cfg.healthFailures, "health-failures", 3, "consecutive failures before declaring a target down")
 	fs.IntVar(&cfg.healthRecoveries, "health-recoveries", 2, "consecutive replies required to clear a down state")
@@ -70,6 +69,7 @@ var removedFlags = map[string]string{
 	"dscp":        "DSCP marking is no longer supported",
 	"http-status": "HTTP checks always treat 200-399 as up",
 	"http-header": "custom HTTP request headers are no longer supported",
+	"no-tui":      "mping always runs with the terminal UI",
 }
 
 // removedFlagError returns an error naming the first removed flag in args,

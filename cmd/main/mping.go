@@ -72,15 +72,11 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	}
 	defer closeWebUI(webSrv, errOut)
 
-	runUI, headless, stopHeadless := chooseUIRunner(cfg, out, errOut)
-	defer stopHeadless()
-
 	s := &session{
 		errOut: errOut, startup: cfg, logWriter: logWriter, eventSink: eventSink,
-		webSrc: webSrc, webSrv: webSrv, runUI: runUI, headless: headless,
-		showToken: !cfg.noTUI || isTerminal(out),
-		rc:        newReloadCoordinator(sp.fs, sp.cliCfg, sp.cliHosts),
-		ids:       &pinger.IDAllocator{}, startedAt: time.Now().UTC(),
+		webSrc: webSrc, webSrv: webSrv, runUI: uiRun,
+		rc:  newReloadCoordinator(sp.fs, sp.cliCfg, sp.cliHosts),
+		ids: &pinger.IDAllocator{}, startedAt: time.Now().UTC(),
 		cfg: cfg, hosts: sp.hosts, groups: sp.groups, env: env,
 		activePortSpecsRaw: cfg.portSpecs,
 	}
@@ -113,21 +109,6 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			return 0
 		}
 	}
-}
-
-// chooseUIRunner returns the TUI, or with --no-tui a headless runner that
-// prints the Log to out and stops on SIGINT/SIGTERM. stop releases the
-// signal handlers; headless is nil for the TUI.
-func chooseUIRunner(cfg config, out, errOut io.Writer) (runUI func(ui.RunOptions) error, headless *headlessRunner, stop func()) {
-	if !cfg.noTUI {
-		return uiRun, nil, func() {}
-	}
-	if !cfg.webEnabled && cfg.jsonOutputFile == "" && cfg.outputFile == "" {
-		fmt.Fprintln(errOut, "Note: --no-tui without --web, --json-output or --output prints only log lines and the final summary.")
-	}
-	sigs, stopSignals := headlessSignals()
-	headless = newHeadlessRunner(out, sigs, stopSignals)
-	return headless.run, headless, stopSignals
 }
 
 // reloadWarnings collects the Log notices for a reload: settings that only

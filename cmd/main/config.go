@@ -41,9 +41,7 @@ type config struct {
 	webEnabled bool
 	webPort    int
 
-	// noTUI replaces the terminal UI with plain log output (headless.go).
 	// CLI only and read once at startup.
-	noTUI bool
 
 	// thresholds holds the colour-coding / alert boundaries (warn = orange,
 	// crit = red), already converted from the raw ms/pct flag values.

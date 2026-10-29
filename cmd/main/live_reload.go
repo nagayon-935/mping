@@ -17,7 +17,7 @@ func probeConfig(cfg config) config {
 	cfg.trace, cfg.mtr = cfg.routeEnabled(), false
 	cfg.thresholds = stats.Thresholds{}
 	cfg.healthFailures, cfg.healthRecoveries, cfg.healthWindow = 0, 0, 0
-	cfg.webEnabled, cfg.webPort, cfg.noTUI, cfg.checkConfig = false, 0, false, false
+	cfg.webEnabled, cfg.webPort, cfg.checkConfig = false, 0, false
 	cfg.eventOutput = ""
 	cfg.outputFile = ""
 	cfg.duration = 0 // startup deadline is intentionally session-wide

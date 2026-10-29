@@ -72,15 +72,9 @@ func startWebUI(cfg config, src *web.Source, errOut io.Writer) (srv *web.Server,
 }
 
 // webAnnouncement is the Log line offering the web UI. The control link
-// carries the token, so it is printed only where it stays private: the TUI,
-// or a headless run writing to an interactive terminal (not a pipe, file or
-// service journal).
-func webAnnouncement(srv *web.Server, showToken bool) string {
-	text := "Web UI: " + srv.URL() + " (read-only: the control link is printed only to a terminal; to make changes, set MPING_WEB_TOKEN as described in the README)"
-	if showToken {
-		text = "Web UI: " + srv.ControlURL()
-	}
-	return fmt.Sprintf("[blue][%s] %s[-]", clock(), tview.Escape(text))
+// carries the token; the TUI's Log never leaves the terminal.
+func webAnnouncement(srv *web.Server) string {
+	return fmt.Sprintf("[blue][%s] %s[-]", clock(), tview.Escape("Web UI: "+srv.ControlURL()))
 }
 
 // closeWebUI stops srv (nil-safe). A shutdown error only means a stream

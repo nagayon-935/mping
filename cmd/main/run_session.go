@@ -23,8 +23,6 @@ type session struct {
 	webSrc    *web.Source
 	webSrv    *web.Server
 	runUI     func(ui.RunOptions) error
-	headless  *headlessRunner // nil for the TUI
-	showToken bool
 	rc        *reloadCoordinator
 	ids       *pinger.IDAllocator
 	startedAt time.Time
@@ -81,12 +79,6 @@ func (s *session) runIteration(first bool) iterationOutcome {
 	}
 	if !s.runUIUntilDone(it) {
 		return iterationFailed
-	}
-	// A signal means exit, even if a hosts-file change armed a reload while
-	// the iteration was ending.
-	if s.headless != nil && s.headless.quitRequested() {
-		s.webSrc.MarkStopped()
-		return iterationExit
 	}
 	if !s.prepareReload() {
 		s.webSrc.MarkStopped()
@@ -175,8 +167,8 @@ func (s *session) startIteration(first bool) (*iteration, bool) {
 
 	s.webSrc.Set(newWebProvider(it.sup, cfg, hosts, len(env.portSpecs), it.logCh))
 	if s.webSrv != nil {
-		it.preLogs = append(it.preLogs, webAnnouncement(s.webSrv, s.showToken))
-		if first && s.showToken {
+		it.preLogs = append(it.preLogs, webAnnouncement(s.webSrv))
+		if first {
 			openBrowser(s.webSrv.ControlURL())
 		}
 	}
@@ -213,7 +205,7 @@ func (s *session) runUIUntilDone(it *iteration) bool {
 		sup: sup, sig: sig, logCh: it.logCh,
 		currentHosts: s.hosts, currentGroups: s.groups,
 	})
-	if s.webSrv != nil && !s.startup.noTUI {
+	if s.webSrv != nil {
 		runOpts.WebControlURL = s.webSrv.ControlURL()
 	}
 	uiErr := s.runUI(runOpts)

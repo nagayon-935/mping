@@ -300,7 +300,6 @@ See [examples/hosts-patterns.yaml](examples/hosts-patterns.yaml) and [examples/b
 | `--json-output` | `-j` | Write a JSON statistics snapshot to this file every 5 seconds | `""` |
 | `--web` | | Serve the web UI on `http://127.0.0.1:<web-port>/` (this machine only; see [Web UI](#web-ui-experimental)) | `false` |
 | `--web-port` | | Port for `--web` (1–65535) | `8080` |
-| `--no-tui` | | Run without the terminal UI (see [Headless mode](#headless-mode---no-tui)) | `false` |
 | `--asn` | `-a` | Look up and display AS numbers for target IPs | `false` |
 | `--http` | `-H` | URL(s) to health-check, e.g. `https://example.com/health`. Comma-separated or repeated for multiple. | `""` |
 | `--rtt-warn` | | RTT warn threshold in ms (orange) | `50` |
@@ -336,7 +335,7 @@ mping --check-config -f examples/monitoring.yaml --interval 500
 
 HTTP checks count a 2xx or 3xx response as up and anything else as down. URLs must be HTTP(S) without embedded credentials or fragments.
 
-Backend health transitions reach TUI, Web and headless logs. Consecutive identical ping failures are folded with `count` and `last_at`; the JSONL stream appends count updates for those records as they occur. This is separate from per-probe CSV output and periodic JSON snapshots. The event writer uses a bounded queue, reports overflow/write failures to stderr, and flushes on normal shutdown. Web settings, CSV/event destinations and the session duration deadline remain startup-only; changes log a restart notice. Port and network changes rebuild the relevant measurement session. See [examples/monitoring.yaml](examples/monitoring.yaml).
+Backend health transitions reach the TUI and Web logs. Consecutive identical ping failures are folded with `count` and `last_at`; the JSONL stream appends count updates for those records as they occur. This is separate from per-probe CSV output and periodic JSON snapshots. The event writer uses a bounded queue, reports overflow/write failures to stderr, and flushes on normal shutdown. Web settings, CSV/event destinations and the session duration deadline remain startup-only; changes log a restart notice. Port and network changes rebuild the relevant measurement session. See [examples/monitoring.yaml](examples/monitoring.yaml).
 
 ### Key bindings
 
@@ -527,6 +526,7 @@ mping --web google.com 1.1.1.1      # then open http://127.0.0.1:8080/
 ```
 
 - It listens on loopback only (`127.0.0.1`, plus `[::1]` when available) and is not reachable from other machines. Requests whose `Host` or `Origin` header is not this server are rejected (DNS-rebinding / cross-site protection).
+- The control link the TUI's Log shows contains a secret token. To choose the token yourself, set the `MPING_WEB_TOKEN` environment variable (at least 16 characters of letters, digits and `-._~`; keep it out of command lines and shell history) and open `http://127.0.0.1:8080/#token=<your token>`.
 - `--web` / `--web-port` are read at startup; a hosts-file reload does not restart the server (changing them in the hosts file logs a restart-required warning).
 - The desktop dashboard fills the browser width and height. Ping monitor and the selected host's **Summary** occupy the upper row; route monitoring and **RTT graphs** share the lower row. Each pane scrolls internally. Narrower windows stack the panes; phone widths are not supported, and below 720px the page scrolls horizontally. Summary contains statistics, enabled port checks and target actions, with no tabs.
 - Route display follows the option: **`-T` → Traceroute pane**, **`-M` → MTR pane**. Both route panes show all targets without requiring a selection, and follow the monitor filter. Traceroute uses a vertical numbered path with optional AS/PTR annotations. MTR has sticky target/column headings and internal scrolling; its probes use TTL/Hop Limit-limited ICMP Echo, with no UDP mode.
@@ -556,18 +556,6 @@ mping --web google.com 1.1.1.1      # then open http://127.0.0.1:8080/
 | `POST /api/v1/reset` | Reset statistics; needs `X-Mping-Token` |
 | `POST /api/v1/stop`, `POST /api/v1/restart` | Stop/restart through the supervisor, retaining counters; needs `X-Mping-Token` |
 | `GET /api/v1/report?format=json` (or `text`) | Download a session report without writing a server-side file; needs `X-Mping-Token` |
-
-## Headless mode (`--no-tui`)
-
-`--no-tui` runs mping without the terminal UI, e.g. as a service on a small box, usually together with `--web`, `--json-output` or `--output`:
-
-```bash
-mping --no-tui --web -f hosts.yaml
-```
-
-- Log lines the TUI would show in its Log pane (route flaps, reload notices, web edits, …) are printed to stdout as plain text, and the usual statistics summary is printed on exit. Health transitions come from the shared backend and appear in headless mode as well.
-- It exits on Ctrl-C or SIGTERM, when `--count` completes, or when `--duration` elapses; hosts-file reloads keep it running (a pending reload never overrides Ctrl-C/SIGTERM). A second Ctrl-C forces an immediate exit if shutdown stalls.
-- The web control link contains a secret token, so it is printed only when stdout is a terminal. For unattended runs, choose the token yourself with the `MPING_WEB_TOKEN` environment variable (at least 16 characters of letters, digits and `-._~`; keep it out of command lines and shell history, e.g. in a systemd `EnvironmentFile=`) and open `http://127.0.0.1:8080/#token=<your token>`. `MPING_WEB_TOKEN` also applies when the TUI is used.
 
 ## License
 

@@ -487,13 +487,51 @@ func TestWebAnnouncementIsATimestampedLogLine(t *testing.T) {
 	defer srv.Close()
 
 	want := regexp.MustCompile(`^\[\d{2}:\d{2}:\d{2}\] Web UI: http://localhost:\d+/`)
-	for _, showToken := range []bool{true, false} {
-		line := webAnnouncement(srv, showToken)
-		if got := plainLogLine(line); !want.MatchString(got) {
-			t.Errorf("showToken=%v: rendered line = %q, want %v", showToken, got, want)
-		}
-		if strings.Contains(line, "#token=") != showToken {
-			t.Errorf("showToken=%v: line %q", showToken, line)
-		}
+	line := webAnnouncement(srv)
+	if got := plainLogLine(line); !want.MatchString(got) {
+		t.Errorf("rendered line = %q, want %v", got, want)
+	}
+	if !strings.Contains(line, "#token=") {
+		t.Errorf("line %q lacks the control link", line)
+	}
+}
+
+func TestRunUsesMPINGWEBTOKENForTheWebServer(t *testing.T) {
+	token := strings.Repeat("t", 32)
+	t.Setenv("MPING_WEB_TOKEN", token)
+	stubRunSeams(t, func(ui.RunOptions) error { return nil })
+	var got string
+	webStart = func(opts web.Options) (*web.Server, error) {
+		got = opts.Token
+		opts.Port = 0
+		return web.Start(opts)
+	}
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"-S", "10.0.0.2", "--web", "example.com"}, &out, &errOut)
+
+	if code != 0 {
+		t.Fatalf("run = %d, want 0 (stderr: %s)", code, errOut.String())
+	}
+	if got != token {
+		t.Fatalf("web token = %q, want MPING_WEB_TOKEN", got)
+	}
+}
+
+func TestRunRejectsAWeakMPINGWEBTOKENWithoutEchoingIt(t *testing.T) {
+	t.Setenv("MPING_WEB_TOKEN", "short")
+	stubRunSeams(t, func(ui.RunOptions) error {
+		t.Error("UI started with an invalid token")
+		return nil
+	})
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"-S", "10.0.0.2", "--web", "example.com"}, &out, &errOut)
+
+	if code != 1 {
+		t.Fatalf("run = %d, want 1", code)
+	}
+	if !strings.Contains(errOut.String(), "MPING_WEB_TOKEN") || strings.Contains(errOut.String(), "short") {
+		t.Fatalf("stderr = %q, want an MPING_WEB_TOKEN error that does not echo the value", errOut.String())
 	}
 }

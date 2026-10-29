@@ -69,6 +69,7 @@ func TestParseArgs_RemovedFlags(t *testing.T) {
 		{[]string{"--dscp=EF", "example.com"}, "--dscp was removed"},
 		{[]string{"--http-status", "200-299", "example.com"}, "--http-status was removed"},
 		{[]string{"--http-header=X-Key=value", "example.com"}, "--http-header was removed"},
+		{[]string{"--no-tui", "example.com"}, "--no-tui was removed"},
 	} {
 		_, _, _, _, err := parseArgs(tt.args)
 		if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -103,21 +104,6 @@ func TestParseArgsHostsFileAllowsNoHosts(t *testing.T) {
 	}
 	if len(hosts) != 0 {
 		t.Fatalf("hosts: expected empty, got %v", hosts)
-	}
-}
-
-func TestParseArgsNoTUIDefaultsOff(t *testing.T) {
-	cfg, _, _, _, err := parseArgs([]string{"example.com"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	on, _, _, _, err := parseArgs([]string{"--no-tui", "example.com"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if cfg.noTUI || !on.noTUI {
-		t.Fatalf("noTUI default=%v with flag=%v, want false/true", cfg.noTUI, on.noTUI)
 	}
 }
 

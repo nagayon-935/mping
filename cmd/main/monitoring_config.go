@@ -104,7 +104,7 @@ func printCheckedConfig(out io.Writer, sp startupParams) error {
 			"health_failures":       cfg.healthFailures, "health_recoveries": cfg.healthRecoveries,
 			"health_window": cfg.healthWindow.String(),
 			"thresholds":    thresholdsMap(cfg.thresholds),
-			"web":           cfg.webEnabled, "web_port": cfg.webPort, "no_tui": cfg.noTUI,
+			"web":           cfg.webEnabled, "web_port": cfg.webPort,
 			"output": cfg.outputFile, "json_output": cfg.jsonOutputFile, "event_output": cfg.eventOutput,
 		},
 	})

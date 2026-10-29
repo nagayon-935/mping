@@ -149,7 +149,7 @@ func TestEventOutputFlushesAndSharedEventsReachHeadlessLog(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("headless/TUI did not receive backend health transition")
+		t.Fatal("the TUI Log did not receive the backend health transition")
 	}
 	_ = s
 }

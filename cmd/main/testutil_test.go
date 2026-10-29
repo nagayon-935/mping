@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/nagayon-935/mping/internal/ui"
 	"github.com/nagayon-935/mping/internal/web"
+	"github.com/rivo/tview"
 )
 
 // hostEntries builds a []hostsfile.Entry from bare hostnames.
@@ -334,4 +336,11 @@ func newStateTestSupervisor(t *testing.T) (*supervisor, *[]*fakePinger) {
 func doCmd(t *testing.T, s *supervisor, k cmdKind) error {
 	t.Helper()
 	return s.handle(command{kind: k})
+}
+
+// plainLogLine renders a Log-pane line without tview colour tags, using
+// tview's own parser so escaped brackets (e.g. "[red[]") come out literally.
+func plainLogLine(line string) string {
+	text := tview.NewTextView().SetDynamicColors(true).SetText(line).GetText(true)
+	return strings.TrimRight(text, "\n")
 }
