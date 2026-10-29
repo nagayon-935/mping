@@ -335,27 +335,16 @@ func TestDisplaySourceIPForDst(t *testing.T) {
 		src6     string
 		expected string
 	}{
-		{
-			name:     "ipv4 destination uses ipv4 source",
-			dst:      "8.8.8.8",
-			src4:     "10.0.0.2",
-			src6:     "2001:db8::2",
-			expected: "10.0.0.2",
-		},
-		{
-			name:     "ipv6 destination with zone uses ipv6 source",
-			dst:      "fe80::1%en0",
-			src4:     "10.0.0.2",
-			src6:     "fe80::2%en0",
-			expected: "fe80::2%en0",
-		},
-		{
-			name:     "ipv6 destination falls back to auto when no ipv6 source",
-			dst:      "2001:4860:4860::8888",
-			src4:     "10.0.0.2",
-			src6:     "",
-			expected: "Auto",
-		},
+		{"ipv4 destination uses ipv4 source", "8.8.8.8", "10.0.0.2", "2001:db8::2", "10.0.0.2"},
+		{"ipv4 destination falls back to auto when no ipv4 source", "8.8.8.8", "", "2001:db8::1", "Auto"},
+		{"ipv6 destination uses ipv6 source", "2001:db8::1", "", "2001:db8::cafe", "2001:db8::cafe"},
+		{"ipv6 destination with zone uses ipv6 source", "fe80::1%en0", "10.0.0.2", "fe80::2%en0", "fe80::2%en0"},
+		{"ipv6 zone is stripped before the family check", "fe80::1%eth0", "", "2001::cafe", "2001::cafe"},
+		{"ipv6 destination falls back to auto when no ipv6 source", "2001:4860:4860::8888", "10.0.0.2", "", "Auto"},
+		{"hostname uses ipv4 source", "hostname.local", "10.0.0.1", "", "10.0.0.1"},
+		{"unparseable colon string is ipv6 and has no source", "not::valid::ip", "", "", "Auto"},
+		{"unparseable colon string without ipv6 source is auto", "not::valid::ip", "10.0.0.1", "", "Auto"},
+		{"unparseable colon string uses ipv6 source", "not::valid::ip", "10.0.0.1", "2001::cafe", "2001::cafe"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -444,64 +433,5 @@ func TestAppendErrorLog_Truncation(t *testing.T) {
 	}
 	if logs[len(logs)-1] != "new-entry" {
 		t.Errorf("last entry should be new-entry, got %q", logs[len(logs)-1])
-	}
-}
-
-// ---- displaySourceIPForDst: IPv6-like string without sourceIPv6 ----
-
-func TestDisplaySourceIPForDst_ColonNoSrc6(t *testing.T) {
-	// String contains ":" but is not parseable as IP → falls through to colon check
-	got := displaySourceIPForDst("not::valid::ip", "", "")
-	if got != "Auto" {
-		t.Errorf("expected Auto, got %q", got)
-	}
-	got = displaySourceIPForDst("not::valid::ip", "10.0.0.1", "")
-	if got != "Auto" {
-		t.Errorf("expected Auto for IPv6-like without src6, got %q", got)
-	}
-}
-
-// ---- displaySourceIPForDst: IPv4 auto (no sourceIPv4) ----
-
-func TestDisplaySourceIPForDst_IPv4Auto(t *testing.T) {
-	// IPv4 destination but no sourceIPv4 → "Auto"
-	got := displaySourceIPForDst("8.8.8.8", "", "2001:db8::1")
-	if got != "Auto" {
-		t.Errorf("expected Auto for IPv4 dst without src4, got %q", got)
-	}
-}
-
-// ---- displaySourceIPForDst: IPv6 dst with sourceIPv6 set ----
-
-func TestDisplaySourceIPForDst_IPv6WithSrc6(t *testing.T) {
-	got := displaySourceIPForDst("2001:db8::1", "", "2001:db8::cafe")
-	if got != "2001:db8::cafe" {
-		t.Errorf("IPv6 dst with src6: got %q, want %q", got, "2001:db8::cafe")
-	}
-}
-
-// ---- displaySourceIPForDst: covers % zone ID path and remaining branches ----
-
-func TestDisplaySourceIPForDst_ZoneID(t *testing.T) {
-	// IPv6 with zone ID (e.g. "fe80::1%eth0") → strip % and treat as IPv6
-	got := displaySourceIPForDst("fe80::1%eth0", "", "2001::cafe")
-	if got != "2001::cafe" {
-		t.Errorf("zone ID: got %q, want %q", got, "2001::cafe")
-	}
-}
-
-func TestDisplaySourceIPForDst_HostnameWithSrc4(t *testing.T) {
-	// Non-IP hostname with no colon → falls to final IPv4 check
-	got := displaySourceIPForDst("hostname.local", "10.0.0.1", "")
-	if got != "10.0.0.1" {
-		t.Errorf("hostname with src4: got %q, want %q", got, "10.0.0.1")
-	}
-}
-
-func TestDisplaySourceIPForDst_ColonWithSrc6(t *testing.T) {
-	// Non-IP with colon and sourceIPv6 set → return sourceIPv6
-	got := displaySourceIPForDst("not::valid::ip", "10.0.0.1", "2001::cafe")
-	if got != "2001::cafe" {
-		t.Errorf("colon with src6: got %q, want %q", got, "2001::cafe")
 	}
 }

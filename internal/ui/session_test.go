@@ -14,11 +14,7 @@ import (
 
 func awaitSessionSignal(t *testing.T, ch <-chan struct{}) {
 	t.Helper()
-	select {
-	case <-ch:
-	case <-time.After(time.Second):
-		t.Fatal("session operation did not finish")
-	}
+	recvWithin(t, ch, "the session operation to finish")
 }
 
 func TestSessionStopReleasesFullMailbox(t *testing.T) {
