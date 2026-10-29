@@ -2,13 +2,15 @@ package watcher
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 // TestWatch_TriggersOnChange verifies that Watch notices each way a file
@@ -19,8 +21,8 @@ func TestWatch_TriggersOnChange(t *testing.T) {
 	tests := []struct {
 		name     string
 		relative bool // hand Watch the path relative to the working directory
-		// change is made once, after the watcher is known to be live; nil
-		// means the direct write that proves liveness is the change under test.
+		// change is made after a first direct write has fired; nil means
+		// that direct write is the change under test.
 		change func(t *testing.T, path string)
 	}{
 		{
@@ -58,7 +60,8 @@ func TestWatch_TriggersOnChange(t *testing.T) {
 			})
 			defer stop()
 
-			triggerUntilCalled(t, &called, func() { touch(t, path) })
+			touch(t, path)
+			waitForMore(t, &called, 0, "the first change")
 			if tt.change == nil {
 				return
 			}
@@ -80,7 +83,8 @@ func TestWatch_Debounce(t *testing.T) {
 		return Watch(ctx, path, func() { called.Add(1) })
 	})
 	defer stop()
-	triggerUntilCalled(t, &called, func() { touch(t, path) }) // watcher is live
+	touch(t, path)
+	waitForMore(t, &called, 0, "the first change")
 	before := called.Load()
 
 	for range 5 {
@@ -99,21 +103,9 @@ func TestWatch_Debounce(t *testing.T) {
 // once its context is cancelled.
 func TestWatchPaths_CancelExits(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hosts.yaml")
-	writeFile(t, path, "initial\n")
-	started := make(chan struct{})
-	var once sync.Once
-	paths := func() []string {
-		once.Do(func() { close(started) })
-		return []string{path}
-	}
 	stop := startWatch(t, func(ctx context.Context) error {
-		return WatchPaths(ctx, paths, func() {})
+		return WatchPaths(ctx, func() []string { return []string{path} }, func() {})
 	})
-	select {
-	case <-started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("WatchPaths never read its path set")
-	}
 
 	stop() // fails the test if WatchPaths errors or does not return
 }
@@ -129,7 +121,8 @@ func TestWatchPaths_CancelDuringDebounceDropsPendingChange(t *testing.T) {
 		return Watch(ctx, path, func() { called.Add(1) })
 	})
 	defer stop()
-	triggerUntilCalled(t, &called, func() { touch(t, path) }) // watcher is live
+	touch(t, path)
+	waitForMore(t, &called, 0, "the first change")
 	before := called.Load()
 
 	writtenAt := time.Now()
@@ -178,5 +171,71 @@ func TestWatch_SetupFailures(t *testing.T) {
 				t.Fatalf("Watch error = %v, want one mentioning %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// fakeEventSource makes WatchPaths read from channels the test drives instead
+// of a real fsnotify watcher. Its add accepts every directory.
+func fakeEventSource(t *testing.T) (events chan fsnotify.Event, errs chan error) {
+	t.Helper()
+	events, errs = make(chan fsnotify.Event), make(chan error)
+	orig := newEventSource
+	t.Cleanup(func() { newEventSource = orig })
+	newEventSource = func() (*eventSource, error) {
+		return &eventSource{
+			add:    func(string) error { return nil },
+			close:  func() error { return nil },
+			events: events,
+			errors: errs,
+		}, nil
+	}
+	return events, errs
+}
+
+// TestWatchPaths_EventSourceEndsTheWatch covers how the event source can end
+// a running watch: a runtime error (e.g. ENOSPC) is returned so the caller
+// can report that auto-reload stopped, while closed channels end it quietly.
+func TestWatchPaths_EventSourceEndsTheWatch(t *testing.T) {
+	runtimeErr := errors.New("no space left on device")
+	tests := []struct {
+		name    string
+		end     func(events chan fsnotify.Event, errs chan error)
+		wantErr error
+	}{
+		{"runtime error is returned", func(_ chan fsnotify.Event, errs chan error) { errs <- runtimeErr }, runtimeErr},
+		{"closed event channel", func(events chan fsnotify.Event, _ chan error) { close(events) }, nil},
+		{"closed error channel", func(_ chan fsnotify.Event, errs chan error) { close(errs) }, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			events, errs := fakeEventSource(t)
+			done := make(chan error, 1)
+			go func() {
+				done <- WatchPaths(t.Context(), func() []string { return []string{"hosts.yaml"} }, func() {})
+			}()
+
+			tt.end(events, errs)
+
+			select {
+			case err := <-done:
+				if !errors.Is(err, tt.wantErr) || (tt.wantErr == nil) != (err == nil) {
+					t.Fatalf("WatchPaths = %v, want %v", err, tt.wantErr)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("WatchPaths did not return")
+			}
+		})
+	}
+}
+
+func TestWatchPaths_CreateWatcherFailure(t *testing.T) {
+	orig := newEventSource
+	t.Cleanup(func() { newEventSource = orig })
+	newEventSource = func() (*eventSource, error) { return nil, errors.New("too many open files") }
+
+	err := WatchPaths(t.Context(), func() []string { return nil }, func() {})
+
+	if err == nil || !strings.Contains(err.Error(), "create watcher: too many open files") {
+		t.Fatalf("WatchPaths = %v, want the watcher creation error", err)
 	}
 }

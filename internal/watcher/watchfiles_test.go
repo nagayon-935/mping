@@ -26,9 +26,8 @@ func TestWatchFiles_AnyListedFileTriggers(t *testing.T) {
 	})
 	defer stop()
 
-	// Prove the watcher is live via the include file first, so the sibling
-	// check below can't pass merely because the watcher wasn't ready yet.
-	triggerUntilCalled(t, &called, func() { touch(t, incPath) })
+	touch(t, incPath)
+	waitForMore(t, &called, 0, "the first change")
 	before := called.Load()
 	touch(t, mainPath)
 	waitForMore(t, &called, before, "changing the main file")
@@ -42,24 +41,18 @@ func TestWatchFiles_AnyListedFileTriggers(t *testing.T) {
 }
 
 // TestWatchFiles_CreatingMissingFileTriggers covers an include file that
-// does not exist yet: creating it — a single write, not retried — must
-// trigger a reload once the watcher is known to be live.
+// does not exist yet: creating it must trigger a reload.
 func TestWatchFiles_CreatingMissingFileTriggers(t *testing.T) {
-	dir := t.TempDir()
-	probe := filepath.Join(dir, "probe.csv")
-	missing := filepath.Join(dir, "later.csv")
-	writeFile(t, probe, "x\n")
+	missing := filepath.Join(t.TempDir(), "later.csv")
 	var called atomic.Int32
 	stop := startWatch(t, func(ctx context.Context) error {
-		return WatchFiles(ctx, []string{probe, missing}, func() { called.Add(1) })
+		return WatchFiles(ctx, []string{missing}, func() { called.Add(1) })
 	})
 	defer stop()
-	triggerUntilCalled(t, &called, func() { touch(t, probe) }) // watcher is live
 
-	before := called.Load()
 	writeFile(t, missing, "10.0.0.1\n")
 
-	waitForMore(t, &called, before, "creating the missing file")
+	waitForMore(t, &called, 0, "creating the missing file")
 }
 
 // TestWatchPaths_RefreshesPathSetAfterChange covers a hosts file edited to
@@ -105,7 +98,8 @@ func TestWatchPaths_RefreshesPathSetAfterChange(t *testing.T) {
 			defer stop()
 
 			// The hosts-file change that fires also re-reads the path set.
-			triggerUntilCalled(t, &called, func() { touch(t, mainPath) })
+			touch(t, mainPath)
+			waitForMore(t, &called, 0, "the first change")
 			waitRefresh(t, refreshed)
 			before := called.Load()
 
@@ -138,7 +132,8 @@ func TestWatchPaths_RefreshRetriesDirectoryThatCouldNotBeWatched(t *testing.T) {
 	defer stop()
 
 	// The first change lists latePath, whose directory is missing: skipped.
-	triggerUntilCalled(t, &called, func() { touch(t, mainPath) })
+	touch(t, mainPath)
+	waitForMore(t, &called, 0, "the first change")
 	waitRefresh(t, refreshed)
 	before := called.Load()
 
@@ -171,7 +166,8 @@ func TestWatchPaths_RefreshSkipsPathItCannotResolve(t *testing.T) {
 	defer stop()
 	breakCwd(t) // after the start, so only the refresh sees the broken directory
 
-	triggerUntilCalled(t, &called, func() { touch(t, mainPath) })
+	touch(t, mainPath)
+	waitForMore(t, &called, 0, "the first change")
 	waitRefresh(t, refreshed)
 	before := called.Load()
 

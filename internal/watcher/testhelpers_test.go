@@ -10,20 +10,28 @@ import (
 	"time"
 )
 
-// startWatch runs fn in a goroutine and returns a stop func that cancels it,
+// startWatch runs fn in a goroutine and returns once the watcher has
+// registered its initial directories (watchingHook), so any change the test
+// makes from then on is seen. The returned stop func cancels the watcher,
 // waits for it to return, and fails the test if it returned an error or did
 // not exit. stop is safe to call more than once.
-//
-// It also gives the watcher a moment to register its directories. That is
-// only an optimization: a change made before the watcher is live is lost,
-// which is why tests prove liveness with triggerUntilCalled before relying
-// on a single change.
 func startWatch(t *testing.T, fn func(ctx context.Context) error) (stop func()) {
 	t.Helper()
+	watching := make(chan struct{}, 1)
+	watchingHook = func() { watching <- struct{}{} }
+	t.Cleanup(func() { watchingHook = nil })
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() { errCh <- fn(ctx) }()
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-watching:
+	case err := <-errCh:
+		cancel()
+		t.Fatalf("watch returned before watching: %v", err)
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("watcher did not start watching")
+	}
 	var once sync.Once
 	return func() {
 		t.Helper()
@@ -50,28 +58,6 @@ func waitFor(timeout time.Duration, cond func() bool) bool {
 		}
 	}
 	return true
-}
-
-// triggerUntilCalled runs trigger until onChange has been called, so a
-// change that races the watcher's startup is retried instead of failing the
-// test. A successful return proves the watcher is live. If a retry was
-// needed it then waits for the count to settle, so no event from the
-// earlier attempts is still pending when the caller takes its baseline.
-func triggerUntilCalled(t *testing.T, called *atomic.Int32, trigger func()) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for attempts := 1; ; attempts++ {
-		if time.Now().After(deadline) {
-			t.Fatal("onChange not called after the change")
-		}
-		trigger()
-		if waitFor(debounceDelay+100*time.Millisecond, func() bool { return called.Load() > 0 }) {
-			if attempts > 1 {
-				settle(t, called)
-			}
-			return
-		}
-	}
 }
 
 // settle waits until called stays unchanged for longer than the debounce

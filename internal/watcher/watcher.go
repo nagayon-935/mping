@@ -12,10 +12,31 @@ import (
 
 const debounceDelay = 200 * time.Millisecond
 
-// refreshedHook, when non-nil, is called after each post-change path
-// refresh in WatchPaths. Tests use it to wait for the refresh instead of
-// sleeping; it is always nil in production.
-var refreshedHook func()
+// Test hooks, always nil in production. watchingHook is called once
+// WatchPaths has registered its initial directories, so a change made after
+// it fires is seen; refreshedHook is called after each post-change path
+// refresh. Tests wait on them instead of sleeping or re-writing files until
+// the watcher reacts.
+var watchingHook, refreshedHook func()
+
+// eventSource is the part of an fsnotify.Watcher that WatchPaths uses.
+type eventSource struct {
+	add    func(name string) error
+	close  func() error
+	events <-chan fsnotify.Event
+	errors <-chan error
+}
+
+// newEventSource creates WatchPaths' event source; a variable so tests can
+// inject runtime errors and closed channels, which a real watcher does not
+// produce on demand.
+var newEventSource = func() (*eventSource, error) {
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+	return &eventSource{add: w.Add, close: w.Close, events: w.Events, errors: w.Errors}, nil
+}
 
 // Watch monitors the file at path for content changes (Write or Create events).
 // It is WatchFiles with a single path.
@@ -52,11 +73,11 @@ func WatchFiles(ctx context.Context, paths []string, onChange func()) error {
 // named one that doesn't exist yet) is skipped and retried on the next
 // refresh instead, so a bad edit can't disable reloading altogether.
 func WatchPaths(ctx context.Context, paths func() []string, onChange func()) error {
-	w, err := fsnotify.NewWatcher()
+	w, err := newEventSource()
 	if err != nil {
 		return fmt.Errorf("create watcher: %w", err)
 	}
-	defer w.Close()
+	defer w.close()
 
 	// Watch each parent directory.  This catches:
 	//   • direct writes      → Write event on the file
@@ -78,7 +99,7 @@ func WatchPaths(ctx context.Context, paths func() []string, onChange func()) err
 			}
 			dir := filepath.Dir(absPath)
 			if !addedDirs[dir] {
-				if err := w.Add(dir); err != nil {
+				if err := w.add(dir); err != nil {
 					if strict {
 						return fmt.Errorf("watch directory %q: %w", dir, err)
 					}
@@ -93,6 +114,9 @@ func WatchPaths(ctx context.Context, paths func() []string, onChange func()) err
 	}
 	if err := refresh(true); err != nil {
 		return err
+	}
+	if watchingHook != nil {
+		watchingHook()
 	}
 
 	var timer *time.Timer
@@ -112,7 +136,7 @@ func WatchPaths(ctx context.Context, paths func() []string, onChange func()) err
 		case <-ctx.Done():
 			return nil
 
-		case event, ok := <-w.Events:
+		case event, ok := <-w.events:
 			if !ok {
 				return nil
 			}
@@ -130,7 +154,7 @@ func WatchPaths(ctx context.Context, paths func() []string, onChange func()) err
 				}
 			}
 
-		case err, ok := <-w.Errors:
+		case err, ok := <-w.errors:
 			if !ok {
 				return nil
 			}
