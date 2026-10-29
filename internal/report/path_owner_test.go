@@ -1,11 +1,6 @@
 package report
 
-import (
-	"os"
-	"path/filepath"
-	"syscall"
-	"testing"
-)
+import "testing"
 
 func TestPathFormat(t *testing.T) {
 	for _, tt := range []struct {
@@ -57,30 +52,5 @@ func TestReportOwnerFollowsInvoker(t *testing.T) {
 				t.Fatalf("owner=%+v err=%v", owner, err)
 			}
 		})
-	}
-}
-
-func TestReportFileIsPrivateAndOwnedByInvoker(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "report.txt")
-	if err := Write(path, "text", Report{SchemaVersion: 1}); err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0600 {
-		t.Fatalf("report mode=%o", info.Mode().Perm())
-	}
-	owner, err := ownerForCaller(os.Getuid(), os.Getgid(), os.Geteuid(), os.Getenv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stat := info.Sys().(*syscall.Stat_t)
-	if int(stat.Uid) != owner.uid {
-		t.Fatalf("report uid=%d want=%d", stat.Uid, owner.uid)
-	}
-	if os.Geteuid() == 0 && int(stat.Gid) != owner.gid {
-		t.Fatalf("report gid=%d want=%d", stat.Gid, owner.gid)
 	}
 }

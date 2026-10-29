@@ -1,824 +1,192 @@
 package ui
 
 import (
-	"errors"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/stats"
 
 	"github.com/gdamore/tcell/v2"
-	"github.com/rivo/tview"
 )
 
+// TestRunKeyboardStop presses s and expects the stopped footer. A second s
+// must be ignored: the R pressed after it runs on the same FIFO worker, so
+// when its callback fires any stop wrongly queued by the second s has
+// already been counted.
 func TestRunKeyboardStop(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	factory, screenCh := makeSimScreen(t)
-	newApplication = factory
-
-	target := stats.NewTargetStats("example.com")
-	stopCalled := make(chan struct{}, 1)
-	onStop := func() { stopCalled <- struct{}{} }
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- Run(RunOptions{Targets: []*stats.TargetStats{target}, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, PacketSize: 56, OnStop: onStop})
-	}()
-
-	screen := <-screenCh
-	time.Sleep(20 * time.Millisecond)
-	// Press 's' to stop
-	screen.InjectKey(tcell.KeyRune, 's', tcell.ModNone)
-	time.Sleep(30 * time.Millisecond)
-	// Press 'q' to quit
-	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Run error: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not stop")
+	tests := []struct {
+		name   string
+		onStop bool
+	}{
+		{"calls OnStop once", true},
+		{"works without an OnStop callback", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stops atomic.Int32
+			reset := make(chan struct{}, 1)
+			opts := RunOptions{
+				Targets: []*stats.TargetStats{stats.NewTargetStats("example.com")},
+				OnReset: func() { reset <- struct{}{} },
+			}
+			if tt.onStop {
+				opts.OnStop = func() { stops.Add(1) }
+			}
+			h := startTUI(t, opts, 200, 50)
+			h.wait("Ping Monitor")
+			h.press('s')
+			h.wait("Stopped. Press 'S' to restart")
+			h.press('s') // already stopped: ignored
+			h.press('R')
+			recvWithin(t, reset, "the reset callback")
+			if want := map[bool]int32{true: 1, false: 0}[tt.onStop]; stops.Load() != want {
+				t.Errorf("OnStop called %d times, want %d", stops.Load(), want)
+			}
+			h.quit()
+		})
 	}
 }
 
+// TestRunKeyboardRestart stops and then restarts measuring: OnRestart runs
+// and the footer returns to the running key hints.
+func TestRunKeyboardRestart(t *testing.T) {
+	restarted := make(chan struct{}, 1)
+	h := startTUI(t, RunOptions{
+		Targets:   []*stats.TargetStats{stats.NewTargetStats("example.com")},
+		OnStop:    func() {},
+		OnRestart: func() error { restarted <- struct{}{}; return nil },
+	}, 200, 50)
+	h.wait("Ping Monitor")
+	h.press('s')
+	h.wait("Stopped. Press 'S' to restart")
+	h.press('S')
+	recvWithin(t, restarted, "the restart callback")
+	h.waitWithout(footerHelpText, "Stopped.")
+	h.quit()
+}
+
+// TestRunKeyboardReset presses R with every monitor enabled. The reset
+// callbacks run after the statistics have been cleared on the same worker,
+// so once the last one fires nothing needs polling.
+//
+// The MTR assertion pins an invariant that rests entirely on this key
+// handler: restartMTR on the supervisor side no longer resets anything, so
+// the only thing clearing per-hop counters on R is the Reset loop here —
+// without it, MTR stats would stay uncleared with the whole suite green.
 func TestRunKeyboardReset(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	factory, screenCh := makeSimScreen(t)
-	newApplication = factory
-
 	target := stats.NewTargetStats("example.com")
+	target.SetIP("127.0.0.1")
 	target.IncSent()
 	target.OnSuccess(10*time.Millisecond, 64)
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- Run(RunOptions{Targets: []*stats.TargetStats{target}, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, PacketSize: 56})
-	}()
-
-	screen := <-screenCh
-	time.Sleep(20 * time.Millisecond)
-	// Press 'R' to reset stats
-	screen.InjectKey(tcell.KeyRune, 'R', tcell.ModNone)
-	time.Sleep(20 * time.Millisecond)
-	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Run error: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not stop")
-	}
-}
-
-func TestRunKeyboardRestart(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	factory, screenCh := makeSimScreen(t)
-	newApplication = factory
-
-	target := stats.NewTargetStats("example.com")
-	restartCalled := make(chan struct{}, 1)
-	onStop := func() {}
-	onRestart := func() error {
-		restartCalled <- struct{}{}
-		return nil
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- Run(RunOptions{Targets: []*stats.TargetStats{target}, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, PacketSize: 56, OnStop: onStop, OnRestart: onRestart})
-	}()
-
-	screen := <-screenCh
-	time.Sleep(20 * time.Millisecond)
-	screen.InjectKey(tcell.KeyRune, 's', tcell.ModNone) // stop first
-	time.Sleep(20 * time.Millisecond)
-	screen.InjectKey(tcell.KeyRune, 'S', tcell.ModNone) // restart
-	time.Sleep(50 * time.Millisecond)
-	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Run error: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not stop")
-	}
-}
-
-func TestRunKeyboardTab(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	factory, screenCh := makeSimScreen(t)
-	newApplication = factory
-
-	target := stats.NewTargetStats("example.com")
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- Run(RunOptions{Targets: []*stats.TargetStats{target}, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, PacketSize: 56})
-	}()
-
-	screen := <-screenCh
-	time.Sleep(20 * time.Millisecond)
-	// Tab cycles focus between table, graph, errorView
-	screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
-	time.Sleep(10 * time.Millisecond)
-	screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
-	time.Sleep(10 * time.Millisecond)
-	screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
-	time.Sleep(10 * time.Millisecond)
-	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Run error: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not stop")
-	}
-}
-
-// ---- Run with Tab when trace + port enabled (covers more Tab branches) ----
-
-func TestRunTabWithTraceAndPort(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	factory, screenCh := makeSimScreen(t)
-	newApplication = factory
-
-	target := stats.NewTargetStats("example.com")
-	target.SetIP("127.0.0.1")
-	target.PortResults = []*stats.PortCheckResult{{Port: 443, Protocol: "tcp", Status: "Open"}}
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- Run(RunOptions{Targets: []*stats.TargetStats{target}, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, PacketSize: 56, TraceEnabled: true, PortEnabled: true})
-	}()
-
-	screen := <-screenCh
-	time.Sleep(20 * time.Millisecond)
-	// Tab multiple times to cycle through: table→trace→port→graph→error→table
-	for range 6 {
-		screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
-		time.Sleep(10 * time.Millisecond)
-	}
-	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Run error: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not stop")
-	}
-}
-
-// ---- Run: 's' key when onStop is nil (stopRequested path without callback) ----
-
-func TestRunKeyboardStopNoCallback(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	factory, screenCh := makeSimScreen(t)
-	newApplication = factory
-
-	target := stats.NewTargetStats("example.com")
-
-	errCh := make(chan error, 1)
-	go func() {
-		// onStop=nil, onRestart=nil
-		errCh <- Run(RunOptions{Targets: []*stats.TargetStats{target}, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, PacketSize: 56})
-	}()
-
-	screen := <-screenCh
-	time.Sleep(20 * time.Millisecond)
-	screen.InjectKey(tcell.KeyRune, 's', tcell.ModNone) // stop (no callback)
-	time.Sleep(20 * time.Millisecond)
-	screen.InjectKey(tcell.KeyRune, 's', tcell.ModNone) // second 's' is no-op (already stopped)
-	time.Sleep(10 * time.Millisecond)
-	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Run error: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not stop")
-	}
-}
-
-// ---- Run: table key scroll (KeyDown when table is focused) ----
-
-func TestRunTableScrollKeys(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	factory, screenCh := makeSimScreen(t)
-	newApplication = factory
-
-	// Many targets so there are rows to scroll
-	targets := make([]*stats.TargetStats, 12)
-	for i := range targets {
-		targets[i] = stats.NewTargetStats("host")
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- Run(RunOptions{Targets: targets, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, PacketSize: 56})
-	}()
-
-	screen := <-screenCh
-	time.Sleep(20 * time.Millisecond)
-	// Table should be focused initially; send scroll keys
-	screen.InjectKey(tcell.KeyDown, 0, tcell.ModNone)
-	time.Sleep(10 * time.Millisecond)
-	screen.InjectKey(tcell.KeyPgDn, 0, tcell.ModNone)
-	time.Sleep(10 * time.Millisecond)
-	screen.InjectKey(tcell.KeyUp, 0, tcell.ModNone)
-	time.Sleep(10 * time.Millisecond)
-	screen.InjectKey(tcell.KeyPgUp, 0, tcell.ModNone)
-	time.Sleep(10 * time.Millisecond)
-	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Run error: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not stop")
-	}
-}
-
-// TestRunTableScrollKeys_ManyTargets_Virtualized is the P1 fix's end-to-end
-// smoke test: with enough targets that virtualization actually windows the
-// render (well beyond tableMaxRows+margin), scrolling all the way to the
-// bottom and back via keys must not crash or hang the app.
-func TestRunTableScrollKeys_ManyTargets_Virtualized(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	factory, screenCh := makeSimScreen(t)
-	newApplication = factory
-
-	const numTargets = 100
-	targets := make([]*stats.TargetStats, numTargets)
-	for i := range targets {
-		targets[i] = stats.NewTargetStats("host")
-		targets[i].SetIP("10.0.0.1")
-		targets[i].IncSent()
-		targets[i].OnSuccess(10*time.Millisecond, 64)
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- Run(RunOptions{Targets: targets, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, PacketSize: 56})
-	}()
-
-	screen := <-screenCh
-	time.Sleep(20 * time.Millisecond)
-	// Scroll all the way to the bottom, then back to the top.
-	for range numTargets/tableMaxRows + 2 {
-		screen.InjectKey(tcell.KeyPgDn, 0, tcell.ModNone)
-	}
-	time.Sleep(10 * time.Millisecond)
-	for range numTargets/tableMaxRows + 2 {
-		screen.InjectKey(tcell.KeyPgUp, 0, tcell.ModNone)
-	}
-	time.Sleep(10 * time.Millisecond)
-	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Run error: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not stop")
-	}
-}
-
-// ---- Run: onRestart returning error ----
-
-func TestRunRestartError(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	factory, screenCh := makeSimScreen(t)
-	newApplication = factory
-
-	target := stats.NewTargetStats("example.com")
-	onStop := func() {}
-	restartErr := errors.New("restart failed")
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- Run(RunOptions{Targets: []*stats.TargetStats{target}, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, PacketSize: 56, OnStop: onStop, OnRestart: func() error { return restartErr }})
-	}()
-
-	screen := <-screenCh
-	time.Sleep(20 * time.Millisecond)
-	screen.InjectKey(tcell.KeyRune, 's', tcell.ModNone)
-	time.Sleep(20 * time.Millisecond)
-	screen.InjectKey(tcell.KeyRune, 'S', tcell.ModNone)
-	time.Sleep(60 * time.Millisecond)
-	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Run error: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not stop")
-	}
-}
-
-// ---- Run: Tab with traceEnabled only (covers traceView→graphView branch) ----
-
-func TestRunTabTraceOnly(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	factory, screenCh := makeSimScreen(t)
-	newApplication = factory
-
-	target := stats.NewTargetStats("example.com")
 	target.SetTraceHops([]string{"10.0.0.1", "1.1.1.1"})
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- Run(RunOptions{Targets: []*stats.TargetStats{target}, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, PacketSize: 56, TraceEnabled: true})
-	}()
-
-	screen := <-screenCh
-	time.Sleep(20 * time.Millisecond)
-	// Tab cycles: table→traceView→graphView→errorView→table
-	for range 5 {
-		screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
-		time.Sleep(10 * time.Millisecond)
-	}
-	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Run error: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not stop")
-	}
-}
-
-// ---- Run: Tab with portEnabled only (covers table→portView branch) ----
-
-func TestRunTabPortOnly(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	factory, screenCh := makeSimScreen(t)
-	newApplication = factory
-
-	target := stats.NewTargetStats("example.com")
-	target.SetIP("127.0.0.1")
-	target.PortResults = []*stats.PortCheckResult{{Port: 443, Protocol: "tcp", Status: "Open"}}
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- Run(RunOptions{Targets: []*stats.TargetStats{target}, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, PacketSize: 56, PortEnabled: true})
-	}()
-
-	screen := <-screenCh
-	time.Sleep(20 * time.Millisecond)
-	// Tab cycles: table→portView→graphView→errorView→table
-	for range 5 {
-		screen.InjectKey(tcell.KeyTab, 0, tcell.ModNone)
-		time.Sleep(10 * time.Millisecond)
-	}
-	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Run error: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not stop")
-	}
-}
-
-// ---- Run: scroll key with 1 target (maxOffset < 0 path) ----
-
-func TestRunScrollKeyWithFewTargets(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	factory, screenCh := makeSimScreen(t)
-	newApplication = factory
-
-	// Only 1 target → rowCount=2 < tableMaxRows+1=11 → maxOffset < 0 → clamped to 0
-	target := stats.NewTargetStats("example.com")
-	target.SetIP("1.1.1.1")
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- Run(RunOptions{Targets: []*stats.TargetStats{target}, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, SourceIPv4: "10.0.0.1", PacketSize: 56})
-	}()
-
-	screen := <-screenCh
-	time.Sleep(20 * time.Millisecond)
-	// Press scroll keys while table is focused (few targets → maxOffset < 0 path)
-	screen.InjectKey(tcell.KeyDown, 0, tcell.ModNone)
-	time.Sleep(5 * time.Millisecond)
-	screen.InjectKey(tcell.KeyUp, 0, tcell.ModNone)
-	time.Sleep(5 * time.Millisecond)
-	screen.InjectKey(tcell.KeyPgDn, 0, tcell.ModNone)
-	time.Sleep(5 * time.Millisecond)
-	screen.InjectKey(tcell.KeyPgUp, 0, tcell.ModNone)
-	time.Sleep(5 * time.Millisecond)
-	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Run error: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not stop")
-	}
-}
-
-// ---- Run: 'R' key with traceEnabled clears TraceHops and calls onResetTrace ----
-
-func TestRunResetTraceKey(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	factory, screenCh := makeSimScreen(t)
-	newApplication = factory
-
-	target := stats.NewTargetStats("example.com")
-	target.SetTraceHops([]string{"10.0.0.1", "1.1.1.1"})
-
-	resetCalled := make(chan struct{}, 1)
-	onResetTrace := func() { resetCalled <- struct{}{} }
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- Run(RunOptions{Targets: []*stats.TargetStats{target}, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, PacketSize: 56, TraceEnabled: true, OnResetTrace: onResetTrace})
-	}()
-
-	screen := <-screenCh
-	time.Sleep(30 * time.Millisecond)
-	screen.InjectKey(tcell.KeyRune, 'R', tcell.ModNone)
-
-	// onResetTrace must be called.
-	select {
-	case <-resetCalled:
-	case <-time.After(2 * time.Second):
-		t.Fatal("onResetTrace was not called after 'R' key")
-	}
-
-	// TraceHops must have been cleared.
-	if hops := target.GetView().TraceHops; len(hops) != 0 {
-		t.Errorf("TraceHops not cleared after 'R': got %v", hops)
-	}
-
-	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Run error: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not stop")
-	}
-}
-
-// ---- Run: 'R' key with portEnabled calls onResetPort ----
-
-func TestRunResetPortKey(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	factory, screenCh := makeSimScreen(t)
-	newApplication = factory
-
-	target := stats.NewTargetStats("example.com")
-	target.SetIP("127.0.0.1")
-	result := &stats.PortCheckResult{Port: 80, Protocol: "tcp"}
-	result.SetResult("Open", 5*time.Millisecond)
-	target.PortResults = []*stats.PortCheckResult{result}
-
-	resetCalled := make(chan struct{}, 1)
-	onResetPort := func() { resetCalled <- struct{}{} }
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- Run(RunOptions{Targets: []*stats.TargetStats{target}, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, PacketSize: 56, PortEnabled: true, OnResetPort: onResetPort})
-	}()
-
-	screen := <-screenCh
-	time.Sleep(30 * time.Millisecond)
-	screen.InjectKey(tcell.KeyRune, 'R', tcell.ModNone)
-
-	select {
-	case <-resetCalled:
-	case <-time.After(2 * time.Second):
-		t.Fatal("onResetPort was not called after 'R' key")
-	}
-
-	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Run error: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not stop")
-	}
-}
-
-func newSimApp(t *testing.T) (*tview.Application, tcell.SimulationScreen) {
-	t.Helper()
-	app := tview.NewApplication()
-	screen := tcell.NewSimulationScreen("UTF-8")
-	if err := screen.Init(); err != nil {
-		t.Fatalf("screen init: %v", err)
-	}
-	screen.SetSize(120, 40)
-	app.SetScreen(screen)
-	return app, screen
-}
-
-func TestRunOnAddHost_CallbackInvoked(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	addCh := make(chan string, 1)
-
-	newApplication = func() *tview.Application {
-		app, screen := newSimApp(t)
-		go func() {
-			time.Sleep(20 * time.Millisecond)
-			// Simulate 'a' key to open add dialog
-			screen.InjectKey(tcell.KeyRune, 'a', tcell.ModNone)
-			time.Sleep(20 * time.Millisecond)
-			// Type hostname (use IP to avoid triggering key shortcuts)
-			for _, r := range "1.2.3.4" {
-				screen.InjectKey(tcell.KeyRune, r, tcell.ModNone)
-			}
-			time.Sleep(20 * time.Millisecond)
-			// Press Enter to confirm
-			screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
-			time.Sleep(100 * time.Millisecond)
-			app.Stop()
-		}()
-		return app
-	}
-
-	target := stats.NewTargetStats("example.com")
-	err := Run(RunOptions{
-		Targets:  []*stats.TargetStats{target},
-		Interval: 50 * time.Millisecond,
-		Timeout:  50 * time.Millisecond,
-		OnAddHost: func(host string) error {
-			addCh <- host
-			return errors.New("test stop") // return error so TUI doesn't reload
-		},
-	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	var got string
-	select {
-	case got = <-addCh:
-	case <-time.After(200 * time.Millisecond):
-		t.Fatal("OnAddHost was not called within timeout")
-	}
-	if got != "1.2.3.4" {
-		t.Fatalf("OnAddHost called with %q, want %q", got, "1.2.3.4")
-	}
-}
-
-func TestRunOnAddHost_EmptyHostIgnored(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	addCalled := false
-	newApplication = func() *tview.Application {
-		app, screen := newSimApp(t)
-		go func() {
-			time.Sleep(20 * time.Millisecond)
-			screen.InjectKey(tcell.KeyRune, 'a', tcell.ModNone)
-			time.Sleep(10 * time.Millisecond)
-			// Press Enter without typing anything
-			screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
-			time.Sleep(30 * time.Millisecond)
-			app.Stop()
-		}()
-		return app
-	}
-
-	target := stats.NewTargetStats("example.com")
-	err := Run(RunOptions{
-		Targets:  []*stats.TargetStats{target},
-		Interval: 50 * time.Millisecond,
-		Timeout:  50 * time.Millisecond,
-		OnAddHost: func(host string) error {
-			addCalled = true
-			return nil
-		},
-	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-	if addCalled {
-		t.Fatal("OnAddHost should not be called for empty host")
-	}
-}
-
-func TestRunOnDeleteHost_CallbackInvoked(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	deleteCh := make(chan string, 1)
-
-	newApplication = func() *tview.Application {
-		app, screen := newSimApp(t)
-		go func() {
-			time.Sleep(20 * time.Millisecond)
-			// Simulate 'd' key to open delete dialog
-			screen.InjectKey(tcell.KeyRune, 'd', tcell.ModNone)
-			time.Sleep(20 * time.Millisecond)
-			// Type the hostname to delete
-			for _, r := range "8.8.8.8" {
-				screen.InjectKey(tcell.KeyRune, r, tcell.ModNone)
-			}
-			time.Sleep(20 * time.Millisecond)
-			// Press Enter to confirm
-			screen.InjectKey(tcell.KeyEnter, 0, tcell.ModNone)
-			time.Sleep(100 * time.Millisecond)
-			app.Stop()
-		}()
-		return app
-	}
-
-	target := stats.NewTargetStats("8.8.8.8")
-	err := Run(RunOptions{
-		Targets:  []*stats.TargetStats{target},
-		Interval: 50 * time.Millisecond,
-		Timeout:  50 * time.Millisecond,
-		OnDeleteHost: func(host string) error {
-			deleteCh <- host
-			return errors.New("test stop")
-		},
-	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	var got string
-	select {
-	case got = <-deleteCh:
-	case <-time.After(200 * time.Millisecond):
-		t.Fatal("OnDeleteHost was not called within timeout")
-	}
-	if got != "8.8.8.8" {
-		t.Fatalf("OnDeleteHost called with %q, want %q", got, "8.8.8.8")
-	}
-}
-
-func TestRunOnDeleteHost_EscapeAborts(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	deleteCalled := false
-	newApplication = func() *tview.Application {
-		app, screen := newSimApp(t)
-		go func() {
-			time.Sleep(20 * time.Millisecond)
-			screen.InjectKey(tcell.KeyRune, 'd', tcell.ModNone)
-			time.Sleep(20 * time.Millisecond)
-			// Type something then press Escape to cancel
-			for _, r := range "8.8.8.8" {
-				screen.InjectKey(tcell.KeyRune, r, tcell.ModNone)
-			}
-			time.Sleep(10 * time.Millisecond)
-			screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
-			time.Sleep(50 * time.Millisecond)
-			app.Stop()
-		}()
-		return app
-	}
-
-	target := stats.NewTargetStats("8.8.8.8")
-	err := Run(RunOptions{
-		Targets:  []*stats.TargetStats{target},
-		Interval: 50 * time.Millisecond,
-		Timeout:  50 * time.Millisecond,
-		OnDeleteHost: func(host string) error {
-			deleteCalled = true
-			return nil
-		},
-	})
-	if err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-	if deleteCalled {
-		t.Fatal("OnDeleteHost should not be called after Escape")
-	}
-}
-
-// ---- Run: 'R' key with mtrEnabled clears MTR hop stats and calls onResetMTR ----
-
-// TestRunResetMTRKey pins an invariant that now rests entirely on this key
-// handler. restartMTR on the supervisor side no longer resets anything, so
-// the only thing clearing per-hop counters on 'R' is the t.Reset() loop here
-// — without this test, removing that loop would leave MTR stats permanently
-// uncleared with the whole suite still green.
-func TestRunResetMTRKey(t *testing.T) {
-	orig := newApplication
-	t.Cleanup(func() { newApplication = orig })
-
-	factory, screenCh := makeSimScreen(t)
-	newApplication = factory
-
-	target := stats.NewTargetStats("example.com")
-	target.SetIP("127.0.0.1")
 	target.MTR().EnsureLen(2)
 	target.MTR().RecordReply(1, "10.0.0.1", "", "", "", 5*time.Millisecond)
+	target.PortResults = []*stats.PortCheckResult{{Port: 80, Protocol: "tcp", Status: "Open"}}
 	if len(target.MTR().View()) == 0 {
 		t.Fatal("fixture did not record any hops")
 	}
 
-	resetCalled := make(chan struct{}, 1)
-	onResetMTR := func() { resetCalled <- struct{}{} }
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- Run(RunOptions{Targets: []*stats.TargetStats{target}, Interval: 50 * time.Millisecond, Timeout: 50 * time.Millisecond, PacketSize: 56, MTREnabled: true, OnResetMTR: onResetMTR})
-	}()
-
-	screen := <-screenCh
-	time.Sleep(30 * time.Millisecond)
-	screen.InjectKey(tcell.KeyRune, 'R', tcell.ModNone)
-
-	select {
-	case <-resetCalled:
-	case <-time.After(2 * time.Second):
-		t.Fatal("onResetMTR was not called after 'R' key")
-	}
-
-	// The handler resets every target before dispatching onResetMTR, so the
-	// callback firing means the reset has already happened — no polling.
-	if hops := target.MTR().View(); len(hops) != 0 {
-		t.Errorf("MTR hop stats not cleared after 'R': got %d hops", len(hops))
-	}
-
-	screen.InjectKey(tcell.KeyRune, 'q', tcell.ModNone)
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Run error: %v", err)
+	resets := make(chan string, 3)
+	h := startTUI(t, RunOptions{
+		Targets:      []*stats.TargetStats{target},
+		TraceEnabled: true, MTREnabled: true, PortEnabled: true,
+		OnResetTrace: func() { resets <- "trace" },
+		OnResetMTR:   func() { resets <- "mtr" },
+		OnResetPort:  func() { resets <- "port" },
+	}, 200, 50)
+	h.wait("Ping Monitor")
+	h.press('R')
+	for _, want := range []string{"trace", "mtr", "port"} {
+		if got := recvWithin(t, resets, "monitor reset "+want); got != want {
+			t.Fatalf("monitor reset %q, want %q", got, want)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not stop")
 	}
+	if v := target.GetView(); v.Sent != 0 || v.Recv != 0 {
+		t.Errorf("counters not cleared after R: sent=%d recv=%d", v.Sent, v.Recv)
+	}
+	if hops := target.GetView().TraceHops; len(hops) != 0 {
+		t.Errorf("TraceHops not cleared after R: got %v", hops)
+	}
+	if hops := target.MTR().View(); len(hops) != 0 {
+		t.Errorf("MTR hop stats not cleared after R: got %d hops", len(hops))
+	}
+	h.quit()
 }
 
-func TestInputStateFollowsBrowserControlsWithoutOvertakingPendingOperations(t *testing.T) {
-	actual := "stopped"
-	h := &inputHandler{inputHandlerDeps: inputHandlerDeps{app: tview.NewApplication(), measurementState: func() string { return actual }}}
-	h.handle(tcell.NewEventKey(tcell.KeyRune, 'x', tcell.ModNone))
-	if h.state != monitorStopped {
-		t.Fatal("browser stop did not reach keyboard state")
+// TestRunKeyboardScroll moves the selection with the arrow and page keys.
+func TestRunKeyboardScroll(t *testing.T) {
+	t.Run("a single target has nothing to scroll", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		target.SetIP("1.1.1.1")
+		h := startTUI(t, RunOptions{Targets: []*stats.TargetStats{target}, SourceIPv4: "10.0.0.1"}, 200, 50)
+		h.wait("example.com")
+		for _, k := range []tcell.Key{tcell.KeyDown, tcell.KeyUp, tcell.KeyPgDn, tcell.KeyPgUp} {
+			h.key(k)
+		}
+		h.wait("example.com")
+		h.quit()
+	})
+
+	// With far more targets than rows, only a window of rows is rendered.
+	// Paging to the bottom must bring the last host into view and paging
+	// back must restore the first, and neither may crash or hang the app.
+	t.Run("many targets scroll to the bottom and back", func(t *testing.T) {
+		const numTargets = 100
+		targets := make([]*stats.TargetStats, numTargets)
+		for i := range targets {
+			targets[i] = stats.NewTargetStats(fmt.Sprintf("host%03d", i))
+			targets[i].SetIP("10.0.0.1")
+			targets[i].IncSent()
+			targets[i].OnSuccess(10*time.Millisecond, 64)
+		}
+		h := startTUI(t, RunOptions{Targets: targets}, 200, 50)
+		first, last := "host000", fmt.Sprintf("host%03d", numTargets-1)
+		frame := h.wait(first)
+		if requireAll(last)(frame) {
+			t.Fatalf("last host visible before scrolling:\n%s", frame)
+		}
+		for range numTargets/tableMaxRows + 2 {
+			h.key(tcell.KeyPgDn)
+		}
+		h.wait(last)
+		for range numTargets/tableMaxRows + 2 {
+			h.key(tcell.KeyPgUp)
+		}
+		h.waitWithout(first, last)
+		h.quit()
+	})
+}
+
+// TestRunPaneControls checks that Tab, f and z reach the pane controls
+// through Run: Tab moves focus to the next pane, which is what f then folds,
+// and z maximizes the focused pane until Escape restores the layout.
+func TestRunPaneControls(t *testing.T) {
+	target := stats.NewTargetStats("example.com")
+	target.SetIP("127.0.0.1")
+	target.SetTraceHops([]string{"10.0.0.1", "1.1.1.1"})
+	target.PortResults = []*stats.PortCheckResult{{Port: 443, Protocol: "tcp", Status: "Open"}}
+	h := startTUI(t, RunOptions{Targets: []*stats.TargetStats{target}, TraceEnabled: true, PortEnabled: true}, 200, 50)
+	h.wait("Port Monitor")
+
+	h.key(tcell.KeyTab) // Ping Monitor -> Traceroute Monitor
+	h.press('f')
+	folded := h.wait("(f: Expand, z: Maximize)")
+	if !requireAll("Traceroute Monitor", "Port Monitor")(folded) {
+		t.Fatalf("expected only the Traceroute Monitor folded:\n%s", folded)
 	}
-	actual = "running"
-	h.handle(tcell.NewEventKey(tcell.KeyRune, 'x', tcell.ModNone))
-	if h.state != monitorRunning {
-		t.Fatal("browser restart did not reach keyboard state")
+	h.press('f')
+	h.waitWithout("Traceroute Monitor", "(f: Expand")
+
+	h.press('z')
+	maximized := h.waitFrame("the Traceroute Monitor alone", func(f string) bool {
+		return requireAll("Traceroute Monitor")(f) && !requireAll("Port Monitor")(f)
+	})
+	if requireAll("Ping Monitor")(maximized) {
+		t.Errorf("maximized pane should hide the Ping Monitor:\n%s", maximized)
 	}
-	h.state = monitorStopping
-	h.handle(tcell.NewEventKey(tcell.KeyRune, 'x', tcell.ModNone))
-	if h.state != monitorStopping {
-		t.Fatal("external state overtook queued stop")
-	}
+	h.key(tcell.KeyEscape)
+	h.waitFrame("the full layout", requireAll("Ping Monitor", "Traceroute Monitor", "Port Monitor"))
+	h.quit()
 }

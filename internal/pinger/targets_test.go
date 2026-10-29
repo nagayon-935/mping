@@ -150,3 +150,72 @@ func TestSessionIDsStayDistinctAcrossRestartsAndRouteProbes(t *testing.T) {
 		t.Fatal("exhausted IDs reused")
 	}
 }
+
+func TestAddTarget_Rejections(t *testing.T) {
+	t.Run("duplicate target", func(t *testing.T) {
+		p := liveTestPinger(t)
+		a := stats.NewTargetStats("a")
+		if err := p.AddTarget(a, "a", nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := p.AddTarget(a, "a", nil); err == nil {
+			t.Fatal("expected an error for an already registered target")
+		}
+	})
+
+	t.Run("stopped pinger", func(t *testing.T) {
+		p := liveTestPinger(t)
+		p.Stop()
+		if err := p.AddTarget(stats.NewTargetStats("a"), "a", nil); err == nil {
+			t.Fatal("expected an error once the pinger is stopped")
+		}
+	})
+
+	t.Run("echo IDs exhausted", func(t *testing.T) {
+		p := liveTestPinger(t)
+		p.ids = &IDAllocator{echo: 32768}
+		if err := p.AddTarget(stats.NewTargetStats("a"), "a", nil); err == nil {
+			t.Fatal("expected an ID exhaustion error")
+		}
+	})
+
+	t.Run("legacy ID space exhausted", func(t *testing.T) {
+		p := liveTestPinger(t)
+		p.ids = nil
+		p.nextWorkerID = 65536
+		if err := p.AddTarget(stats.NewTargetStats("a"), "a", nil); err == nil {
+			t.Fatal("expected an ID exhaustion error")
+		}
+	})
+}
+
+func TestAddTarget_RecordsDSCPOverride(t *testing.T) {
+	p := liveTestPinger(t)
+	a := stats.NewTargetStats("a")
+	dscp := 46 << 2
+	if err := p.AddTarget(a, "a", &dscp); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := p.dscpFor(a); !ok || got != dscp {
+		t.Fatalf("dscpFor = (%d, %v), want (%d, true)", got, ok, dscp)
+	}
+	p.RemoveTarget(a)
+	if _, ok := p.dscpFor(a); ok {
+		t.Fatal("DSCP override survived RemoveTarget")
+	}
+}
+
+func TestPingerDone_ClosesOnStop(t *testing.T) {
+	p := NewPinger(nil)
+	select {
+	case <-p.Done():
+		t.Fatal("Done closed before Stop")
+	default:
+	}
+	p.Stop()
+	select {
+	case <-p.Done():
+	case <-time.After(time.Second):
+		t.Fatal("Done not closed after Stop")
+	}
+}

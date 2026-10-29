@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -10,6 +11,12 @@ import (
 )
 
 func testPaneControls() (*paneControls, *tview.Table, *GraphView) {
+	return newTestPaneControls(newMonitorPane(true, " MTR Monitor ", func(int) string { return "data" }))
+}
+
+// newTestPaneControls builds pane controls around the given monitor panes,
+// with the table focused.
+func newTestPaneControls(monitors ...*monitorPane) (*paneControls, *tview.Table, *GraphView) {
 	app := tview.NewApplication()
 	table := tview.NewTable()
 	tablePane := tview.NewFlex().AddItem(table, 0, 1, true)
@@ -17,8 +24,7 @@ func testPaneControls() (*paneControls, *tview.Table, *GraphView) {
 	log := tview.NewTextView()
 	header := tview.NewTextView()
 	footer := tview.NewPages()
-	monitor := newMonitorPane(true, " MTR Monitor ", func(int) string { return "data" })
-	controls := newPaneControls(app, tview.NewFlex(), header, footer, table, tablePane, table.GetRowCount, []*monitorPane{monitor}, graph, log)
+	controls := newPaneControls(app, tview.NewFlex(), header, footer, table, tablePane, table.GetRowCount, monitors, graph, log)
 	app.SetFocus(table)
 	controls.rebuild()
 	return controls, table, graph
@@ -95,5 +101,47 @@ func TestPaneControlsTabRestoresUnfocusedBorderColors(t *testing.T) {
 	}
 	if got := c.log.content.(*tview.TextView).GetBorderColor(); got != vividRed {
 		t.Errorf("log unfocused border color = %v, want %v (vividRed)", got, vividRed)
+	}
+}
+
+// TestPaneControlsTabVisitsEnabledPanesInOrder follows focus around the
+// whole cycle for each monitor combination: the table, then the enabled
+// monitors in order, the RTT graph, the Log, and back to the table.
+func TestPaneControlsTabVisitsEnabledPanesInOrder(t *testing.T) {
+	render := func(int) string { return "data" }
+	trace := func(enabled bool) *monitorPane { return newMonitorPane(enabled, " Traceroute Monitor ", render) }
+	port := func(enabled bool) *monitorPane { return newMonitorPane(enabled, " Port Monitor ", render) }
+	tests := []struct {
+		name     string
+		monitors []*monitorPane
+		want     []string
+	}{
+		{"no monitors", nil, []string{"RTT Graphs", "Log", "Ping Monitor"}},
+		{"disabled monitors are skipped", []*monitorPane{trace(false), port(false)},
+			[]string{"RTT Graphs", "Log", "Ping Monitor"}},
+		{"traceroute only", []*monitorPane{trace(true), port(false)},
+			[]string{" Traceroute Monitor ", "RTT Graphs", "Log", "Ping Monitor"}},
+		{"port only", []*monitorPane{trace(false), port(true)},
+			[]string{" Port Monitor ", "RTT Graphs", "Log", "Ping Monitor"}},
+		{"traceroute and port", []*monitorPane{trace(true), port(true)},
+			[]string{" Traceroute Monitor ", " Port Monitor ", "RTT Graphs", "Log", "Ping Monitor"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _, _ := newTestPaneControls(tt.monitors...)
+			if got := c.current().title; got != "Ping Monitor" {
+				t.Fatalf("initial focus = %q, want the Ping Monitor", got)
+			}
+			var got []string
+			for range tt.want {
+				if !c.handle(tcell.NewEventKey(tcell.KeyTab, 0, tcell.ModNone)) {
+					t.Fatal("Tab not handled")
+				}
+				got = append(got, c.current().title)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("focus order after Tab = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

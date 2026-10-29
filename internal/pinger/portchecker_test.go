@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"reflect"
 	"testing"
 	"time"
 
@@ -141,7 +142,14 @@ func TestPortChecker_Wait(t *testing.T) {
 	pc := NewPortChecker(targets, specs, 5*time.Millisecond, 10*time.Millisecond, BindConfig{})
 
 	pc.Start()
-	time.Sleep(20 * time.Millisecond) // let loops run at least once
+	for _, tgt := range targets { // let every loop complete a check
+		tgt := tgt
+		for i := range specs {
+			eventually(t, 5*time.Second, "first port check", func() bool {
+				return tgt.PortResults[i].GetView().Status != "Checking..."
+			})
+		}
+	}
 	pc.Stop()
 
 	done := make(chan struct{})
@@ -220,47 +228,88 @@ func TestCheckTCP_Closed(t *testing.T) {
 }
 
 func TestCheckTCP_Filtered(t *testing.T) {
-	// Use a non-routable address to trigger timeout
-	status, _ := checkTCP(context.Background(), NewBoundDialer("tcp", 50*time.Millisecond, BindConfig{}), "192.0.2.1:9")
-	if status != "Filtered" {
-		t.Logf("checkTCP filtered: got %q (may vary in CI)", status)
+	// An expired or cancelled context is reported as Filtered (no answer
+	// before the deadline), without depending on any network behaviour.
+	expired, cancelExpired := context.WithTimeout(context.Background(), 0)
+	defer cancelExpired()
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for name, ctx := range map[string]context.Context{"deadline exceeded": expired, "cancelled": cancelled} {
+		if status, _ := checkTCP(ctx, NewBoundDialer("tcp", time.Second, BindConfig{}), "127.0.0.1:9"); status != "Filtered" {
+			t.Errorf("%s: checkTCP = %q, want Filtered", name, status)
+		}
 	}
 }
 
 // ---- checkUDP tests ----
 
-func TestCheckUDP_OpenFiltered(t *testing.T) {
-	// Non-routable address, UDP won't get ICMP unreachable → Open|Filtered
-	status, _ := checkUDP(context.Background(), NewBoundDialer("udp", 50*time.Millisecond, BindConfig{}), "192.0.2.1:9", 50*time.Millisecond)
-	if status != "Open|Filtered" && status != "Error" {
-		t.Logf("checkUDP: got %q (may vary by environment)", status)
-	}
-}
-
-func TestCheckUDP_LocalhostOpen(t *testing.T) {
+// udpListener binds a loopback UDP socket for a checkUDP scenario.
+func udpListener(t *testing.T) net.PacketConn {
+	t.Helper()
 	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Skip("cannot bind UDP: ", err)
 	}
-	defer conn.Close()
-	addr := conn.LocalAddr().String()
-
-	status, _ := checkUDP(context.Background(), NewBoundDialer("udp", 200*time.Millisecond, BindConfig{}), addr, 200*time.Millisecond)
-	// UDP server exists; likely Open|Filtered or Open depending on OS
-	if status == "Error" {
-		t.Logf("checkUDP local: got Error (OS may not allow UDP dial to self)")
-	}
+	t.Cleanup(func() { conn.Close() })
+	return conn
 }
 
-func TestCheckUDP_Closed(t *testing.T) {
-	// Pick a port that is unlikely to be listening
-	addr := "127.0.0.1:54321"
-	status, _ := checkUDP(context.Background(), NewBoundDialer("udp", 50*time.Millisecond, BindConfig{}), addr, 50*time.Millisecond)
-	// On most OSs, this should return Closed (ECONNREFUSED) or Open|Filtered (timeout)
-	// If it returns Closed, we've increased coverage.
-	if status == "Closed" {
-		t.Log("got Closed as expected for unreachable UDP port")
-	}
+func TestCheckUDP_Outcomes(t *testing.T) {
+	t.Run("a reply means Open", func(t *testing.T) {
+		srv := udpListener(t)
+		go func() {
+			buf := make([]byte, 16)
+			if _, from, err := srv.ReadFrom(buf); err == nil {
+				srv.WriteTo([]byte{1}, from)
+			}
+		}()
+		status, rtt := checkUDP(context.Background(), NewBoundDialer("udp", time.Second, BindConfig{}), srv.LocalAddr().String(), time.Second)
+		if status != "Open" || rtt <= 0 {
+			t.Fatalf("checkUDP = (%q, %v), want Open with a positive rtt", status, rtt)
+		}
+	})
+
+	t.Run("silence until the timeout means Open|Filtered", func(t *testing.T) {
+		srv := udpListener(t) // bound but never answers
+		status, rtt := checkUDP(context.Background(), NewBoundDialer("udp", 50*time.Millisecond, BindConfig{}), srv.LocalAddr().String(), 50*time.Millisecond)
+		if status != "Open|Filtered" || rtt < 40*time.Millisecond {
+			t.Fatalf("checkUDP = (%q, %v), want Open|Filtered after ~50ms", status, rtt)
+		}
+	})
+
+	t.Run("ICMP port unreachable means Closed", func(t *testing.T) {
+		srv := udpListener(t)
+		addr := srv.LocalAddr().String()
+		srv.Close() // nothing listens any more: loopback answers with port unreachable
+		status, _ := checkUDP(context.Background(), NewBoundDialer("udp", time.Second, BindConfig{}), addr, time.Second)
+		if status != "Closed" {
+			t.Fatalf("checkUDP = %q, want Closed", status)
+		}
+	})
+
+	t.Run("cancellation interrupts a pending read", func(t *testing.T) {
+		srv := udpListener(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() {
+			// The probe datagram proves checkUDP is past its setup and about
+			// to block in Read; cancel then.
+			buf := make([]byte, 16)
+			if _, _, err := srv.ReadFrom(buf); err == nil {
+				cancel()
+			}
+		}()
+		done := make(chan struct{})
+		go func() {
+			checkUDP(ctx, NewBoundDialer("udp", time.Minute, BindConfig{}), srv.LocalAddr().String(), time.Minute)
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("checkUDP stayed blocked in Read after its context was cancelled")
+		}
+	})
 }
 
 func TestCheckUDP_DialError(t *testing.T) {
@@ -363,17 +412,16 @@ func TestPortChecker_LoopWaitsForIP(t *testing.T) {
 		t.Fatalf("expected Checking... immediately, got %q", status)
 	}
 
+	// Without an IP the first check is deferred, not run and not skipped.
 	time.Sleep(20 * time.Millisecond)
+	if status := tgt.PortResults[0].GetView().Status; status != "Checking..." {
+		t.Fatalf("check ran before the IP was resolved: %q", status)
+	}
 	tgt.SetIP("127.0.0.1")
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if status := tgt.PortResults[0].GetView().Status; status != "Checking..." {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("status remained Checking... after IP was set")
+	eventually(t, 2*time.Second, "status leaves Checking... once the IP is set", func() bool {
+		return tgt.PortResults[0].GetView().Status != "Checking..."
+	})
 }
 
 // TestPortChecker_LoopStopsWhileWaitingForIP verifies that Stop() cancels the
@@ -414,5 +462,59 @@ func TestPortTargetEditsKeepSurvivingResult(t *testing.T) {
 	pc.RemoveTarget(b)
 	if a.PortResults[0] != result || a.GetView().PortResults[0].ClosedCount != before.ClosedCount {
 		t.Fatal("surviving port statistics were reset")
+	}
+}
+
+func TestParsePortSpecRejectsTrailingCharacters(t *testing.T) {
+	for _, raw := range []string{"443garbage/tcp", "443.5", "443:80", "80 90/tcp", "53x/udp"} {
+		if spec, err := ParsePortSpec(raw); err == nil {
+			t.Errorf("accepted %q as %+v", raw, spec)
+		}
+	}
+}
+
+func TestPortChecker_AddTargetTwiceKeepsOneRun(t *testing.T) {
+	tgt := stats.NewTargetStats("a")
+	tgt.SetIP("127.0.0.1")
+	pc := NewPortChecker(nil, []PortSpec{{Port: 1, Protocol: "tcp"}}, time.Hour, 50*time.Millisecond, BindConfig{})
+	defer func() { pc.Stop(); pc.Wait() }()
+
+	pc.AddTarget(tgt)
+	first := pc.targetRuns[tgt]
+	pc.AddTarget(tgt)
+
+	if len(pc.targetRuns) != 1 || pc.targetRuns[tgt] != first {
+		t.Fatalf("a second AddTarget replaced the running checks: %d runs", len(pc.targetRuns))
+	}
+}
+
+// TestPortChecker_StopDuringCheckKeepsLastResult: shutting down while a check
+// is in flight must not turn the interrupted check into a recorded result.
+func TestPortChecker_StopDuringCheckKeepsLastResult(t *testing.T) {
+	srv := udpListener(t) // receives the probe but never answers
+	port := srv.LocalAddr().(*net.UDPAddr).Port
+	tgt := stats.NewTargetStats("127.0.0.1")
+	tgt.SetIP("127.0.0.1")
+	spec := PortSpec{Port: port, Protocol: "udp"}
+	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Hour, time.Minute, BindConfig{})
+	r := tgt.PortResults[0]
+	before := r.GetView()
+
+	go func() {
+		buf := make([]byte, 16)
+		if _, _, err := srv.ReadFrom(buf); err == nil {
+			pc.Stop() // the probe is on the wire: interrupt the pending read
+		}
+	}()
+	done := make(chan struct{})
+	go func() { pc.check(tgt, spec, r); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("check stayed blocked after Stop")
+	}
+
+	if got := r.GetView(); !reflect.DeepEqual(got, before) {
+		t.Fatalf("interrupted check changed the result: %+v -> %+v", before, got)
 	}
 }

@@ -117,46 +117,43 @@ func TestWriteFailsWhenOwnerCannotBeDetermined(t *testing.T) {
 	}
 }
 
-func TestSetReportOwnerIsNoOpForNonRoot(t *testing.T) {
-	orig := geteuid
-	t.Cleanup(func() { geteuid = orig })
-	geteuid = func() int { return 501 }
-	f, err := os.CreateTemp(t.TempDir(), "o")
-	if err != nil {
-		t.Fatal(err)
+func TestSetReportOwner(t *testing.T) {
+	tests := []struct {
+		name    string
+		euid    int
+		closed  bool // chown on a closed file fails, so success proves chown was never attempted
+		owner   fileOwner
+		wantErr string // empty: no error expected
+	}{
+		{name: "no-op for non-root", euid: 501, closed: true, owner: fileOwner{uid: 1, gid: 1}},
+		// Chowning to the file's current owner succeeds without privileges.
+		{name: "chowns as root", euid: 0, owner: fileOwner{uid: os.Getuid(), gid: os.Getgid()}},
+		{name: "wraps chown failure", euid: 0, closed: true, wantErr: "set report owner"},
 	}
-	f.Close() // chown on a closed file would fail, proving it is never attempted
-	if err := setReportOwner(f, fileOwner{uid: 1, gid: 1}); err != nil {
-		t.Fatalf("setReportOwner: %v", err)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orig := geteuid
+			t.Cleanup(func() { geteuid = orig })
+			geteuid = func() int { return tt.euid }
+			f, err := os.CreateTemp(t.TempDir(), "o")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.closed {
+				f.Close()
+			} else {
+				defer f.Close()
+			}
 
-func TestSetReportOwnerChownsAsRoot(t *testing.T) {
-	orig := geteuid
-	t.Cleanup(func() { geteuid = orig })
-	geteuid = func() int { return 0 }
-	f, err := os.CreateTemp(t.TempDir(), "o")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	// Chowning to the file's current owner succeeds without privileges.
-	if err := setReportOwner(f, fileOwner{uid: os.Getuid(), gid: os.Getgid()}); err != nil {
-		t.Fatalf("setReportOwner: %v", err)
-	}
-}
+			err = setReportOwner(f, tt.owner)
 
-func TestSetReportOwnerWrapsChownFailure(t *testing.T) {
-	orig := geteuid
-	t.Cleanup(func() { geteuid = orig })
-	geteuid = func() int { return 0 }
-	f, err := os.CreateTemp(t.TempDir(), "o")
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
-	if err := setReportOwner(f, fileOwner{}); err == nil || !strings.Contains(err.Error(), "set report owner") {
-		t.Fatalf("expected wrapped chown error, got %v", err)
+			switch {
+			case tt.wantErr == "" && err != nil:
+				t.Fatalf("setReportOwner: %v", err)
+			case tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)):
+				t.Fatalf("setReportOwner error = %v, want one containing %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 

@@ -12,7 +12,6 @@ import (
 
 	"github.com/nagayon-935/mping/internal/stats"
 	"golang.org/x/net/icmp"
-	"golang.org/x/net/ipv4"
 )
 
 // TestEmbedAndExtractSendTimestamp_RoundTrip pins that a timestamp embedded
@@ -138,38 +137,13 @@ func TestExtractSendTimestamp_ImplausibleRTTRejected(t *testing.T) {
 
 // ---- sendProbe embedding ----
 
-// capturingPacketConn is a minimal PacketConnV4 fake that records every
-// WriteTo payload verbatim, so tests can parse back what sendProbe actually
-// put on the wire.
-type capturingPacketConn struct {
-	written [][]byte
-}
-
-func (c *capturingPacketConn) ReadFrom(b []byte) (int, *ipv4.ControlMessage, net.Addr, error) {
-	return 0, nil, nil, timeoutOpError()
-}
-
-func (c *capturingPacketConn) WriteTo(b []byte, cm *ipv4.ControlMessage, dst net.Addr) (int, error) {
-	cp := make([]byte, len(b))
-	copy(cp, b)
-	c.written = append(c.written, cp)
-	return len(b), nil
-}
-
-func (c *capturingPacketConn) SetReadDeadline(t time.Time) error { return nil }
-func (c *capturingPacketConn) Close() error                      { return nil }
-func (c *capturingPacketConn) SetControlMessage(cf ipv4.ControlFlags, on bool) error {
-	return nil
-}
-func (c *capturingPacketConn) SetTOS(tos int) error { return nil }
-
 // TestSendProbe_EmbedsTimestampInPayload pins that sendProbe writes a valid,
 // extractable send timestamp into the wire payload for a size large enough
 // to carry one.
 func TestSendProbe_EmbedsTimestampInPayload(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{})
-	conn := &capturingPacketConn{}
+	conn := &fakePacketConn{}
 	p.connV4 = conn
 
 	payload := buildPayload(56)
@@ -177,18 +151,11 @@ func TestSendProbe_EmbedsTimestampInPayload(t *testing.T) {
 	if !ok {
 		t.Fatal("expected sendProbe to succeed")
 	}
-	if len(conn.written) != 1 {
-		t.Fatalf("written packets = %d, want 1", len(conn.written))
+	written := conn.writes()
+	if len(written) != 1 {
+		t.Fatalf("written packets = %d, want 1", len(written))
 	}
-
-	msg, err := icmp.ParseMessage(1, conn.written[0]) // protocol 1 = ICMPv4
-	if err != nil {
-		t.Fatalf("ParseMessage: %v", err)
-	}
-	echo, ok := msg.Body.(*icmp.Echo)
-	if !ok {
-		t.Fatalf("body type = %T, want *icmp.Echo", msg.Body)
-	}
+	echo := icmpEchoOf(t, written[0])
 
 	rtt, ok := extractSendTimestamp(echo.Data, start, time.Second)
 	if !ok {
@@ -205,7 +172,7 @@ func TestSendProbe_EmbedsTimestampInPayload(t *testing.T) {
 func TestSendProbe_SmallPayloadNoTimestamp(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{})
-	conn := &capturingPacketConn{}
+	conn := &fakePacketConn{}
 	p.connV4 = conn
 
 	payload := buildPayload(8) // signature fits (5 bytes), timestamp (8 more) does not
@@ -214,11 +181,7 @@ func TestSendProbe_SmallPayloadNoTimestamp(t *testing.T) {
 		t.Fatal("expected sendProbe to succeed")
 	}
 
-	msg, err := icmp.ParseMessage(1, conn.written[0])
-	if err != nil {
-		t.Fatalf("ParseMessage: %v", err)
-	}
-	echo := msg.Body.(*icmp.Echo)
+	echo := icmpEchoOf(t, conn.writes()[0])
 	if len(echo.Data) != 8 {
 		t.Fatalf("payload len on wire = %d, want 8 (unchanged)", len(echo.Data))
 	}
@@ -293,33 +256,17 @@ func TestHandleEchoReply_FallsBackWhenTimestampInvalid(t *testing.T) {
 
 // TestRunWorker_UsesEmbeddedRTTWhenValid pins that runWorker records the
 // receiver-computed reply.RTT verbatim rather than re-deriving RTT from its
-// own pend.start bookkeeping, by making the two disagree sharply: the test
-// goroutine delivers the reply after a real 40ms sleep, but tags it with a
-// tiny embedded RTT. If runWorker used pend.start instead, LastRTT would
-// come out around 40ms.
+// own pend.start bookkeeping. The reply is delivered the instant the probe is
+// written, so a start-time-derived RTT would be microseconds, far from the
+// distinctive embedded value.
 func TestRunWorker_UsesEmbeddedRTTWhenValid(t *testing.T) {
-	target := stats.NewTargetStats("example.com")
-	resolve := func(network, address string) (*net.IPAddr, error) {
-		return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
-	}
-	p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{ResolveIPAddr: resolve})
-	p.connV4 = &fakePacketConn{}
-	p.Count = 1
-
-	id := p.baseID & 0xffff
-	ch := make(chan Reply, 1)
-	p.targetChans[id] = ch
-
+	r := newWorkerRig(t, 1)
 	const embeddedRTT = 3 * time.Millisecond
-	go func() {
-		time.Sleep(40 * time.Millisecond)
-		ch <- Reply{TTL: 64, Seq: 1, RTT: embeddedRTT}
-	}()
+	r.replyOnWrite(1, Reply{TTL: 64, Seq: 1, RTT: embeddedRTT})
 
-	p.runWorker(target, id, 10*time.Millisecond, 500*time.Millisecond)
+	r.run(10*time.Millisecond, 500*time.Millisecond)
 
-	view := target.GetView()
-	if view.LastRTT != embeddedRTT {
+	if view := r.target.GetView(); view.LastRTT != embeddedRTT {
 		t.Fatalf("LastRTT = %v, want the embedded %v (runWorker must prefer reply.RTT)", view.LastRTT, embeddedRTT)
 	}
 }
@@ -329,48 +276,18 @@ func TestRunWorker_UsesEmbeddedRTTWhenValid(t *testing.T) {
 // (the fallback signal from handleEchoReply), preserving pre-existing
 // behavior for small payloads / untrusted timestamps.
 func TestRunWorker_FallsBackToStartTimeWhenRTTZero(t *testing.T) {
-	target := stats.NewTargetStats("example.com")
-	resolve := func(network, address string) (*net.IPAddr, error) {
-		return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
-	}
-	p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{ResolveIPAddr: resolve})
-	conn := &sendNotifyingConn{fakePacketConn: &fakePacketConn{}, sent: make(chan struct{}, 1)}
-	p.connV4 = conn
-	p.Count = 1
-
-	id := p.baseID & 0xffff
-	ch := make(chan Reply, 1)
-	p.targetChans[id] = ch
-
-	// Time the reply from the actual send, not from goroutine start: the
-	// probe's start time is taken just before WriteTo, so replying 20ms
-	// after WriteTo guarantees a fallback RTT of at least 20ms. Timing it
-	// from before runWorker made the assertion race the worker's startup.
-	go func() {
-		<-conn.sent
+	r := newWorkerRig(t, 1)
+	// The probe's start time is taken just before WriteTo, so a reply
+	// delivered 20ms into the write guarantees a fallback RTT of at least 20ms.
+	r.conn.onWrite = func([]byte, net.Addr) error {
 		time.Sleep(20 * time.Millisecond)
-		ch <- Reply{TTL: 64, Seq: 1} // RTT left zero
-	}()
+		r.ch <- Reply{TTL: 64, Seq: 1} // RTT left zero
+		return nil
+	}
 
-	p.runWorker(target, id, 10*time.Millisecond, 500*time.Millisecond)
+	r.run(10*time.Millisecond, 500*time.Millisecond)
 
-	view := target.GetView()
-	if view.LastRTT < 20*time.Millisecond {
+	if view := r.target.GetView(); view.LastRTT < 20*time.Millisecond {
 		t.Fatalf("LastRTT = %v, want >= ~20ms (fallback to start-time bookkeeping)", view.LastRTT)
 	}
-}
-
-// sendNotifyingConn signals the first WriteTo so a test can time a reply
-// relative to when the probe actually went out.
-type sendNotifyingConn struct {
-	*fakePacketConn
-	sent chan struct{}
-}
-
-func (c *sendNotifyingConn) WriteTo(b []byte, cm *ipv4.ControlMessage, dst net.Addr) (int, error) {
-	select {
-	case c.sent <- struct{}{}:
-	default:
-	}
-	return c.fakePacketConn.WriteTo(b, cm, dst)
 }

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -38,12 +39,7 @@ func press(h *inputHandler, key tcell.Key, r rune) *tcell.EventKey {
 // input loop would.
 func runNextUpdate(t *testing.T, s *uiSession) {
 	t.Helper()
-	select {
-	case f := <-s.updates:
-		f()
-	case <-time.After(2 * time.Second):
-		t.Fatal("no UI update was posted")
-	}
+	recvWithin(t, s.updates, "a UI update to be posted")()
 }
 
 func TestTabCyclesEnabledPanesAndSkipsDisabledOnes(t *testing.T) {
@@ -197,17 +193,31 @@ func TestResetWithoutCallbackClearsStatsAndRestartsEnabledMonitors(t *testing.T)
 
 	var got []string
 	for range 4 {
-		select {
-		case c := <-calls:
-			got = append(got, c)
-		case <-time.After(2 * time.Second):
-			t.Fatalf("monitor resets = %v, want trace, mtr, port and http", got)
-		}
+		got = append(got, recvWithin(t, calls, fmt.Sprintf("a monitor reset (got %v, want trace, mtr, port and http)", got)))
 	}
 	if strings.Join(got, ",") != "trace,mtr,port,http" {
 		t.Fatalf("monitor resets = %v, want trace,mtr,port,http", got)
 	}
 	if v := target.GetView(); v.Sent != 0 || len(v.TraceHops) != 0 {
 		t.Fatalf("target after reset: sent=%d hops=%v, want 0 and no hops", v.Sent, v.TraceHops)
+	}
+}
+
+func TestInputStateFollowsBrowserControlsWithoutOvertakingPendingOperations(t *testing.T) {
+	actual := "stopped"
+	h := &inputHandler{inputHandlerDeps: inputHandlerDeps{app: tview.NewApplication(), measurementState: func() string { return actual }}}
+	h.handle(tcell.NewEventKey(tcell.KeyRune, 'x', tcell.ModNone))
+	if h.state != monitorStopped {
+		t.Fatal("browser stop did not reach keyboard state")
+	}
+	actual = "running"
+	h.handle(tcell.NewEventKey(tcell.KeyRune, 'x', tcell.ModNone))
+	if h.state != monitorRunning {
+		t.Fatal("browser restart did not reach keyboard state")
+	}
+	h.state = monitorStopping
+	h.handle(tcell.NewEventKey(tcell.KeyRune, 'x', tcell.ModNone))
+	if h.state != monitorStopping {
+		t.Fatal("external state overtook queued stop")
 	}
 }

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -11,119 +12,194 @@ import (
 	"github.com/rivo/tview"
 )
 
-func TestProjectDurationsToGraph(t *testing.T) {
-	data := []time.Duration{
-		1 * time.Millisecond,
-		2 * time.Millisecond,
-		3 * time.Millisecond,
+func graphTargets(n int, host string) []*stats.TargetStats {
+	targets := make([]*stats.TargetStats, n)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats(host)
 	}
-
-	values, has := projectDurationsToGraph(data, 30, 10)
-	if len(values) != 10 || len(has) != 10 {
-		t.Fatalf("projection size: got values=%d has=%d, want 10", len(values), len(has))
-	}
-	if has[9] != true || values[9] != data[len(data)-1] {
-		t.Fatalf("latest sample should be right-aligned: has=%v value=%v", has[9], values[9])
-	}
-	if has[0] {
-		t.Fatalf("left side should be empty when window is not yet filled: has=%v", has)
-	}
-
-	values2, has2 := projectDurationsToGraph(data, 2, 4)
-	if len(values2) != 4 || len(has2) != 4 {
-		t.Fatalf("projection2 size: got values=%d has=%d, want 4", len(values2), len(has2))
-	}
-	if !has2[0] || !has2[1] || !has2[2] || !has2[3] {
-		t.Fatalf("expected continuous span in narrow window: has=%v", has2)
-	}
+	return targets
 }
 
-func TestProjectDurationsToGraphSinglePoint(t *testing.T) {
-	data := []time.Duration{5 * time.Millisecond}
-	values, has := projectDurationsToGraph(data, 1, 3)
-	if len(values) != 3 || len(has) != 3 {
-		t.Fatalf("size mismatch")
+func TestProjectDurationsToGraph(t *testing.T) {
+	ms := time.Millisecond
+	tests := []struct {
+		name          string
+		data          []time.Duration
+		window, width int
+		wantLast      time.Duration // right-aligned latest sample, when non-zero
+		wantLeftEmpty bool          // slot 0 unfilled: the window is not yet full
+		wantAllFilled bool          // a continuous span covers every slot
+	}{
+		{"partially filled window is right-aligned", []time.Duration{1 * ms, 2 * ms, 3 * ms}, 30, 10, 3 * ms, true, false},
+		{"narrow window spans every slot", []time.Duration{1 * ms, 2 * ms, 3 * ms}, 2, 4, 0, false, true},
+		{"single sample is right-aligned", []time.Duration{5 * ms}, 1, 3, 5 * ms, true, false},
+		{"single sample in a window of one", []time.Duration{5 * ms}, 1, 10, 5 * ms, true, false},
+		{"data beyond the window is trimmed to its tail", []time.Duration{1 * ms, 2 * ms, 3 * ms, 4 * ms}, 2, 5, 4 * ms, false, true},
 	}
-	if !has[2] || values[2] != data[0] {
-		t.Fatalf("expected right-aligned value")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			values, has := projectDurationsToGraph(tt.data, tt.window, tt.width)
+			if len(values) != tt.width || len(has) != tt.width {
+				t.Fatalf("projection size: got values=%d has=%d, want %d", len(values), len(has), tt.width)
+			}
+			if tt.wantLast != 0 && (!has[tt.width-1] || values[tt.width-1] != tt.wantLast) {
+				t.Errorf("latest sample should be right-aligned: has=%v value=%v, want %v", has[tt.width-1], values[tt.width-1], tt.wantLast)
+			}
+			if tt.wantLeftEmpty && has[0] {
+				t.Errorf("left side should be empty when the window is not yet filled: has=%v", has)
+			}
+			if tt.wantAllFilled && slices.Contains(has, false) {
+				t.Errorf("expected a continuous span: has=%v", has)
+			}
+		})
 	}
 }
 
 func TestGraphViewInputHandlerScroll(t *testing.T) {
-	targets := []*stats.TargetStats{
-		stats.NewTargetStats("a"),
-		stats.NewTargetStats("b"),
-		stats.NewTargetStats("c"),
-		stats.NewTargetStats("d"),
-		stats.NewTargetStats("e"),
-		stats.NewTargetStats("f"),
-		stats.NewTargetStats("g"),
+	tests := []struct {
+		name    string
+		targets int
+		w, h    int // 0 leaves the rect unset
+		start   int
+		keys    []tcell.Key
+		want    []int // scrollRow after each key
+	}{
+		{"Down then Up moves one row each", 7, 80, 10, 0, []tcell.Key{tcell.KeyDown, tcell.KeyUp}, []int{1, 0}},
+		{"PgDn then PgUp pages and clamps", 8, 80, 40, 0, []tcell.Key{tcell.KeyPgDn, tcell.KeyPgUp}, []int{1, 0}},
+		{"Up clamps a stale scroll position", 4, 80, 40, 2, []tcell.Key{tcell.KeyUp}, []int{0}},
+		{"an unhandled key is a no-op", 1, 80, 20, 0, []tcell.Key{tcell.KeyEnter}, []int{0}},
+		{"no targets resets the scroll", 0, 80, 20, 5, []tcell.Key{tcell.KeyDown}, []int{0}},
+		{"without a rect the scroll stays in range", 1, 0, 0, 0, []tcell.Key{tcell.KeyDown}, []int{0}},
 	}
-	g := NewGraphView(targets, 1*time.Second)
-	g.SetRect(0, 0, 80, 10)
-
-	handler := g.InputHandler()
-	handler(tcell.NewEventKey(tcell.KeyDown, 0, 0), func(p tview.Primitive) {})
-	if g.scrollRow == 0 {
-		t.Fatalf("expected scrollRow to change")
-	}
-	handler(tcell.NewEventKey(tcell.KeyUp, 0, 0), func(p tview.Primitive) {})
-	if g.scrollRow < 0 {
-		t.Fatalf("scrollRow should not be negative")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewGraphView(graphTargets(tt.targets, "host"), time.Second)
+			if tt.w > 0 {
+				g.SetRect(0, 0, tt.w, tt.h)
+			}
+			g.scrollRow = tt.start
+			handler := g.InputHandler()
+			for i, key := range tt.keys {
+				handler(tcell.NewEventKey(key, 0, 0), func(p tview.Primitive) {})
+				if g.scrollRow != tt.want[i] {
+					t.Errorf("after key %d scrollRow = %d, want %d", i+1, g.scrollRow, tt.want[i])
+				}
+			}
+		})
 	}
 }
 
 func TestGraphViewClampScroll(t *testing.T) {
-	g := NewGraphView(nil, 1*time.Second)
-	g.scrollRow = 10
-	g.clampScroll(2, 2)
-	if g.scrollRow != 0 {
-		t.Fatalf("expected scrollRow clamped to 0, got %d", g.scrollRow)
+	tests := []struct {
+		name                        string
+		scrollRow, numRows, visible int
+		want                        int
+	}{
+		{"all rows visible resets to the top", 10, 2, 2, 0},
+		{"negative scroll is raised to zero", -1, 5, 2, 0},
+		{"fewer rows than visible clamps the negative maximum", 5, 1, 3, 0},
+		{"scroll beyond the last page is capped", 10, 5, 2, 3},
 	}
-	g.scrollRow = -1
-	g.clampScroll(5, 2)
-	if g.scrollRow != 0 {
-		t.Fatalf("expected scrollRow >=0, got %d", g.scrollRow)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewGraphView(nil, time.Second)
+			g.scrollRow = tt.scrollRow
+			g.clampScroll(tt.numRows, tt.visible)
+			if g.scrollRow != tt.want {
+				t.Errorf("scrollRow = %d, want %d", g.scrollRow, tt.want)
+			}
+		})
 	}
 }
 
 func TestAdjustPlotArea(t *testing.T) {
-	plotY, plotHeight := adjustPlotArea(5, 10)
-	if plotHeight != 9 {
-		t.Fatalf("plotHeight: got %d, want 9", plotHeight)
+	tests := []struct {
+		name                     string
+		graphY, height           int
+		wantPlotY, wantPlotHight int
+	}{
+		{"normal height", 5, 10, 5, 9},
+		// desiredSteps = 0 is raised to 1, then plotY-- is clamped back to graphY.
+		{"small height keeps at least one row", 5, 2, 5, 2},
+		{"height one is left alone", 3, 1, 3, 1},
 	}
-	if plotY != 5 {
-		t.Fatalf("plotY: got %d, want 5", plotY)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plotY, plotHeight := adjustPlotArea(tt.graphY, tt.height)
+			if plotY != tt.wantPlotY || plotHeight != tt.wantPlotHight {
+				t.Errorf("adjustPlotArea(%d, %d) = (%d, %d), want (%d, %d)",
+					tt.graphY, tt.height, plotY, plotHeight, tt.wantPlotY, tt.wantPlotHight)
+			}
+		})
 	}
 }
 
 func TestGridStepsForHeight(t *testing.T) {
-	gy25, gy50, gy75, gy100 := gridStepsForHeight(9)
-	if gy25 != 2 || gy50 != 4 || gy75 != 6 || gy100 != 8 {
-		t.Fatalf("unexpected steps: 25=%d 50=%d 75=%d 100=%d",
-			gy25, gy50, gy75, gy100)
+	tests := []struct {
+		height int
+		want   [4]int
+	}{
+		{9, [4]int{2, 4, 6, 8}},
+		{1, [4]int{1, 1, 1, 1}}, // totalSteps is clamped to 1
+	}
+	for _, tt := range tests {
+		gy25, gy50, gy75, gy100 := gridStepsForHeight(tt.height)
+		if got := [4]int{gy25, gy50, gy75, gy100}; got != tt.want {
+			t.Errorf("gridStepsForHeight(%d) = %v, want %v", tt.height, got, tt.want)
+		}
 	}
 }
 
-func TestGraphViewLayoutMinHeight(t *testing.T) {
-	targets := []*stats.TargetStats{
-		stats.NewTargetStats("a"),
-		stats.NewTargetStats("b"),
-		stats.NewTargetStats("c"),
-		stats.NewTargetStats("d"),
-		stats.NewTargetStats("e"),
-		stats.NewTargetStats("f"),
+func TestGraphViewLayout(t *testing.T) {
+	tests := []struct {
+		name    string
+		targets int
+		w, h    int
+		check   func(t *testing.T, numCols, numRows, visRows, colW, rowH int)
+	}{
+		{"min height shows one row of two columns", 6, 80, 9, func(t *testing.T, cols, rows, vis, _, rowH int) {
+			if cols != 2 || rows != 3 {
+				t.Errorf("cols/rows = %d/%d, want 2/3", cols, rows)
+			}
+			if vis != 1 {
+				t.Errorf("visibleRows = %d, want 1", vis)
+			}
+			if rowH < 7 {
+				t.Errorf("rowHeight = %d, want >= 7", rowH)
+			}
+		}},
+		{"narrow width forces one column", 2, 20, 20, func(t *testing.T, cols, _, _, _, _ int) {
+			if cols != 1 {
+				t.Errorf("numCols = %d, want 1", cols)
+			}
+		}},
+		{"many targets cap the visible rows", 10, 80, 60, func(t *testing.T, _, _, vis, _, _ int) {
+			if vis > graphMaxVisibleRows {
+				t.Errorf("visibleRows = %d, want <= %d", vis, graphMaxVisibleRows)
+			}
+		}},
+		{"height 1 clamps the row height to 2", 1, 80, 1, func(t *testing.T, cols, rows, vis, _, rowH int) {
+			if cols < 1 || rows < 0 || vis < 0 || rowH < 2 {
+				t.Errorf("unexpected layout: cols=%d rows=%d vis=%d rowH=%d", cols, rows, vis, rowH)
+			}
+		}},
+		{"short height with several rows keeps one row of at least 2 lines", 6, 80, 3, func(t *testing.T, _, _, vis, _, rowH int) {
+			if vis < 1 || rowH < 2 {
+				t.Errorf("visibleRows=%d rowHeight=%d, want >= 1 and >= 2", vis, rowH)
+			}
+		}},
+		{"no targets lay out nothing", 0, 80, 24, func(t *testing.T, cols, rows, vis, colW, rowH int) {
+			if cols != 1 || rows != 0 || vis != 0 || colW != 0 || rowH != 0 {
+				t.Errorf("zero targets: unexpected %d %d %d %d %d", cols, rows, vis, colW, rowH)
+			}
+		}},
 	}
-	g := NewGraphView(targets, 1*time.Second)
-	numCols, numRowsTotal, visibleRows, _, rowHeight := g.layout(80, 9)
-	if numCols != 2 || numRowsTotal != 3 {
-		t.Fatalf("layout cols/rows: got cols=%d rows=%d", numCols, numRowsTotal)
-	}
-	if visibleRows != 1 {
-		t.Fatalf("visibleRows: got %d, want 1", visibleRows)
-	}
-	if rowHeight < 7 {
-		t.Fatalf("rowHeight: got %d, want >=7", rowHeight)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewGraphView(graphTargets(tt.targets, "host"), time.Second)
+			cols, rows, vis, colW, rowH := g.layout(tt.w, tt.h)
+			tt.check(t, cols, rows, vis, colW, rowH)
+		})
 	}
 }
 
@@ -162,433 +238,94 @@ func BenchmarkGraphViewDraw_20Targets_LongHistory(b *testing.B) {
 	}
 }
 
-func TestGraphViewDraw_EmptyTargets(t *testing.T) {
-	screen := tcell.NewSimulationScreen("UTF-8")
-	if err := screen.Init(); err != nil {
-		t.Fatalf("screen init: %v", err)
-	}
-	defer screen.Fini()
-	screen.SetSize(80, 24)
-
-	g := NewGraphView(nil, 1*time.Second)
-	g.SetRect(0, 0, 80, 24)
-
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("Draw panicked: %v", r)
+// TestGraphViewDraw renders the graph for a range of target and screen
+// shapes and checks the text that must reach the screen.
+func TestGraphViewDraw(t *testing.T) {
+	const bars = "▁▂▃▄▅▆▇█"
+	withRTTs := func(host string, rtts ...time.Duration) *stats.TargetStats {
+		target := stats.NewTargetStats(host)
+		for _, rtt := range rtts {
+			target.IncSent()
+			target.OnSuccess(rtt, 64)
 		}
-	}()
-	g.Draw(screen)
+		return target
+	}
+	ms := time.Millisecond
+	tests := []struct {
+		name     string
+		w, h     int
+		interval time.Duration
+		targets  []*stats.TargetStats
+		check    func(t *testing.T, text string)
+	}{
+		{"no targets draws nothing", 80, 24, time.Second, nil, func(t *testing.T, text string) {
+			if strings.TrimSpace(text) != "" {
+				t.Errorf("expected a blank screen, got:\n%s", text)
+			}
+		}},
+		{"single target shows its latest RTT and axis", 120, 30, 200 * ms,
+			[]*stats.TargetStats{withRTTs("example.com", 10*ms, 20*ms, 30*ms)},
+			func(t *testing.T, text string) { requireText(t, text, "example.com", "30ms", "100ms", "0ms") }},
+		{"several targets fill two columns", 80, 12, 500 * ms,
+			func() []*stats.TargetStats {
+				targets := graphTargets(4, "a")
+				targets[0].OnSuccess(10*ms, 64)
+				return targets
+			}(),
+			func(t *testing.T, text string) {
+				requireText(t, text, "10ms")
+				if n := strings.Count(text, "100ms"); n != 2 {
+					t.Errorf("axis labels = %d, want one per column (2)", n)
+				}
+			}},
+		{"narrow width still shows the host", 20, 8, time.Second,
+			[]*stats.TargetStats{withRTTs("example.com", 10*ms)},
+			func(t *testing.T, text string) { requireText(t, text, "example.com") }},
+		// An RTT above the 100ms floor rescales the axis instead of overflowing it.
+		{"high RTT rescales the axis", 120, 20, 200 * ms,
+			[]*stats.TargetStats{withRTTs("example.com", 200*ms, 200*ms, 200*ms, 200*ms, 200*ms, 500*ms)},
+			func(t *testing.T, text string) { requireText(t, text, "example.com", "500ms", "1000ms") }},
+		// ratio 0.01 is floored to 0.05 so the bar stays visible.
+		{"very small RTT still draws a bar", 120, 20, 200 * ms,
+			[]*stats.TargetStats{withRTTs("example.com", ms, ms, ms, ms, ms)},
+			func(t *testing.T, text string) {
+				requireText(t, text, "example.com", "1ms")
+				if !strings.ContainsAny(text, bars) {
+					t.Errorf("no bar drawn:\n%s", text)
+				}
+			}},
+		// With only two plot rows the floored level rounds to zero and is raised to one.
+		{"very small RTT on a short graph still draws a bar", 120, 4, 200 * ms,
+			[]*stats.TargetStats{withRTTs("example.com", ms, ms, ms, ms, ms)},
+			func(t *testing.T, text string) {
+				requireText(t, text, "example.com", "1ms")
+				if !strings.ContainsAny(text, bars) {
+					t.Errorf("no bar drawn:\n%s", text)
+				}
+			}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			screen := tcell.NewSimulationScreen("UTF-8")
+			if err := screen.Init(); err != nil {
+				t.Fatalf("screen init: %v", err)
+			}
+			defer screen.Fini()
+			screen.SetSize(tt.w, tt.h)
+			g := NewGraphView(tt.targets, tt.interval)
+			g.SetRect(0, 0, tt.w, tt.h)
+			g.Draw(screen)
+			tt.check(t, screenText(screen))
+		})
+	}
 }
 
-func TestGraphViewDraw_SingleTarget(t *testing.T) {
-	screen := tcell.NewSimulationScreen("UTF-8")
-	if err := screen.Init(); err != nil {
-		t.Fatalf("screen init: %v", err)
-	}
-	defer screen.Fini()
-	screen.SetSize(120, 30)
-
-	target := stats.NewTargetStats("example.com")
-	target.OnSuccess(10*time.Millisecond, 64)
-	target.OnSuccess(20*time.Millisecond, 64)
-	target.OnSuccess(30*time.Millisecond, 64)
-
-	g := NewGraphView([]*stats.TargetStats{target}, 200*time.Millisecond)
-	g.SetRect(0, 0, 120, 30)
-
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("Draw panicked: %v", r)
+// requireText fails the test for each of wants missing from text.
+func requireText(t *testing.T, text string, wants ...string) {
+	t.Helper()
+	for _, want := range wants {
+		if !strings.Contains(text, want) {
+			t.Errorf("screen missing %q:\n%s", want, text)
 		}
-	}()
-	g.Draw(screen)
-}
-
-func TestGraphViewDraw_MultiTargets(t *testing.T) {
-	screen := tcell.NewSimulationScreen("UTF-8")
-	if err := screen.Init(); err != nil {
-		t.Fatalf("screen init: %v", err)
 	}
-	defer screen.Fini()
-	screen.SetSize(80, 12)
-
-	targets := []*stats.TargetStats{
-		stats.NewTargetStats("a"),
-		stats.NewTargetStats("b"),
-		stats.NewTargetStats("c"),
-		stats.NewTargetStats("d"),
-	}
-	targets[0].OnSuccess(10*time.Millisecond, 64)
-
-	g := NewGraphView(targets, 500*time.Millisecond)
-	g.SetRect(0, 0, 80, 12)
-
-	g.Draw(screen)
-}
-
-func TestGraphViewDraw_NarrowWidth(t *testing.T) {
-	screen := tcell.NewSimulationScreen("UTF-8")
-	if err := screen.Init(); err != nil {
-		t.Fatalf("screen init: %v", err)
-	}
-	defer screen.Fini()
-	screen.SetSize(20, 8)
-
-	target := stats.NewTargetStats("example.com")
-	target.OnSuccess(10*time.Millisecond, 64)
-	g := NewGraphView([]*stats.TargetStats{target}, 1*time.Second)
-	g.SetRect(0, 0, 20, 8)
-	g.Draw(screen)
-}
-
-func TestGraphViewDraw_HeaderText(t *testing.T) {
-	screen := tcell.NewSimulationScreen("UTF-8")
-	if err := screen.Init(); err != nil {
-		t.Fatalf("screen init: %v", err)
-	}
-	defer screen.Fini()
-	screen.SetSize(80, 10)
-
-	target := stats.NewTargetStats("example.com")
-	target.OnSuccess(10*time.Millisecond, 64)
-
-	g := NewGraphView([]*stats.TargetStats{target}, 1*time.Second)
-	g.SetRect(0, 0, 80, 10)
-
-	g.Draw(screen)
-
-	row := screenRowString(screen, 0, 80)
-	if !strings.Contains(row, "example.com") {
-		t.Fatalf("header missing hostname: %q", row)
-	}
-	if !strings.Contains(row, "10ms") {
-		t.Fatalf("header missing RTT: %q", row)
-	}
-}
-
-func screenRowString(screen tcell.Screen, y, width int) string {
-	var b strings.Builder
-	for x := range width {
-		r, _, _, _ := screen.GetContent(x, y)
-		if r == 0 {
-			r = ' '
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
-}
-
-// ---- InputHandler: PgUp and PgDn ----
-
-func TestGraphViewInputHandlerPgUpPgDn(t *testing.T) {
-	targets := make([]*stats.TargetStats, 8)
-	for i := range targets {
-		targets[i] = stats.NewTargetStats("host")
-	}
-	g := NewGraphView(targets, time.Second)
-	g.SetRect(0, 0, 80, 40)
-
-	handler := g.InputHandler()
-
-	// PgDn should increase scroll by 3
-	before := g.scrollRow
-	handler(tcell.NewEventKey(tcell.KeyPgDn, 0, 0), func(p tview.Primitive) {})
-	if g.scrollRow <= before {
-		t.Errorf("PgDn: scrollRow should increase, got %d (was %d)", g.scrollRow, before)
-	}
-
-	// PgUp should decrease scroll
-	before = g.scrollRow
-	handler(tcell.NewEventKey(tcell.KeyPgUp, 0, 0), func(p tview.Primitive) {})
-	if g.scrollRow >= before {
-		t.Errorf("PgUp: scrollRow should decrease, got %d (was %d)", g.scrollRow, before)
-	}
-}
-
-func TestGraphViewInputHandlerDefault(t *testing.T) {
-	g := NewGraphView([]*stats.TargetStats{stats.NewTargetStats("a")}, time.Second)
-	g.SetRect(0, 0, 80, 20)
-	handler := g.InputHandler()
-	before := g.scrollRow
-	// Unhandled key should be a no-op (returns early)
-	handler(tcell.NewEventKey(tcell.KeyEnter, 0, 0), func(p tview.Primitive) {})
-	if g.scrollRow != before {
-		t.Errorf("unhandled key: scrollRow changed unexpectedly")
-	}
-}
-
-// ---- clampScroll: numRowsTotal < visibleRows → maxScroll clamped from negative ----
-
-func TestClampScroll_NegativeMaxScroll(t *testing.T) {
-	g := NewGraphView(nil, time.Second)
-	g.scrollRow = 5
-	// numRowsTotal=1 < visibleRows=3 → maxScroll = -2 → clamped to 0 → scrollRow = 0
-	g.clampScroll(1, 3)
-	if g.scrollRow != 0 {
-		t.Errorf("expected scrollRow=0 after negative maxScroll, got %d", g.scrollRow)
-	}
-}
-
-func TestClampScroll_ScrollRowAboveMax(t *testing.T) {
-	g := NewGraphView(nil, time.Second)
-	g.scrollRow = 10
-	// numRowsTotal=5, visibleRows=2 → maxScroll=3; scrollRow(10) > maxScroll(3) → clamp
-	g.clampScroll(5, 2)
-	if g.scrollRow != 3 {
-		t.Errorf("expected scrollRow=3, got %d", g.scrollRow)
-	}
-}
-
-// ---- adjustPlotArea: small height ----
-
-func TestAdjustPlotArea_SmallHeight(t *testing.T) {
-	// height=2: desiredSteps=0 < 1 → clamped to 1; then plotY-- → plotY < graphY → clamped
-	plotY, plotHeight := adjustPlotArea(5, 2)
-	if plotHeight < 1 {
-		t.Errorf("plotHeight should be >= 1, got %d", plotHeight)
-	}
-	if plotY < 5 {
-		t.Errorf("plotY should be >= graphY(5), got %d", plotY)
-	}
-}
-
-func TestAdjustPlotArea_HeightOne(t *testing.T) {
-	// height=1: plotHeight=1, first if (plotHeight > 1) is false → no adjustment
-	plotY, plotHeight := adjustPlotArea(3, 1)
-	if plotY != 3 || plotHeight != 1 {
-		t.Errorf("expected plotY=3 plotHeight=1, got plotY=%d plotHeight=%d", plotY, plotHeight)
-	}
-}
-
-// ---- gridStepsForHeight: height=1 → totalSteps (== gy100) clamped to 1 ----
-
-func TestGridStepsForHeight_One(t *testing.T) {
-	_, _, _, gy100 := gridStepsForHeight(1)
-	if gy100 != 1 {
-		t.Errorf("expected gy100=1 for height=1, got %d", gy100)
-	}
-}
-
-// ---- layout: narrow width, many targets, small height ----
-
-func TestGraphViewLayout_NarrowWidth(t *testing.T) {
-	targets := []*stats.TargetStats{
-		stats.NewTargetStats("a"), stats.NewTargetStats("b"),
-	}
-	g := NewGraphView(targets, time.Second)
-	// Width too narrow for 2 columns → forced to 1 column
-	numCols, _, _, _, _ := g.layout(20, 20)
-	if numCols != 1 {
-		t.Errorf("expected numCols=1 for narrow width, got %d", numCols)
-	}
-}
-
-func TestGraphViewLayout_ManyTargets(t *testing.T) {
-	targets := make([]*stats.TargetStats, 10)
-	for i := range targets {
-		targets[i] = stats.NewTargetStats("host")
-	}
-	g := NewGraphView(targets, time.Second)
-	// 10 targets with 2 cols → numRowsTotal=5 > graphMaxVisibleRows(3) → cap visibleRows
-	_, _, visibleRows, _, _ := g.layout(80, 60)
-	if visibleRows > graphMaxVisibleRows {
-		t.Errorf("visibleRows should be capped at %d, got %d", graphMaxVisibleRows, visibleRows)
-	}
-}
-
-func TestGraphViewLayout_SmallHeight(t *testing.T) {
-	targets := []*stats.TargetStats{stats.NewTargetStats("a")}
-	g := NewGraphView(targets, time.Second)
-	// height=1 → initial rowHeight=1 < 2 → clamped to 2
-	numCols, numRows, visRows, _, rowH := g.layout(80, 1)
-	if numCols < 1 || numRows < 0 || visRows < 0 || rowH < 2 {
-		t.Errorf("unexpected layout values: cols=%d rows=%d vis=%d rowH=%d",
-			numCols, numRows, visRows, rowH)
-	}
-}
-
-func TestGraphViewLayout_ZeroTargets(t *testing.T) {
-	g := NewGraphView(nil, time.Second)
-	numCols, numRows, visRows, colW, rowH := g.layout(80, 24)
-	if numCols != 1 || numRows != 0 || visRows != 0 || colW != 0 || rowH != 0 {
-		t.Errorf("zero targets: unexpected %d %d %d %d %d", numCols, numRows, visRows, colW, rowH)
-	}
-}
-
-// ---- projectDurationsToGraph: windowPoints=1 ----
-
-func TestProjectDurationsToGraph_WindowOne(t *testing.T) {
-	data := []time.Duration{5 * time.Millisecond}
-	values, has := projectDurationsToGraph(data, 1, 10)
-	if len(values) != 10 || len(has) != 10 {
-		t.Fatalf("unexpected size: values=%d has=%d", len(values), len(has))
-	}
-	if !has[9] || values[9] != 5*time.Millisecond {
-		t.Errorf("expected last slot filled: has[9]=%v values[9]=%v", has[9], values[9])
-	}
-}
-
-// ---- InputHandler: zero-size rect → early return; zero targets → scrollRow=0 ----
-
-func TestGraphViewInputHandlerNoRect(t *testing.T) {
-	targets := []*stats.TargetStats{stats.NewTargetStats("a")}
-	g := NewGraphView(targets, time.Second)
-	// Do NOT call SetRect → inner rect is (0,0,0,0) → width=0, height=0
-	handler := g.InputHandler()
-	// Should return early after key handling (width <= 0 || height <= 0)
-	handler(tcell.NewEventKey(tcell.KeyDown, 0, 0), func(p tview.Primitive) {})
-	// No assert needed: just verifying no panic and early-return path is hit
-}
-
-func TestGraphViewInputHandlerNoTargets(t *testing.T) {
-	// GraphView with no targets → layout returns visibleRows=0 → scrollRow reset to 0
-	g := NewGraphView(nil, time.Second)
-	g.SetRect(0, 0, 80, 20)
-	g.scrollRow = 5
-	handler := g.InputHandler()
-	handler(tcell.NewEventKey(tcell.KeyDown, 0, 0), func(p tview.Primitive) {})
-	if g.scrollRow != 0 {
-		t.Errorf("expected scrollRow=0 for no-targets, got %d", g.scrollRow)
-	}
-}
-
-// ---- layout: small height, loop rowHeight < 2 ----
-
-func TestGraphViewLayout_SmallHeightMultiRows(t *testing.T) {
-	targets := make([]*stats.TargetStats, 6)
-	for i := range targets {
-		targets[i] = stats.NewTargetStats("host")
-	}
-	g := NewGraphView(targets, time.Second)
-	// height=3, visibleRows starts at 3, loop will reduce visibleRows and set rowHeight < 2
-	_, _, visRows, _, rowH := g.layout(80, 3)
-	if visRows < 1 {
-		t.Errorf("visibleRows should be at least 1, got %d", visRows)
-	}
-	if rowH < 2 {
-		t.Errorf("rowHeight should be at least 2, got %d", rowH)
-	}
-}
-
-// ---- projectDurationsToGraph: data > windowPoints → trim ----
-
-func TestProjectDurationsToGraph_DataExceedsWindow(t *testing.T) {
-	data := []time.Duration{
-		1 * time.Millisecond,
-		2 * time.Millisecond,
-		3 * time.Millisecond,
-		4 * time.Millisecond,
-	}
-	// windowPoints=2 < len(data)=4 → trim to last 2
-	values, has := projectDurationsToGraph(data, 2, 5)
-	if len(values) != 5 || len(has) != 5 {
-		t.Fatalf("unexpected size: values=%d has=%d", len(values), len(has))
-	}
-}
-
-// ---- Draw: RTT > 100ms (v > yMax cap) ----
-
-func TestGraphViewDraw_HighRTT(t *testing.T) {
-	screen := tcell.NewSimulationScreen("UTF-8")
-	if err := screen.Init(); err != nil {
-		t.Fatalf("screen init: %v", err)
-	}
-	defer screen.Fini()
-	screen.SetSize(120, 20)
-
-	target := stats.NewTargetStats("example.com")
-	// Add RTT values > 100ms to trigger v > yMax cap branch
-	for range 5 {
-		target.IncSent()
-		target.OnSuccess(200*time.Millisecond, 64)
-	}
-	target.IncSent()
-	target.OnSuccess(500*time.Millisecond, 64)
-
-	g := NewGraphView([]*stats.TargetStats{target}, 200*time.Millisecond)
-	g.SetRect(0, 0, 120, 20)
-
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("Draw panicked: %v", r)
-		}
-	}()
-	g.Draw(screen)
-}
-
-// ---- Draw: very small RTT (ratio < 0.05 floor) ----
-
-func TestGraphViewDraw_SmallRTT(t *testing.T) {
-	screen := tcell.NewSimulationScreen("UTF-8")
-	if err := screen.Init(); err != nil {
-		t.Fatalf("screen init: %v", err)
-	}
-	defer screen.Fini()
-	screen.SetSize(120, 20)
-
-	target := stats.NewTargetStats("example.com")
-	// Add very small RTT (1ms) to trigger ratio < 0.05 floor branch
-	for range 5 {
-		target.IncSent()
-		target.OnSuccess(1*time.Millisecond, 64)
-	}
-
-	g := NewGraphView([]*stats.TargetStats{target}, 200*time.Millisecond)
-	g.SetRect(0, 0, 120, 20)
-
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("Draw panicked: %v", r)
-		}
-	}()
-	g.Draw(screen)
-}
-
-// ---- InputHandler: KeyUp with valid rect and targets ----
-
-func TestGraphViewInputHandler_KeyUp(t *testing.T) {
-	targets := make([]*stats.TargetStats, 4)
-	for i := range targets {
-		targets[i] = stats.NewTargetStats("host")
-	}
-	g := NewGraphView(targets, time.Second)
-	g.SetRect(0, 0, 80, 40)
-	g.scrollRow = 2 // start scrolled down
-
-	handler := g.InputHandler()
-	before := g.scrollRow
-	handler(tcell.NewEventKey(tcell.KeyUp, 0, 0), func(p tview.Primitive) {})
-	if g.scrollRow >= before {
-		t.Errorf("KeyUp: scrollRow should decrease, got %d (was %d)", g.scrollRow, before)
-	}
-}
-
-// ---- Draw: very small height (4) with small RTT covers totalLevels=1 ----
-
-func TestGraphViewDraw_SmallHeightSmallRTT(t *testing.T) {
-	screen := tcell.NewSimulationScreen("UTF-8")
-	if err := screen.Init(); err != nil {
-		t.Fatalf("screen init: %v", err)
-	}
-	defer screen.Fini()
-	screen.SetSize(120, 4)
-
-	target := stats.NewTargetStats("example.com")
-	// Very small RTT = 1ms → ratio=0.01 < 0.05 → floored to 0.05
-	// With plotHeight=2: totalLevels = int(0.05*2*8)=0 → totalLevels=1 branch
-	for range 5 {
-		target.IncSent()
-		target.OnSuccess(1*time.Millisecond, 64)
-	}
-
-	g := NewGraphView([]*stats.TargetStats{target}, 200*time.Millisecond)
-	g.SetRect(0, 0, 120, 4)
-
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("Draw panicked: %v", r)
-		}
-	}()
-	g.Draw(screen)
 }

@@ -21,27 +21,6 @@ import (
 	"github.com/nagayon-935/mping/internal/web"
 )
 
-// stubRunSeams swaps newPinger/uiRun/webStart/openBrowser for the duration of a test.
-// webStart is wrapped so the real server binds a kernel-chosen port instead
-// of the configured one, keeping tests independent of what is free locally.
-func stubRunSeams(t *testing.T, ui func(ui.RunOptions) error) (started func() *web.Server) {
-	t.Helper()
-	origPinger, origUI, origWeb, origBrowser := newPinger, uiRun, webStart, openBrowser
-	t.Cleanup(func() { newPinger, uiRun, webStart, openBrowser = origPinger, origUI, origWeb, origBrowser })
-
-	newPinger = func([]*stats.TargetStats, pinger.Options) pingerController { return &fakePinger{} }
-	uiRun = ui
-	openBrowser = func(string) {}
-	var srv *web.Server
-	webStart = func(opts web.Options) (*web.Server, error) {
-		opts.Port = 0
-		s, err := web.Start(opts)
-		srv = s
-		return s, err
-	}
-	return func() *web.Server { return srv }
-}
-
 func TestRunWithWebServesLiveSnapshotWhileUIRuns(t *testing.T) {
 	var started func() *web.Server
 	var status int
@@ -224,29 +203,6 @@ func containsSubstring(lines []string, sub string) bool {
 	return false
 }
 
-func TestParseArgsWebDefaultsToOffOnPort8080(t *testing.T) {
-	cfg, _, _, _, err := parseArgs([]string{"example.com"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if cfg.webEnabled || cfg.webPort != 8080 {
-		t.Fatalf("web = (%v, %d), want (false, 8080)", cfg.webEnabled, cfg.webPort)
-	}
-}
-
-func TestParseArgsRejectsOutOfRangeWebPort(t *testing.T) {
-	for _, port := range []string{"0", "-1", "65536"} {
-		t.Run(port, func(t *testing.T) {
-			_, _, _, _, err := parseArgs([]string{"--web", "--web-port", port, "example.com"})
-
-			if err == nil || !strings.Contains(err.Error(), "--web-port") {
-				t.Fatalf("err = %v, want a --web-port range error", err)
-			}
-		})
-	}
-}
-
 func TestCheckWebReloadDrift(t *testing.T) {
 	on := func(port int) config { return config{webEnabled: true, webPort: port} }
 	off := func(port int) config { return config{webEnabled: false, webPort: port} }
@@ -276,26 +232,6 @@ func TestCheckWebReloadDrift(t *testing.T) {
 	}
 }
 
-func TestRunWithWebMarksSourceStoppedOnExit(t *testing.T) {
-	stubRunSeams(t, func(ui.RunOptions) error { return nil })
-	var src *web.Source
-	webStart = func(opts web.Options) (*web.Server, error) {
-		src = opts.Source
-		opts.Port = 0
-		return web.Start(opts)
-	}
-
-	var out, errOut bytes.Buffer
-	code := run([]string{"-S", "10.0.0.2", "--web", "example.com"}, &out, &errOut)
-
-	if code != 0 {
-		t.Fatalf("run = %d, want 0 (stderr: %s)", code, errOut.String())
-	}
-	if got := src.State(); got != web.StateStopped {
-		t.Fatalf("state after exit = %q, want %q", got, web.StateStopped)
-	}
-}
-
 // A startup-only web port change must warn without restarting measurements.
 func TestRunReloadWithWeb(t *testing.T) {
 	dir := t.TempDir()
@@ -309,19 +245,21 @@ func TestRunReloadWithWeb(t *testing.T) {
 	stubRunSeams(t, func(opts ui.RunOptions) error {
 		calls++
 		if calls == 1 {
-			time.Sleep(100 * time.Millisecond)
-			if err := os.WriteFile(yamlPath, []byte("hosts:\n  - example.com\nweb: true\nweb-port: 19090\n"), 0o644); err != nil {
-				t.Errorf("write yaml: %v", err)
-			}
-			deadline := time.After(2 * time.Second)
-			for !sawWarning {
-				select {
-				case line := <-opts.ExternalLogCh:
-					sawWarning = strings.Contains(line, "web: change detected")
-				case <-deadline:
-					t.Error("missing live reload warning")
-					return nil
+			gotWarning := func() bool {
+				for {
+					select {
+					case line := <-opts.ExternalLogCh:
+						if strings.Contains(line, "web: change detected") {
+							sawWarning = true
+							return true
+						}
+					default:
+						return false
+					}
 				}
+			}
+			if !rewriteHostsUntil(t, yamlPath, "hosts:\n  - example.com\nweb: true\nweb-port: 19090\n", gotWarning) {
+				t.Error("missing live reload warning")
 			}
 			return nil
 		}
@@ -471,16 +409,13 @@ func TestWebLogNeverBlocksWhenTUILogIsFull(t *testing.T) {
 	}
 }
 
-// stopProbePinger runs onStop when the supervisor tears measurements down,
-// which only happens after uiRun has returned (finishIteration).
-type stopProbePinger struct {
-	*liveFakePinger
-	onStop func()
-}
-
-func (p *stopProbePinger) Stop() {
-	p.onStop()
-	p.liveFakePinger.Stop()
+// newStopProbePinger returns a pinger that runs onStop when the supervisor
+// tears measurements down, which only happens after uiRun has returned
+// (finishIteration).
+func newStopProbePinger(onStop func()) *liveFakePinger {
+	p := newLiveFakePinger()
+	p.onStop = onStop
+	return p
 }
 
 // TestRunWebStopsAcceptingEditsOnceTheUIIterationEnds covers the window
@@ -497,11 +432,11 @@ func TestRunWebStopsAcceptingEditsOnceTheUIIterationEnds(t *testing.T) {
 		return web.Start(opts)
 	}
 	newPinger = func([]*stats.TargetStats, pinger.Options) pingerController {
-		return &stopProbePinger{liveFakePinger: newLiveFakePinger(), onStop: func() {
+		return newStopProbePinger(func() {
 			if src != nil {
 				atTeardown = append(atTeardown, src.State())
 			}
-		}}
+		})
 	}
 
 	var out, errOut bytes.Buffer

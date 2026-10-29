@@ -5,19 +5,12 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/nagayon-935/mping/internal/stats"
 )
 
 func newLoopTestSupervisor(t *testing.T) *supervisor {
 	t.Helper()
-	return newSupervisor(supervisorConfig{
-		makePinger: func(size int) pingerController { return &lifecycleFakePinger{} },
-		targets:    []*stats.TargetStats{stats.NewTargetStats("example.com")},
-		interval:   time.Second,
-		timeout:    time.Second,
-		logCh:      make(chan string, 8),
-	})
+	sup, _ := newStateTestSupervisor(t)
+	return sup
 }
 
 // TestLoop_ExecutesCommandsInOrder pins the FIFO contract: every command is

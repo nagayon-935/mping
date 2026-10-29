@@ -100,10 +100,4 @@ func TestWriteNeverOverwritesAndPublishesCompleteFile(t *testing.T) {
 	if err := Write(link, "json", r); err == nil {
 		t.Fatal("symlink overwritten")
 	}
-	if err := Write(filepath.Join(dir, "missing", "report.json"), "json", r); err == nil {
-		t.Fatal("missing parent accepted")
-	}
-	if err := Write(filepath.Join(dir, "unsupported"), "csv", r); err == nil {
-		t.Fatal("unsupported format accepted")
-	}
 }

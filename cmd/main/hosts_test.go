@@ -1,18 +1,12 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"reflect"
 	"testing"
 )
 
 func TestParseHostsFile_Mapping(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "hosts.yaml")
-	if err := os.WriteFile(path, []byte("hosts:\n  - example.com\n  - 8.8.8.8\n"), 0644); err != nil {
-		t.Fatalf("write file: %v", err)
-	}
+	path := writeHostsYAML(t, "hosts:\n  - example.com\n  - 8.8.8.8\n")
 
 	got, err := parseHostsFile(path)
 	if err != nil {
@@ -25,17 +19,12 @@ func TestParseHostsFile_Mapping(t *testing.T) {
 }
 
 func TestParseHostsFile_PerHostDSCPMapping(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "hosts.yaml")
 	// The feature's primary use case: the same destination monitored twice,
 	// once per DSCP marking, side by side.
-	content := "hosts:\n" +
-		"  - host: 2001:db8::1\n    dscp: EF\n" +
-		"  - host: 2001:db8::1\n    dscp: CS0\n" +
-		"  - plain.example.com\n"
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("write file: %v", err)
-	}
+	path := writeHostsYAML(t, "hosts:\n"+
+		"  - host: 2001:db8::1\n    dscp: EF\n"+
+		"  - host: 2001:db8::1\n    dscp: CS0\n"+
+		"  - plain.example.com\n")
 
 	got, err := parseHostsFile(path)
 	if err != nil {
@@ -51,40 +40,26 @@ func TestParseHostsFile_PerHostDSCPMapping(t *testing.T) {
 	}
 }
 
-func TestParseHostsFile_HostMappingMissingHostIsRejected(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "hosts.yaml")
-	content := "hosts:\n  - dscp: EF\n" // missing required 'host' key
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("write file: %v", err)
-	}
+func TestParseHostsFile_GroupsYAML(t *testing.T) {
+	path := writeHostsYAML(t, "groups:\n  - name: \"Site A\"\n    hosts:\n      - 1.1.1.1\n      - 8.8.8.8\n")
 
-	_, err := parseHostsFile(path)
-	if err == nil {
-		t.Fatal("parseHostsFile: expected error for host mapping missing 'host', got nil")
+	doc, err := parseHostsFile(path)
+	if err != nil {
+		t.Fatalf("parseHostsFile: %v", err)
 	}
-}
-
-func TestParseHostsFile_HostMappingUnknownKeyIsRejected(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "hosts.yaml")
-	content := "hosts:\n  - host: example.com\n    dscpp: EF\n" // typo of "dscp"
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("write file: %v", err)
+	if len(doc.Groups) != 1 {
+		t.Fatalf("Groups: want 1, got %d", len(doc.Groups))
 	}
-
-	_, err := parseHostsFile(path)
-	if err == nil {
-		t.Fatal("parseHostsFile: expected error for unknown key in host mapping, got nil")
+	if doc.Groups[0].Name != "Site A" {
+		t.Errorf("Groups[0].Name: want %q, got %q", "Site A", doc.Groups[0].Name)
+	}
+	if len(doc.Groups[0].Hosts) != 2 {
+		t.Errorf("Groups[0].Hosts: want 2, got %d", len(doc.Groups[0].Hosts))
 	}
 }
 
 func TestParseHostsFile_EmptyFileIsNotAnError(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "hosts.yaml")
-	if err := os.WriteFile(path, []byte(""), 0644); err != nil {
-		t.Fatalf("write file: %v", err)
-	}
+	path := writeHostsYAML(t, "")
 
 	got, err := parseHostsFile(path)
 	if err != nil {
@@ -95,32 +70,23 @@ func TestParseHostsFile_EmptyFileIsNotAnError(t *testing.T) {
 	}
 }
 
-func TestParseHostsFile_UnknownKeyIsRejected(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "hosts.yaml")
-	// "interva" is a typo of "interval" and must be surfaced as an error
-	// rather than silently ignored.
-	content := "hosts:\n  - example.com\ninterva: 500\n"
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("write file: %v", err)
+// TestParseHostsFile_RejectsInvalidDocuments pins strict decoding: a typo in a
+// key must be surfaced as an error rather than silently ignored.
+func TestParseHostsFile_RejectsInvalidDocuments(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"host mapping missing the required 'host' key", "hosts:\n  - dscp: EF\n"},
+		{"unknown key in host mapping (typo of dscp)", "hosts:\n  - host: example.com\n    dscpp: EF\n"},
+		{"unknown top-level key (typo of interval)", "hosts:\n  - example.com\ninterva: 500\n"},
+		{"unknown key in nested group (host for hosts)", "groups:\n  - name: web\n    host:\n      - example.com\n"},
 	}
-
-	_, err := parseHostsFile(path)
-	if err == nil {
-		t.Fatal("parseHostsFile: expected error for unknown key, got nil")
-	}
-}
-
-func TestParseHostsFile_UnknownGroupKeyIsRejected(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "hosts.yaml")
-	content := "groups:\n  - name: web\n    host:\n      - example.com\n" // "host" typo of "hosts"
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("write file: %v", err)
-	}
-
-	_, err := parseHostsFile(path)
-	if err == nil {
-		t.Fatal("parseHostsFile: expected error for unknown key in nested group, got nil")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := parseHostsFile(writeHostsYAML(t, tt.content)); err == nil {
+				t.Fatal("parseHostsFile: expected an error, got nil")
+			}
+		})
 	}
 }

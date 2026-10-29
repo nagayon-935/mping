@@ -4,20 +4,27 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
-// fakeProvider is a fixed Provider for handler tests.
+// fakeProvider is a fixed Provider for handler tests. targetCalls counts
+// Targets calls so tests can tell whether a snapshot was rebuilt or served
+// from cache.
 type fakeProvider struct {
-	targets []*stats.TargetStats
-	http    []*stats.HTTPCheckResult
-	meta    Meta
+	targets     []*stats.TargetStats
+	http        []*stats.HTTPCheckResult
+	meta        Meta
+	targetCalls atomic.Int64
 }
 
-func (f *fakeProvider) Targets() []*stats.TargetStats         { return f.targets }
+func (f *fakeProvider) Targets() []*stats.TargetStats {
+	f.targetCalls.Add(1)
+	return f.targets
+}
 func (f *fakeProvider) HTTPResults() []*stats.HTTPCheckResult { return f.http }
 func (f *fakeProvider) Meta() Meta                            { return f.meta }
 
@@ -59,6 +66,18 @@ func get(t *testing.T, url string) *http.Response {
 	}
 	t.Cleanup(func() { resp.Body.Close() })
 	return resp
+}
+
+// startServer runs Start on an ephemeral port with an empty Source and
+// closes the server when the test ends.
+func startServer(t *testing.T) *Server {
+	t.Helper()
+	s, err := Start(Options{Port: 0, Source: NewSource()})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return s
 }
 
 func providerWithTarget(host string) (*fakeProvider, *stats.TargetStats) {

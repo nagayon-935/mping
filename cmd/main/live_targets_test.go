@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -9,27 +8,6 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 	ui "github.com/nagayon-935/mping/internal/ui"
 )
-
-type liveFakePinger struct {
-	fakePinger
-	events  chan struct{}
-	done    chan struct{}
-	failAdd bool
-}
-
-func newLiveFakePinger() *liveFakePinger {
-	return &liveFakePinger{events: make(chan struct{}, 1), done: make(chan struct{})}
-}
-func (p *liveFakePinger) AddTarget(*stats.TargetStats, string, *int) error {
-	if p.failAdd {
-		return errors.New("ID allocation failed")
-	}
-	return nil
-}
-func (p *liveFakePinger) RemoveTarget(*stats.TargetStats) {}
-func (p *liveFakePinger) WorkerEvents() <-chan struct{}   { return p.events }
-func (p *liveFakePinger) WorkersFinished() bool           { return false }
-func (p *liveFakePinger) Done() <-chan struct{}           { return p.done }
 
 func TestLiveEditsKeepStatisticsAndStoppedState(t *testing.T) {
 	a, b := stats.NewTargetStats("a"), stats.NewTargetStats("b")

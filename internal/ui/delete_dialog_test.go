@@ -11,23 +11,6 @@ import (
 	"github.com/rivo/tview"
 )
 
-// Skip the continuation cells of wide characters when reading visible text.
-func screenVisibleRow(screen tcell.Screen, y, width int) string {
-	var b strings.Builder
-	for x := 0; x < width; {
-		r, combining, _, cells := screen.GetContent(x, y)
-		if r == 0 {
-			r = ' '
-		}
-		b.WriteRune(r)
-		for _, c := range combining {
-			b.WriteRune(c)
-		}
-		x += max(1, cells)
-	}
-	return b.String()
-}
-
 func TestDeleteDialogDefaultsToCancelAndRestoresFocus(t *testing.T) {
 	app := tview.NewApplication()
 	setFocus := func(p tview.Primitive) { app.SetFocus(p) }
@@ -86,14 +69,10 @@ func TestDeleteDialogShowsAndConfirmsFrozenTarget(t *testing.T) {
 	screen.SetSize(140, 45)
 	root.SetRect(0, 0, 140, 45)
 	root.Draw(screen)
-	var text strings.Builder
-	for y := range 45 {
-		text.WriteString(screenVisibleRow(screen, y, 140))
-		text.WriteByte('\n')
-	}
+	text := screenText(screen)
 	for _, expected := range []string{"このホストを削除しますか？", fmt.Sprintf("対象: #%d", b.ID), "192.0.2.2", "EF", "キャンセル", "削除"} {
-		if !strings.Contains(text.String(), expected) {
-			t.Fatalf("dialog missing %q: %s", expected, text.String())
+		if !strings.Contains(text, expected) {
+			t.Fatalf("dialog missing %q: %s", expected, text)
 		}
 	}
 	b.SetIP("192.0.2.3")

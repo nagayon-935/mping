@@ -16,7 +16,14 @@ type fakeIDs struct {
 	mu                   sync.Mutex
 	uid, euid, gid, egid int
 	calls                []string
-	failSeteuidTo        int // -1: never fail
+	failSeteuidTo        int // seteuid(id) fails when id equals this; -1: never fail
+	failSetegidTo        int // setegid(id) fails when id equals this; -1: never fail
+}
+
+// newFakeIDs returns credentials that never fail; tests set failSeteuidTo or
+// failSetegidTo to inject a failure.
+func newFakeIDs(uid, euid, gid, egid int) *fakeIDs {
+	return &fakeIDs{uid: uid, euid: euid, gid: gid, egid: egid, failSeteuidTo: -1, failSetegidTo: -1}
 }
 
 func installFake(t *testing.T, f *fakeIDs) {
@@ -42,6 +49,9 @@ func installFake(t *testing.T, f *fakeIDs) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
 			f.calls = append(f.calls, "setegid "+strconv.Itoa(id))
+			if id == f.failSetegidTo {
+				return errors.New("operation not permitted")
+			}
 			f.egid = id
 			return nil
 		},
@@ -49,7 +59,7 @@ func installFake(t *testing.T, f *fakeIDs) {
 }
 
 func TestAsRealUser_SetuidDropsAndRestores(t *testing.T) {
-	f := &fakeIDs{uid: 501, euid: 0, gid: 20, egid: 0, failSeteuidTo: -1}
+	f := newFakeIDs(501, 0, 20, 0)
 	installFake(t, f)
 	var during [2]int
 
@@ -84,7 +94,7 @@ func TestAsRealUser_NoopWhenNotSetuid(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &fakeIDs{uid: tt.uid, euid: tt.euid, gid: tt.gid, egid: tt.egid, failSeteuidTo: -1}
+			f := newFakeIDs(tt.uid, tt.euid, tt.gid, tt.egid)
 			installFake(t, f)
 			ran := false
 
@@ -101,7 +111,7 @@ func TestAsRealUser_NoopWhenNotSetuid(t *testing.T) {
 }
 
 func TestAsRealUser_PropagatesFnError(t *testing.T) {
-	f := &fakeIDs{uid: 501, euid: 0, gid: 20, egid: 0, failSeteuidTo: -1}
+	f := newFakeIDs(501, 0, 20, 0)
 	installFake(t, f)
 	want := errors.New("boom")
 
@@ -115,37 +125,107 @@ func TestAsRealUser_PropagatesFnError(t *testing.T) {
 	}
 }
 
-func TestAsRealUser_DropFailureSkipsFn(t *testing.T) {
-	f := &fakeIDs{uid: 501, euid: 0, gid: 20, egid: 0, failSeteuidTo: 501}
-	installFake(t, f)
-	ran := false
-
-	err := AsRealUser(func() error { ran = true; return nil })
-
-	if err == nil || !strings.Contains(err.Error(), "drop privileges") {
-		t.Fatalf("err = %v, want a drop-privileges error", err)
+// TestAsRealUser_CredentialFailures covers every credential call failing in
+// turn: while dropping, fn must not run and the original IDs must be
+// regained where possible; while restoring, fn has run and the failure is
+// reported. The fake starts as setuid root (uid 501/gid 20, euid/egid 0).
+func TestAsRealUser_CredentialFailures(t *testing.T) {
+	const never = -1
+	fnErr := errors.New("fn failed")
+	tests := []struct {
+		name          string
+		failSeteuidTo int
+		failSetegidTo int
+		fnErr         error
+		wantRan       bool
+		wantErr       []string // substrings the error must contain
+		wantNotErr    []string // substrings the error must not contain
+		wantCalls     []string
+		wantEuid      int
+		wantEgid      int
+	}{
+		{
+			name: "seteuid fails while dropping", failSeteuidTo: 501, failSetegidTo: never,
+			wantErr:    []string{"drop privileges"},
+			wantNotErr: []string{"restoring group also failed"},
+			wantCalls:  []string{"setegid 20", "seteuid 501", "setegid 0"},
+			wantEuid:   0, wantEgid: 0, // the group is handed back
+		},
+		{
+			name: "setegid fails while dropping", failSeteuidTo: never, failSetegidTo: 20,
+			wantErr:   []string{"drop privileges"},
+			wantCalls: []string{"setegid 20"}, // the user switch is never attempted
+			wantEuid:  0, wantEgid: 0,
+		},
+		{
+			name: "group restore also fails after a failed drop", failSeteuidTo: 501, failSetegidTo: 0,
+			wantErr:   []string{"drop privileges", "restoring group also failed"},
+			wantCalls: []string{"setegid 20", "seteuid 501", "setegid 0"},
+			wantEuid:  0, wantEgid: 20,
+		},
+		{
+			name: "seteuid fails while restoring", failSeteuidTo: 0, failSetegidTo: never,
+			wantRan:   true,
+			wantErr:   []string{"restore privileges"},
+			wantCalls: []string{"setegid 20", "seteuid 501", "seteuid 0"}, // setegid is not attempted
+			wantEuid:  501, wantEgid: 20,
+		},
+		{
+			name: "setegid fails while restoring", failSeteuidTo: never, failSetegidTo: 0,
+			wantRan:   true,
+			wantErr:   []string{"restore privileges"},
+			wantCalls: []string{"setegid 20", "seteuid 501", "seteuid 0", "setegid 0"},
+			wantEuid:  0, wantEgid: 20,
+		},
+		{
+			name: "restore failure is joined with fn's own error", failSeteuidTo: 0, failSetegidTo: never,
+			fnErr:     fnErr,
+			wantRan:   true,
+			wantErr:   []string{"restore privileges", "fn failed"},
+			wantCalls: []string{"setegid 20", "seteuid 501", "seteuid 0"},
+			wantEuid:  501, wantEgid: 20,
+		},
 	}
-	if ran {
-		t.Fatal("fn must not run with privileges still held")
-	}
-	if f.egid != 0 {
-		t.Fatalf("egid not restored after failed drop: %d", f.egid)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFakeIDs(501, 0, 20, 0)
+			f.failSeteuidTo, f.failSetegidTo = tt.failSeteuidTo, tt.failSetegidTo
+			installFake(t, f)
+			ran := false
 
-func TestAsRealUser_RestoreFailureIsReported(t *testing.T) {
-	f := &fakeIDs{uid: 501, euid: 0, gid: 20, egid: 0, failSeteuidTo: 0}
-	installFake(t, f)
+			err := AsRealUser(func() error { ran = true; return tt.fnErr })
 
-	err := AsRealUser(func() error { return nil })
-
-	if err == nil || !strings.Contains(err.Error(), "restore privileges") {
-		t.Fatalf("err = %v, want a restore-privileges error", err)
+			if err == nil {
+				t.Fatal("AsRealUser returned nil, want an error")
+			}
+			for _, want := range tt.wantErr {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("err = %q, want it to contain %q", err, want)
+				}
+			}
+			for _, bad := range tt.wantNotErr {
+				if strings.Contains(err.Error(), bad) {
+					t.Errorf("err = %q, must not contain %q", err, bad)
+				}
+			}
+			if tt.fnErr != nil && !errors.Is(err, tt.fnErr) {
+				t.Errorf("err = %v, want it to wrap fn's error %v", err, tt.fnErr)
+			}
+			if ran != tt.wantRan {
+				t.Errorf("fn ran = %v, want %v (fn must not run with privileges still held)", ran, tt.wantRan)
+			}
+			if !reflect.DeepEqual(f.calls, tt.wantCalls) {
+				t.Errorf("calls = %v, want %v", f.calls, tt.wantCalls)
+			}
+			if f.euid != tt.wantEuid || f.egid != tt.wantEgid {
+				t.Errorf("final euid/egid = %d/%d, want %d/%d", f.euid, f.egid, tt.wantEuid, tt.wantEgid)
+			}
+		})
 	}
 }
 
 func TestPrivileged_WaitsForAsRealUser(t *testing.T) {
-	f := &fakeIDs{uid: 501, euid: 0, gid: 20, egid: 0, failSeteuidTo: -1}
+	f := newFakeIDs(501, 0, 20, 0)
 	installFake(t, f)
 	inside, release := make(chan struct{}), make(chan struct{})
 	go func() {
