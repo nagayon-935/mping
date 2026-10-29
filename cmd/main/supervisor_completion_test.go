@@ -93,12 +93,10 @@ func TestSupervisorShutdownJoinsCompletionObservers(t *testing.T) {
 	}
 }
 
-// TestCountObserverGivesUpAfterShutdownWhenQueueIsFull pins the observer's
-// escape hatch: a completion notification that cannot be queued (command loop
-// gone, buffer full) must not block Shutdown, which joins the observer. The
-// full buffer makes the select deterministic; with free space the send and
-// the closed done channel would both be ready and either could win.
-func TestCountObserverGivesUpAfterShutdownWhenQueueIsFull(t *testing.T) {
+// TestCountObserverDoesNotNotifyAfterShutdown pins that a completion arriving
+// after Shutdown closed done is dropped rather than queued, even though cmds
+// has room for it, and that Shutdown (which joins the observer) still returns.
+func TestCountObserverDoesNotNotifyAfterShutdown(t *testing.T) {
 	p := &fakePinger{workersDone: make(chan struct{})} // Stop does not release the workers
 	sup := newSupervisor(supervisorConfig{countLimited: true, makePinger: func(int) pingerController { return p }})
 	sup.Start()
@@ -108,15 +106,41 @@ func TestCountObserverGivesUpAfterShutdownWhenQueueIsFull(t *testing.T) {
 	shutdownDone := make(chan struct{})
 	go func() { sup.Shutdown(); close(shutdownDone) }()
 
-	<-sup.loopDone // the loop has exited, so nothing drains cmds any more
-	for len(sup.cmds) < cap(sup.cmds) {
-		sup.cmds <- command{kind: cmdStop}
-	}
-	p.finish() // the observer now tries to notify and must take the done branch
+	<-sup.loopDone // done is closed and nothing drains cmds any more
+	p.finish()     // the observer wakes with room in cmds and done closed
 
 	select {
 	case <-shutdownDone:
 	case <-time.After(2 * time.Second):
-		t.Fatal("Shutdown did not return: the completion observer is stuck sending")
+		t.Fatal("Shutdown did not return: the completion observer is stuck")
+	}
+	if n := len(sup.cmds); n != 0 {
+		t.Fatalf("observer queued %d command(s) after shutdown", n)
+	}
+}
+
+// TestCountObserverGivesUpWhenShutdownInterruptsASend covers the other exit:
+// an observer already blocked sending to a queue nobody drains must return
+// once done closes.
+func TestCountObserverGivesUpWhenShutdownInterruptsASend(t *testing.T) {
+	p := &fakePinger{workersDone: make(chan struct{})}
+	sup := newSupervisor(supervisorConfig{})
+	sup.cmds = make(chan command) // unbuffered and never read
+	sup.done = make(chan struct{})
+	sup.startCountObserver(p)
+	p.finish()
+
+	joined := make(chan struct{})
+	go func() { sup.observers.Wait(); close(joined) }()
+	select {
+	case <-joined:
+		t.Fatal("observer returned before shutdown although its send cannot complete")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(sup.done)
+	select {
+	case <-joined:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the completion observer is stuck sending after shutdown")
 	}
 }

@@ -289,3 +289,38 @@ func (f *fakeHopConnV6) ReadFrom(b []byte) (int, *ipv6.ControlMessage, net.Addr,
 	f.readQueue = f.readQueue[1:]
 	return copy(b, r.data), r.cm, r.addr, r.err
 }
+
+// rawRead is one scripted inbound packet for fakeRawConn.
+type rawRead struct {
+	hdr     *ipv4.Header
+	payload []byte
+}
+
+// fakeRawConn implements pmtuRawConn: the header-included socket
+// canSendPayload probes through.
+type fakeRawConn struct {
+	// writeErr fails WriteTo; reads is drained one packet per ReadFrom call,
+	// and once empty ReadFrom times out.
+	writeErr error
+	reads    []rawRead
+
+	// header and payload record the last WriteTo.
+	header  *ipv4.Header
+	payload []byte
+}
+
+func (f *fakeRawConn) WriteTo(h *ipv4.Header, p []byte, _ *ipv4.ControlMessage) error {
+	f.header, f.payload = h, append([]byte(nil), p...)
+	return f.writeErr
+}
+
+func (f *fakeRawConn) SetReadDeadline(time.Time) error { return nil }
+
+func (f *fakeRawConn) ReadFrom(b []byte) (*ipv4.Header, []byte, *ipv4.ControlMessage, error) {
+	if len(f.reads) == 0 {
+		return nil, nil, nil, timeoutOpError()
+	}
+	r := f.reads[0]
+	f.reads = f.reads[1:]
+	return r.hdr, b[:copy(b, r.payload)], nil, nil
+}

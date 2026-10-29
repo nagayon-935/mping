@@ -11,6 +11,9 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
+// Addr is the bound host:port.
+func (s *Server) Addr() string { return s.addr }
+
 // fakeProvider is a fixed Provider for handler tests. targetCalls counts
 // Targets calls so tests can tell whether a snapshot was rebuilt or served
 // from cache.

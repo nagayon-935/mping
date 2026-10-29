@@ -8,6 +8,9 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"golang.org/x/net/icmp"
+	"golang.org/x/net/ipv4"
 )
 
 // stubCanSendPayload swaps canSendPayloadFn for the duration of the test.
@@ -208,6 +211,71 @@ func TestIsMTUTooLarge(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := isMTUTooLarge(tt.err); got != tt.want {
 				t.Fatalf("isMTUTooLarge(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCanSendPayload_ClassifiesTheProbe drives canSendPayload past the raw
+// socket through a fake header-included connection: what it writes, and how
+// each kind of answer (or its absence) is classified.
+func TestCanSendPayload_ClassifiesTheProbe(t *testing.T) {
+	p := NewPingerWithOptions(nil, Options{ListenPacket: listenWith(&fakeNetPacketConn{})})
+	p.Source = "192.0.2.10"
+	id := p.baseID & 0xffff
+	router := &ipv4.Header{Src: net.IPv4(192, 0, 2, 1)}
+	reply := func(typ icmp.Type, code int, body icmp.MessageBody) rawRead {
+		return rawRead{hdr: router, payload: mustMarshal(t, &icmp.Message{Type: typ, Code: code, Body: body})}
+	}
+	echoReply := func(id int) rawRead {
+		return reply(ipv4.ICMPTypeEchoReply, 0, &icmp.Echo{ID: id})
+	}
+	fragNeeded := func(code, id int) rawRead {
+		return reply(ipv4.ICMPTypeDestinationUnreachable, code, &icmp.DstUnreach{Data: ipPacketWithEcho(false, id, 0)})
+	}
+	tests := []struct {
+		name           string
+		conn           *fakeRawConn
+		wantOK         bool
+		wantBottleneck string
+		wantErr        bool
+	}{
+		{"matching echo reply after skipped packets", &fakeRawConn{reads: []rawRead{
+			{payload: []byte{0x01}}, // too short to parse
+			echoReply(id + 1),       // another prober's reply
+			echoReply(id),
+		}}, true, "", false},
+		{"fragmentation needed names the bottleneck", &fakeRawConn{reads: []rawRead{fragNeeded(4, id)}}, false, "192.0.2.1", false},
+		{"fragmentation needed without a header", &fakeRawConn{reads: []rawRead{{payload: fragNeeded(4, id).payload}}}, false, "", false},
+		{"another probe's fragmentation needed is ignored", &fakeRawConn{reads: []rawRead{fragNeeded(4, id+1)}}, false, "", false},
+		{"other unreachable codes are ignored", &fakeRawConn{reads: []rawRead{fragNeeded(1, id)}}, false, "", false},
+		{"no reply before the deadline", &fakeRawConn{}, false, "", false},
+		{"EMSGSIZE on send means too large", &fakeRawConn{writeErr: syscall.EMSGSIZE}, false, "", false},
+		{"other send errors are returned", &fakeRawConn{writeErr: errors.New("boom")}, false, "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orig := newRawConnFn
+			t.Cleanup(func() { newRawConnFn = orig })
+			newRawConnFn = func(net.PacketConn) (pmtuRawConn, error) { return tt.conn, nil }
+			dst := &net.IPAddr{IP: net.IPv4(198, 51, 100, 7)}
+
+			ok, bottleneck, err := p.canSendPayload(context.Background(), dst, 100)
+
+			if (err != nil) != tt.wantErr || ok != tt.wantOK || bottleneck != tt.wantBottleneck {
+				t.Fatalf("canSendPayload = (%v, %q, %v), want (%v, %q, error=%v)", ok, bottleneck, err, tt.wantOK, tt.wantBottleneck, tt.wantErr)
+			}
+			h := tt.conn.header
+			if h == nil || h.Flags != ipv4.DontFragment || !h.Dst.Equal(dst.IP) || !h.Src.Equal(net.ParseIP(p.Source)) ||
+				h.Protocol != 1 || h.TotalLen != ipv4.HeaderLen+len(tt.conn.payload) {
+				t.Fatalf("written header = %+v (payload %d bytes), want DF set from %s to %s", h, len(tt.conn.payload), p.Source, dst)
+			}
+			msg, perr := icmp.ParseMessage(1, tt.conn.payload)
+			if perr != nil {
+				t.Fatalf("written payload is not ICMP: %v", perr)
+			}
+			if echo, isEcho := msg.Body.(*icmp.Echo); !isEcho || echo.ID != id || len(echo.Data) != 100 {
+				t.Fatalf("written probe = %+v, want an echo with ID %d and 100 data bytes", msg.Body, id)
 			}
 		})
 	}

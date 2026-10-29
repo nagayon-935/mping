@@ -525,3 +525,20 @@ func TestHopSocket_Close(t *testing.T) {
 	(&HopSocket{isV4: true}).Close()
 	(&HopSocket{}).Close()
 }
+
+// TestReceiveViaTraceChan_ClosedChannelIsATimeout pins the guard for a closed
+// trace channel: nothing closes one today (see UnregisterTraceChan), but if
+// something did, the probe must report no response instead of handing a zero
+// traceMsg to accept or spinning on the closed channel.
+func TestReceiveViaTraceChan_ClosedChannelIsATimeout(t *testing.T) {
+	ch := make(chan traceMsg)
+	close(ch)
+	accept := func(*icmp.Message, net.Addr) (HopReply, bool) {
+		t.Fatal("accept called for a closed channel")
+		return HopReply{}, false
+	}
+	got, err := receiveViaTraceChan(context.Background(), ch, accept, time.Now(), time.Hour)
+	if err != nil || got.Responded {
+		t.Fatalf("got %+v, %v; want a non-responded hop and no error", got, err)
+	}
+}

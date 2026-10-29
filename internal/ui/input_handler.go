@@ -25,9 +25,7 @@ type inputHandlerDeps struct {
 	table           *tview.Table
 	addHostInput    *tview.InputField
 	deleteHostInput *tview.InputField
-	graphView       *GraphView
 	footer          *tview.TextView
-	sidePanes       []*monitorPane
 	pages           *tview.Pages
 	targets         []*stats.TargetStats
 
@@ -122,11 +120,6 @@ func (h *inputHandler) handle(event *tcell.EventKey) *tcell.EventKey {
 			return nil
 		}
 	}
-	if event.Key() == tcell.KeyTab {
-		h.cycleFocus()
-		return nil
-	}
-
 	switch event.Rune() {
 	case 'a':
 		if h.onAddHost != nil {
@@ -176,47 +169,6 @@ func (h *inputHandler) scrollTable(key tcell.Key) {
 	if h.forceUpdate != nil {
 		h.forceUpdate()
 	}
-}
-
-// cycleFocus moves focus to the next enabled pane:
-// table → [trace] → [mtr] → [port] → [http] → graph → log → table.
-func (h *inputHandler) cycleFocus() {
-	type focusEntry struct {
-		enabled  bool
-		view     tview.Primitive
-		setColor func(tcell.Color)
-	}
-	cycle := []focusEntry{{true, h.table, func(c tcell.Color) { h.table.SetBorderColor(c) }}}
-	for _, mp := range h.sidePanes {
-		cycle = append(cycle, focusEntry{mp.enabled, mp.view, mp.setBorderColor})
-	}
-	cycle = append(cycle,
-		focusEntry{true, h.graphView, func(c tcell.Color) { h.graphView.SetBorderColor(c) }},
-		focusEntry{true, h.vs.errorView, func(c tcell.Color) { h.vs.errorView.SetBorderColor(c) }},
-	)
-	h.table.SetBorderColor(tcell.ColorWhite)
-	h.vs.errorView.SetBorderColor(tcell.ColorRed)
-	h.graphView.SetBorderColor(vividCyan)
-	for _, mp := range h.sidePanes {
-		mp.setBorderColor(tcell.ColorWhite)
-	}
-	focused := h.app.GetFocus()
-	for i, entry := range cycle {
-		if !entry.enabled || entry.view != focused {
-			continue
-		}
-		for j := 1; j <= len(cycle); j++ {
-			if next := cycle[(i+j)%len(cycle)]; next.enabled {
-				h.app.SetFocus(next.view)
-				next.setColor(tcell.ColorGreen)
-				return
-			}
-		}
-		return
-	}
-	// Focus is somewhere outside the cycle: start over at the table.
-	h.app.SetFocus(h.table)
-	h.table.SetBorderColor(tcell.ColorGreen)
 }
 
 func (h *inputHandler) showState() {

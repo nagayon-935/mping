@@ -48,6 +48,22 @@ func (p *Pinger) OpenHopSocket(dest string) (*HopSocket, error) {
 	return p.OpenHopSocketContext(context.Background(), dest)
 }
 
+// NewPinger creates a Pinger with default options for the given targets.
+func NewPinger(targets []*stats.TargetStats) *Pinger {
+	return NewPingerWithOptions(targets, Options{})
+}
+
+// NewHTTPChecker creates an HTTPChecker with DefaultHTTPOptions.
+func NewHTTPChecker(urls []string, interval, timeout time.Duration, bind BindConfig) *HTTPChecker {
+	return NewHTTPCheckerWithOptions(urls, interval, timeout, bind, DefaultHTTPOptions())
+}
+
+// DefaultHTTPOptions mirrors the CLI defaults: 2xx/3xx is up, redirects are
+// followed.
+func DefaultHTTPOptions() HTTPOptions {
+	return HTTPOptions{ExpectedStatus: []StatusRange{{200, 399}}, FollowRedirects: true}
+}
+
 // resolveTo returns an Options.ResolveIPAddr hook that resolves every host to ip.
 func resolveTo(ip string) func(network, address string) (*net.IPAddr, error) {
 	return func(network, address string) (*net.IPAddr, error) {

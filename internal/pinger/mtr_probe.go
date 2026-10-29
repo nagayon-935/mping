@@ -82,6 +82,8 @@ func (p *Pinger) RegisterTraceChan(traceID int) chan traceMsg {
 }
 
 // UnregisterTraceChan removes the trace channel for the given traceID from the pinger's map.
+// The channel is deliberately left open: broadcastTrace sends to it after
+// releasing traceChansMu, so closing it here could panic a concurrent send.
 func (p *Pinger) UnregisterTraceChan(traceID int) {
 	p.traceChansMu.Lock()
 	delete(p.traceChans, traceID)
@@ -112,8 +114,12 @@ func (p *Pinger) OpenHopSocketContext(ctx context.Context, dest string) (*HopSoc
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", dest, err)
 	}
-	return p.openHopSocketAddr(dstAddr)
+	return openHopSocketFn(p, dstAddr)
 }
+
+// openHopSocketFn opens a hop socket; a variable so tests can substitute a
+// HopSocket over fake connections, since a real one needs a raw socket.
+var openHopSocketFn = (*Pinger).openHopSocketAddr
 
 func (p *Pinger) openHopSocketAddr(dstAddr *net.IPAddr) (*HopSocket, error) {
 	isV4 := dstAddr.IP.To4() != nil
@@ -276,7 +282,10 @@ func receiveViaTraceChan(ctx context.Context, traceCh chan traceMsg, accept func
 		select {
 		case <-ctx.Done():
 			return HopReply{}, ctx.Err()
-		case tm := <-traceCh:
+		case tm, ok := <-traceCh:
+			if !ok { // see UnregisterTraceChan: never closed today
+				return HopReply{Responded: false}, nil
+			}
 			if r, matched := accept(tm.parsed, tm.src); matched {
 				r.RTT = time.Since(sent)
 				return r, nil

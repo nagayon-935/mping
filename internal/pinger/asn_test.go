@@ -92,25 +92,35 @@ func TestGetASNInfo_ExtractsCountryAndOrg(t *testing.T) {
 	}
 }
 
+// TestGetASNInfo_OrgLookupFails_StillReturnsCountry covers every way the
+// second (org name) lookup can come back empty-handed: the ASN and country
+// from the origin lookup are kept and Org is left empty.
 func TestGetASNInfo_OrgLookupFails_StillReturnsCountry(t *testing.T) {
-	mockLookup := func(query string) ([]string, error) {
-		if strings.Contains(query, "origin") {
-			return []string{"15169 | 8.8.8.0/24 | JP | arin | 1992-12-01"}, nil
-		}
-		return nil, fmt.Errorf("asn lookup fail")
+	tests := []struct {
+		name string
+		txts []string
+		err  error
+	}{
+		{"lookup error", nil, fmt.Errorf("asn lookup fail")},
+		{"empty answer", nil, nil},
+		{"answer without fields", []string{"15169"}, nil},
 	}
-	p := NewPingerWithOptions(nil, Options{AsnEnabled: true, LookupTXT: mockLookup})
-	p.asnJitter = func() time.Duration { return 0 }
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockLookup := func(query string) ([]string, error) {
+				if strings.Contains(query, "origin") {
+					return []string{"15169 | 8.8.8.0/24 | JP | arin | 1992-12-01"}, nil
+				}
+				return tt.txts, tt.err
+			}
+			p := NewPingerWithOptions(nil, Options{AsnEnabled: true, LookupTXT: mockLookup})
+			p.asnJitter = func() time.Duration { return 0 }
 
-	info := p.getASNInfo("8.8.8.8")
-	if info.Number != "AS15169" {
-		t.Errorf("Number: want AS15169, got %q", info.Number)
-	}
-	if info.Country != "JP" {
-		t.Errorf("Country: want JP, got %q", info.Country)
-	}
-	if info.Org != "" {
-		t.Errorf("Org: want empty on lookup failure, got %q", info.Org)
+			info := p.getASNInfo("8.8.8.8")
+			if info != (ASNInfo{Number: "AS15169", Country: "JP"}) {
+				t.Errorf("info = %+v, want AS15169 in JP with no org", info)
+			}
+		})
 	}
 }
 

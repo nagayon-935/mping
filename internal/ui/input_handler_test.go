@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -25,7 +24,7 @@ func newTestInputHandler(t *testing.T) (*inputHandlerDeps, func() *inputHandler)
 	rows := 1
 	d := &inputHandlerDeps{
 		app: app, table: table, addHostInput: tview.NewInputField(), deleteHostInput: tview.NewInputField(),
-		graphView: NewGraphView(nil, time.Second), footer: tview.NewTextView(), pages: tview.NewPages(),
+		footer: tview.NewTextView(), pages: tview.NewPages(),
 		vs: newViewState(tview.NewTextView()), rowCount: &rows, session: s,
 	}
 	return d, func() *inputHandler { return &inputHandler{inputHandlerDeps: *d, state: monitorRunning} }
@@ -40,36 +39,6 @@ func press(h *inputHandler, key tcell.Key, r rune) *tcell.EventKey {
 func runNextUpdate(t *testing.T, s *uiSession) {
 	t.Helper()
 	recvWithin(t, s.updates, "a UI update to be posted")()
-}
-
-func TestTabCyclesEnabledPanesAndSkipsDisabledOnes(t *testing.T) {
-	d, build := newTestInputHandler(t)
-	trace := newMonitorPane(true, "Traceroute", func(int) string { return "" })
-	port := newMonitorPane(false, "Port", func(int) string { return "" })
-	d.sidePanes = []*monitorPane{trace, port}
-	h := build()
-
-	want := []tview.Primitive{trace.view, h.graphView, h.vs.errorView, h.table}
-	for i, next := range want {
-		if got := press(h, tcell.KeyTab, 0); got != nil {
-			t.Fatalf("Tab %d was not consumed", i+1)
-		}
-		if focus := h.app.GetFocus(); focus != next {
-			t.Fatalf("after Tab %d focus = %T, want %T", i+1, focus, next)
-		}
-	}
-}
-
-func TestTabFromAnUnknownPrimitiveReturnsFocusToTheTable(t *testing.T) {
-	_, build := newTestInputHandler(t)
-	h := build()
-	h.app.SetFocus(tview.NewBox())
-
-	press(h, tcell.KeyTab, 0)
-
-	if h.app.GetFocus() != h.table {
-		t.Fatalf("focus = %T, want the table", h.app.GetFocus())
-	}
 }
 
 func TestScrollKeysWithoutNavigationClampTheTableOffset(t *testing.T) {

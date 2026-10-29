@@ -28,7 +28,7 @@ func (p *Pinger) TraceRoute(ctx context.Context, dest string, maxHops int, timeo
 		return nil, fmt.Errorf("resolve %s: %w", dest, err)
 	}
 
-	sock, err := p.openHopSocketAddr(dstAddr)
+	sock, err := openHopSocketFn(p, dstAddr)
 	if err != nil {
 		return nil, fmt.Errorf("open traceroute send socket: %w", err)
 	}

@@ -113,22 +113,31 @@ func gridStepsForHeight(plotHeight int) (gy25, gy50, gy75, gy100 int) {
 // visible graph row gets graphPreferredRowHeight lines for the given inner
 // width.
 func (g *GraphView) preferredHeight(width int) int {
-	_, _, visibleRows, _, _ := g.layout(width, graphMaxVisibleRows*graphPreferredRowHeight)
+	_, _, visibleRows, _, _ := layoutGraph(g.seriesCount(), width, graphMaxVisibleRows*graphPreferredRowHeight)
 	return visibleRows*graphPreferredRowHeight + 2
 }
 
-func (g *GraphView) layout(width, height int) (numCols, numRowsTotal, visibleRows, colWidth, rowHeight int) {
-	// Only the count is needed here (not the fetched history/label data),
-	// and buildSeries maps 1:1 onto g.targets with no filtering, so read
-	// the count directly rather than fetching a GetViewWindow snapshot per
-	// target just to throw it away.
-	numTargets := len(g.targets)
-	if numTargets == 0 || width <= 0 || height <= 0 {
+// seriesCount is len(g.buildSeries(...)) without fetching any history or
+// label data: one series per target, plus one per port check when
+// includePorts is set (Host Details).
+func (g *GraphView) seriesCount() int {
+	n := len(g.targets)
+	if g.includePorts {
+		for _, t := range g.targets {
+			n += t.PortCount()
+		}
+	}
+	return n
+}
+
+// layoutGraph arranges numSeries graph cells in a width×height area.
+func layoutGraph(numSeries, width, height int) (numCols, numRowsTotal, visibleRows, colWidth, rowHeight int) {
+	if numSeries == 0 || width <= 0 || height <= 0 {
 		return 1, 0, 0, 0, 0
 	}
 
 	numCols = 1
-	if numTargets > 1 {
+	if numSeries > 1 {
 		numCols = 2
 	}
 	minCellWidth := graphMinWidth + graphLabelWidth + 2
@@ -136,9 +145,9 @@ func (g *GraphView) layout(width, height int) (numCols, numRowsTotal, visibleRow
 		numCols = 1
 	}
 
-	numRowsTotal = (numTargets + numCols - 1) / numCols
+	numRowsTotal = (numSeries + numCols - 1) / numCols
 
-	// numTargets >= 1 here, so numRowsTotal >= 1 and so is visibleRows.
+	// numSeries >= 1 here, so numRowsTotal >= 1 and so is visibleRows.
 	visibleRows = min(numRowsTotal, graphMaxVisibleRows)
 
 	colWidth = width / numCols

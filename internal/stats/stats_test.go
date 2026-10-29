@@ -481,6 +481,9 @@ func TestTargetStats_SetPortResults(t *testing.T) {
 	if view.PortResults[0].Port != 80 || view.PortResults[0].Status != "Open" {
 		t.Errorf("PortResults[0]: got %v, want Port 80 Open", view.PortResults[0])
 	}
+	if got := tgt.PortCount(); got != 2 {
+		t.Errorf("PortCount = %d, want 2", got)
+	}
 }
 
 func TestLightweightReadAccessors(t *testing.T) {

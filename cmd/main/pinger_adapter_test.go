@@ -10,7 +10,7 @@ import (
 )
 
 func TestPingerAdapterSetters(t *testing.T) {
-	p := &pingerAdapter{Pinger: pinger.NewPinger(nil)}
+	p := &pingerAdapter{Pinger: pinger.NewPingerWithOptions(nil, pinger.Options{})}
 
 	p.SetSource("1.2.3.4")
 	if p.Source != "1.2.3.4" {
@@ -44,7 +44,7 @@ func TestPingerAdapterSetters(t *testing.T) {
 // underlying *pinger.Pinger in a pingerMTRAdapter, without any downcast at
 // the call site.
 func TestPingerAdapter_MTRProber(t *testing.T) {
-	adapter := &pingerAdapter{Pinger: pinger.NewPinger(nil)}
+	adapter := &pingerAdapter{Pinger: pinger.NewPingerWithOptions(nil, pinger.Options{})}
 	prober := adapter.MTRProber()
 	if prober == nil {
 		t.Fatal("expected non-nil mtr.HopProber")
