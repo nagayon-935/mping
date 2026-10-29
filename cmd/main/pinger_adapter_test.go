@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"testing"
 	"time"
 
@@ -31,11 +30,6 @@ func TestPingerAdapterSetters(t *testing.T) {
 	p.SetResolveInterval(30 * time.Second)
 	if p.ResolveInterval != 30*time.Second {
 		t.Errorf("SetResolveInterval: got %v, want 30s", p.ResolveInterval)
-	}
-	var buf bytes.Buffer
-	p.SetLogWriter(&buf)
-	if p.LogWriter != &buf {
-		t.Error("SetLogWriter: writer not set correctly")
 	}
 }
 

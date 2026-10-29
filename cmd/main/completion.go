@@ -23,10 +23,7 @@ type flagInfo struct {
 // fileCompletionFlags are long flag names whose value is a filesystem path;
 // their shell templates delegate to the shell's own file-path completion.
 var fileCompletionFlags = map[string]bool{
-	"file":         true,
-	"output":       true,
-	"json-output":  true,
-	"event-output": true,
+	"file": true,
 }
 
 // interfaceCompletionFlags are long flag names whose value is a network

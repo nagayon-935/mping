@@ -70,6 +70,9 @@ func TestParseArgs_RemovedFlags(t *testing.T) {
 		{[]string{"--http-status", "200-299", "example.com"}, "--http-status was removed"},
 		{[]string{"--http-header=X-Key=value", "example.com"}, "--http-header was removed"},
 		{[]string{"--no-tui", "example.com"}, "--no-tui was removed"},
+		{[]string{"-o", "log.csv", "example.com"}, "-o/--output was removed"},
+		{[]string{"-jstats.json", "example.com"}, "-j/--json-output was removed"},
+		{[]string{"--event-output=events.jsonl", "example.com"}, "--event-output was removed"},
 	} {
 		_, _, _, _, err := parseArgs(tt.args)
 		if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -77,8 +80,8 @@ func TestParseArgs_RemovedFlags(t *testing.T) {
 		}
 	}
 	// A removed flag's name used as another flag's value is not a flag.
-	if _, _, _, _, err := parseArgs([]string{"-o", "--dscp", "example.com"}); err != nil {
-		t.Errorf("--dscp as the -o value: unexpected error %v", err)
+	if _, _, _, _, err := parseArgs([]string{"-I", "--dscp", "example.com"}); err != nil {
+		t.Errorf("--dscp as the -I value: unexpected error %v", err)
 	}
 }
 
@@ -125,28 +128,6 @@ func TestParseArgsDuration_Valid(t *testing.T) {
 			}
 			if cfg.duration != tt.want {
 				t.Fatalf("duration: got %s, want %s", cfg.duration, tt.want)
-			}
-		})
-	}
-}
-
-func TestParseArgs_JSONOutputFlag(t *testing.T) {
-	tests := []struct {
-		name string
-		args []string
-		want string
-	}{
-		{"short -j", []string{"-j", "/tmp/stats.json", "example.com"}, "/tmp/stats.json"},
-		{"long --json-output", []string{"--json-output", "/tmp/out.json", "example.com"}, "/tmp/out.json"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg, _, _, _, err := parseArgs(tt.args)
-			if err != nil {
-				t.Fatalf("parse error: %v", err)
-			}
-			if cfg.jsonOutputFile != tt.want {
-				t.Errorf("jsonOutputFile = %q, want %q", cfg.jsonOutputFile, tt.want)
 			}
 		})
 	}

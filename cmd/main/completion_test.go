@@ -250,8 +250,6 @@ func TestBashCompletionCandidates(t *testing.T) {
 		{"shell prefix", []string{"completion", "z"}, []string{"zsh"}},
 		{"no arguments after shell", []string{"completion", "bash", ""}, nil},
 		{"file with spaces", []string{"-f", "hosts l"}, []string{"hosts list.yaml"}},
-		{"output path", []string{"--output", "hosts l"}, []string{"hosts list.yaml"}},
-		{"json path", []string{"-j", "hosts l"}, []string{"hosts list.yaml"}},
 		{"equals unsplit", []string{"--file=hosts l"}, []string{"--file=hosts list.yaml"}},
 		{"equals split", []string{"--file", "=", "hosts l"}, []string{"hosts list.yaml"}},
 		{"equals joined to flag", []string{"--file=", "hosts l"}, []string{"hosts list.yaml"}},

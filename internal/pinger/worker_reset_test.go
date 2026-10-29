@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strings"
 	"testing"
 	"time"
 
@@ -73,10 +72,6 @@ func TestResetKeepsRemainingCountBudget(t *testing.T) {
 	}
 }
 
-type resetLogWriter chan string
-
-func (w resetLogWriter) Write(data []byte) (int, error) { w <- string(data); return len(data), nil }
-
 func TestResetRejectsPreviousDuplicateAndLateReply(t *testing.T) {
 	for _, late := range []bool{false, true} {
 		t.Run(fmt.Sprint("late=", late), func(t *testing.T) {
@@ -85,37 +80,31 @@ func TestResetRejectsPreviousDuplicateAndLateReply(t *testing.T) {
 			p.connV4 = &fakePacketConn{}
 			ch := make(chan Reply, 2)
 			p.targetChans[p.baseID] = ch
-			logs := make(resetLogWriter, 8)
-			p.LogWriter = logs
 			done := make(chan struct{})
 			go func() { p.runWorker(target, p.baseID, time.Hour, 30*time.Millisecond); close(done) }()
 			t.Cleanup(func() { p.Stop(); <-done })
 			awaitTarget(t, target, func(v stats.TargetView) bool { return v.Sent == 1 })
-			want := ",DUP,"
 			if late {
 				awaitTarget(t, target, func(v stats.TargetView) bool { return v.Loss == 1 })
-				want = ",LateReply,"
 			} else {
 				ch <- Reply{Seq: 1, TTL: 64}
 				awaitTarget(t, target, func(v stats.TargetView) bool { return v.Recv == 1 })
 			}
 			target.Reset()
+			// The old reply, then a marker for a seq never sent: the worker
+			// takes replies one at a time, so once the marker has left the
+			// channel the old reply has been classified.
 			ch <- Reply{Seq: 1, TTL: 64}
-			timer := time.NewTimer(time.Second)
-			defer timer.Stop()
-			for {
-				select {
-				case line := <-logs:
-					if strings.Contains(line, want) {
-						v := target.GetView()
-						if v.Sent != 0 || v.Recv != 0 || v.Loss != 0 || v.Duplicates != 0 || v.LateReplies != 0 {
-							t.Fatalf("old history changed reset stats: %+v", v)
-						}
-						return
-					}
-				case <-timer.C:
-					t.Fatal("worker did not classify old reply")
+			ch <- Reply{Seq: 999, TTL: 64}
+			deadline := time.Now().Add(time.Second)
+			for len(ch) > 0 {
+				if time.Now().After(deadline) {
+					t.Fatal("worker did not take the replies")
 				}
+				time.Sleep(time.Millisecond)
+			}
+			if v := target.GetView(); v.Sent != 0 || v.Recv != 0 || v.Loss != 0 || v.Duplicates != 0 || v.LateReplies != 0 {
+				t.Fatalf("old history changed reset stats: %+v", v)
 			}
 		})
 	}

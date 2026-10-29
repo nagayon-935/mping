@@ -25,8 +25,7 @@
 * **PMTU 探索**: DF 付きのパケットサイズ探索を実行できます。
 * **自動ソースIP検出**: 指定がない場合でも、実際に通信に使用されているローカルIPを自動的に表示します。
 * **RTT グラフ**: 縦軸は自動スケール（スパイク時に即拡大、一定期間後に縮小）、横軸 30 秒。ICMP と TCP/UDP ポートの両系列を表示できます。
-* **CSV ログ出力**: 実行結果を統計情報とともにファイルに保存できます。
-* **JSON 統計エクスポート**: `-j` オプションで 5 秒ごとに全統計情報の JSON スナップショットをファイルへ出力します。
+* **統計のスナップショット**: その時点までに集めた全統計を、TUI (`w`) か Web UI の **Report** ボタンからいつでも保存できます。
 
 ## 対応プラットフォーム
 
@@ -142,9 +141,6 @@ mping -I eth0 google.com
 # パケットサイズ (100バイト) と送信回数 (10回) を指定
 mping -s 100 -c 10 google.com
 
-# ログを CSV ファイルに出力
-mping -o results.csv google.com
-
 # YAML からホストを読み込み
 mping -f hosts.yaml
 
@@ -171,9 +167,6 @@ mping -M google.com
 
 # Traceroute と Port Monitor を同時に表示
 mping -T -p 443/tcp google.com
-
-# 統計情報を JSON ファイルへリアルタイム出力 (5 秒ごとに更新)
-mping -j stats.json google.com 1.1.1.1
 
 # 色分けの閾値をカスタマイズする (warn = オレンジ, crit = 赤)
 mping --rtt-warn 30 --rtt-crit 100 --loss-warn 10 --loss-crit 50 google.com
@@ -202,7 +195,6 @@ asn: true
 port:
   - 443/tcp
   - 53/udp
-json-output: stats.json
 dns-server: 8.8.8.8
 resolve-all: true
 web: true
@@ -250,7 +242,7 @@ groups:
 
 1パターンの展開は最大 1024 ホスト、hosts ファイル全体（include を含む）は最大 4096 ターゲットです。IPv6 の範囲指定は非対応のため、CIDR で指定してください。
 
-`name` を付けると、アドレスの代わりにその名前を表示します（IP は名前の横に表示されます）。名前は重複不可で、他のエントリのホストと同じ文字列にもできません。複数ホストに展開されるパターンには名前を付けられません。CSV / JSON 出力とレポートでも、ホストの代わりに名前が記録されます（解決した IP は引き続き記録されます）。
+`name` を付けると、アドレスの代わりにその名前を表示します（IP は名前の横に表示されます）。名前は重複不可で、他のエントリのホストと同じ文字列にもできません。複数ホストに展開されるパターンには名前を付けられません。レポートでも、ホストの代わりに名前が記録されます（解決した IP は引き続き記録されます）。
 
 ```yaml
 hosts:
@@ -288,9 +280,7 @@ groups:
 | `--count` | `-c` | 各ターゲットに送信する回数 (0 は無制限) | `0` |
 | `--ipv4` | `-4` | IPv4 のみを使用する | `false` |
 | `--ipv6` | `-6` | IPv6 のみを使用する | `false` |
-| `--output` | `-o` | CSV 形式でのログ出力ファイルパス | `""` |
 | `--port` | `-p` | 疎通確認するポート (例: `443/tcp`, `53/udp`, `443`)。カンマ区切りで複数指定可 | `""` |
-| `--json-output` | `-j` | 統計情報の JSON スナップショットを出力するファイルパス (5 秒ごとに更新) | `""` |
 | `--web` | | Web UI を `http://127.0.0.1:<web-port>/` で提供する (このマシンからのみ接続可。[Web UI](#web-ui-実験的機能) 参照) | `false` |
 | `--web-port` | | `--web` の待ち受けポート (1–65535) | `8080` |
 | `--asn` | `-a` | ターゲット IP の AS 番号を検索して表示する | `false` |
@@ -313,7 +303,6 @@ groups:
 | `--health-failures` | `3` | 応答不能と判定する連続失敗回数 (1–10000) |
 | `--health-recoveries` | `2` | 応答不能を解除する連続応答回数 (1–10000) |
 | `--health-window` | `1m` | 直近ロス率の集計期間 (1秒–1時間、1秒単位で集計)。期間を変更すると直近の集計窓を新しく開始 |
-| `--event-output` | 空 | 共通イベントをJSONLファイルに追記 |
 | `--http-follow-redirects` | `true` | 最大10回までリダイレクトを追う。falseなら最初の応答を判定 |
 
 JSONの `health` には状態・理由・応答不能判定・連続回数・直近ロス率・最終計測時刻・最終応答時刻を含みます。直近の集計値は `evaluated_at` (最後の計測完了または判定ルールの変更時点) の窓を表し、一時停止中も判定理由と集計値をそろえて保持します。`measurement_state` (`running` / `finished` / `stopped`) はICMP計測の状態で、Webサーバーの `state` とは別です。TUIでは送信回数の上限到達後も補助監視を継続できます。グラフは実際の計測時刻を使い、一時停止中は空白として表示します。
@@ -328,7 +317,7 @@ mping --check-config -f examples/monitoring.yaml --interval 500
 
 HTTP チェックは 2xx / 3xx の応答を Up、それ以外を Down と判定します。URLは認証情報・フラグメントを含まないHTTP(S)のみ対応します。
 
-状態変化はTUI・Webで共通の判定結果を使います。同一エラーの連続失敗は `count` と `last_at` に集約し、JSONLには発生時点の更新を追記します。これは計測ごとのCSV・定期的なJSONスナップショットとは別の出力です。書き込みキューが満杯の場合や保存失敗はstderrに通知し、通常終了時にキューを書き切ります。Web設定・CSV/イベント出力先・セッションの終了期限は起動時の設定を維持し、変更時は再起動の案内を出します。ポート・ネットワーク設定の変更は測定を再構築して反映します。[設定例](examples/monitoring.yaml)も参照してください。
+状態変化はTUI・Webで共通の判定結果を使います。同一エラーの連続失敗は `count` と `last_at` を持つ1件のイベントに集約します。Web設定とセッションの終了期限は起動時の設定を維持し、変更時は再起動の案内を出します。ポート・ネットワーク設定の変更は測定を再構築して反映します。[設定例](examples/monitoring.yaml)も参照してください。
 
 ### キー操作
 
@@ -369,7 +358,7 @@ HTTP チェックは 2xx / 3xx の応答を Up、それ以外を Down と判定�
 
 ## シェル補完
 
-mping は `mping --help` と同じフラグ定義から bash/zsh/fish 用の補完スクリプトを生成します。フラグ名、`-f`/`-o`/`-j` のファイルパス、`-I` のネットワークインターフェース名、`mping completion bash|zsh|fish` を補完できます。ファイルパスとインターフェース名は `--file=...` / `--interface=...` 形式や `-Ien` のような短縮フラグに続けて入力する形式にも対応します。スクリプト生成とインターフェース一覧取得に `sudo` は不要です。
+mping は `mping --help` と同じフラグ定義から bash/zsh/fish 用の補完スクリプトを生成します。フラグ名、`-f` のファイルパス、`-I` のネットワークインターフェース名、`mping completion bash|zsh|fish` を補完できます。ファイルパスとインターフェース名は `--file=...` / `--interface=...` 形式や `-Ien` のような短縮フラグに続けて入力する形式にも対応します。スクリプト生成とインターフェース一覧取得に `sudo` は不要です。
 
 対応シェルは `mping completion --help` でも確認できます。ソースコードから試す場合は、先に `make build` を実行し、以下の `mping` を `./mping` に置き換えてください。
 
@@ -462,7 +451,7 @@ mping completion fish > ~/.config/fish/completions/mping.fish
   * **Max** — RTT の最大値
   * **Jitter** — パケット遅延変動 (RFC 1889 スムージング)
 * 端末幅が狭い場合、**Recv** / **Min** / **Max** / **Jitter** カラムは自動的に省略されます (コンパクトモード)。
-* ホップはどちらのモードでも `-j` JSON エクスポートに `mtr_hops` フィールドとして含まれます (`-T` ではカウンタは 0 のまま)。経路を調べられなかった理由は `mtr_error` に入ります。
+* ホップはどちらのモードでも統計のスナップショットに `mtr_hops` フィールドとして含まれます (`-T` ではカウンタは 0 のまま)。経路を調べられなかった理由は `mtr_error` に入ります。
 * **経路変化 (Route Flap) 検知** — 再発見時に経路が変化した場合、対象ターゲットのヘッダに `[FLAP ×N HH:MM:SS]` バッジを表示し、Log ペインに黄色いアラート (例: `[route flap google.com: hop 3: 10.0.0.2 → 10.0.0.9]`) を記録します。
 
 ## HTTP Monitor ペイン
@@ -484,7 +473,7 @@ mping completion fish > ~/.config/fish/completions/mping.fish
   * **Since** — 最終ステータス変化からの経過時間
 * 端末幅が狭い場合、**Min** / **Avg** / **Max** / **Since** カラムは自動的に省略されます (コンパクトモード)。
 * ステータス変化は Log ペインに記録されます (例: `HTTP https://example.com: Up → Down`)。
-* HTTP チェック結果は `-j` JSON エクスポートに `http_checks` フィールドとして含まれます。
+* HTTP チェック結果は統計のスナップショットに `http_checks` フィールドとして含まれます。
 
 ## Port Monitor ペイン
 
@@ -533,7 +522,7 @@ mping --web google.com 1.1.1.1      # http://127.0.0.1:8080/ を開く
 
 | エンドポイント | 内容 |
 |---|---|
-| `GET /api/v1/snapshot` | 現在の統計 (`snapshot` 配下は `--json-output` と同じスキーマ)、`meta` (有効な機能・閾値・グループ)、`state` (`starting` / `running` / `reloading` / `stopped`) |
+| `GET /api/v1/snapshot` | 現在の統計 (`snapshot` 配下)、`meta` (有効な機能・閾値・グループ)、`state` (`starting` / `running` / `reloading` / `stopped`) |
 | `GET /api/v1/events?limit=200` | 全ターゲットのイベントを新しい順に 1 つのリストで返す (ホスト名付き、`limit` は 1–1000) |
 | `GET /api/v1/history?n=60` | 全ターゲットの直近 RTT を 1 回のレスポンスで返す (`n` は 1–3000) |
 | `GET /api/v1/stream` | Server-Sent Events。接続時と、統計が変化している間は最大 1 秒に 1 回 `snapshot` イベントを送信 |

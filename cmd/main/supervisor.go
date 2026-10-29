@@ -31,7 +31,6 @@ type supervisorConfig struct {
 	sourceIPv4          string
 	sourceIPv6          string
 	network             string
-	reservedOutputs     []string
 	packetSize          int
 	targets             []*stats.TargetStats
 	interval            time.Duration
@@ -44,7 +43,6 @@ type supervisorConfig struct {
 	bind         pinger.BindConfig
 	countLimited bool
 	logCh        chan string
-	eventSink    func(string, stats.Event)
 }
 
 // supervisorState tracks whether this supervisor's components are running.
@@ -405,11 +403,8 @@ func (s *supervisor) startCountObserver(next pingerController) {
 func (s *supervisor) configureTarget(t *stats.TargetStats) {
 	t.ConfigureHealth(healthPolicy(s.cfg.config))
 	host := t.DisplayName()
-	sink, logCh := s.cfg.eventSink, s.cfg.logCh
+	logCh := s.cfg.logCh
 	t.SetEventSink(func(e stats.Event) {
-		if sink != nil {
-			sink(host, e)
-		}
 		if e.Kind == "health" {
 			postLog(logCh, fmt.Sprintf("[%s] %s: %s", e.At.Format("15:04:05"), tview.Escape(host), tview.Escape(e.Message)))
 		}

@@ -46,23 +46,10 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		}
 		return 0
 	}
-	eventSink, closeEvents, eventErr := startEventOutput(cfg.eventOutput, errOut)
-	if eventErr != nil {
-		fmt.Fprintf(errOut, "Error: %v\n", eventErr)
-		return 1
-	}
-	defer closeEvents()
-
 	env, code, ok := prepareRunEnv(cfg, sp.hosts, out, errOut)
 	if !ok {
 		return code
 	}
-	var logWriter io.Writer
-	if env.logFile != nil {
-		defer env.logFile.Close()
-		logWriter = env.logFile
-	}
-
 	// The web UI outlives reload iterations: it is started once here and
 	// each iteration swaps its supervisor into webSrc.
 	webSrc := web.NewSource()
@@ -73,7 +60,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	defer closeWebUI(webSrv, errOut)
 
 	s := &session{
-		errOut: errOut, startup: cfg, logWriter: logWriter, eventSink: eventSink,
+		errOut: errOut, startup: cfg,
 		webSrc: webSrc, webSrv: webSrv, runUI: uiRun,
 		rc:  newReloadCoordinator(sp.fs, sp.cliCfg, sp.cliHosts),
 		ids: &pinger.IDAllocator{}, startedAt: time.Now().UTC(),
@@ -83,9 +70,9 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 
 	// The --duration deadline bounds the whole run() invocation (an overall
 	// session alarm, mirroring ping.c's -t) rather than being re-armed per
-	// reload iteration — the same one-shot-from-startup treatment the
-	// CSV/event output writers and the web server get (a reload keeps their
-	// startup values or warns that a restart is needed), unlike the source
+	// reload iteration — the same one-shot-from-startup treatment the web
+	// server gets (a reload keeps its startup values or warns that a
+	// restart is needed), unlike the source
 	// address, which every reload re-resolves from the reloaded
 	// ifaceName/sourceAddr. It is derived from the startup cfg so a YAML
 	// reload cannot silently extend or shorten an already-running deadline.

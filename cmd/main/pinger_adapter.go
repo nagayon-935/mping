@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/mtr"
@@ -28,7 +27,6 @@ type pingerController interface {
 	SetSize(size int)
 	SetCount(count int)
 	SetResolveInterval(interval time.Duration)
-	SetLogWriter(w io.Writer)
 	// MTRProber returns an mtr.HopProber view onto this controller, used to
 	// wire up the MTR engine without the caller needing to downcast to a
 	// concrete pinger type.
@@ -61,10 +59,6 @@ func (p *pingerAdapter) SetCount(count int) {
 
 func (p *pingerAdapter) SetResolveInterval(interval time.Duration) {
 	p.ResolveInterval = interval
-}
-
-func (p *pingerAdapter) SetLogWriter(w io.Writer) {
-	p.LogWriter = w
 }
 
 func (p *pingerAdapter) MTRProber() mtr.HopProber {

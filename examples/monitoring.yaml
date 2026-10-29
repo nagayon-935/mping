@@ -22,6 +22,5 @@ thresholds:
 http:
   - https://status.example/health
 http-follow-redirects: false
-# event-output: events.jsonl
 # web: true
 # web-port: 8080

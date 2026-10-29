@@ -13,11 +13,9 @@ import (
 	"github.com/nagayon-935/mping/internal/ui"
 )
 
-func TestCheckConfigExpandsTargetsAndNeverStartsMeasurementsOrWritesFiles(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "hosts.yaml")
-	output := filepath.Join(dir, "events.jsonl")
-	doc := "hosts:\n  - '192.0.2.{1..3}'\ninterval: 2000\nhealth-failures: 5\nevent-output: " + output + "\n"
+func TestCheckConfigExpandsTargets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts.yaml")
+	doc := "hosts:\n  - '192.0.2.{1..3}'\ninterval: 2000\nhealth-failures: 5\n"
 	if err := os.WriteFile(path, []byte(doc), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -39,9 +37,6 @@ func TestCheckConfigExpandsTargetsAndNeverStartsMeasurementsOrWritesFiles(t *tes
 	}
 	if !body.Valid || body.Count != 3 || body.Settings.Interval != 500 || body.Settings.Failures != 5 {
 		t.Fatalf("output=%s", out.String())
-	}
-	if _, err := os.Stat(output); !os.IsNotExist(err) {
-		t.Fatal("check-config wrote event output")
 	}
 }
 
@@ -120,27 +115,13 @@ func TestLiveReloadAddFailureIsAtomic(t *testing.T) {
 	}
 }
 
-func TestEventOutputFlushesAndSharedEventsReachHeadlessLog(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "events.jsonl")
-	var errOut bytes.Buffer
-	sink, closeOutput, err := startEventOutput(path, &errOut)
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestHealthTransitionsReachTheLog(t *testing.T) {
 	target := stats.NewTargetStats("router")
 	logs := make(chan string, 16)
-	s := newSupervisor(supervisorConfig{targets: []*stats.TargetStats{target}, logCh: logs, eventSink: sink})
+	newSupervisor(supervisorConfig{targets: []*stats.TargetStats{target}, logCh: logs})
 	target.OnSuccess(time.Millisecond, 64)
 	for range 3 {
 		target.OnFailure("timeout")
-	}
-	closeOutput()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Contains(data, []byte(`"kind":"health"`)) || !bytes.Contains(data, []byte(`"count":3`)) || errOut.Len() != 0 {
-		t.Fatalf("output %s; err %s", data, errOut.String())
 	}
 	found := false
 	for len(logs) > 0 {
@@ -151,7 +132,6 @@ func TestEventOutputFlushesAndSharedEventsReachHeadlessLog(t *testing.T) {
 	if !found {
 		t.Fatal("the TUI Log did not receive the backend health transition")
 	}
-	_ = s
 }
 
 func TestWebStopRestartAndReportUseSupervisorWithoutReset(t *testing.T) {

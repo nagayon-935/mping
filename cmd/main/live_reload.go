@@ -18,8 +18,6 @@ func probeConfig(cfg config) config {
 	cfg.thresholds = stats.Thresholds{}
 	cfg.healthFailures, cfg.healthRecoveries, cfg.healthWindow = 0, 0, 0
 	cfg.webEnabled, cfg.webPort, cfg.checkConfig = false, 0, false
-	cfg.eventOutput = ""
-	cfg.outputFile = ""
 	cfg.duration = 0 // startup deadline is intentionally session-wide
 	return cfg
 }
@@ -94,9 +92,7 @@ func (s *supervisor) reloadLive(cfg config, specs []targetSpec, groups []ui.Targ
 		}
 		previous := s.cfg.config
 		s.cfg.config = cfg
-		// Startup-only writers/servers keep their actual configuration in reports.
-		s.cfg.config.eventOutput = previous.eventOutput
-		s.cfg.config.outputFile = previous.outputFile
+		// The startup-only web server keeps its actual configuration in reports.
 		s.cfg.config.webEnabled, s.cfg.config.webPort = previous.webEnabled, previous.webPort
 		s.cfg.config.duration = previous.duration
 		for i, t := range targets {
@@ -121,17 +117,8 @@ func (s *supervisor) reloadLive(cfg config, specs []targetSpec, groups []ui.Targ
 		if len(added) > 0 {
 			s.clearFinished()
 		}
-		for _, change := range []struct {
-			changed bool
-			name    string
-		}{
-			{cfg.eventOutput != previous.eventOutput, "event-output"},
-			{cfg.outputFile != previous.outputFile, "CSV output"},
-			{cfg.duration != previous.duration, "duration limit"},
-		} {
-			if change.changed {
-				reason += change.name + " changes require restarting mping. "
-			}
+		if cfg.duration != previous.duration {
+			reason += "duration limit changes require restarting mping. "
 		}
 		if warning := checkWebReloadDrift(previous, cfg); warning != "" {
 			reason += " " + warning

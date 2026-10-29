@@ -75,7 +75,6 @@ type Document struct {
 	Groups              []Group     `yaml:"groups"`
 	IntervalMs          *int        `yaml:"interval"`
 	TimeoutMs           *int        `yaml:"timeout"`
-	OutputFile          *string     `yaml:"output"`
 	IfaceName           *string     `yaml:"interface"`
 	SourceAddr          *string     `yaml:"source"`
 	PacketSize          *int        `yaml:"size"`
@@ -88,7 +87,6 @@ type Document struct {
 	Ipv6Only            *bool       `yaml:"ipv6"`
 	PortSpecs           []string    `yaml:"port"`
 	HTTPURLs            []string    `yaml:"http"`
-	JsonOutput          *string     `yaml:"json-output"`
 	Mtr                 *bool       `yaml:"mtr"`
 	DNSServer           *string     `yaml:"dns-server"`
 	ResolveAll          *bool       `yaml:"resolve-all"`
@@ -99,7 +97,6 @@ type Document struct {
 	HealthFailures      *int        `yaml:"health-failures"`
 	HealthRecoveries    *int        `yaml:"health-recoveries"`
 	HealthWindow        *string     `yaml:"health-window"`
-	EventOutput         *string     `yaml:"event-output"`
 	HTTPFollowRedirects *bool       `yaml:"http-follow-redirects"`
 }
 
@@ -107,9 +104,12 @@ type Document struct {
 // user whose file still has them. They are rejected by name so the error
 // says the setting was removed, not that it was mistyped.
 var removedSettings = map[string]string{
-	"dscp":        "DSCP marking is no longer supported; delete the key",
-	"http-status": "HTTP checks always treat 200-399 as up; delete the key",
-	"http-header": "custom HTTP request headers are no longer supported; delete the key",
+	"dscp":         "DSCP marking is no longer supported; delete the key",
+	"http-status":  "HTTP checks always treat 200-399 as up; delete the key",
+	"http-header":  "custom HTTP request headers are no longer supported; delete the key",
+	"output":       "save a statistics snapshot from the TUI or the Web UI instead; delete the key",
+	"json-output":  "save a statistics snapshot from the TUI or the Web UI instead; delete the key",
+	"event-output": "save a statistics snapshot from the TUI or the Web UI instead; delete the key",
 }
 
 // checkRemovedSettings rejects a document that still uses a removed

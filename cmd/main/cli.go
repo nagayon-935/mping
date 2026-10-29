@@ -27,7 +27,6 @@ type thresholdFlags struct {
 func registerFlags(fs *pflag.FlagSet, cfg *config, th *thresholdFlags) {
 	fs.IntVarP(&cfg.intervalMs, "interval", "i", 1000, "ping interval in ms")
 	fs.IntVarP(&cfg.timeoutMs, "timeout", "t", 1000, "ping timeout in ms")
-	fs.StringVarP(&cfg.outputFile, "output", "o", "", "log output file path (csv format)")
 	fs.StringVarP(&cfg.hostsFile, "file", "f", "", "hosts YAML file, or a NetBox IP addresses CSV export")
 	fs.BoolVarP(&cfg.mtuEnabled, "discovery-mtu", "m", false, "discover maximum payload size using DF probes (IPv4 only)")
 	fs.BoolVarP(&cfg.trace, "traceroute", "T", false, "show each target's route, rediscovered every 10 minutes (not with -M)")
@@ -42,7 +41,6 @@ func registerFlags(fs *pflag.FlagSet, cfg *config, th *thresholdFlags) {
 	fs.BoolVarP(&cfg.ipv6Only, "ipv6", "6", false, "force IPv6 only")
 	fs.StringSliceVarP(&cfg.portSpecs, "port", "p", nil, "port(s) to check, e.g. 443/tcp,53/udp or 443 (defaults to tcp)")
 	fs.StringSliceVarP(&cfg.httpURLs, "http", "H", nil, "URL(s) to health-check, e.g. https://example.com/health (comma-separated or repeated)")
-	fs.StringVarP(&cfg.jsonOutputFile, "json-output", "j", "", "write JSON statistics snapshot to this file (updated every 5s)")
 	fs.BoolVarP(&cfg.mtr, "mtr", "M", false, "show each target's route and probe every hop each second, MTR-style (not with -T)")
 	fs.StringVarP(&cfg.dnsServer, "dns-server", "d", "", "custom DNS server IP to use for hostname resolution")
 	fs.BoolVar(&cfg.resolveAll, "resolve-all", false, "resolve target hostname to all IP addresses and monitor them concurrently")
@@ -52,7 +50,6 @@ func registerFlags(fs *pflag.FlagSet, cfg *config, th *thresholdFlags) {
 	fs.IntVar(&cfg.healthFailures, "health-failures", 3, "consecutive failures before declaring a target down")
 	fs.IntVar(&cfg.healthRecoveries, "health-recoveries", 2, "consecutive replies required to clear a down state")
 	fs.DurationVar(&cfg.healthWindow, "health-window", time.Minute, "recent loss window (1s-1h)")
-	fs.StringVar(&cfg.eventOutput, "event-output", "", "append structured measurement events to a JSONL file")
 	fs.BoolVar(&cfg.httpFollowRedirects, "http-follow-redirects", true, "follow HTTP redirects (up to 10)")
 
 	fs.IntVar(&th.rttWarnMs, "rtt-warn", 50, "RTT warn threshold in ms (orange)")
@@ -66,11 +63,21 @@ func registerFlags(fs *pflag.FlagSet, cfg *config, th *thresholdFlags) {
 // removedFlags maps deleted long flags to the reason shown when a script still
 // passes one; pflag alone would only report "unknown flag".
 var removedFlags = map[string]string{
-	"dscp":        "DSCP marking is no longer supported",
-	"http-status": "HTTP checks always treat 200-399 as up",
-	"http-header": "custom HTTP request headers are no longer supported",
-	"no-tui":      "mping always runs with the terminal UI",
+	"dscp":         "DSCP marking is no longer supported",
+	"http-status":  "HTTP checks always treat 200-399 as up",
+	"http-header":  "custom HTTP request headers are no longer supported",
+	"no-tui":       "mping always runs with the terminal UI",
+	"output":       snapshotInstead,
+	"json-output":  snapshotInstead,
+	"event-output": snapshotInstead,
 }
+
+// snapshotInstead points users of the removed continuous outputs to the
+// on-demand snapshot.
+const snapshotInstead = "save a statistics snapshot with the w key or the Web UI's Report button instead"
+
+// removedShorthands maps the short forms of removed flags to their long names.
+var removedShorthands = map[byte]string{'o': "output", 'j': "json-output"}
 
 // removedFlagError returns an error naming the first removed flag in args,
 // or nil. It only runs after pflag rejected args, so a removed flag's name
@@ -79,6 +86,12 @@ func removedFlagError(args []string) error {
 	for _, arg := range args {
 		if arg == "--" {
 			return nil
+		}
+		if len(arg) > 1 && arg[0] == '-' && arg[1] != '-' {
+			if name, ok := removedShorthands[arg[1]]; ok {
+				return fmt.Errorf("-%c/--%s was removed: %s", arg[1], name, removedFlags[name])
+			}
+			continue
 		}
 		name, ok := strings.CutPrefix(arg, "--")
 		if !ok {

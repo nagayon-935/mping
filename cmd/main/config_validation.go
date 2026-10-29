@@ -61,10 +61,7 @@ func validateMergedHosts(cfg config, hosts []hostsfile.Entry, groups []hostsfile
 			return fmt.Errorf("invalid port spec %q: %w", raw, err)
 		}
 	}
-	if err := validateBinding(cfg); err != nil {
-		return err
-	}
-	return validateOutputPaths(cfg)
+	return validateBinding(cfg)
 }
 
 // validateHostEntries checks the rules shared by grouped and ungrouped hosts.

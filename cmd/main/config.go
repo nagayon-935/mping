@@ -14,27 +14,25 @@ import (
 func (c config) routeEnabled() bool { return c.trace || c.mtr }
 
 type config struct {
-	intervalMs     int
-	timeoutMs      int
-	outputFile     string
-	hostsFile      string
-	ifaceName      string
-	sourceAddr     string
-	packetSize     int
-	count          int
-	mtuEnabled     bool
-	trace          bool
-	asnEnabled     bool
-	ptrEnabled     bool
-	ipv4Only       bool
-	ipv6Only       bool
-	portSpecs      []string
-	httpURLs       []string
-	jsonOutputFile string
-	mtr            bool
-	dnsServer      string
-	resolveAll     bool
-	duration       time.Duration
+	intervalMs int
+	timeoutMs  int
+	hostsFile  string
+	ifaceName  string
+	sourceAddr string
+	packetSize int
+	count      int
+	mtuEnabled bool
+	trace      bool
+	asnEnabled bool
+	ptrEnabled bool
+	ipv4Only   bool
+	ipv6Only   bool
+	portSpecs  []string
+	httpURLs   []string
+	mtr        bool
+	dnsServer  string
+	resolveAll bool
+	duration   time.Duration
 	// webEnabled/webPort control the loopback-only browser dashboard. Like
 	// --duration they are read once at startup: a YAML reload does not
 	// start, stop or move the web server.
@@ -48,7 +46,6 @@ type config struct {
 	thresholds                       stats.Thresholds
 	healthFailures, healthRecoveries int
 	healthWindow                     time.Duration
-	eventOutput                      string
 	checkConfig                      bool
 	httpFollowRedirects              bool
 }
@@ -60,7 +57,6 @@ type config struct {
 func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsfile.Document) ([]hostsfile.Entry, []hostsfile.Group, config, error) {
 	syncField(fs, "interval", doc.IntervalMs, &cfg.intervalMs)
 	syncField(fs, "timeout", doc.TimeoutMs, &cfg.timeoutMs)
-	syncField(fs, "output", doc.OutputFile, &cfg.outputFile)
 	syncField(fs, "interface", doc.IfaceName, &cfg.ifaceName)
 	syncField(fs, "source", doc.SourceAddr, &cfg.sourceAddr)
 	syncField(fs, "size", doc.PacketSize, &cfg.packetSize)
@@ -73,7 +69,6 @@ func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsfile.Document) ([]hos
 	syncField(fs, "ipv6", doc.Ipv6Only, &cfg.ipv6Only)
 	syncSlice(fs, "port", doc.PortSpecs, &cfg.portSpecs)
 	syncSlice(fs, "http", doc.HTTPURLs, &cfg.httpURLs)
-	syncField(fs, "json-output", doc.JsonOutput, &cfg.jsonOutputFile)
 	syncField(fs, "mtr", doc.Mtr, &cfg.mtr)
 	syncField(fs, "dns-server", doc.DNSServer, &cfg.dnsServer)
 	syncField(fs, "resolve-all", doc.ResolveAll, &cfg.resolveAll)
@@ -81,7 +76,6 @@ func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsfile.Document) ([]hos
 	syncField(fs, "web-port", doc.WebPort, &cfg.webPort)
 	syncField(fs, "health-failures", doc.HealthFailures, &cfg.healthFailures)
 	syncField(fs, "health-recoveries", doc.HealthRecoveries, &cfg.healthRecoveries)
-	syncField(fs, "event-output", doc.EventOutput, &cfg.eventOutput)
 	syncField(fs, "http-follow-redirects", doc.HTTPFollowRedirects, &cfg.httpFollowRedirects)
 	if err := syncDuration(fs, "health-window", doc.HealthWindow, &cfg.healthWindow); err != nil {
 		return nil, nil, cfg, err

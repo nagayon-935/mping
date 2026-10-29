@@ -39,7 +39,7 @@ func TestMakePingerFactory_SetsInterface(t *testing.T) {
 				return created
 			}
 
-			factory := makePingerFactory(nil, pinger.Options{}, tt.cfg, tt.bindIP, nil)
+			factory := makePingerFactory(nil, pinger.Options{}, tt.cfg, tt.bindIP)
 			factory(56)
 
 			if created == nil {

@@ -52,14 +52,6 @@ func TestFileOperationsCallAsRealUser(t *testing.T) {
 		name string
 		run  func() error
 	}{
-		{name: "CSV log", run: func() error {
-			f, err := setupLogger(filepath.Join(dir, "log.csv"))
-			if err == nil {
-				f.Close()
-			}
-			return err
-		}},
-		{name: "JSON snapshot", run: func() error { return writeJSONSnapshot(filepath.Join(dir, "snap.json"), nil, nil) }},
 		{name: "report", run: func() error {
 			return writeReportFile(filepath.Join(dir, "report.json"), "json", report.Report{})
 		}},
@@ -85,27 +77,6 @@ func TestFileOperationsCallAsRealUser(t *testing.T) {
 // callback skipped, nothing may be written. Hosts and include files are
 // covered by internal/hostsfile's own tests.
 func TestFileOperationsDoAllIOInsideAsRealUser(t *testing.T) {
-	t.Run("CSV log is not created", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "log.csv")
-		skipAsRealUser(t)
-
-		if f, _ := setupLogger(path); f != nil {
-			f.Close()
-		}
-
-		assertNotExist(t, path)
-	})
-	t.Run("JSON snapshot is not written", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "snap.json")
-		skipAsRealUser(t)
-
-		if err := writeJSONSnapshot(path, nil, nil); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		assertNotExist(t, path)
-		assertNotExist(t, path+".tmp")
-	})
 	t.Run("report is not written", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "report.json")
 		skipAsRealUser(t)
@@ -134,31 +105,6 @@ func TestSupervisorSaveReportWritesAsRealUser(t *testing.T) {
 	assertNotExist(t, path)
 }
 
-func TestSupervisorSaveReportResolvesPathAsRealUser(t *testing.T) {
-	dir := t.TempDir()
-	reserved := filepath.Join(dir, "live.json")
-	s := newSupervisor(supervisorConfig{
-		targets:         []*stats.TargetStats{stats.NewTargetStats("base")},
-		specs:           []targetSpec{{Host: "base"}},
-		reservedOutputs: []string{reserved},
-	})
-	s.Start()
-	t.Cleanup(s.Shutdown)
-	calls := recordAsRealUser(t)
-
-	err := s.saveReport(reserved, "json", 0)
-
-	if err == nil {
-		t.Fatal("reserved path accepted")
-	}
-	// Rejected before any write: the only asRealUser call is the symlink
-	// resolution of the requested path, which would otherwise probe the
-	// filesystem with root's permissions.
-	if *calls == 0 {
-		t.Fatal("report path was resolved outside asRealUser")
-	}
-}
-
 func TestFileOperationsFailWhenPrivilegesCannotBeDropped(t *testing.T) {
 	swapAsRealUser(t, func(func() error) error { return errors.New("drop privileges: operation not permitted") })
 	dir := t.TempDir()
@@ -167,8 +113,6 @@ func TestFileOperationsFailWhenPrivilegesCannotBeDropped(t *testing.T) {
 		name string
 		run  func() error
 	}{
-		{name: "CSV log", run: func() error { _, err := setupLogger(filepath.Join(dir, "log.csv")); return err }},
-		{name: "JSON snapshot", run: func() error { return writeJSONSnapshot(filepath.Join(dir, "s.json"), nil, nil) }},
 		{name: "report", run: func() error {
 			return writeReportFile(filepath.Join(dir, "r.json"), "json", report.Report{})
 		}},

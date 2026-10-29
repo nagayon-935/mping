@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"slices"
 	"sync"
 	"time"
@@ -85,14 +84,12 @@ func parseAndLoadHosts(args []string, out, errOut io.Writer) (p startupParams, e
 }
 
 // runEnv holds the one-time (non-reloadable) environment run() needs for the
-// lifetime of the process: network family, source IP, log file, and parsed
-// port specs.
+// lifetime of the process: network family, source IP and parsed port specs.
 type runEnv struct {
 	resNetwork string
 	bindIP     string
 	dispV4     string
 	dispV6     string
-	logFile    *os.File
 	portSpecs  []pinger.PortSpec
 }
 
@@ -112,13 +109,6 @@ func prepareRunEnv(cfg config, hosts []targetSpec, out, errOut io.Writer) (env r
 	if cfg.ifaceName != "" && bindIP != "" {
 		fmt.Fprintf(out, "Binding to interface %s (%s)\n", cfg.ifaceName, bindIP)
 	}
-
-	logFile, err := setupLogger(cfg.outputFile)
-	if err != nil {
-		fmt.Fprintf(errOut, "Error opening log file: %v\n", err)
-		return runEnv{}, 1, false
-	}
-	env.logFile = logFile
 
 	for _, raw := range cfg.portSpecs {
 		spec, err := pinger.ParsePortSpec(raw)
@@ -249,34 +239,6 @@ func startWatcher(hostsFile string, onFileChange func(), logCh chan<- string) (c
 	return cancelFn, innerDone
 }
 
-// startLiveJSONWriter launches the periodic JSON snapshot writer goroutine when
-// path is set. When it isn't, it still returns a valid cancel func (safe to
-// call unconditionally) and a pre-closed done channel.
-func startLiveJSONWriter(path string, targets func() []*stats.TargetStats, httpResults func() []*stats.HTTPCheckResult, errOut io.Writer) (cancel func(), done chan struct{}) {
-	ctx, cancelFn := context.WithCancel(context.Background())
-	doneCh := make(chan struct{})
-	if path == "" {
-		close(doneCh)
-		return cancelFn, doneCh
-	}
-	go func() {
-		defer close(doneCh)
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if err := writeJSONSnapshot(path, targets(), httpResults()); err != nil {
-					fmt.Fprintf(errOut, "Warning: JSON snapshot write failed: %v\n", err)
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return cancelFn, doneCh
-}
-
 // watchDurationLimit arms sig to fire once durationCtx's deadline elapses,
 // converging --duration onto the same ExternalCloseCh shutdown path a YAML
 // reload already uses (see reload_coordinator.go): this function never calls
@@ -390,21 +352,10 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 	return opts
 }
 
-// finishIteration performs the standard post-uiRun cleanup: stop the JSON
-// writer, join all measurement producers, write their final snapshot, stop
-// the command loop, and join the file watcher.
-//
-// Terminate before exporting so the final snapshot includes every completed
-// measurement. Shutdown also terminates defensively and joins the loop.
-func finishIteration(cfg config, targets []*stats.TargetStats, sup *supervisor, errOut io.Writer, jsonCancel func(), jsonDone chan struct{}, watchCancel func(), watchDone chan struct{}) {
-	jsonCancel()
-	<-jsonDone
+// finishIteration performs the standard post-uiRun cleanup: join all
+// measurement producers, stop the command loop, and join the file watcher.
+func finishIteration(sup *supervisor, watchCancel func(), watchDone chan struct{}) {
 	_ = sup.do(cmdTerminate)
-	if cfg.jsonOutputFile != "" {
-		if err := writeJSONSnapshot(cfg.jsonOutputFile, targets, sup.httpResults()); err != nil {
-			fmt.Fprintf(errOut, "Warning: Final JSON snapshot write failed: %v\n", err)
-		}
-	}
 	sup.Shutdown()
 	watchCancel()
 	<-watchDone

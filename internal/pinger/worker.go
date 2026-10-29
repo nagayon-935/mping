@@ -64,7 +64,6 @@ func (p *Pinger) sendProbeWithStats(t *stats.TargetStats, probe stats.Probe, id,
 	if err != nil {
 		errMsg := p.applyLastErrSource(err.Error())
 		probe.OnFailure(errMsg)
-		p.log(t, seq, "SendError", 0, 0, err.Error())
 		return time.Time{}, false
 	}
 
@@ -72,12 +71,11 @@ func (p *Pinger) sendProbeWithStats(t *stats.TargetStats, probe stats.Probe, id,
 	return start, true
 }
 
-// pendingProbe tracks one in-flight probe: the logical (unbounded) seq used
-// for CSV logging, and the time it was sent (for RTT and expiry).
+// pendingProbe tracks one in-flight probe: the time it was sent (for RTT and
+// expiry) and the statistics generation it belongs to.
 type pendingProbe struct {
-	logicalSeq int
-	start      time.Time
-	stats      stats.Probe
+	start time.Time
+	stats stats.Probe
 }
 
 // resolutionKind records how a wire seq was most recently resolved, so a
@@ -96,15 +94,11 @@ const (
 )
 
 // recentEntry is one record in recentSeqHistory: how wireSeq was resolved,
-// its logical seq (for CSV logging, matching pendingProbe.logicalSeq), and
-// the original send time (for the same RTT fallback runTargetWorker's normal
-// success path uses when no payload-embedded timestamp is available).
+// and the statistics generation it belongs to.
 type recentEntry struct {
-	wireSeq    int
-	logicalSeq int
-	kind       resolutionKind
-	start      time.Time
-	stats      stats.Probe
+	wireSeq int
+	kind    resolutionKind
+	stats   stats.Probe
 }
 
 // recentSeqHistory is a small, size-bounded FIFO cache mapping a
@@ -134,11 +128,11 @@ func newRecentSeqHistory() *recentSeqHistory {
 // already-present wireSeq (not expected in normal operation -- a given wire
 // seq is only resolved once per generation -- but handled safely) replaces
 // its entry and moves it to the back as the newest.
-func (h *recentSeqHistory) record(wireSeq, logicalSeq int, kind resolutionKind, start time.Time, probe stats.Probe) {
+func (h *recentSeqHistory) record(wireSeq int, kind resolutionKind, probe stats.Probe) {
 	if el, ok := h.index[wireSeq]; ok {
 		h.order.Remove(el)
 	}
-	el := h.order.PushBack(recentEntry{wireSeq: wireSeq, logicalSeq: logicalSeq, kind: kind, start: start, stats: probe})
+	el := h.order.PushBack(recentEntry{wireSeq: wireSeq, kind: kind, stats: probe})
 	h.index[wireSeq] = el
 
 	for h.order.Len() > recentSeqHistoryCap {
@@ -314,7 +308,7 @@ func (p *Pinger) runTargetWorker(t *stats.TargetStats, id int, interval, timeout
 			probe := t.NewProbe()
 			start, ok := p.sendProbeWithStats(t, probe, id, seq, payload, dstAddr)
 			if ok {
-				unacked[seq&seqMask] = pendingProbe{logicalSeq: seq, start: start, stats: probe}
+				unacked[seq&seqMask] = pendingProbe{start: start, stats: probe}
 				rearmSweepTimer(sweepTimer, unacked, timeout)
 				replyCh = ch
 			}
@@ -351,7 +345,6 @@ func (p *Pinger) settleReply(t *stats.TargetStats, reply Reply, unacked map[int]
 		delete(unacked, reply.Seq)
 		if reply.Err != "" {
 			pend.stats.OnFailure(reply.Err)
-			p.log(t, pend.logicalSeq, "ICMPError", 0, 0, reply.Err)
 		} else {
 			// Prefer the RTT the receiver goroutine computed from the
 			// payload-embedded send timestamp (see handleEchoReply):
@@ -367,21 +360,16 @@ func (p *Pinger) settleReply(t *stats.TargetStats, reply Reply, unacked map[int]
 				rtt = time.Since(pend.start)
 			}
 			pend.stats.OnSuccess(rtt, reply.TTL)
-			p.log(t, pend.logicalSeq, "OK", rtt, reply.TTL, "")
 		}
 		// Remember how this wire seq was resolved so a further reply
 		// for it (a genuine network-level duplicate) can be
 		// classified as a DUP below instead of silently discarded.
-		hist.record(reply.Seq, pend.logicalSeq, resolvedAcked, pend.start, pend.stats)
+		hist.record(reply.Seq, resolvedAcked, pend.stats)
 		return true
 	}
 	if entry, foundHist := hist.lookup(reply.Seq); foundHist {
 		// No `unacked` entry, but this wire seq was recently
 		// resolved: classify instead of silently discarding.
-		rtt := reply.RTT
-		if rtt <= 0 {
-			rtt = time.Since(entry.start)
-		}
 		switch entry.kind {
 		case resolvedAcked:
 			// A second reply for an already-resolved seq: a
@@ -390,14 +378,12 @@ func (p *Pinger) settleReply(t *stats.TargetStats, reply Reply, unacked map[int]
 			// see TargetStats.Duplicates' doc -- so the loss rate
 			// isn't understated.
 			entry.stats.OnDuplicate()
-			p.log(t, entry.logicalSeq, "DUP", rtt, reply.TTL, "")
 		case resolvedTimeout:
 			// Arrived after its probe was already swept as a loss:
 			// the target is slow but reachable, not truly dropping
 			// this probe. The Loss already recorded stands; see
 			// TargetStats.LateReplies' doc.
 			entry.stats.OnLateReply()
-			p.log(t, entry.logicalSeq, "LateReply", rtt, reply.TTL, "")
 		}
 	}
 	// A reply matching neither `unacked` nor recent history is for a
@@ -415,11 +401,10 @@ func (p *Pinger) sweepTimeouts(t *stats.TargetStats, unacked map[int]pendingProb
 			delete(unacked, wireSeq)
 			errMsg := p.applyLastErrSource("Timeout")
 			pend.stats.OnFailure(errMsg)
-			p.log(t, pend.logicalSeq, "Timeout", 0, 0, "Request timed out")
 			// Remember this seq timed out so a reply that shows up
 			// later is classified as a late arrival by settleReply,
 			// instead of silently discarded.
-			hist.record(wireSeq, pend.logicalSeq, resolvedTimeout, pend.start, pend.stats)
+			hist.record(wireSeq, resolvedTimeout, pend.stats)
 		}
 	}
 }

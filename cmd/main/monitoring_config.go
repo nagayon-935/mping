@@ -52,22 +52,6 @@ func validateBinding(cfg config) error {
 	return nil
 }
 
-func validateOutputPaths(cfg config) error {
-	paths := []string{cfg.outputFile, cfg.jsonOutputFile, cfg.eventOutput, cfg.hostsFile}
-	seen := map[string]bool{}
-	for _, path := range paths {
-		if path == "" {
-			continue
-		}
-		canonical := canonicalOutputPath(path)
-		if seen[canonical] {
-			return fmt.Errorf("output and configuration files must use different paths")
-		}
-		seen[canonical] = true
-	}
-	return nil
-}
-
 func printCheckedConfig(out io.Writer, sp startupParams) error {
 	overrides := []string{}
 	sp.fs.Visit(func(f *pflag.Flag) { overrides = append(overrides, f.Name) })
@@ -105,7 +89,6 @@ func printCheckedConfig(out io.Writer, sp startupParams) error {
 			"health_window": cfg.healthWindow.String(),
 			"thresholds":    thresholdsMap(cfg.thresholds),
 			"web":           cfg.webEnabled, "web_port": cfg.webPort,
-			"output": cfg.outputFile, "json_output": cfg.jsonOutputFile, "event_output": cfg.eventOutput,
 		},
 	})
 }

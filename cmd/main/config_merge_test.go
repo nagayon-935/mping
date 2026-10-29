@@ -131,7 +131,6 @@ hosts:
   - example.com
 interval: 2000
 timeout: 3000
-output: log.csv
 interface: eth0
 source: 10.0.0.1
 size: 100
@@ -153,7 +152,6 @@ port:
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	fs.Int("interval", 1000, "")
 	fs.Int("timeout", 1000, "")
-	fs.String("output", "", "")
 	fs.String("interface", "", "")
 	fs.String("source", "", "")
 	fs.Int("size", 56, "")
@@ -178,9 +176,6 @@ port:
 	}
 	if gotCfg.timeoutMs != 3000 {
 		t.Errorf("timeoutMs: got %d", gotCfg.timeoutMs)
-	}
-	if gotCfg.outputFile != "log.csv" {
-		t.Errorf("outputFile: got %q", gotCfg.outputFile)
 	}
 	if gotCfg.ifaceName != "eth0" {
 		t.Errorf("ifaceName: got %q", gotCfg.ifaceName)

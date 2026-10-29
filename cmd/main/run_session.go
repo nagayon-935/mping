@@ -18,8 +18,6 @@ import (
 type session struct {
 	errOut    io.Writer
 	startup   config // as started; startup-only settings are read from here
-	logWriter io.Writer
-	eventSink func(string, stats.Event)
 	webSrc    *web.Source
 	webSrv    *web.Server
 	runUI     func(ui.RunOptions) error
@@ -122,7 +120,7 @@ func (s *session) startIteration(first bool) (*iteration, bool) {
 	pingerFactory := func(targets []*stats.TargetStats, specs []targetSpec) func(size int) pingerController {
 		opts := buildPingerOptions(cfg, env.resNetwork, customResolver, specs)
 		opts.IDs = s.ids
-		return makePingerFactory(targets, opts, cfg, env.bindIP, s.logWriter)
+		return makePingerFactory(targets, opts, cfg, env.bindIP)
 	}
 
 	ifaceMTU, mtuErr := getInterfaceMTU(cfg.ifaceName, env.bindIP, hosts[0].resolveAddr())
@@ -142,8 +140,7 @@ func (s *session) startIteration(first bool) (*iteration, bool) {
 		specs:      hosts, groups: s.groups, config: cfg,
 		startedAt: s.startedAt, sourceIPv4: env.dispV4, sourceIPv6: env.dispV6,
 		durationLimit: s.startup.duration, durationDeadline: s.durationDeadline,
-		network: env.resNetwork, reservedOutputs: []string{s.startup.outputFile, cfg.jsonOutputFile, s.startup.eventOutput},
-		eventSink: s.eventSink,
+		network: env.resNetwork,
 		makeTargetPinger: func(size int, targets []*stats.TargetStats, specs []targetSpec) pingerController {
 			return pingerFactory(targets, specs)(size)
 		},
@@ -186,7 +183,6 @@ func (s *session) runUIUntilDone(it *iteration) bool {
 	s.rc.tryLive = sup.reloadLive
 	onFileChange := func() { s.rc.requestFileReload(sig, cfg.hostsFile, it.logCh) }
 	watchCancel, watchDone := startWatcher(cfg.hostsFile, onFileChange, it.logCh)
-	jsonCancel, jsonDone := startLiveJSONWriter(cfg.jsonOutputFile, func() []*stats.TargetStats { return sup.liveTargets().Targets }, sup.httpResults, s.errOut)
 
 	// The duration watch converges --duration onto the same sig /
 	// ExternalCloseCh path as a reload: it requests no reload, so once the UI
@@ -222,7 +218,7 @@ func (s *session) runUIUntilDone(it *iteration) bool {
 		s.webSrc.MarkStopped()
 		fmt.Fprintf(s.errOut, "Error running application: %v\n", uiErr)
 	}
-	finishIteration(cfg, s.targets, sup, s.errOut, jsonCancel, jsonDone, watchCancel, watchDone)
+	finishIteration(sup, watchCancel, watchDone)
 	return uiErr == nil
 }
 
@@ -237,13 +233,5 @@ func (s *session) prepareReload() bool {
 	s.webSrc.MarkReloading()
 	s.pendingWarnings = reloadWarnings(s.startup, s.cfg, s.activePortSpecsRaw, expandWarning)
 	s.activePortSpecsRaw = append([]string(nil), s.cfg.portSpecs...)
-	if s.cfg.outputFile != s.startup.outputFile {
-		s.pendingWarnings = append(s.pendingWarnings, "CSV output changes require restarting mping; continuing the startup writer.")
-		s.cfg.outputFile = s.startup.outputFile
-	}
-	if s.cfg.eventOutput != s.startup.eventOutput {
-		s.pendingWarnings = append(s.pendingWarnings, "event-output changes require restarting mping; continuing the startup writer.")
-		s.cfg.eventOutput = s.startup.eventOutput
-	}
 	return true
 }

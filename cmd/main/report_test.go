@@ -93,11 +93,10 @@ func TestReportKeepsRemovedIdentityAndActualSettings(t *testing.T) {
 	}
 }
 
-func TestReportBoundsArchiveAndRejectsActiveWriterPaths(t *testing.T) {
+func TestReportBoundsArchiveAndKeepsExistingFiles(t *testing.T) {
 	dir := t.TempDir()
-	reserved := filepath.Join(dir, "live.json")
 	base := stats.NewTargetStats("base")
-	s := newSupervisor(supervisorConfig{targets: []*stats.TargetStats{base}, specs: []targetSpec{{Host: "base"}}, reservedOutputs: []string{reserved}})
+	s := newSupervisor(supervisorConfig{targets: []*stats.TargetStats{base}, specs: []targetSpec{{Host: "base"}}})
 	s.Start()
 	t.Cleanup(s.Shutdown)
 	if err := s.editTargets(func(s *supervisor) error {
@@ -112,22 +111,12 @@ func TestReportBoundsArchiveAndRejectsActiveWriterPaths(t *testing.T) {
 	if len(r.RemovedTargets) != maxRemovedTargets || r.RemovedTargetsDropped != 3 {
 		t.Fatal("archive retention was not reported")
 	}
-	if err := s.saveReport(reserved, "json", 0); err == nil {
-		t.Fatal("active output path accepted")
-	}
-	alias := filepath.Join(dir, "alias")
-	if err := os.Symlink(dir, alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.saveReport(filepath.Join(alias, "live.json"), "text", 0); err == nil {
-		t.Fatal("aliased active output path accepted")
-	}
-	if _, err := os.Stat(reserved); !os.IsNotExist(err) {
-		t.Fatal("reserved path was created")
-	}
 	path := filepath.Join(dir, "report.json")
 	if err := s.saveReport(path, "json", 0); err != nil {
 		t.Fatal(err)
+	}
+	if err := s.saveReport(path, "json", 0); err == nil {
+		t.Fatal("an existing report was overwritten")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

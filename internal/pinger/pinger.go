@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"math/rand"
 	"net"
 	"os"
@@ -189,8 +188,6 @@ type Pinger struct {
 	traceChansMu sync.RWMutex
 	traceCounter atomic.Uint32 // unique traceID per concurrent call
 
-	LogWriter io.Writer // Optional logger
-
 	ctx      context.Context // lifetime of all context-aware DNS operations
 	cancel   context.CancelFunc
 	done     chan struct{} // Signal to close receiver
@@ -324,24 +321,6 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		lookupAddrContext:  lookupAddrContext,
 		asnJitter:          func() time.Duration { return time.Duration(rand.Int63n(int64(asnJitterMax))) },
 		ptrJitter:          func() time.Duration { return time.Duration(rand.Int63n(int64(ptrJitterMax))) },
-	}
-}
-
-func (p *Pinger) log(t *stats.TargetStats, seq int, status string, rtt time.Duration, ttl int, errMsg string) {
-	if p.LogWriter == nil {
-		return
-	}
-	// CSV format: Timestamp, Host, IP, Seq, Status, RTT(ms), TTL, Error
-	timestamp := p.now().Format(time.RFC3339Nano)
-	rttMs := float64(rtt.Microseconds()) / 1000.0
-
-	host, ip := t.HostAndIP()
-	line := fmt.Sprintf("%s,%s,%s,%d,%s,%.3f,%d,%s\n",
-		timestamp, host, ip, seq, status, rttMs, ttl, errMsg)
-
-	if _, err := p.LogWriter.Write([]byte(line)); err != nil && p.LogWriter != io.Discard {
-		// Best-effort logging; write errors are non-fatal but surfaced via stderr when possible.
-		fmt.Fprintf(os.Stderr, "mping: log write error: %v\n", err)
 	}
 }
 
