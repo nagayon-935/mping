@@ -18,6 +18,23 @@ var canSendPayloadFn = func(ctx context.Context, p *Pinger, dst *net.IPAddr, pay
 	return p.canSendPayload(ctx, dst, payloadLen)
 }
 
+// pmtuRawConn is the subset of *ipv4.RawConn that canSendPayload uses.
+type pmtuRawConn interface {
+	WriteTo(h *ipv4.Header, p []byte, cm *ipv4.ControlMessage) error
+	SetReadDeadline(t time.Time) error
+	ReadFrom(b []byte) (*ipv4.Header, []byte, *ipv4.ControlMessage, error)
+}
+
+// newRawConnFn wraps canSendPayload's socket for header-included writes; a
+// variable so tests can substitute a fake, since a real one needs a raw socket.
+var newRawConnFn = func(c net.PacketConn) (pmtuRawConn, error) {
+	rc, err := ipv4.NewRawConn(c)
+	if err != nil {
+		return nil, err
+	}
+	return rc, nil
+}
+
 // DiscoverMaxPayload performs a binary search to find the maximum ICMP payload
 // size that can be sent to dest without fragmentation (DF flag set).
 // start is the upper bound to probe; min is the lower bound (usually the
@@ -121,7 +138,7 @@ func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloa
 
 	defer closeOnCancel(ctx, func() { _ = c.Close() })()
 
-	rc, err := ipv4.NewRawConn(c)
+	rc, err := newRawConnFn(c)
 	if err != nil {
 		return false, "", err
 	}

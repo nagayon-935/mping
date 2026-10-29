@@ -114,8 +114,12 @@ func (p *Pinger) OpenHopSocketContext(ctx context.Context, dest string) (*HopSoc
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", dest, err)
 	}
-	return p.openHopSocketAddr(dstAddr)
+	return openHopSocketFn(p, dstAddr)
 }
+
+// openHopSocketFn opens a hop socket; a variable so tests can substitute a
+// HopSocket over fake connections, since a real one needs a raw socket.
+var openHopSocketFn = (*Pinger).openHopSocketAddr
 
 func (p *Pinger) openHopSocketAddr(dstAddr *net.IPAddr) (*HopSocket, error) {
 	isV4 := dstAddr.IP.To4() != nil
