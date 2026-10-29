@@ -238,39 +238,22 @@ func (s *supervisor) handle(c command) error {
 		return c.edit(s)
 	case cmdProbesFinished:
 		if s.state == stateRunning && s.p == c.pinger {
-			if dynamic, ok := s.p.(dynamicPinger); ok && !dynamic.WorkersFinished() {
-				return nil
-			}
-			select {
-			case s.finished <- struct{}{}:
-			default:
-			}
-			for _, t := range s.cfg.targets {
-				t.SetMeasurementState("finished")
-			}
+			s.markProbesFinished()
 		}
 		return nil
 	case cmdStart:
-		if s.state == stateTerminated {
+		switch s.state {
+		case stateTerminated:
 			return errSupervisorTerminated
-		}
-		if s.state == stateRunning {
+		case stateRunning:
 			return nil
 		}
 		return s.startAll()
-
 	case cmdStop:
-		if s.state != stateRunning {
-			return nil
+		if s.state == stateRunning {
+			s.stopRunning()
 		}
-		s.tearDownAll()
-		for _, t := range s.cfg.targets {
-			t.SetMeasurementState("stopped")
-			t.RecordEvent("stopped", "Measurements stopped")
-		}
-		s.state = stateStopped
 		return nil
-
 	case cmdRestart:
 		if s.state == stateTerminated {
 			return errSupervisorTerminated
@@ -280,78 +263,103 @@ func (s *supervisor) handle(c command) error {
 			s.state = stateStopped
 		}
 		return s.startAll()
-
 	case cmdResetTrace:
-		if s.state != stateRunning {
-			return nil
-		}
-		s.startTraceroutes(s.p)
-		return nil
-
-	case cmdResetStats:
-		if s.state == stateTerminated {
-			return nil
-		}
-		// Stop route writers before resetting their state. Ping workers keep
-		// their count budget; TargetStats.Reset invalidates their old probes.
-		s.stopTraceroutes()
-		s.stopMTR()
-		for _, t := range s.cfg.targets {
-			t.Reset()
-			if s.state == stateRunning && s.cfg.traceEnabled {
-				t.SetTraceHops(nil)
-			}
-		}
-		if s.state != stateRunning {
-			return nil // a reset never resumes stopped measurements
-		}
-		if s.cfg.traceEnabled {
+		if s.state == stateRunning {
 			s.startTraceroutes(s.p)
 		}
-		if s.cfg.mtrEnabled {
-			s.restartMTR(false)
-		}
-		s.restartPortChecker()
-		s.restartHTTPChecker()
 		return nil
-
+	case cmdResetStats:
+		if s.state != stateTerminated {
+			s.resetAll()
+		}
+		return nil
 	case cmdResetMTR:
-		if s.state != stateRunning {
-			return nil
-		}
-		s.restartMTR(true)
-		return nil
-
-	case cmdResetPort:
-		if s.state != stateRunning {
-			return nil
-		}
-		s.restartPortChecker()
-		return nil
-
-	case cmdResetHTTP:
-		if s.state != stateRunning {
-			return nil
-		}
-		s.restartHTTPChecker()
-		return nil
-
-	case cmdTerminate:
-		if s.state == stateTerminated {
-			return nil
-		}
 		if s.state == stateRunning {
-			s.tearDownAll()
+			s.restartMTR(true)
 		}
-		s.state = stateTerminated
-		for _, t := range s.cfg.targets {
-			if t.MeasurementState() != "finished" {
-				t.SetMeasurementState("stopped")
-			}
+		return nil
+	case cmdResetPort:
+		if s.state == stateRunning {
+			s.restartPortChecker()
+		}
+		return nil
+	case cmdResetHTTP:
+		if s.state == stateRunning {
+			s.restartHTTPChecker()
+		}
+		return nil
+	case cmdTerminate:
+		if s.state != stateTerminated {
+			s.terminate()
 		}
 		return nil
 	}
 	return fmt.Errorf("supervisor: unknown command %d", c.kind)
+}
+
+// markProbesFinished notifies count completion once every worker of the
+// current pinger has sent its last probe.
+func (s *supervisor) markProbesFinished() {
+	if dynamic, ok := s.p.(dynamicPinger); ok && !dynamic.WorkersFinished() {
+		return
+	}
+	select {
+	case s.finished <- struct{}{}:
+	default:
+	}
+	for _, t := range s.cfg.targets {
+		t.SetMeasurementState("finished")
+	}
+}
+
+// stopRunning tears every component down, keeping the statistics.
+func (s *supervisor) stopRunning() {
+	s.tearDownAll()
+	for _, t := range s.cfg.targets {
+		t.SetMeasurementState("stopped")
+		t.RecordEvent("stopped", "Measurements stopped")
+	}
+	s.state = stateStopped
+}
+
+// resetAll clears every target's statistics. While running it also
+// recreates the route, port and HTTP monitors; a reset never resumes
+// stopped measurements.
+func (s *supervisor) resetAll() {
+	// Stop route writers before resetting their state. Ping workers keep
+	// their count budget; TargetStats.Reset invalidates their old probes.
+	s.stopTraceroutes()
+	s.stopMTR()
+	for _, t := range s.cfg.targets {
+		t.Reset()
+		if s.state == stateRunning && s.cfg.traceEnabled {
+			t.SetTraceHops(nil)
+		}
+	}
+	if s.state != stateRunning {
+		return
+	}
+	if s.cfg.traceEnabled {
+		s.startTraceroutes(s.p)
+	}
+	if s.cfg.mtrEnabled {
+		s.restartMTR(false)
+	}
+	s.restartPortChecker()
+	s.restartHTTPChecker()
+}
+
+// terminate ends the supervisor for good: nothing restarts it afterwards.
+func (s *supervisor) terminate() {
+	if s.state == stateRunning {
+		s.tearDownAll()
+	}
+	s.state = stateTerminated
+	for _, t := range s.cfg.targets {
+		if t.MeasurementState() != "finished" {
+			t.SetMeasurementState("stopped")
+		}
+	}
 }
 
 // clearFinished drops a pending count-completion notification so a membership
