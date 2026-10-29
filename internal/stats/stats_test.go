@@ -156,8 +156,17 @@ func TestPortCheckResult_SetAndGetResult(t *testing.T) {
 	if v.Status != "Closed" {
 		t.Errorf("Status: got %q, want %q", v.Status, "Closed")
 	}
+	if v.RTT != 5*time.Millisecond {
+		t.Errorf("RTT (last): got %v, want 5ms", v.RTT)
+	}
+	if v.OpenCount != 1 {
+		t.Errorf("OpenCount: got %d, want 1", v.OpenCount)
+	}
 	if v.ClosedCount != 1 {
 		t.Errorf("ClosedCount: got %d, want 1", v.ClosedCount)
+	}
+	if v.Port != 443 || v.Protocol != "tcp" {
+		t.Errorf("Port/Protocol: got %d/%q, want 443/tcp", v.Port, v.Protocol)
 	}
 }
 
@@ -183,33 +192,24 @@ func TestPortCheckResult_SetResult_LastChange(t *testing.T) {
 func TestPortCheckResult_SetResult_AllStatuses(t *testing.T) {
 	tests := []struct {
 		status          string
-		expectOpenInc   bool
-		expectClosedInc bool
+		wantOpenCount   int
+		wantClosedCount int
 	}{
-		{"Open", true, false},
-		{"Closed", false, true},
-		{"Filtered", false, true},
-		{"Open|Filtered", false, true},
-		{"Error", false, false},
+		{"Open", 1, 0},
+		{"Closed", 0, 1},
+		{"Filtered", 0, 1},
+		{"Open|Filtered", 0, 1},
+		{"Error", 0, 0},
 	}
 	for _, tt := range tests {
-		r := &PortCheckResult{Status: "Checking..."}
-		r.SetResult(tt.status, 0)
-		v := r.GetView()
-		if tt.expectOpenInc && v.OpenCount != 1 {
-			t.Errorf("status %q: OpenCount got %d, want 1", tt.status, v.OpenCount)
-		}
-		if tt.expectClosedInc && v.ClosedCount != 1 {
-			t.Errorf("status %q: ClosedCount got %d, want 1", tt.status, v.ClosedCount)
-		}
-	}
-}
-
-func TestTargetStats_SetIP(t *testing.T) {
-	tgt := NewTargetStats("example.com")
-	tgt.SetIP("1.2.3.4")
-	if tgt.GetView().IP != "1.2.3.4" {
-		t.Errorf("SetIP: got %q, want %q", tgt.GetView().IP, "1.2.3.4")
+		t.Run(tt.status, func(t *testing.T) {
+			r := &PortCheckResult{Status: "Checking..."}
+			r.SetResult(tt.status, 0)
+			v := r.GetView()
+			if v.OpenCount != tt.wantOpenCount || v.ClosedCount != tt.wantClosedCount {
+				t.Errorf("OpenCount/ClosedCount = %d/%d, want %d/%d", v.OpenCount, v.ClosedCount, tt.wantOpenCount, tt.wantClosedCount)
+			}
+		})
 	}
 }
 
@@ -233,38 +233,35 @@ func TestTargetStats_SetTraceHops(t *testing.T) {
 	}
 }
 
-func TestTargetStats_SetIfaceMTU(t *testing.T) {
-	tgt := NewTargetStats("example.com")
-	tgt.SetIfaceMTU(1500)
-	if tgt.GetView().IfaceMTU != 1500 {
-		t.Errorf("SetIfaceMTU: got %d, want 1500", tgt.GetView().IfaceMTU)
-	}
-}
-
-func TestTargetStats_SetPMTU(t *testing.T) {
-	tgt := NewTargetStats("example.com")
-	tgt.SetPMTU(1400)
-	if tgt.GetView().PMTU != 1400 {
-		t.Errorf("SetPMTU: got %d, want 1400", tgt.GetView().PMTU)
-	}
-}
-
-func TestSetPMTUBottleneckIP(t *testing.T) {
+// TestTargetStats_ScalarSetters verifies that each simple setter shows up
+// in the next GetView.
+func TestTargetStats_ScalarSetters(t *testing.T) {
 	tests := []struct {
 		name string
-		ip   string
+		set  func(*TargetStats)
+		got  func(TargetView) any
+		want any
 	}{
-		{"non-empty IP", "10.0.0.1"},
-		{"empty string", ""},
-		{"another IP", "192.168.1.254"},
+		{"SetIP", func(s *TargetStats) { s.SetIP("1.2.3.4") }, func(v TargetView) any { return v.IP }, "1.2.3.4"},
+		{"SetIfaceMTU", func(s *TargetStats) { s.SetIfaceMTU(1500) }, func(v TargetView) any { return v.IfaceMTU }, 1500},
+		{"SetPMTU", func(s *TargetStats) { s.SetPMTU(1400) }, func(v TargetView) any { return v.PMTU }, 1400},
+		{"SetPMTUBottleneckIP", func(s *TargetStats) { s.SetPMTUBottleneckIP("10.0.0.1") }, func(v TargetView) any { return v.PMTUBottleneckIP }, "10.0.0.1"},
+		{
+			"SetPMTUBottleneckIP cleared by an empty string",
+			func(s *TargetStats) { s.SetPMTUBottleneckIP("10.0.0.1"); s.SetPMTUBottleneckIP("") },
+			func(v TargetView) any { return v.PMTUBottleneckIP }, "",
+		},
+		{"SetASNInfo", func(s *TargetStats) { s.SetASNInfo("AS12345", "", "") }, func(v TargetView) any { return v.ASN }, "AS12345"},
+		{"SetPTR", func(s *TargetStats) { s.SetPTR("dns.google") }, func(v TargetView) any { return v.PTR }, "dns.google"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tgt := NewTargetStats("example.com")
-			tgt.SetPMTUBottleneckIP(tt.ip)
-			view := tgt.GetView()
-			if view.PMTUBottleneckIP != tt.ip {
-				t.Errorf("PMTUBottleneckIP: got %q, want %q", view.PMTUBottleneckIP, tt.ip)
+
+			tt.set(tgt)
+
+			if got := tt.got(tgt.GetView()); got != tt.want {
+				t.Errorf("view value = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -309,24 +306,6 @@ func TestTargetStatsFailureAndReset(t *testing.T) {
 	}
 	if view.LastDSCP != 0 {
 		t.Fatalf("Reset did not clear LastDSCP: got %d", view.LastDSCP)
-	}
-}
-
-func TestTargetStats_SetASNInfo(t *testing.T) {
-	tgt := NewTargetStats("example.com")
-	tgt.SetASNInfo("AS12345", "", "")
-	view := tgt.GetView()
-	if view.ASN != "AS12345" {
-		t.Errorf("ASN: got %q, want %q", view.ASN, "AS12345")
-	}
-}
-
-func TestTargetStats_SetPTR(t *testing.T) {
-	tgt := NewTargetStats("example.com")
-	tgt.SetPTR("dns.google")
-	view := tgt.GetView()
-	if view.PTR != "dns.google" {
-		t.Errorf("PTR: got %q, want %q", view.PTR, "dns.google")
 	}
 }
 
@@ -416,6 +395,9 @@ func TestPortCheckResult_RTTStats(t *testing.T) {
 			if view.MaxRTT != tt.wantMax {
 				t.Errorf("MaxRTT: got %v, want %v", view.MaxRTT, tt.wantMax)
 			}
+			if len(view.History) != tt.wantSamples {
+				t.Errorf("History samples: got %d, want %d", len(view.History), tt.wantSamples)
+			}
 		})
 	}
 }
@@ -466,32 +448,6 @@ func TestPortCheckResult_GetView_History(t *testing.T) {
 	})
 }
 
-func TestPortCheckResult_GetView_BackwardCompat(t *testing.T) {
-	r := &PortCheckResult{Port: 443, Protocol: "tcp", Status: "Checking..."}
-	r.SetResult("Open", 10*time.Millisecond)
-	r.SetResult("Closed", 5*time.Millisecond)
-
-	view := r.GetView()
-	if view.Port != 443 {
-		t.Errorf("Port: got %d, want 443", view.Port)
-	}
-	if view.Protocol != "tcp" {
-		t.Errorf("Protocol: got %q, want tcp", view.Protocol)
-	}
-	if view.Status != "Closed" {
-		t.Errorf("Status: got %q, want Closed", view.Status)
-	}
-	if view.RTT != 5*time.Millisecond {
-		t.Errorf("RTT (last): got %v, want 5ms", view.RTT)
-	}
-	if view.OpenCount != 1 {
-		t.Errorf("OpenCount: got %d, want 1", view.OpenCount)
-	}
-	if view.ClosedCount != 1 {
-		t.Errorf("ClosedCount: got %d, want 1", view.ClosedCount)
-	}
-}
-
 func TestPortCheckResult_ConcurrentAccess(t *testing.T) {
 	r := &PortCheckResult{Port: 80, Protocol: "tcp", Status: "Checking..."}
 	done := make(chan struct{})
@@ -505,6 +461,10 @@ func TestPortCheckResult_ConcurrentAccess(t *testing.T) {
 		_ = r.GetView()
 	}
 	<-done
+
+	if got := r.GetView().OpenCount; got != 1000 {
+		t.Errorf("OpenCount = %d, want 1000 (concurrent updates were lost)", got)
+	}
 }
 
 func TestTargetStats_SetPortResults(t *testing.T) {

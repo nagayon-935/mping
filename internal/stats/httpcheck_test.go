@@ -2,6 +2,7 @@ package stats
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -20,72 +21,43 @@ func TestHTTPCheckResult_InitialStatus(t *testing.T) {
 	}
 }
 
-func TestHTTPCheckResult_SetResult_Up2xx(t *testing.T) {
-	r := NewHTTPCheckResult("https://example.com")
-	r.SetResult(200, 10*time.Millisecond, nil)
-	v := r.GetView()
-	if v.Status != "Up" {
-		t.Errorf("Status = %q, want Up", v.Status)
+func TestHTTPCheckResult_SetResult(t *testing.T) {
+	tests := []struct {
+		name       string
+		code       int
+		rtt        time.Duration
+		err        error
+		wantStatus string
+		wantUp     int
+		wantDown   int
+		wantMinRTT time.Duration // only checks counted Up feed the RTT stats
+	}{
+		{name: "2xx is up", code: 200, rtt: 10 * time.Millisecond, wantStatus: "Up", wantUp: 1, wantMinRTT: 10 * time.Millisecond},
+		{name: "3xx is up", code: 301, rtt: 5 * time.Millisecond, wantStatus: "Up", wantUp: 1, wantMinRTT: 5 * time.Millisecond},
+		{name: "4xx is down", code: 404, rtt: 20 * time.Millisecond, wantStatus: "Down", wantDown: 1},
+		{name: "5xx is down", code: 503, rtt: 15 * time.Millisecond, wantStatus: "Down", wantDown: 1},
+		{name: "transport error", err: errors.New("connection refused"), wantStatus: "Error", wantDown: 1},
 	}
-	if v.StatusCode != 200 {
-		t.Errorf("StatusCode = %d, want 200", v.StatusCode)
-	}
-	if v.UpCount != 1 {
-		t.Errorf("UpCount = %d, want 1", v.UpCount)
-	}
-	if v.DownCount != 0 {
-		t.Errorf("DownCount = %d, want 0", v.DownCount)
-	}
-	if v.MinRTT != 10*time.Millisecond {
-		t.Errorf("MinRTT = %v, want 10ms", v.MinRTT)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := NewHTTPCheckResult("https://example.com")
 
-func TestHTTPCheckResult_SetResult_Up3xx(t *testing.T) {
-	r := NewHTTPCheckResult("http://example.com")
-	r.SetResult(301, 5*time.Millisecond, nil)
-	v := r.GetView()
-	if v.Status != "Up" {
-		t.Errorf("Status = %q, want Up (3xx counts as Up)", v.Status)
-	}
-	if v.UpCount != 1 {
-		t.Errorf("UpCount = %d, want 1", v.UpCount)
-	}
-}
+			r.SetResult(tt.code, tt.rtt, tt.err)
 
-func TestHTTPCheckResult_SetResult_Down4xx(t *testing.T) {
-	r := NewHTTPCheckResult("https://example.com")
-	r.SetResult(404, 20*time.Millisecond, nil)
-	v := r.GetView()
-	if v.Status != "Down" {
-		t.Errorf("Status = %q, want Down", v.Status)
-	}
-	if v.DownCount != 1 {
-		t.Errorf("DownCount = %d, want 1", v.DownCount)
-	}
-	if v.UpCount != 0 {
-		t.Errorf("UpCount = %d, want 0", v.UpCount)
-	}
-}
-
-func TestHTTPCheckResult_SetResult_Down5xx(t *testing.T) {
-	r := NewHTTPCheckResult("https://example.com")
-	r.SetResult(503, 15*time.Millisecond, nil)
-	v := r.GetView()
-	if v.Status != "Down" {
-		t.Errorf("Status = %q, want Down", v.Status)
-	}
-}
-
-func TestHTTPCheckResult_SetResult_Error(t *testing.T) {
-	r := NewHTTPCheckResult("https://example.com")
-	r.SetResult(0, 0, errors.New("connection refused"))
-	v := r.GetView()
-	if v.Status != "Error" {
-		t.Errorf("Status = %q, want Error", v.Status)
-	}
-	if v.DownCount != 1 {
-		t.Errorf("DownCount = %d, want 1", v.DownCount)
+			v := r.GetView()
+			if v.Status != tt.wantStatus {
+				t.Errorf("Status = %q, want %q", v.Status, tt.wantStatus)
+			}
+			if v.StatusCode != tt.code {
+				t.Errorf("StatusCode = %d, want %d", v.StatusCode, tt.code)
+			}
+			if v.UpCount != tt.wantUp || v.DownCount != tt.wantDown {
+				t.Errorf("UpCount/DownCount = %d/%d, want %d/%d", v.UpCount, v.DownCount, tt.wantUp, tt.wantDown)
+			}
+			if v.MinRTT != tt.wantMinRTT {
+				t.Errorf("MinRTT = %v, want %v", v.MinRTT, tt.wantMinRTT)
+			}
+		})
 	}
 }
 
@@ -148,30 +120,24 @@ func TestHTTPCheckResult_LastChange(t *testing.T) {
 }
 
 func TestHTTPCheckResult_ConcurrentSafe(t *testing.T) {
+	const workers, perWorker = 5, 200
 	r := NewHTTPCheckResult("https://example.com")
-	done := make(chan struct{})
-	for range 5 {
-		go func() {
-			for {
-				select {
-				case <-done:
-					return
-				default:
-					r.SetResult(200, time.Millisecond, nil)
-				}
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Go(func() {
+			for range perWorker {
+				r.SetResult(200, time.Millisecond, nil)
 			}
-		}()
-		go func() {
-			for {
-				select {
-				case <-done:
-					return
-				default:
-					r.GetView()
-				}
+		})
+		wg.Go(func() {
+			for range perWorker {
+				_ = r.GetView()
 			}
-		}()
+		})
 	}
-	time.Sleep(50 * time.Millisecond)
-	close(done)
+	wg.Wait()
+
+	if got := r.GetView().UpCount; got != workers*perWorker {
+		t.Errorf("UpCount = %d, want %d (concurrent updates were lost)", got, workers*perWorker)
+	}
 }

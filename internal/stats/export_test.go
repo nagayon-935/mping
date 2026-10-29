@@ -2,6 +2,7 @@ package stats
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -135,6 +136,16 @@ func TestBuildSnapshot_JSON(t *testing.T) {
 	if !ok || len(targets) != 1 {
 		t.Fatalf("expected targets array with 1 element, got %v", out["targets"])
 	}
+	target, ok := targets[0].(map[string]any)
+	if !ok {
+		t.Fatalf("target is %T, want an object", targets[0])
+	}
+	want := map[string]any{"host": "google.com", "ip": "8.8.8.8", "sent": float64(1), "recv": float64(1), "last_rtt_ms": float64(8), "last_ttl": float64(115)}
+	for key, wantVal := range want {
+		if target[key] != wantVal {
+			t.Errorf("json %q = %v, want %v", key, target[key], wantVal)
+		}
+	}
 }
 
 func TestBuildSnapshot_NoLoss(t *testing.T) {
@@ -149,24 +160,20 @@ func TestBuildSnapshot_NoLoss(t *testing.T) {
 	}
 }
 
-func TestBuildSnapshot_TraceHops(t *testing.T) {
+// TestBuildSnapshot_CopiesPathFields verifies that the traceroute hops and
+// the path MTU details reach the snapshot.
+func TestBuildSnapshot_CopiesPathFields(t *testing.T) {
 	ts := NewTargetStats("host.local")
 	ts.SetTraceHops([]string{"1.1.1.1", "2.2.2.2"})
-
-	snap := BuildSnapshot([]*TargetStats{ts}, nil)
-	st := snap.Targets[0]
-	if len(st.TraceHops) != 2 {
-		t.Errorf("expected 2 trace hops, got %d", len(st.TraceHops))
-	}
-}
-
-func TestBuildSnapshot_PMTU(t *testing.T) {
-	ts := NewTargetStats("host.local")
 	ts.SetPMTU(1400)
 	ts.SetPMTUBottleneckIP("10.0.0.1")
 
 	snap := BuildSnapshot([]*TargetStats{ts}, nil)
+
 	st := snap.Targets[0]
+	if want := []string{"1.1.1.1", "2.2.2.2"}; !reflect.DeepEqual(st.TraceHops, want) {
+		t.Errorf("trace hops = %v, want %v", st.TraceHops, want)
+	}
 	if st.PMTU != 1400 {
 		t.Errorf("expected PMTU=1400, got %d", st.PMTU)
 	}
