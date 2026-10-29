@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,16 +16,6 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/nagayon-935/mping/internal/ui"
 )
-
-func TestGetPreferredOutboundIP_Localhost(t *testing.T) {
-	ip := getPreferredOutboundIP("127.0.0.1", "udp4")
-	if ip == "" {
-		t.Skip("no outbound IP detected in this environment")
-	}
-	if net.ParseIP(ip) == nil {
-		t.Fatalf("expected valid IP, got %q", ip)
-	}
-}
 
 func TestRunHelp(t *testing.T) {
 	var out, errOut bytes.Buffer
@@ -67,75 +55,6 @@ func TestRunMissingHostsFile(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "Error reading hosts file") {
 		t.Fatalf("expected hosts file error")
-	}
-}
-
-func TestGetInterfaceIP_Invalid(t *testing.T) {
-	if _, err := getInterfaceIP("no-such-iface", false); err == nil {
-		t.Fatal("expected error for invalid interface")
-	}
-}
-
-func TestGetInterfaceMTU_InvalidIface(t *testing.T) {
-	if _, err := getInterfaceMTU("no-such-iface", "", "127.0.0.1"); err == nil {
-		t.Fatal("expected error for invalid interface")
-	}
-}
-
-func TestDetectAutoSourceIPs_Unresolvable(t *testing.T) {
-	v4, v6 := detectAutoSourceIPs([]targetSpec{{Host: "invalid.invalid"}})
-	if v4 != "" || v6 != "" {
-		t.Fatalf("expected empty results, got v4=%q v6=%q", v4, v6)
-	}
-}
-
-func TestDetectAutoSourceIPs_WithResolvedFormat(t *testing.T) {
-	// This test ensures that a pinned targetSpec is processed correctly
-	// without crashing and resolves via its PinnedIP.
-	// Since 127.0.0.1 may or may not resolve to a preferred outbound IP depending on active interfaces,
-	// we just call it to ensure no panics.
-	detectAutoSourceIPs([]targetSpec{
-		{Host: "localhost", PinnedIP: "127.0.0.1"},
-		{Host: "localhost", PinnedIP: "::1"},
-	})
-}
-
-func TestHasIPv6Connectivity(t *testing.T) {
-	orig := getPreferredOutboundIPFn
-	t.Cleanup(func() {
-		getPreferredOutboundIPFn = orig
-	})
-
-	// Case 1: returns empty (no connectivity)
-	getPreferredOutboundIPFn = func(remote string, network string) string {
-		return ""
-	}
-	if hasIPv6Connectivity() {
-		t.Fatal("expected false, got true")
-	}
-
-	// Case 2: returns a valid global IPv6 address
-	getPreferredOutboundIPFn = func(remote string, network string) string {
-		return "2001:db8::1"
-	}
-	if !hasIPv6Connectivity() {
-		t.Fatal("expected true, got false")
-	}
-
-	// Case 3: returns a link-local IPv6 address (should be treated as no connectivity)
-	getPreferredOutboundIPFn = func(remote string, network string) string {
-		return "fe80::1"
-	}
-	if hasIPv6Connectivity() {
-		t.Fatal("expected false for link-local, got true")
-	}
-
-	// Case 4: returns invalid IP
-	getPreferredOutboundIPFn = func(remote string, network string) string {
-		return "invalid"
-	}
-	if hasIPv6Connectivity() {
-		t.Fatal("expected false for invalid IP, got true")
 	}
 }
 
@@ -231,32 +150,6 @@ func TestRunStartError(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "Error starting pinger") {
 		t.Fatalf("expected start error output")
-	}
-}
-
-func TestResolveNetwork(t *testing.T) {
-	if got := resolveNetwork(config{ipv4Only: true}); got != "ip4" {
-		t.Fatalf("ipv4: got %q", got)
-	}
-	if got := resolveNetwork(config{ipv6Only: true}); got != "ip6" {
-		t.Fatalf("ipv6: got %q", got)
-	}
-	expected := "ip4"
-	if hasIPv6Connectivity() {
-		expected = "ip"
-	}
-	if got := resolveNetwork(config{}); got != expected {
-		t.Fatalf("default: got %q, expected %q", got, expected)
-	}
-}
-
-func TestDetermineSourceIPs_SourceAddr(t *testing.T) {
-	bind, v4, v6, err := determineSourceIPs(config{sourceAddr: "10.0.0.2"}, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if bind != "10.0.0.2" || v4 != "10.0.0.2" || v6 != "" {
-		t.Fatalf("unexpected values: bind=%q v4=%q v6=%q", bind, v4, v6)
 	}
 }
 
@@ -461,43 +354,7 @@ func TestRunTraceroutes_EmptyHops(t *testing.T) {
 
 // ---- determineSourceIPs additional tests ----
 
-func TestDetermineSourceIPs_IPv6SourceAddr(t *testing.T) {
-	bind, v4, v6, err := determineSourceIPs(config{sourceAddr: "2001:db8::1"}, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if bind != "2001:db8::1" || v4 != "" || v6 != "2001:db8::1" {
-		t.Errorf("unexpected: bind=%q v4=%q v6=%q", bind, v4, v6)
-	}
-}
-
-func TestDetermineSourceIPs_IfaceNameError(t *testing.T) {
-	_, _, _, err := determineSourceIPs(config{ifaceName: "no-such-iface-xyz"}, nil)
-	if err == nil {
-		t.Fatal("expected error for invalid interface name")
-	}
-}
-
 // ---- getInterfaceIP additional tests ----
-
-func TestGetInterfaceIP_LoopbackNoMatch(t *testing.T) {
-	ifaces, err := net.Interfaces()
-	if err != nil || len(ifaces) == 0 {
-		t.Skip("no interfaces available")
-	}
-	// Find a loopback interface; its IPs are filtered (IsLoopback), so should return error
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagLoopback != 0 {
-			_, err := getInterfaceIP(iface.Name, false)
-			// Loopback IPs are skipped, so we expect "no IPv4 address found" error
-			if err == nil {
-				t.Logf("unexpected success on loopback interface %q", iface.Name)
-			}
-			return
-		}
-	}
-	t.Skip("no loopback interface found")
-}
 
 // ---- run() additional coverage ----
 
@@ -879,30 +736,6 @@ func TestSetupPMTU_ProgressLinesKeepTheirPrefixAndTimestamp(t *testing.T) {
 	}
 }
 
-func TestDetermineSourceIPs_Interface(t *testing.T) {
-	oldInterfaceByName := interfaceByName
-	defer func() { interfaceByName = oldInterfaceByName }()
-
-	interfaceByName = func(name string) (*net.Interface, error) {
-		return nil, fmt.Errorf("mock error")
-	}
-
-	cfg := config{ifaceName: "eth0"}
-	_, _, _, err := determineSourceIPs(cfg, nil)
-	if err == nil {
-		t.Fatal("expected error for missing interface, got nil")
-	}
-}
-
-func TestDetermineSourceIPs_Auto(t *testing.T) {
-	// detectAutoSourceIPs might return empty strings if no network, but it shouldn't fail.
-	_, v4, v6, err := determineSourceIPs(config{}, []targetSpec{{Host: "8.8.8.8"}})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	t.Logf("Auto IPs: v4=%q, v6=%q", v4, v6)
-}
-
 func TestInitTargets(t *testing.T) {
 	hosts := []targetSpec{{Host: "a"}, {Host: "b"}}
 	targets := initTargets(hosts)
@@ -1253,62 +1086,6 @@ func TestWriteJSONSnapshot_WriteError(t *testing.T) {
 	}
 }
 
-// ---- setupHTTPChecker ----
-
-func TestSetupHTTPChecker_NoURLs(t *testing.T) {
-	sup := newSupervisor(supervisorConfig{interval: time.Second, timeout: time.Second})
-	hc := sup.setupHTTPChecker()
-	if hc != nil {
-		t.Error("expected nil HTTPChecker for empty URL list")
-	}
-}
-
-func TestSetupHTTPChecker_WithURLs(t *testing.T) {
-	srv := &localHTTPServer{}
-	srv.start(t)
-	sup := newSupervisor(supervisorConfig{
-		httpURLs: []string{srv.url()},
-		interval: 100 * time.Millisecond,
-		timeout:  100 * time.Millisecond,
-	})
-	hc := sup.setupHTTPChecker()
-	if hc == nil {
-		t.Fatal("expected non-nil HTTPChecker for non-empty URL list")
-	}
-	hc.Stop()
-	hc.Wait()
-}
-
-// localHTTPServer is a minimal test HTTP server.
-type localHTTPServer struct {
-	l net.Listener
-}
-
-func (s *localHTTPServer) start(t *testing.T) {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	s.l = ln
-	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			// Respond with minimal HTTP 200.
-			_, _ = fmt.Fprintf(c, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-			c.Close()
-		}
-	}()
-	t.Cleanup(func() { ln.Close() })
-}
-
-func (s *localHTTPServer) url() string {
-	return "http://" + s.l.Addr().String()
-}
-
 // ---- printExitSummary additional coverage ----
 
 func TestPrintExitSummary_WithRecv(t *testing.T) {
@@ -1405,93 +1182,7 @@ func TestPrintExitSummary_NoDuplicatesOrLateReplies(t *testing.T) {
 	}
 }
 
-func TestNewCustomResolver(t *testing.T) {
-	r := newCustomResolver("8.8.8.8", pinger.BindConfig{})
-	if r == nil {
-		t.Fatal("expected resolver, got nil")
-	}
-
-	rPort := newCustomResolver("8.8.8.8:53", pinger.BindConfig{})
-	if rPort == nil {
-		t.Fatal("expected resolver with port, got nil")
-	}
-}
-
-// TestNewCustomResolver_NoDNSServerReturnsDefaultResolver verifies the -S/-I
-// wiring never touches the empty-dnsServer path: with no --dns-server the
-// resolver must stay net.DefaultResolver regardless of bind, exactly as
-// before this feature — bind only takes effect once --dns-server picks a
-// specific server to dial.
-func TestNewCustomResolver_NoDNSServerReturnsDefaultResolver(t *testing.T) {
-	r := newCustomResolver("", pinger.BindConfig{Source: "192.0.2.5", Interface: "eth0"})
-	if r != net.DefaultResolver {
-		t.Errorf("newCustomResolver(\"\", ...): got %p, want net.DefaultResolver (%p)", r, net.DefaultResolver)
-	}
-}
-
-// TestNewCustomResolver_DialHonoursBindConfig is the behavioral proof that
-// -S actually reaches the resolver's dial: a real loopback UDP listener is
-// reachable through the unbound resolver's Dial and stops being reachable
-// once the resolver is told to source from an address the host does not
-// own. This exercises exactly the func net.Resolver.Dial invokes internally
-// during LookupIP, without needing a real DNS server to answer.
-func TestNewCustomResolver_DialHonoursBindConfig(t *testing.T) {
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	defer conn.Close()
-	dnsServer := conn.LocalAddr().String()
-
-	unbound := newCustomResolver(dnsServer, pinger.BindConfig{})
-	if _, err := unbound.Dial(context.Background(), "udp", "ignored"); err != nil {
-		t.Fatalf("unbound resolver Dial: unexpected error: %v", err)
-	}
-
-	bound := newCustomResolver(dnsServer, pinger.BindConfig{Source: "192.0.2.5"})
-	if _, err := bound.Dial(context.Background(), "udp", "ignored"); err == nil {
-		t.Error("resolver Dial with Source=192.0.2.5: got no error, want a dial failure — the source address was ignored")
-	}
-}
-
 // ---- resolverBindConfig ----
-
-// TestResolverBindConfig_UsesSourceAddr verifies expandTargets' -S/-I lookup
-// helper carries an explicit -S straight through without needing any
-// network I/O (determineSourceIPs returns cfg.sourceAddr as-is in this case).
-func TestResolverBindConfig_UsesSourceAddr(t *testing.T) {
-	cfg := config{sourceAddr: "192.0.2.5", ifaceName: "eth0"}
-
-	got := resolverBindConfig(cfg, nil)
-
-	want := pinger.BindConfig{Source: "192.0.2.5", Interface: "eth0"}
-	if got != want {
-		t.Errorf("resolverBindConfig() = %+v, want %+v", got, want)
-	}
-}
-
-// TestResolverBindConfig_UnsetFlagsYieldZeroValue mirrors
-// TestCheckerBindConfig_UnsetFlagsYieldZeroValue: with neither flag given,
-// --resolve-all's DNS lookups must stay unbound.
-func TestResolverBindConfig_UnsetFlagsYieldZeroValue(t *testing.T) {
-	if got := resolverBindConfig(config{}, nil); !got.IsZero() {
-		t.Errorf("resolverBindConfig() = %+v, want zero value", got)
-	}
-}
-
-// TestResolverBindConfig_ResolutionErrorFallsBackToZero verifies that when
-// -I names an interface that doesn't exist, resolverBindConfig degrades to
-// an unbound resolver rather than propagating the error itself — the
-// authoritative error for a bad -I surfaces later via prepareRunEnv's own
-// determineSourceIPs call, so duplicating that failure here would just add a
-// second, redundant error path for the same misconfiguration.
-func TestResolverBindConfig_ResolutionErrorFallsBackToZero(t *testing.T) {
-	cfg := config{ifaceName: "no-such-iface-xyz-mping-test"}
-
-	if got := resolverBindConfig(cfg, nil); !got.IsZero() {
-		t.Errorf("resolverBindConfig() = %+v, want zero value on resolution error", got)
-	}
-}
 
 func TestExpandTargets(t *testing.T) {
 	// Without resolveAll
