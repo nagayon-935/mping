@@ -80,19 +80,17 @@ func newHostInput(label string, labelColor tcell.Color) *tview.InputField {
 }
 
 // newSidePanes builds the route (Traceroute or MTR), Port and HTTP monitor
-// panes. currentTargets is read on every render, so hosts added or removed
-// after startup show up without rebuilding the panes.
-func newSidePanes(opts RunOptions, currentTargets func() []*stats.TargetStats, vs *viewState) []*monitorPane {
-	title := " Traceroute Monitor "
-	if opts.Route == RouteMonitor {
-		title = " MTR Monitor "
-	}
-	route := newMonitorPane(opts.Route != RouteOff, title, func(availW int) string {
-		if opts.Route == RoutePath {
+// panes. currentTargets and route are read on every render, so hosts added
+// or removed and a route mode switched after startup show up without
+// rebuilding the panes.
+func newSidePanes(opts RunOptions, currentTargets func() []*stats.TargetStats, route func() RouteMode, vs *viewState) []*monitorPane {
+	routePane := newMonitorPane(opts.Route != RouteOff, routePaneTitle(opts.Route), func(availW int) string {
+		if route() == RoutePath {
 			return renderTracerouteTable(currentTargets(), availW)
 		}
 		return renderMTRTable(currentTargets(), availW, opts.SourceIPv4, opts.SourceIPv6)
 	})
+	routePane.titleFn = func() string { return routePaneTitle(route()) }
 	port := newMonitorPane(opts.PortEnabled, " Port Monitor ", func(availW int) string {
 		return renderPortMonitorTable(currentTargets(), availW, vs.lastPortStatuses, &vs.errorLogs, vs.errorView)
 	})
@@ -103,7 +101,15 @@ func newSidePanes(opts RunOptions, currentTargets func() []*stats.TargetStats, v
 		}
 		return renderHTTPMonitorTable(results, vs.thresholds, availW, vs.lastHTTPStatuses, &vs.errorLogs, vs.errorView)
 	})
-	return []*monitorPane{route, port, http}
+	return []*monitorPane{routePane, port, http}
+}
+
+// routePaneTitle names the route pane after what it shows.
+func routePaneTitle(mode RouteMode) string {
+	if mode == RouteMonitor {
+		return " MTR Monitor "
+	}
+	return " Traceroute Monitor "
 }
 
 func newStyledModal(title, message string, buttons []string, done func(index int, label string)) *tview.Modal {

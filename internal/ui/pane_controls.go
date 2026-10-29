@@ -15,7 +15,9 @@ const (
 )
 
 type paneControl struct {
-	title          string
+	title string
+	// titleFn, when set, renames the folded stub as the title changes.
+	titleFn        func() string
 	content        tview.Primitive
 	focus          tview.Primitive
 	border         func(tcell.Color)
@@ -51,7 +53,7 @@ type paneControls struct {
 func newPaneControls(app *tview.Application, layout *tview.Flex, header *tview.TextView, footer *tview.Pages, table *tview.Table, tablePane *tview.Flex, tableRows func() int, monitors []*monitorPane, graph *GraphView, log *tview.TextView) *paneControls {
 	c := &paneControls{app: app, layout: layout, header: header, footer: footer, table: table, tablePane: tablePane}
 	add := func(title string, content, focus tview.Primitive, weight int, unfocusedColor tcell.Color, border func(tcell.Color), desired func(width int) int) *paneControl {
-		stub := tview.NewTextView().SetText(fmt.Sprintf("[+] %s  (f: Expand, z: Maximize)", title)).SetWrap(false)
+		stub := tview.NewTextView().SetText(stubText(title)).SetWrap(false)
 		stub.SetBackgroundColor(tcell.ColorBlack)
 		stub.SetTextColor(tcell.ColorYellow)
 		pane := &paneControl{title: title, content: content, focus: focus, weight: weight, unfocusedColor: unfocusedColor, border: border, stub: stub, desired: desired}
@@ -75,8 +77,9 @@ func newPaneControls(app *tview.Application, layout *tview.Flex, header *tview.T
 	for _, pane := range monitors {
 		if pane.enabled {
 			mp := pane
-			add(mp.title, mp.pane, mp.view, weight, tcell.ColorWhite, mp.setBorderColor,
+			pane := add(mp.title, mp.pane, mp.view, weight, tcell.ColorWhite, mp.setBorderColor,
 				func(int) int { return mp.lines + 2 })
+			pane.titleFn = mp.titleFn
 		}
 	}
 	c.graph = add("RTT Graphs", graph, graph, 3, vividCyan, func(color tcell.Color) { graph.SetBorderColor(color) },
@@ -110,6 +113,13 @@ func (c *paneControls) syncTableRect(width, paneHeight int) {
 // and weight (see fitHeights). Rows nobody needs go first to the Log, up to
 // its content, then to the RTT graph. A maximized pane keeps the whole area.
 func (c *paneControls) fit(width, height int) {
+	for _, pane := range c.panes {
+		if pane.titleFn != nil && pane.folded {
+			if text := stubText(pane.titleFn()); pane.stub.GetText(false) != text {
+				pane.stub.SetText(text)
+			}
+		}
+	}
 	if c.maximized != nil {
 		if len(c.panes) > 0 && c.maximized == c.panes[0] {
 			c.syncTableRect(width, max(height-headerHeight-footerHeight, 0))
@@ -203,6 +213,11 @@ func (c *paneControls) focus(pane *paneControl) {
 	} else {
 		c.app.SetFocus(pane.focus)
 	}
+}
+
+// stubText is what a folded pane shows in place of its content.
+func stubText(title string) string {
+	return fmt.Sprintf("[+] %s  (f: Expand, z: Maximize)", title)
 }
 
 func (c *paneControls) rebuild() {

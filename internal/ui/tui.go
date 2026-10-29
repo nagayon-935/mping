@@ -30,6 +30,10 @@ type TargetSet struct {
 	Targets    []*stats.TargetStats
 	Groups     []TargetGroup
 	Thresholds *stats.Thresholds
+	// Route switches the route pane between RoutePath and RouteMonitor
+	// after a reload. RouteOff keeps the current mode: whether the pane
+	// exists is fixed for the run.
+	Route RouteMode
 }
 
 // RunOptions contains all parameters for the Run function.

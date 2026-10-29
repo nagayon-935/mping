@@ -64,7 +64,7 @@ func (s *supervisor) liveTargets() ui.TargetSet {
 		return ui.TargetSet{}
 	}
 	th := v.config.thresholds
-	return ui.TargetSet{Targets: v.targets, Groups: v.groups, Thresholds: &th}
+	return ui.TargetSet{Targets: v.targets, Groups: v.groups, Thresholds: &th, Route: uiRouteMode(v.config)}
 }
 
 func (s *supervisor) editTargets(edit func(*supervisor) error) error {

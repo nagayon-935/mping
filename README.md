@@ -449,6 +449,7 @@ Regenerate saved scripts after upgrading mping to include new flags. To monitor 
 ## Traceroute Monitor pane
 
 * Shown only when `-T` / `--traceroute` is given. `-T` and `-M` cannot be combined: `-T` discovers the route only, `-M` also measures every hop.
+* Switching between `traceroute: true` and `mtr: true` in the hosts file applies on reload without restarting measurements: ping counters, graphs and history are kept and the pane switches in place. Turning route monitoring on or off restarts measurements.
 * The route (up to 30 hops) is discovered at startup and rediscovered every 10 minutes, with no per-hop probes in between — about 30 probes per target every 10 minutes.
 * Results are shown in a Host / Hops / Init TTL / Route table, one row per target. Hops carry the AS (`-a`) and PTR name (`-r`) when enabled; `*` is a hop that did not answer.
 * **Route change detection** works as in the MTR pane: a changed path adds a `[FLAP ×N HH:MM:SS]` line under the route and a yellow alert in the Log pane.

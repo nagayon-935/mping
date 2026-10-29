@@ -67,7 +67,7 @@ func newTUI(opts RunOptions) *tui {
 	if opts.Thresholds != nil {
 		t.vs.thresholds = *opts.Thresholds
 	}
-	t.sidePanes = newSidePanes(opts, func() []*stats.TargetStats { return t.targets }, t.vs)
+	t.sidePanes = newSidePanes(opts, func() []*stats.TargetStats { return t.targets }, func() RouteMode { return t.opts.Route }, t.vs)
 
 	t.tr = newTableRenderer(t.targets, opts.SourceIPv4, opts.SourceIPv6, opts.PacketSize, opts.ASNEnabled, opts.PTREnabled, opts.Groups,
 		t.table, t.tablePane, opts.InitialLogs, t.vs)
@@ -79,12 +79,18 @@ func newTUI(opts RunOptions) *tui {
 	return t
 }
 
-// pullTargets replaces the target list (and the run's thresholds) from
-// TargetSource.
+// pullTargets replaces the target list (and the run's thresholds and route
+// mode) from TargetSource.
 func (t *tui) pullTargets() {
 	set := t.opts.TargetSource()
 	if set.Thresholds != nil && set.Thresholds.RTTCrit > 0 {
 		t.vs.thresholds = *set.Thresholds
+	}
+	if set.Route != RouteOff && t.opts.Route != RouteOff {
+		t.opts.Route = set.Route
+		if t.details != nil {
+			t.details.opts.Route = set.Route
+		}
 	}
 	t.targets = set.Targets
 	t.tr.targets = t.targets
