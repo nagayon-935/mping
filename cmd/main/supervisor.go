@@ -402,6 +402,14 @@ func (s *supervisor) startAll() error {
 func (s *supervisor) startCountObserver(next pingerController) {
 	s.observers.Go(func() {
 		notify := func() bool {
+			// Never enqueue once shut down: with room in cmds, the send and
+			// the closed done channel would both be ready and select would
+			// pick either one.
+			select {
+			case <-s.done:
+				return false
+			default:
+			}
 			select {
 			case s.cmds <- command{kind: cmdProbesFinished, pinger: next}:
 				return true
