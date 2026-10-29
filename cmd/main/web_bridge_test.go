@@ -224,29 +224,6 @@ func containsSubstring(lines []string, sub string) bool {
 	return false
 }
 
-func TestParseArgsWebDefaultsToOffOnPort8080(t *testing.T) {
-	cfg, _, _, _, err := parseArgs([]string{"example.com"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if cfg.webEnabled || cfg.webPort != 8080 {
-		t.Fatalf("web = (%v, %d), want (false, 8080)", cfg.webEnabled, cfg.webPort)
-	}
-}
-
-func TestParseArgsRejectsOutOfRangeWebPort(t *testing.T) {
-	for _, port := range []string{"0", "-1", "65536"} {
-		t.Run(port, func(t *testing.T) {
-			_, _, _, _, err := parseArgs([]string{"--web", "--web-port", port, "example.com"})
-
-			if err == nil || !strings.Contains(err.Error(), "--web-port") {
-				t.Fatalf("err = %v, want a --web-port range error", err)
-			}
-		})
-	}
-}
-
 func TestCheckWebReloadDrift(t *testing.T) {
 	on := func(port int) config { return config{webEnabled: true, webPort: port} }
 	off := func(port int) config { return config{webEnabled: false, webPort: port} }

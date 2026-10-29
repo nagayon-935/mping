@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -24,6 +26,17 @@ func hostEntries(hosts ...string) []hostEntry {
 		entries[i] = hostEntry{Host: h}
 	}
 	return entries
+}
+
+// writeHostsYAML writes content to hosts.yaml in a fresh temp dir and returns
+// its path.
+func writeHostsYAML(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "hosts.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write hosts file: %v", err)
+	}
+	return path
 }
 
 // waitFor polls cond every few milliseconds until it holds, failing the test

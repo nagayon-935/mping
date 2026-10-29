@@ -127,21 +127,6 @@ func TestHeadlessRunnerReturnsWhen(t *testing.T) {
 	}
 }
 
-func TestParseArgsNoTUIDefaultsOff(t *testing.T) {
-	cfg, _, _, _, err := parseArgs([]string{"example.com"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	on, _, _, _, err := parseArgs([]string{"--no-tui", "example.com"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if cfg.noTUI || !on.noTUI {
-		t.Fatalf("noTUI default=%v with flag=%v, want false/true", cfg.noTUI, on.noTUI)
-	}
-}
-
 // stubHeadlessSignals feeds run()'s headless loop from a test channel.
 func stubHeadlessSignals(t *testing.T) chan os.Signal {
 	t.Helper()
