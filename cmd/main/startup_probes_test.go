@@ -18,8 +18,7 @@ import (
 // not just when a caller constructs *pinger.Pinger by hand. When -I was never
 // passed the factory still calls SetInterface with an empty string rather than
 // skipping the call, matching Pinger's own zero-value semantics (an empty
-// Interface is a documented no-op in bindToInterface) and keeping -S-only
-// runs behaviorally identical to before this feature existed.
+// Interface is a documented no-op in bindToInterface).
 func TestMakePingerFactory_SetsInterface(t *testing.T) {
 	tests := []struct {
 		name   string

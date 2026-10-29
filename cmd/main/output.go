@@ -78,8 +78,7 @@ func printExitSummary(out io.Writer, targets []*stats.TargetStats) {
 		}
 		fmt.Fprintf(out, "%s (%s): %d packets transmitted, %d received", v.Host, v.IP, v.Sent, v.Recv)
 		// Mirrors ping.c's "+N duplicates" / "N packets out of wait time":
-		// both are omitted when zero, so a run with neither dups nor late
-		// arrivals prints exactly as it did before this feature existed.
+		// both are omitted when zero.
 		if v.Duplicates > 0 {
 			fmt.Fprintf(out, ", +%d duplicates", v.Duplicates)
 		}

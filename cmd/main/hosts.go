@@ -13,13 +13,12 @@ import (
 )
 
 // hostEntry is one entry of a hosts-file's hosts:/groups[].hosts: list. It
-// unmarshals from either a bare scalar string (the pre-existing, common
-// case: just a hostname/IP) or a mapping with a required 'host' key and an
-// optional 'dscp' key — the per-target DSCP override that lets the same
-// destination be monitored under two different DSCP markings side by side
-// (e.g. one entry with dscp: EF, another with dscp: CS0, both host: the
-// same address), which is this feature's primary use case (see
-// targetSpec.DSCP).
+// unmarshals from either a bare scalar string (the common case: just a
+// hostname/IP) or a mapping with a required 'host' key and an optional
+// 'dscp' key — the per-target DSCP override that lets the same destination
+// be monitored under two different DSCP markings side by side (e.g. one
+// entry with dscp: EF, another with dscp: CS0, both host: the same address;
+// see targetSpec.DSCP).
 type hostEntry struct {
 	Host string
 	// Name is an optional display name shown instead of Host (from the

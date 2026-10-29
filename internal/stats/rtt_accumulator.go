@@ -7,7 +7,7 @@ import (
 
 // rttAccumulator tracks min/max/sum/sample-count RTT statistics and an
 // optional ring-buffer history. Shared by TargetStats, PortCheckResult, and
-// HTTPCheckResult, which previously each re-implemented this bookkeeping.
+// HTTPCheckResult.
 // Not safe for concurrent use; callers hold their own mutex.
 type rttAccumulator struct {
 	min     time.Duration

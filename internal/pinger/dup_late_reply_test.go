@@ -4,9 +4,8 @@ package pinger
 // that don't match any entry in `unacked` because that entry was already
 // resolved (a second reply for an already-acked seq -> DUP) or already swept
 // as a timeout (a reply that shows up after loss was recorded -> late
-// arrival). Before this feature, both cases were silently discarded
-// (TestRunWorker_MismatchedReplyDiscarded pins that this stays true for a
-// seq the worker never even sent).
+// arrival). A reply for a seq the worker never sent is still silently
+// discarded (TestRunWorker_MismatchedReplyDiscarded).
 
 import (
 	"strings"

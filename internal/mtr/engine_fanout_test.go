@@ -41,7 +41,7 @@ func (c *trackingProber) ProbeHop(ctx context.Context, sock HopSocket, dest stri
 	return c.fakeProber.ProbeHop(ctx, sock, dest, ttl, traceID, timeout)
 }
 
-// TestDiscover_BoundsConcurrentProbeHopCalls verifies the F4 fix: discover()
+// TestDiscover_BoundsConcurrentProbeHopCalls verifies that discover()
 // fans out up to MaxHops goroutines, but the Engine-wide semaphore must cap
 // how many ProbeHop calls are actually in flight at once, regardless of how
 // many TTLs are being probed.

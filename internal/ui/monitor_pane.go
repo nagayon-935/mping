@@ -7,10 +7,8 @@ import (
 
 // monitorPane bundles construction, per-tick rendering, and focus-cycle
 // wiring for one of the four optional side panels (Traceroute/MTR/Port/HTTP
-// Monitor). TD-23①: replaces four near-identical ~20-line construction
-// blocks in Run(), plus their separately hand-maintained render/focus-cycle
-// /layout-assembly call sites, with one constructor and two methods shared
-// by all four.
+// Monitor), so all four share one constructor and the same render and
+// focus-cycle methods.
 type monitorPane struct {
 	title   string
 	enabled bool

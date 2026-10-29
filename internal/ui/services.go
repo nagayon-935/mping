@@ -1,8 +1,6 @@
 package ui
 
 // wellKnownServices maps a port number to its protocol -> service name.
-// TD-34: moved out of tui_helpers.go, which had nothing else to do with
-// port/service naming.
 var wellKnownServices = map[int]map[string]string{
 	20:    {"tcp": "FTP-Data"},
 	21:    {"tcp": "FTP"},

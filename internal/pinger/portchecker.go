@@ -64,7 +64,7 @@ type PortChecker struct {
 // NewPortChecker creates a PortChecker and initialises PortResults on each
 // target. bind carries the -S source address and -I interface name so port
 // checks leave the host by the same path as the ICMP probes; a zero BindConfig
-// leaves dialling exactly as it was before those flags were wired in.
+// leaves dialling to the OS defaults.
 func NewPortChecker(targets []*stats.TargetStats, specs []PortSpec, interval, timeout time.Duration, bind BindConfig) *PortChecker {
 	results := make([][]*stats.PortCheckResult, len(targets))
 	for i, t := range targets {

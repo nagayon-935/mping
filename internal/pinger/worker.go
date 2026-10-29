@@ -64,8 +64,8 @@ func (p *Pinger) sendProbeWithStats(t *stats.TargetStats, probe stats.Probe, id,
 	}
 
 	// start is captured before the payload is marshaled (rather than right
-	// before the write, as before) because embedSendTimestamp needs it
-	// embedded in `payload` first. This is the same instant used for both
+	// before the write) because embedSendTimestamp needs it embedded in
+	// `payload` first. This is the same instant used for both
 	// the embedded timestamp and the pendingProbe fallback in runTargetWorker, so
 	// the two stay consistent with each other.
 	start := time.Now()
@@ -135,8 +135,8 @@ type recentEntry struct {
 // recentSeqHistory is a small, size-bounded FIFO cache mapping a
 // just-resolved wire seq to how it was resolved. runTargetWorker consults it only
 // when a reply doesn't match anything in `unacked`, to tell a duplicate or a
-// late arrival apart from a genuinely unrecognized/bogus seq (which stays
-// silently discarded, exactly as before this feature existed).
+// late arrival apart from a genuinely unrecognized/bogus seq (which is
+// silently discarded).
 //
 // Capacity, not time, bounds it (see recentSeqHistoryCap's doc for why a
 // bounded size rather than a time window is what keeps this safe across the
@@ -329,7 +329,7 @@ func (p *Pinger) runTargetWorker(t *stats.TargetStats, id int, interval, timeout
 				if addr := p.resolveTargetContext(ctx, t); addr != nil {
 					dstAddr = addr
 				} else {
-					sendTimer.Reset(interval) // retry resolution on the next tick, as before
+					sendTimer.Reset(interval) // retry resolution on the next tick
 					continue
 				}
 			}
@@ -386,8 +386,7 @@ func (p *Pinger) settleReply(t *stats.TargetStats, reply Reply, unacked map[int]
 			// whenever that timestamp couldn't be trusted (payload
 			// too small for -s, signature mismatch, or a result
 			// isPlausibleRTT rejected), in which case fall back to
-			// this goroutine's own start-time bookkeeping, exactly
-			// as before this feature existed.
+			// this goroutine's own start-time bookkeeping.
 			rtt := reply.RTT
 			if rtt <= 0 {
 				rtt = time.Since(pend.start)
@@ -471,9 +470,9 @@ func buildPayload(size int) []byte {
 // here. For ICMPv4 it's ignored entirely, but for ICMPv6, x/net treats a
 // non-nil psh as real pseudo-header bytes: it writes a 4-byte message
 // length field at a fixed offset (2*net.IPv6len = 32) into the buffer
-// and computes a checksum over it. A non-nil-but-empty slice (as this
-// package used to pass via a pooled buffer for size<=1400) satisfies
-// "non-nil" without being an actual pseudo header, so that length write
+// and computes a checksum over it. A non-nil-but-empty slice (such as a
+// pooled scratch buffer) satisfies "non-nil" without being an actual
+// pseudo header, so that length write
 // lands inside the ICMP payload once it's long enough to reach offset
 // 32, silently corrupting it. Passing nil defers checksum computation to
 // the kernel, which is required anyway since a raw ICMPv6 socket always

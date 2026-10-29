@@ -16,10 +16,6 @@ import (
 // the error log and per-host alert/status caches) — pointers because both
 // sides must observe the same reassignment (e.g. the 'R' key resetting
 // errorLogs to a fresh slice).
-//
-// TD-23②: extracted out of Run()'s ~170-line app.SetInputCapture closure so
-// the key-handling logic lives in its own file, independently readable from
-// pane/table construction.
 type inputHandlerDeps struct {
 	app             *tview.Application
 	table           *tview.Table

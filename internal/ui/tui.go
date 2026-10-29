@@ -90,7 +90,7 @@ type RunOptions struct {
 	OnDeleteTarget func(id uint64) error
 	OnSaveReport   func(path, format string, selectedID uint64) error
 	// Groups defines named groups of targets for grouped display.
-	// Nil means flat (ungrouped) layout — existing behaviour.
+	// Nil means flat (ungrouped) layout.
 	Groups []TargetGroup
 }
 
@@ -120,7 +120,7 @@ func Run(opts RunOptions) error {
 		AddPage("deleteHost", deleteHostInput, true, false)
 
 	// Render state shared between tableRenderer, the key handler, and the
-	// monitor pane render closures (TD-51).
+	// monitor pane render closures.
 	vs := newViewState(newLogView())
 	errorView := vs.errorView
 	sidePanes := newSidePanes(opts, currentTargets, vs)

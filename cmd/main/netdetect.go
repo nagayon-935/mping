@@ -57,8 +57,7 @@ func ipv6AddrRank(ip net.IP) int {
 // selectInterfaceIP picks the most appropriate address of the requested
 // family from addrs, the set of addresses assigned to interface ifaceName.
 //
-// For IPv4, it keeps the pre-existing behavior of returning the first
-// non-loopback address found.
+// For IPv4, it returns the first non-loopback address found.
 //
 // For IPv6, an interface commonly carries several addresses at once
 // (link-local, ULA, global unicast, RFC 4941 temporary addresses). Global

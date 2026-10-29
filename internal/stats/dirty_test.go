@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// TestGeneration_AdvancesOnMutation is a smoke test covering the P7
+// TestGeneration_AdvancesOnMutation is a smoke test covering the UI
 // dirty-redraw-gate's data source: every mutator the UI's refresh loop
 // relies on (ping, MTR, port, HTTP) must bump the shared generation
 // counter, or that source's pane would silently stop refreshing under the

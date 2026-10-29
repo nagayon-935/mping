@@ -51,8 +51,7 @@ func determineSourceIPs(cfg config, hosts []targetSpec) (string, string, string,
 // -I interface name so name resolution leaves the host by the same path as
 // the ICMP probes and the port/HTTP checks; it only takes effect once
 // dnsServer picks a specific server to dial — the net.DefaultResolver
-// fallback can't be steered this way, so bind is a no-op in that case exactly
-// as before this feature.
+// fallback can't be steered this way, so bind is a no-op in that case.
 func newCustomResolver(dnsServer string, bind pinger.BindConfig) *net.Resolver {
 	if dnsServer == "" {
 		return net.DefaultResolver

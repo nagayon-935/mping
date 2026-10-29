@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-// TestTargetStats_GetViewWindow_MatchesGetViewExceptHistory guards the P2
-// fix: GetViewWindow must produce the exact same TargetView as GetView for
-// every field except History, which should be truncated to the trailing n
+// TestTargetStats_GetViewWindow_MatchesGetViewExceptHistory checks that
+// GetViewWindow produces the exact same TargetView as GetView for every
+// field except History, which is truncated to the trailing n
 // entries instead of the full ring.
 func TestTargetStats_GetViewWindow_MatchesGetViewExceptHistory(t *testing.T) {
 	tgt := NewTargetStats("example.com")

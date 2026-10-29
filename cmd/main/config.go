@@ -49,8 +49,7 @@ type config struct {
 	noTUI bool
 
 	// thresholds holds the colour-coding / alert boundaries (warn = orange,
-	// crit = red), unified onto ui.Thresholds directly (TD-10) instead of
-	// six separate ms/pct fields that had to be converted at every use site.
+	// crit = red), already converted from the raw ms/pct flag values.
 	thresholds                       ui.Thresholds
 	healthFailures, healthRecoveries int
 	healthWindow                     time.Duration
@@ -109,9 +108,7 @@ func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]hostEntr
 
 // syncField applies *docVal into *cfgField when non-nil and its CLI flag
 // wasn't explicitly set on the command line. This is the flag > YAML >
-// default precedence shared by every simple (non-threshold) config field —
-// TD-19②: adding a new config field now costs one call here instead of a
-// bespoke 3-line if-block.
+// default precedence shared by every simple (non-threshold) config field.
 func syncField[T any](fs *pflag.FlagSet, flag string, docVal *T, cfgField *T) {
 	if fs.Changed(flag) || docVal == nil {
 		return
@@ -163,8 +160,7 @@ func syncDuration(fs *pflag.FlagSet, flag string, docVal *string, cfgField *time
 // merging a reload into the running cfg.thresholds, where CLI flags must
 // keep winning). When fs is nil, every non-nil doc field is applied
 // unconditionally (used by validateHostsDoc, which checks a doc's raw values
-// against a baseline and has no fs to consult). This single function
-// replaces the former applyThresholdsDoc/overlayThresholds pair (TD-10).
+// against a baseline and has no fs to consult).
 func overlayThresholdsDoc(base ui.Thresholds, fs *pflag.FlagSet, th *thresholdsYAML) ui.Thresholds {
 	if th == nil {
 		return base

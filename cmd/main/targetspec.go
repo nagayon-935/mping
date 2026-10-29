@@ -11,7 +11,7 @@ import (
 
 // targetSpec identifies one monitored target as it flows through cmd/main's
 // host pipeline: CLI/YAML hosts → --resolve-all expansion → per-iteration
-// target construction (TD-24). Host is what the user configured (hostname
+// target construction. Host is what the user configured (hostname
 // or literal IP); PinnedIP is set only for a --resolve-all expansion entry
 // that pins this entry to one specific resolved address distinct from Host.
 type targetSpec struct {

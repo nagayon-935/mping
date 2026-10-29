@@ -10,9 +10,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
-// TestMainTableColumns_DynamicFlags is TestDynamicColumnIndices's
-// column-struct-model successor (TD-21②): it checks which columns are
-// marked dynamic (width tracks rendered content) rather than returning a
+// TestMainTableColumns_DynamicFlags checks which columns are marked dynamic (width tracks rendered content) rather than returning a
 // separate index list that could drift out of sync with the column slice.
 func TestMainTableColumns_DynamicFlags(t *testing.T) {
 	tests := []struct {
@@ -111,8 +109,8 @@ func columnTestView() stats.TargetView {
 	}
 }
 
-// TestRenderRowTexts is TestBuildFullColumns's column-struct-model successor
-// (TD-21③): renderRowTexts + mainTableColumns replace buildFullColumns.
+// TestRenderRowTexts checks the per-column cell text renderRowTexts produces
+// for the schema mainTableColumns returns.
 func TestRenderRowTexts(t *testing.T) {
 	noPTR := columnTestView()
 	noPTR.PTR = ""
@@ -164,10 +162,8 @@ func TestRenderRowTexts(t *testing.T) {
 	}
 }
 
-// TestRenderRowCells is TestBuildFullRowCells's column-struct-model
-// successor (TD-21③): renderRowCells replaces buildFullRowCells and its
-// hardcoded "column index + dns/asn offset" color switch — each column now
-// owns its own color logic via column.color.
+// TestRenderRowCells checks the cell colors renderRowCells produces; each
+// column owns its own color logic via column.color.
 func TestRenderRowCells(t *testing.T) {
 	view := stats.TargetView{
 		Host: "d", IP: "d", ASN: "AS123",

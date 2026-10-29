@@ -11,16 +11,12 @@ import (
 )
 
 // tableRenderer owns the Ping Monitor table's column schema, per-tick width
-// calculation, and row rendering — the state and logic that used to live as
-// ~15 local variables plus the ~160-line updateTable closure inside Run().
+// calculation, and row rendering; Run() calls update() once per tick.
 //
 // vs is state Run() also shares with the key handler (inputHandlerDeps) and
 // the monitor pane render closures, not state tableRenderer owns outright:
 // all sides must observe the same reassignment (e.g. the 'R' key resetting
-// errorLogs to a fresh slice) — see viewState (TD-51).
-//
-// TD-23③: this is Run()'s "tableRenderer type" — update() replaces the
-// updateTable closure.
+// errorLogs to a fresh slice) — see viewState.
 //
 // Concurrency invariant: like viewState, every field below is mutated only
 // from tview's single draw/event-loop goroutine (update() runs inside
@@ -232,9 +228,8 @@ func (tr *tableRenderer) update() {
 
 	// One GetView() snapshot per target for this whole tick — width calc,
 	// compact layout, and row rendering all read from this same slice
-	// instead of each calling GetView() independently (P2: GetView() copies
-	// the full RTT history ring, so this collapses what used to be 10+
-	// redundant calls per target per tick down to exactly one).
+	// instead of each calling GetView() independently: GetView() copies the
+	// full RTT history ring, so one call per target per tick is the budget.
 	views := fetchViews(tr.targets)
 	compactRows := tr.chooseLayout(views)
 	if tr.selectionEnabled {

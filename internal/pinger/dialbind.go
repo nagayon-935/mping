@@ -12,8 +12,7 @@ import (
 // the stream/datagram counterpart of the Source/Interface fields Pinger
 // already honours for its raw ICMP sockets, so that -S and -I steer the port
 // and HTTP checks down the same path as ping. A zero BindConfig means "no
-// binding requested" and leaves every dial exactly as it was before these
-// flags were wired in.
+// binding requested" and leaves every dial to the OS defaults.
 type BindConfig struct {
 	Source    string // -S: source IP address to bind outgoing sockets to
 	Interface string // -I: physical interface name to bind outgoing sockets to
@@ -28,7 +27,7 @@ func (bc BindConfig) IsZero() bool {
 // "udp"). net.Dialer rejects a LocalAddr whose concrete type doesn't match the
 // network being dialled ("mismatched local address type"), so the two cases
 // cannot share one address type. A source that isn't a literal IP yields nil,
-// leaving the OS to pick the source address as before.
+// leaving the OS to pick the source address.
 func localAddrFor(network, source string) net.Addr {
 	ip := net.ParseIP(source) // nil for "" as well as a non-literal
 	if ip == nil {
@@ -47,10 +46,10 @@ func localAddrFor(network, source string) net.Addr {
 // DNS resolver, which needs the same -S/-I treatment as the ICMP pinger and
 // the port/HTTP checkers so name resolution leaves via the same egress path.
 //
-// Both are opt-in: with a zero BindConfig the returned dialer is identical to
-// the plain &net.Dialer{Timeout: timeout} that preceded this feature, and on
-// platforms without an interface-binding facility the Control hook resolves to
-// a no-op (see bindif_other.go), so behavior there is unchanged too.
+// Both are opt-in: with a zero BindConfig the returned dialer is a plain
+// &net.Dialer{Timeout: timeout}, and on platforms without an
+// interface-binding facility the Control hook resolves to a no-op (see
+// bindif_other.go).
 func NewBoundDialer(network string, timeout time.Duration, bc BindConfig) *net.Dialer {
 	d := &net.Dialer{Timeout: timeout}
 	// localAddrFor returns an untyped nil net.Addr (never a typed nil pointer)
@@ -72,8 +71,8 @@ func NewBoundDialer(network string, timeout time.Duration, bc BindConfig) *net.D
 
 // newBoundTransport returns an http.Transport whose dials honour bc, or nil
 // when bc requests no binding — in which case callers must leave
-// http.Client.Transport unset so http.DefaultTransport stays in play, exactly
-// as before -S/-I were wired into the HTTP checker. Cloning the default
+// http.Client.Transport unset so http.DefaultTransport stays in play.
+// Cloning the default
 // transport (rather than building one from scratch) preserves proxy support,
 // HTTP/2 negotiation and the default connection-pool limits.
 func newBoundTransport(timeout time.Duration, bc BindConfig) *http.Transport {

@@ -131,8 +131,7 @@ type Reply struct {
 	// message — i.e. what the reply actually arrived carrying, after any
 	// re-marking or bleaching along the return path. Zero when the platform
 	// didn't supply a control message, indistinguishable from an explicit
-	// CS0/Default reply; this mirrors the pre-existing TTL field's same
-	// zero-value ambiguity.
+	// CS0/Default reply; the TTL field has the same zero-value ambiguity.
 	DSCP int
 	Seq  int
 	Err  string
@@ -157,8 +156,7 @@ type Pinger struct {
 	// choose a different one, or when the same address is assigned to more
 	// than one interface. It has no effect on platforms without a
 	// supported binding facility (bindif_other.go), where source-IP bind
-	// via Source remains the only interface-selection mechanism, exactly
-	// matching pre-existing behavior.
+	// via Source remains the only interface-selection mechanism.
 	Interface string
 
 	Size  int // Payload size in bytes

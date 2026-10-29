@@ -18,9 +18,8 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// TD-22④: the helpers below carve run()'s former parse/setup/per-iteration
-// wiring/cleanup steps out into named functions so run() itself is left as
-// parse → construct → loop-control only.
+// The helpers below hold run()'s parse, setup, per-iteration wiring and
+// cleanup steps so run() itself reads as parse → construct → loop control.
 
 // startupParams holds everything parseAndLoadHosts derives from argv and the
 // optional YAML hosts file, before any network/logger setup happens.

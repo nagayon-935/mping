@@ -56,7 +56,7 @@ func newReloadCoordinator(fs *pflag.FlagSet, cliCfg config, cliHosts []string) *
 
 // requestFileReload is the watcher's onChange callback (post-debounce). It
 // parses and validates the hosts file; on failure it logs to logCh and
-// leaves the running instance untouched, exactly as before.
+// leaves the running instance untouched.
 func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile string, logCh chan<- string) {
 	doc, err := parseHostsFile(hostsFile)
 	if err != nil {
@@ -99,7 +99,7 @@ func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile stri
 // groups, and cfg, plus whether the main loop should re-enter (true) or exit
 // (false), plus a non-empty TUI Log warning when the reload succeeded but
 // with a caveat the user should know about (currently: --resolve-all
-// re-expansion failure, TD-47). Must be called only after the previous
+// re-expansion failure). Must be called only after the previous
 // iteration's pinger, port checker, HTTP checker, and watcher have all been
 // stopped and joined.
 func (rc *reloadCoordinator) apply(currentCfg config, currentHosts []targetSpec, currentGroups []ui.TargetGroup) ([]targetSpec, []ui.TargetGroup, config, bool, string) {
@@ -121,7 +121,7 @@ func (rc *reloadCoordinator) apply(currentCfg config, currentHosts []targetSpec,
 		// expandTargets only does work (and can fail) when resolve-all is
 		// set; otherwise it's a passthrough. Keeping the pre-expansion
 		// host list here means resolve-all silently shrinks to one entry
-		// per host unless the user is told (TD-47).
+		// per host unless the user is told.
 		warning = fmt.Sprintf("[yellow][%s] resolve-all: failed to re-expand hosts after reload (%v) — keeping previous resolution[-]",
 			clock(), expandErr)
 	}

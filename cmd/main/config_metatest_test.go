@@ -7,8 +7,8 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// TestApplyDocToCfg_EveryFieldHasEffect guards against TD-19: adding a field
-// to hostsFileYAML without wiring it into applyDocToCfg. For every pointer/
+// TestApplyDocToCfg_EveryFieldHasEffect guards against adding a field to
+// hostsFileYAML without wiring it into applyDocToCfg. For every pointer/
 // slice field on hostsFileYAML (excluding Hosts/Groups/Thresholds, which are
 // structurally different and returned/handled separately), it builds a doc
 // with only that field set to a distinguishing sentinel value, applies it to

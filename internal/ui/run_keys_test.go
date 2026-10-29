@@ -72,7 +72,7 @@ func TestRunKeyboardRestart(t *testing.T) {
 // so once the last one fires nothing needs polling.
 //
 // The MTR assertion pins an invariant that rests entirely on this key
-// handler: restartMTR on the supervisor side no longer resets anything, so
+// handler: restartMTR on the supervisor side does not reset anything, so
 // the only thing clearing per-hop counters on R is the Reset loop here —
 // without it, MTR stats would stay uncleared with the whole suite green.
 func TestRunKeyboardReset(t *testing.T) {

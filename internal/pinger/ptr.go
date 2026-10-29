@@ -75,11 +75,11 @@ func (p *Pinger) lookupAddrBounded(ipStr string) ([]string, error) {
 }
 
 // annotateHopIP formats a traceroute/MTR-style hop responder IP, optionally
-// appending an ASN annotation (matching TraceRoute's pre-existing
-// "IP(ASxxx Org)" format) and/or a PTR reverse-DNS name. ip == "" or "*" is
-// returned unchanged since there is no responder to annotate. Extracted out
-// of TraceRoute's hop loop so the annotation logic can be unit tested
-// without simulating ICMP wire traffic.
+// appending an ASN annotation (in TraceRoute's "IP(ASxxx Org)" format)
+// and/or a PTR reverse-DNS name. ip == "" or "*" is returned unchanged since
+// there is no responder to annotate. Kept separate from TraceRoute's hop loop
+// so the annotation logic can be unit tested without simulating ICMP wire
+// traffic.
 func annotateHopIP(ip string, asnEnabled bool, getASN func(string) ASNInfo, ptrEnabled bool, getPTR func(string) string) string {
 	if ip == "" || ip == "*" {
 		return ip

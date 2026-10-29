@@ -13,7 +13,7 @@ import (
 // thresholdFlags holds the raw ms/pct values pflag fills in for the
 // colour-coding / alert thresholds (warn = orange, crit = red). These are
 // bound to local vars rather than cfg directly since cfg.thresholds is a
-// ui.Thresholds (TD-10): the raw values are converted to ui.Thresholds once,
+// ui.Thresholds: the raw values are converted to ui.Thresholds once,
 // right after a successful parse (see parseArgs).
 type thresholdFlags struct {
 	rttWarnMs, rttCritMs, jitterWarnMs, jitterCritMs int

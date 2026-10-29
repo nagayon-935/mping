@@ -122,7 +122,7 @@ func TestBuildGroupRows_HeaderGroupIdxSet(t *testing.T) {
 }
 
 // TestTableRendererUpdate_GroupHeaderRendersEvenWhenMembersOffWindow guards
-// the P1 fix's group-rendering risk: the visible row window is computed by
+// windowed rendering's group-rendering risk: the visible row window is computed by
 // table-row index (into groupRowMap), not target index, so a group header
 // that falls inside the window must render even when most of that group's
 // members fall outside it.

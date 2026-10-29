@@ -1,10 +1,9 @@
 package ui
 
-// TD-21 stage①: golden tests that pin down the exact rendered header/data
-// row text for the main table across the layouts most likely to break
-// during the column-model refactor (TD-21②③) — DNS/ASN column presence,
-// compact fallback, and grouped rendering. These must pass unchanged before
-// and after introducing the column struct.
+// Golden tests that pin down the exact rendered header/data row text for the
+// main table across the layouts most likely to break when the column schema
+// changes — DNS/ASN column presence, compact fallback, and grouped
+// rendering.
 
 import (
 	"fmt"
@@ -61,24 +60,19 @@ func TestColumnGolden_FullLayout(t *testing.T) {
 			wantData:   "║│Auto    │example.com (93.184.216.34)  │         0│        0│        0.0%│           -│           -│           -│      56│       -│     -│                                         │-                │║",
 		},
 		{
-			// DNS's rendered width now comes from the same render func used
-			// for width measurement and cell text (col.render), instead of a
-			// separate header-name switch — so this is 1 char narrower than
-			// the pre-TD-21② capture, whose grow-priority for DNS was
-			// accidentally inherited from whatever column used to sit at
-			// its array index. See the TD-21② commit message.
+			// DNS's rendered width comes from the same render func used for
+			// width measurement and cell text (col.render), and DNS carries
+			// its own grow priority.
 			name:       "DNSOnly",
 			dns:        true,
 			wantHeader: "║│Src IP  │Dst IP                       │DNS     │  Success│    Loss│ Loss Ratio│        RTT│        Avg│     Jitter│   Size│    MTU│   TTL│Error                                    │Last Loss       │║",
 			wantData:   "║│Auto    │example.com (93.184.216.34)  │8.8.8.8 │        0│       0│       0.0%│          -│          -│          -│     56│      -│     -│                                         │-               │║",
 		},
 		{
-			// ASN's width is now measured from the same render func used for
-			// the cell text (number + operator name — country code is no
-			// longer shown), instead of a separate calcColumnWidths switch
-			// that only measured the bare number — so the column is now
-			// correctly sized to its full content instead of truncating to
-			// "AS1513...". See the TD-21② commit message.
+			// ASN's width is measured from the same render func used for the
+			// cell text (number + operator name, no country code), so the
+			// column is sized to its full content instead of truncating to
+			// "AS1513...".
 			name:       "ASNOnly",
 			asn:        true,
 			wantHeader: "║│Src IP │Dst IP                      │             ASN│  Success│   Loss│Loss Ratio│        RTT│        Avg│    Jitter│  Size│   MTU│  TTL│Error                                    │Last Loss       │║",

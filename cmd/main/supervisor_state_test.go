@@ -9,9 +9,8 @@ import (
 )
 
 // TestHandle_CommandTable walks every (state, command) cell of the design's
-// command table. The old code expressed these rules four different ways
-// across resetTrace/resetMTR/resetPort/resetHTTP, which is how D1 (resets
-// resurrecting components after shutdown) survived. One table, one rule set.
+// command table, so resetTrace/resetMTR/resetPort/resetHTTP all follow one
+// rule set (in particular, no reset resurrects a component after shutdown).
 func TestHandle_CommandTable(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -141,10 +140,9 @@ func TestHandle_ResetAfterTerminateCreatesNothing(t *testing.T) {
 	}
 }
 
-// TestHandle_RestartReleasesPreviousPinger replaces the concurrency-window
-// coverage that TestStartPingerReleasesSupersededPinger provided: with
-// commands serialized, a superseded pinger can only appear through
-// sequential restarts, and each one must still be fully released.
+// TestHandle_RestartReleasesPreviousPinger: with commands serialized, a
+// superseded pinger can only appear through sequential restarts, and each
+// one must still be fully released.
 func TestHandle_RestartReleasesPreviousPinger(t *testing.T) {
 	sup, created := newStateTestSupervisor(t)
 

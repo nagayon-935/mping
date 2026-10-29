@@ -51,10 +51,10 @@ type supervisorConfig struct {
 }
 
 // supervisorState tracks whether this supervisor's components are running.
-// The previous code used a single `stopped bool`, which conflated "the user
-// pressed 's'" with "run() is tearing this iteration down" — a restart
-// racing with the teardown could therefore resurrect the pinger and
-// checkers. stateTerminated is one-way: nothing revives a supervisor from it.
+// "The user pressed 's'" (stopped) and "run() is tearing this iteration
+// down" (terminated) are separate states so a restart racing with the
+// teardown cannot resurrect the pinger and checkers. stateTerminated is
+// one-way: nothing revives a supervisor from it.
 //
 // Command       stopped           running               terminated
 // start         start -> running  no-op                 error
@@ -88,7 +88,7 @@ func (s supervisorState) String() string {
 
 // cmdKind identifies a supervisor operation. Every mutation of supervisor
 // state goes through one of these, processed one at a time, so the
-// components no longer need to defend themselves against concurrent callers.
+// components need not defend themselves against concurrent callers.
 type cmdKind int
 
 const (
@@ -471,7 +471,7 @@ func (s *supervisor) setupHTTPChecker() *pinger.HTTPChecker {
 //
 // s.p, s.portChecker and s.httpChecker are deliberately NOT set to nil: the
 // UI keeps showing each pane's last values after a stop instead of blanking
-// them, which is the pre-existing behaviour.
+// them.
 func (s *supervisor) tearDownAll() {
 	s.stopTraceroutes()
 	s.stopMTR()

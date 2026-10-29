@@ -78,11 +78,11 @@ func TestRunStop_JoinsTracerouteBeforeStoppingPinger(t *testing.T) {
 	}
 }
 
-// TestRunStop_ClosesPingerAfterWait verifies the F1 fix end-to-end: OnStop
-// (-> stopAll -> tearDownAll) must call Close() on the pinger, and only after
-// Wait() has already returned (Stop -> Wait -> Close). Before the fix, the
-// stop path never called Close() at all. The onClose hook makes the ordering
-// check deterministic: it fires before Close() is recorded.
+// TestRunStop_ClosesPingerAfterWait verifies end-to-end that OnStop
+// (-> stopAll -> tearDownAll) calls Close() on the pinger, and only after
+// Wait() has already returned (Stop -> Wait -> Close), so the raw socket is
+// released on stop. The onClose hook makes the ordering check deterministic:
+// it fires before Close() is recorded.
 func TestRunStop_ClosesPingerAfterWait(t *testing.T) {
 	tracker := &fakePinger{}
 	closeBeforeWait := false
@@ -100,7 +100,7 @@ func TestRunStop_ClosesPingerAfterWait(t *testing.T) {
 	}
 
 	if !tracker.isReleased() {
-		t.Error("expected Stop() and Close() to be called — Close() is the F1 fix")
+		t.Error("expected Stop() and Close() to be called")
 	}
 	if !tracker.Waited() {
 		t.Error("expected Wait() to be called")

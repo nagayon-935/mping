@@ -39,11 +39,11 @@ func TestResetMTR_PreservesPingStats(t *testing.T) {
 	}
 }
 
-// TestRestart_PreservesPingStatsRegardlessOfMTR pins the consistency this
-// decoupling buys. restartMTR is also reached from startAll, so a restart
-// used to wipe the ping counters when --mtr was on and keep them when it was
-// off — the same command with two different outcomes depending on an
-// unrelated flag. Both cases must now preserve them.
+// TestRestart_PreservesPingStatsRegardlessOfMTR: restartMTR is also reached
+// from startAll, so a restart that reset statistics there would wipe the
+// ping counters when --mtr was on and keep them when it was off — the same
+// command with two different outcomes depending on an unrelated flag. Both
+// cases must preserve them.
 func TestRestart_PreservesPingStatsRegardlessOfMTR(t *testing.T) {
 	for _, mtrEnabled := range []bool{false, true} {
 		name := "mtr disabled"

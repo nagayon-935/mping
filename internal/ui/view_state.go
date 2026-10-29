@@ -6,12 +6,10 @@ import (
 	"github.com/rivo/tview"
 )
 
-// viewState bundles the five render-state containers that Run() previously
-// declared as separate local variables and distributed as individual
-// pointers to three destinations: newTableRenderer (ballooning its
-// parameter list), inputHandlerDeps (five more individual pointer fields),
-// and the port/HTTP monitor pane render closures. A single *viewState now
-// flows to all three instead (TD-51).
+// viewState bundles the render-state containers shared by the table
+// renderer, the key handler (inputHandlerDeps) and the port/HTTP monitor
+// pane render closures. All three hold the same *viewState so they observe
+// each other's reassignments.
 //
 // Concurrency invariant: none of viewState's fields are guarded by a mutex.
 // This is safe only because every mutation happens on tview's single

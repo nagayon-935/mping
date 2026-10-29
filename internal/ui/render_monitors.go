@@ -38,8 +38,7 @@ func statusChangeMessage(subject, prevStatus, newStatus, healthyStatus string) s
 // it changed, appends a log line built by statusChangeMessage. It always
 // records newStatus under key afterward (a no-op for the initial ""/
 // "Checking..." placeholder status). Shared by the port and HTTP monitor
-// panes, whose status-change detection was previously duplicated verbatim
-// (TD-45).
+// panes.
 func logStatusChangeIfNeeded(lastStatuses map[string]string, key, newStatus, healthyStatus, subject string,
 	errorLogs *[]string, errorView *tview.TextView) {
 	if newStatus == "" || newStatus == "Checking..." {

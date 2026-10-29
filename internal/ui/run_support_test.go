@@ -42,7 +42,7 @@ func TestRefreshTickInterval(t *testing.T) {
 	}
 }
 
-// TestShouldRedraw covers the P7 dirty-redraw-gate decision matrix: redraw
+// TestShouldRedraw covers the dirty-redraw-gate decision matrix: redraw
 // when the generation counter advanced, OR when redrawFloor has elapsed
 // regardless of the counter, and skip only when neither is true.
 func TestShouldRedraw(t *testing.T) {
