@@ -59,7 +59,7 @@ func TestGraphViewInputHandlerScroll(t *testing.T) {
 	tests := []struct {
 		name    string
 		targets int
-		w, h    int // 0 leaves the rect unset
+		w, h    int
 		start   int
 		keys    []tcell.Key
 		want    []int // scrollRow after each key
@@ -69,14 +69,12 @@ func TestGraphViewInputHandlerScroll(t *testing.T) {
 		{"Up clamps a stale scroll position", 4, 80, 40, 2, []tcell.Key{tcell.KeyUp}, []int{0}},
 		{"an unhandled key is a no-op", 1, 80, 20, 0, []tcell.Key{tcell.KeyEnter}, []int{0}},
 		{"no targets resets the scroll", 0, 80, 20, 5, []tcell.Key{tcell.KeyDown}, []int{0}},
-		{"without a rect the scroll stays in range", 1, 0, 0, 0, []tcell.Key{tcell.KeyDown}, []int{0}},
+		{"a zero-size rect resets the scroll", 4, 0, 0, 2, []tcell.Key{tcell.KeyDown}, []int{0}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewGraphView(graphTargets(tt.targets, "host"), time.Second)
-			if tt.w > 0 {
-				g.SetRect(0, 0, tt.w, tt.h)
-			}
+			g.SetRect(0, 0, tt.w, tt.h)
 			g.scrollRow = tt.start
 			handler := g.InputHandler()
 			for i, key := range tt.keys {
@@ -150,12 +148,12 @@ func TestGridStepsForHeight(t *testing.T) {
 	}
 }
 
-func TestGraphViewLayout(t *testing.T) {
+func TestLayoutGraph(t *testing.T) {
 	tests := []struct {
-		name    string
-		targets int
-		w, h    int
-		check   func(t *testing.T, numCols, numRows, visRows, colW, rowH int)
+		name   string
+		series int
+		w, h   int
+		check  func(t *testing.T, numCols, numRows, visRows, colW, rowH int)
 	}{
 		{"min height shows one row of two columns", 6, 80, 9, func(t *testing.T, cols, rows, vis, _, rowH int) {
 			if cols != 2 || rows != 3 {
@@ -188,16 +186,15 @@ func TestGraphViewLayout(t *testing.T) {
 				t.Errorf("visibleRows=%d rowHeight=%d, want >= 1 and >= 2", vis, rowH)
 			}
 		}},
-		{"no targets lay out nothing", 0, 80, 24, func(t *testing.T, cols, rows, vis, colW, rowH int) {
+		{"no series lay out nothing", 0, 80, 24, func(t *testing.T, cols, rows, vis, colW, rowH int) {
 			if cols != 1 || rows != 0 || vis != 0 || colW != 0 || rowH != 0 {
-				t.Errorf("zero targets: unexpected %d %d %d %d %d", cols, rows, vis, colW, rowH)
+				t.Errorf("zero series: unexpected %d %d %d %d %d", cols, rows, vis, colW, rowH)
 			}
 		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewGraphView(graphTargets(tt.targets, "host"), time.Second)
-			cols, rows, vis, colW, rowH := g.layout(tt.w, tt.h)
+			cols, rows, vis, colW, rowH := layoutGraph(tt.series, tt.w, tt.h)
 			tt.check(t, cols, rows, vis, colW, rowH)
 		})
 	}
@@ -317,6 +314,47 @@ func TestGraphViewDraw(t *testing.T) {
 			g.Draw(screen)
 			tt.check(t, screenText(screen))
 		})
+	}
+}
+
+// TestGraphViewDrawsPortSeries covers the Host Details graph: a single
+// target with port checks must lay out one cell per series, not one per
+// target, so the port RTTs are drawn and reachable by scrolling.
+func TestGraphViewDrawsPortSeries(t *testing.T) {
+	target := stats.NewTargetStats("example.com")
+	target.OnSuccess(10*time.Millisecond, 64)
+	ports := make([]*stats.PortCheckResult, 4)
+	for i := range ports {
+		ports[i] = &stats.PortCheckResult{Port: 8000 + i, Protocol: "tcp"}
+		ports[i].SetResult("Open", time.Duration(20+i)*time.Millisecond)
+	}
+	target.SetPortResults(ports)
+
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatalf("screen init: %v", err)
+	}
+	defer screen.Fini()
+	screen.SetSize(80, 18)
+	g := NewGraphView([]*stats.TargetStats{target}, time.Second)
+	g.includePorts = true
+	g.SetRect(0, 0, 80, 18)
+
+	// Five series in two columns: three rows, two of them visible at 18 lines.
+	g.Draw(screen)
+	requireText(t, screenText(screen), "example.com ", "10ms", "8000/tcp", "20ms", "8001/tcp", "8002/tcp")
+
+	g.InputHandler()(tcell.NewEventKey(tcell.KeyDown, 0, 0), func(tview.Primitive) {})
+	if g.scrollRow != 1 {
+		t.Fatalf("scrollRow = %d, want 1 (the third row of port series)", g.scrollRow)
+	}
+	g.Draw(screen)
+	requireText(t, screenText(screen), "8003/tcp", "23ms")
+
+	// The main graph counts targets only.
+	g.includePorts = false
+	if got := g.seriesCount(); got != 1 {
+		t.Errorf("seriesCount without ports = %d, want 1", got)
 	}
 }
 

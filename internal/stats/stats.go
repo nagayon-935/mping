@@ -344,6 +344,13 @@ func (t *TargetStats) HostAndIP() (host, ip string) {
 	return t.displayNameLocked(), t.IP
 }
 
+// PortCount returns the number of port check results without copying them.
+func (t *TargetStats) PortCount() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return len(t.PortResults)
+}
+
 // EffectiveAddress returns the resolved IP when available, falling back to
 // ResolveAddress() so auxiliary probes (traceroute, MTR) can start before or
 // after the first DNS resolution completes without calling GetView().

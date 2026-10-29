@@ -119,12 +119,10 @@ func (g *GraphView) InputHandler() func(event *tcell.EventKey, setFocus func(p t
 			return
 		}
 
+		// Without series or a drawable area layoutGraph has no visible rows,
+		// so the scroll resets to the top.
 		_, _, width, height := g.GetInnerRect()
-		if width <= 0 || height <= 0 {
-			return
-		}
-
-		_, numRowsTotal, visibleRows, _, _ := g.layout(width, height)
+		_, numRowsTotal, visibleRows, _, _ := layoutGraph(g.seriesCount(), width, height)
 		if visibleRows == 0 {
 			g.scrollRow = 0
 			return
@@ -162,7 +160,7 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 	g.updateScale(windowMax(series, timeBasedWidth), time.Now())
 	yMaxDur := time.Duration(g.currentScale.maxMs * float64(time.Millisecond))
 
-	numCols, numRowsTotal, visibleRows, colWidth, rowHeight := g.layout(width, height)
+	numCols, numRowsTotal, visibleRows, colWidth, rowHeight := layoutGraph(len(series), width, height)
 	if visibleRows == 0 {
 		return
 	}
