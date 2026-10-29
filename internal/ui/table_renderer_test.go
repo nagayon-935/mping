@@ -201,9 +201,8 @@ func TestColumnWidthsFollowLateArrivingASN(t *testing.T) {
 		t.Fatal("ASN column not present; construct the renderer with asnEnabled=true")
 	}
 
-	// calcColumnWidths returns a fresh slice per call (unlike the deleted
-	// calcColumnWidthsCached, which aliased the same backing slice across
-	// calls); copying here is just defensive.
+	// calcColumnWidths returns a fresh slice per call; copying here is just
+	// defensive.
 	before := []stats.TargetView{{Host: "example.com", IP: "192.0.2.1"}}
 	widthsBefore := append([]int(nil), tr.calcColumnWidths(before)...)
 

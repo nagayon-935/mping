@@ -131,12 +131,10 @@ func newTableRenderer(
 // tr.targets, in the same order (one GetView() snapshot per target, taken
 // once per tick by the caller rather than re-fetched here).
 //
-// Recomputed every tick on purpose. A previous version cached this and only
-// invalidated on terminal resize, which pinned the ASN and Dst IP columns to
-// whatever they measured on the first tick — before the Cymru lookup and DNS
-// resolution had filled them in — so their content stayed truncated until
-// the user resized. See BenchmarkCalcColumnWidths for the cost this trades
-// against.
+// Recomputed every tick on purpose: ASN and Dst IP content arrives after the
+// first tick (Cymru lookup, DNS resolution), so widths cached until the next
+// resize would keep those columns truncated. See BenchmarkCalcColumnWidths
+// for the cost this trades against.
 func (tr *tableRenderer) calcColumnWidths(views []stats.TargetView) []int {
 	widths := append([]int(nil), tr.baseWidths...)
 	for i, c := range tr.cols {

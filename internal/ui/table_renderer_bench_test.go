@@ -38,9 +38,8 @@ func newBenchTableRenderer(tb testing.TB, targetCount int) *tableRenderer {
 }
 
 // BenchmarkCalcColumnWidths documents the per-tick cost of recomputing
-// dynamic column widths for every target. A previous cached version skipped
-// this unless the terminal was resized, which left the ASN and Dst IP
-// columns stuck at their startup width. Recomputing every tick is only
+// dynamic column widths for every target. Widths are recomputed every tick
+// so late-arriving values (ASN, Dst IP) widen their columns; that is only
 // acceptable while this stays well under the refresh interval.
 func BenchmarkCalcColumnWidths(b *testing.B) {
 	const targetCount = 200
