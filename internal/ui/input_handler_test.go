@@ -211,3 +211,22 @@ func TestResetWithoutCallbackClearsStatsAndRestartsEnabledMonitors(t *testing.T)
 		t.Fatalf("target after reset: sent=%d hops=%v, want 0 and no hops", v.Sent, v.TraceHops)
 	}
 }
+
+func TestInputStateFollowsBrowserControlsWithoutOvertakingPendingOperations(t *testing.T) {
+	actual := "stopped"
+	h := &inputHandler{inputHandlerDeps: inputHandlerDeps{app: tview.NewApplication(), measurementState: func() string { return actual }}}
+	h.handle(tcell.NewEventKey(tcell.KeyRune, 'x', tcell.ModNone))
+	if h.state != monitorStopped {
+		t.Fatal("browser stop did not reach keyboard state")
+	}
+	actual = "running"
+	h.handle(tcell.NewEventKey(tcell.KeyRune, 'x', tcell.ModNone))
+	if h.state != monitorRunning {
+		t.Fatal("browser restart did not reach keyboard state")
+	}
+	h.state = monitorStopping
+	h.handle(tcell.NewEventKey(tcell.KeyRune, 'x', tcell.ModNone))
+	if h.state != monitorStopping {
+		t.Fatal("external state overtook queued stop")
+	}
+}
