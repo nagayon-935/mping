@@ -82,6 +82,8 @@ func (p *Pinger) RegisterTraceChan(traceID int) chan traceMsg {
 }
 
 // UnregisterTraceChan removes the trace channel for the given traceID from the pinger's map.
+// The channel is deliberately left open: broadcastTrace sends to it after
+// releasing traceChansMu, so closing it here could panic a concurrent send.
 func (p *Pinger) UnregisterTraceChan(traceID int) {
 	p.traceChansMu.Lock()
 	delete(p.traceChans, traceID)
@@ -276,7 +278,10 @@ func receiveViaTraceChan(ctx context.Context, traceCh chan traceMsg, accept func
 		select {
 		case <-ctx.Done():
 			return HopReply{}, ctx.Err()
-		case tm := <-traceCh:
+		case tm, ok := <-traceCh:
+			if !ok { // see UnregisterTraceChan: never closed today
+				return HopReply{Responded: false}, nil
+			}
 			if r, matched := accept(tm.parsed, tm.src); matched {
 				r.RTT = time.Since(sent)
 				return r, nil
