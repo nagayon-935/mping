@@ -67,22 +67,28 @@ func TestOriginMustMatchRequestedHostExactly(t *testing.T) {
 
 	tests := []struct {
 		name   string
+		host   string // Host header to send; empty keeps the server's own
 		origin string
 		want   int
 	}{
-		{"no origin", "", http.StatusOK},
-		{"same origin", "http://" + host, http.StatusOK},
-		{"other loopback port", "http://127.0.0.1:1", http.StatusForbidden},
-		{"localhost alias of same port", "http://localhost:" + port, http.StatusForbidden},
-		{"https scheme", "https://" + host, http.StatusForbidden},
-		{"foreign site", "https://evil.example", http.StatusForbidden},
-		{"lookalike host", "http://localhost.evil.example", http.StatusForbidden},
-		{"opaque origin", "null", http.StatusForbidden},
-		{"malformed", "://bad", http.StatusForbidden},
+		{"no origin", "", "", http.StatusOK},
+		{"same origin", "", "http://" + host, http.StatusOK},
+		{"other loopback port", "", "http://127.0.0.1:1", http.StatusForbidden},
+		{"localhost alias of same port", "", "http://localhost:" + port, http.StatusForbidden},
+		{"https scheme", "", "https://" + host, http.StatusForbidden},
+		{"foreign site", "", "https://evil.example", http.StatusForbidden},
+		{"lookalike host", "", "http://localhost.evil.example", http.StatusForbidden},
+		{"opaque origin", "", "null", http.StatusForbidden},
+		{"malformed", "", "://bad", http.StatusForbidden},
+		// A page opened via http://localhost sends that Host, and its Origin matches it.
+		{"origin matches the Host header the browser sent", "localhost:" + port, "http://localhost:" + port, http.StatusOK},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			headers := map[string]string{}
+			if tt.host != "" {
+				headers["Host"] = tt.host
+			}
 			if tt.origin != "" {
 				headers["Origin"] = tt.origin
 			}
@@ -93,20 +99,6 @@ func TestOriginMustMatchRequestedHostExactly(t *testing.T) {
 				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.want)
 			}
 		})
-	}
-}
-
-func TestOriginMatchUsesHostHeaderTheBrowserSent(t *testing.T) {
-	srv := newTestServer(t, NewSource(), defaultTestConfig())
-	_, port, _ := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
-
-	resp := doWithHeaders(t, srv.URL+"/", map[string]string{
-		"Host":   "localhost:" + port,
-		"Origin": "http://localhost:" + port,
-	})
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 for a page opened via http://localhost", resp.StatusCode)
 	}
 }
 
@@ -140,7 +132,7 @@ func TestStaticHandlerHidesDirectoryListings(t *testing.T) {
 }
 
 // The embedded files change with every mping build but carry no modification
-// time, so without this header a browser may keep running an older
+// time, so without these headers a browser may keep running an older
 // dashboard's scripts against a newer API after an upgrade.
 func TestStaticFilesMustBeRevalidated(t *testing.T) {
 	fsys := fstest.MapFS{
@@ -157,32 +149,25 @@ func TestStaticFilesMustBeRevalidated(t *testing.T) {
 			if got := resp.Header.Get("Cache-Control"); got != "no-cache" {
 				t.Fatalf("Cache-Control = %q, want %q", got, "no-cache")
 			}
-			if resp.Header.Get("ETag") == "" {
+			tag := resp.Header.Get("ETag")
+			if tag == "" {
 				t.Fatal("ETag missing; revalidation would re-send the whole file")
 			}
+
+			req, err := http.NewRequest(http.MethodGet, srv.URL+path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("If-None-Match", tag)
+			again, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			again.Body.Close()
+			if again.StatusCode != http.StatusNotModified {
+				t.Fatalf("revalidation status = %d, want %d", again.StatusCode, http.StatusNotModified)
+			}
 		})
-	}
-}
-
-func TestStaticRevalidationWithMatchingETagIsNotModified(t *testing.T) {
-	fsys := fstest.MapFS{"app.js": {Data: []byte("console.log(1)")}}
-	srv := httptest.NewServer(staticHandler(fsys))
-	t.Cleanup(srv.Close)
-	tag := get(t, srv.URL+"/app.js").Header.Get("ETag")
-
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/app.js", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("If-None-Match", tag)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNotModified {
-		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusNotModified)
 	}
 }
 
@@ -192,11 +177,7 @@ func TestStartAlsoListensOnIPv6Loopback(t *testing.T) {
 		t.Skipf("IPv6 loopback unavailable: %v", err)
 	}
 	probe.Close()
-	s, err := Start(Options{Port: 0, Source: NewSource()})
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
+	s := startServer(t)
 	_, port, _ := net.SplitHostPort(s.Addr())
 
 	resp := get(t, "http://[::1]:"+port+"/")
@@ -226,33 +207,23 @@ func TestResponsesCarrySecurityHeaders(t *testing.T) {
 	}
 }
 
-func TestStartListensOnLoopbackOnly(t *testing.T) {
-	s, err := Start(Options{Port: 0, Source: NewSource()})
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
-
-	host, _, err := net.SplitHostPort(s.Addr())
-
+func TestStartServesOnALoopbackPortChosenByTheKernel(t *testing.T) {
+	s := startServer(t)
+	host, portStr, err := net.SplitHostPort(s.Addr())
 	if err != nil {
 		t.Fatalf("Addr %q: %v", s.Addr(), err)
 	}
+
 	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
 		t.Fatalf("listening on %q, want a loopback address", host)
 	}
-}
-
-func TestStartServesAndReportsURL(t *testing.T) {
-	s, err := Start(Options{Port: 0, Source: NewSource()})
-	if err != nil {
-		t.Fatalf("Start: %v", err)
+	if port, _ := strconv.Atoi(portStr); port == 0 {
+		t.Fatal("Addr still reports port 0")
 	}
-	t.Cleanup(func() { s.Close() })
-
-	resp := get(t, s.URL())
-
-	if resp.StatusCode != http.StatusOK {
+	if want := "http://localhost:" + portStr + "/"; s.URL() != want {
+		t.Fatalf("URL = %q, want %q", s.URL(), want)
+	}
+	if resp := get(t, s.URL()); resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET %s: status = %d, want 200", s.URL(), resp.StatusCode)
 	}
 }
@@ -326,24 +297,6 @@ func TestCloseIsIdempotent(t *testing.T) {
 
 	if first != nil || second != nil {
 		t.Fatalf("Close errors = %v, %v; want nil, nil", first, second)
-	}
-}
-
-func TestURLUsesPortChosenByKernel(t *testing.T) {
-	s, err := Start(Options{Port: 0, Source: NewSource()})
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
-	_, portStr, _ := net.SplitHostPort(s.Addr())
-
-	port, _ := strconv.Atoi(portStr)
-
-	if port == 0 {
-		t.Fatal("Addr still reports port 0")
-	}
-	if want := "http://localhost:" + portStr + "/"; s.URL() != want {
-		t.Fatalf("URL = %q, want %q", s.URL(), want)
 	}
 }
 
