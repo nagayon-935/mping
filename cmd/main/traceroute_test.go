@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"reflect"
 	"strings"
@@ -205,5 +206,29 @@ func TestTraceResetJoinsPreviousRun(t *testing.T) {
 	<-sup.traceDone
 	if got := target.GetView().TraceHops; !reflect.DeepEqual(got, []string{"new route"}) {
 		t.Fatalf("stale trace result: %v", got)
+	}
+}
+
+// TestRunTraceroutes_RerunsOnTheInterval checks the periodic re-run: after the
+// initial trace, each tick traces again and publishes the newer route.
+func TestRunTraceroutes_RerunsOnTheInterval(t *testing.T) {
+	orig := tracerouteInterval
+	t.Cleanup(func() { tracerouteInterval = orig })
+	tracerouteInterval = time.Millisecond
+
+	target := stats.NewTargetStats("example.com")
+	runs := 0 // only touched by the runTraceroutes goroutine until it stops
+	tr := funcTracer(func(context.Context) ([]string, error) {
+		runs++
+		return []string{fmt.Sprintf("route %d", runs)}, nil
+	})
+
+	rerouted := func(hops []string) bool {
+		return len(hops) == 1 && strings.HasPrefix(hops[0], "route ") && hops[0] != "route 1"
+	}
+	// A run cancelled mid-trace is not published, so runs may be one ahead of
+	// the displayed route; it is enough that a re-run's route replaced the first.
+	if hops := traceUntil(t, tr, target, rerouted); !rerouted(hops) || runs < 2 {
+		t.Fatalf("after %d runs the route is %v, want a re-run's route", runs, hops)
 	}
 }

@@ -17,7 +17,6 @@ const (
 	pmtuMaxPayload       = 9872             // max ICMP payload for 9900-byte jumbo frames (9900 - 20 IP - 8 ICMP)
 	pmtuHeaderBytes      = 20 + 8           // IPv4 header (20) + ICMP header (8) subtracted from MTU to get max payload
 	dnsResolveInterval   = 60 * time.Second // how often each worker re-resolves the target hostname
-	tracerouteInterval   = 10 * time.Minute // how often the background traceroute is re-run
 	tracerouteMaxHops    = 30               // RFC 1393 recommended maximum; internet paths rarely exceed 30 hops
 	tracerouteHopTimeout = 1 * time.Second  // per-hop timeout for traceroute probes
 	probePort            = "80"             // destination port used when detecting the preferred outbound IP
@@ -27,6 +26,10 @@ const (
 	// run) and every target finished with zero replies.
 	exitCodeNoResponse = 2
 )
+
+// tracerouteInterval is how often the background traceroute is re-run. A var
+// (not const) so tests can shorten it instead of waiting ten minutes.
+var tracerouteInterval = 10 * time.Minute
 
 var uiRun = func(opts ui.RunOptions) error { return ui.Run(opts) }
 
