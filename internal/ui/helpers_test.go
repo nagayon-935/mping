@@ -61,6 +61,14 @@ func screenVisibleRow(screen tcell.Screen, y, width int) string {
 	return b.String()
 }
 
+// cellForeground returns the text color of a table cell. TableCell.Color is
+// only used while the cell has the default style, which NewTableCell never
+// leaves it with, so the color has to be read from the style.
+func cellForeground(c *tview.TableCell) tcell.Color {
+	fg, _, _ := c.Style.Decompose()
+	return fg
+}
+
 // screenText returns every row of the screen joined by newlines.
 func screenText(screen tcell.Screen) string {
 	w, h := screen.Size()

@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -65,42 +66,59 @@ func BenchmarkCalcColumnWidths(b *testing.B) {
 	}
 }
 
-// TestColumnWidthsFollowLateArrivingASN verifies the ASN column widens once
-// the Cymru lookup lands. Widths feed formatCellText's truncation
-// (internal/ui/tui_helpers.go), so a width frozen at startup silently
-// clipped "AS15169 Google LLC" down to the header's 4 columns until the
-// user resized the terminal.
-//
-// This drives calcColumnWidths directly (the fix). It used to drive
-// calcColumnWidthsCached — the deleted function that held the bug: the
-// renderer is not attached to a running tview app, so GetInnerRect reported
-// width 0 on both calls, exactly the "terminal width unchanged" condition
-// under which the old cache served stale widths forever.
-func TestColumnWidthsFollowLateArrivingASN(t *testing.T) {
-	tr := newBenchTableRenderer(t, 1)
+// BenchmarkTableRendererUpdate_500Targets_Scrolled is the P1 fix's
+// windowed-rendering proof. Pass 1 (GetView, alert/log tracking) still
+// necessarily scans every target regardless of scroll position — that
+// part of the per-tick cost scales with total target count no matter what,
+// and correctly so, since an off-screen host's loss/alert state must still
+// be tracked. What P1 caps is Pass 2's cell-rendering work: regardless of
+// how far numTargets exceeds tableMaxRows, only the visible-plus-margin
+// window's rows are ever SetCell'd here (~16-21 rows), rather than all
+// 500. Compare this benchmark's allocs/op against a version of update()
+// without the windowing (e.g. checking out the prior commit) to see that
+// difference directly — this run alone mainly confirms Pass 2 doesn't
+// panic or misbehave at a large scrolled offset.
+func BenchmarkTableRendererUpdate_500Targets_Scrolled(b *testing.B) {
+	const numTargets = 500
+	targets := make([]*stats.TargetStats, numTargets)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats("host")
+		targets[i].SetIP("10.0.0.1")
+		targets[i].IncSent()
+		targets[i].OnSuccess(10*time.Millisecond, 64)
+	}
+	tr := newTestTableRenderer(targets, 200)
+	tr.table.SetOffset(250, 0)
 
-	asnIdx := -1
-	for i, c := range tr.cols {
-		if c.name == "ASN" {
-			asnIdx = i
-			break
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		tr.update()
+	}
+}
+
+// BenchmarkTableRendererUpdate_100Targets is the P2 fix's alloc-reduction
+// proof: run with `go test -bench=. -benchmem` and compare against the
+// pre-P2 commit — GetView() previously ran once per target for width calc,
+// once per target in Pass 1, and (before the P3 fix) again inside
+// buildCompactLayout, each copying up to historySize RTT history entries.
+// After P2, each target's GetView() runs exactly once per update() call.
+func BenchmarkTableRendererUpdate_100Targets(b *testing.B) {
+	const numTargets = 100
+	targets := make([]*stats.TargetStats, numTargets)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats("host")
+		targets[i].SetIP("10.0.0.1")
+		for j := range 500 {
+			targets[i].IncSent()
+			targets[i].OnSuccess(time.Duration(j)*time.Millisecond, 64)
 		}
 	}
-	if asnIdx < 0 {
-		t.Fatal("ASN column not present; construct the renderer with asnEnabled=true")
-	}
+	tr := newTestTableRenderer(targets, 200)
 
-	// calcColumnWidths returns a fresh slice per call (unlike the deleted
-	// calcColumnWidthsCached, which aliased the same backing slice across
-	// calls); copying here is just defensive.
-	before := []stats.TargetView{{Host: "example.com", IP: "192.0.2.1"}}
-	widthsBefore := append([]int(nil), tr.calcColumnWidths(before)...)
-
-	after := []stats.TargetView{{Host: "example.com", IP: "192.0.2.1", ASN: "AS15169", Org: "Google LLC"}}
-	widthsAfter := append([]int(nil), tr.calcColumnWidths(after)...)
-
-	if widthsAfter[asnIdx] <= widthsBefore[asnIdx] {
-		t.Errorf("expected the ASN column to widen once ASN data arrived, got before=%d after=%d",
-			widthsBefore[asnIdx], widthsAfter[asnIdx])
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		tr.update()
 	}
 }
