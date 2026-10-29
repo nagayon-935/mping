@@ -6,113 +6,12 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
-	"time"
 )
-
-// startWatch runs fn in a goroutine and returns a stop func that cancels it,
-// waits for it to return, and fails the test if it returned an error.
-func startWatch(t *testing.T, fn func(ctx context.Context) error) (stop func()) {
-	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	errCh := make(chan error, 1)
-	go func() { errCh <- fn(ctx) }()
-	return func() {
-		t.Helper()
-		cancel()
-		if err := <-errCh; err != nil {
-			t.Errorf("watch returned error: %v", err)
-		}
-	}
-}
-
-// writeUntilCalled rewrites path until called becomes non-zero, so a write
-// that races the watcher's startup is retried instead of failing the test.
-// It then waits for the count to settle, so no event from these writes is
-// still pending when the caller takes its next baseline.
-func writeUntilCalled(t *testing.T, path string, called *atomic.Int32) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for called.Load() == 0 {
-		if time.Now().After(deadline) {
-			t.Fatalf("onChange not called after writing %s", path)
-		}
-		if err := os.WriteFile(path, []byte(time.Now().String()), 0644); err != nil {
-			t.Fatal(err)
-		}
-		time.Sleep(debounceDelay + 100*time.Millisecond)
-	}
-	settle(t, called)
-}
-
-// settle waits until called stays unchanged for longer than the debounce
-// delay, i.e. no onChange is pending, and returns the settled count.
-func settle(t *testing.T, called *atomic.Int32) int32 {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	last := called.Load()
-	for stableSince := time.Now(); time.Since(stableSince) < debounceDelay+150*time.Millisecond; {
-		if time.Now().After(deadline) {
-			t.Fatal("onChange count never settled")
-		}
-		time.Sleep(20 * time.Millisecond)
-		if n := called.Load(); n != last {
-			last, stableSince = n, time.Now()
-		}
-	}
-	return last
-}
-
-// waitForMore polls until called exceeds before.
-func waitForMore(t *testing.T, called *atomic.Int32, before int32, what string) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for called.Load() == before {
-		if time.Now().After(deadline) {
-			t.Fatalf("%s did not trigger onChange", what)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-}
-
-// hookRefreshes makes refreshedHook signal on the returned channel.
-func hookRefreshes(t *testing.T) <-chan struct{} {
-	t.Helper()
-	ch := make(chan struct{}, 16)
-	refreshedHook = func() { ch <- struct{}{} }
-	t.Cleanup(func() { refreshedHook = nil })
-	return ch
-}
-
-func waitRefresh(t *testing.T, ch <-chan struct{}) {
-	t.Helper()
-	select {
-	case <-ch:
-	case <-time.After(5 * time.Second):
-		t.Fatal("path refresh did not run")
-	}
-}
-
-// drain discards refresh signals already delivered.
-func drain(ch <-chan struct{}) {
-	for {
-		select {
-		case <-ch:
-		default:
-			return
-		}
-	}
-}
-
-func writeFile(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-}
 
 // TestWatchFiles_AnyListedFileTriggers verifies that a change to any of the
 // watched files — here an include file in a different directory than the
-// main file — fires onChange, while unlisted siblings stay ignored.
+// main file, listed twice — fires onChange, while unlisted siblings stay
+// ignored.
 func TestWatchFiles_AnyListedFileTriggers(t *testing.T) {
 	mainDir, incDir := t.TempDir(), t.TempDir()
 	mainPath := filepath.Join(mainDir, "hosts.yaml")
@@ -129,8 +28,12 @@ func TestWatchFiles_AnyListedFileTriggers(t *testing.T) {
 
 	// Prove the watcher is live via the include file first, so the sibling
 	// check below can't pass merely because the watcher wasn't ready yet.
-	writeUntilCalled(t, incPath, &called)
+	triggerUntilCalled(t, &called, func() { touch(t, incPath) })
 	before := called.Load()
+	touch(t, mainPath)
+	waitForMore(t, &called, before, "changing the main file")
+	before = called.Load()
+
 	writeFile(t, sibling, "changed\n")
 
 	if n := settle(t, &called); n != before {
@@ -151,7 +54,7 @@ func TestWatchFiles_CreatingMissingFileTriggers(t *testing.T) {
 		return WatchFiles(ctx, []string{probe, missing}, func() { called.Add(1) })
 	})
 	defer stop()
-	writeUntilCalled(t, probe, &called) // watcher is live
+	triggerUntilCalled(t, &called, func() { touch(t, probe) }) // watcher is live
 
 	before := called.Load()
 	writeFile(t, missing, "10.0.0.1\n")
@@ -159,76 +62,120 @@ func TestWatchFiles_CreatingMissingFileTriggers(t *testing.T) {
 	waitForMore(t, &called, before, "creating the missing file")
 }
 
-// TestWatchPaths_RefreshesAfterChange covers a hosts file edited to name a
-// new include file in a not-yet-watched directory: after the hosts-file
-// change fires, the path set is re-read, so creating the include file
-// fires again without touching the hosts file a second time.
-func TestWatchPaths_RefreshesAfterChange(t *testing.T) {
-	refreshed := hookRefreshes(t)
-	mainPath := filepath.Join(t.TempDir(), "hosts.yaml")
-	incPath := filepath.Join(t.TempDir(), "new.csv")
-	writeFile(t, mainPath, "x\n")
-	var withInclude atomic.Bool
-	paths := func() []string {
-		if withInclude.Load() {
-			return []string{mainPath, incPath}
-		}
-		return []string{mainPath}
+// TestWatchPaths_RefreshesPathSetAfterChange covers a hosts file edited to
+// change the path set: after its change fires, the set is re-read, so a
+// newly listed file (an include in a not-yet-watched directory) starts
+// triggering without touching the hosts file again, and a dropped one
+// stops.
+func TestWatchPaths_RefreshesPathSetAfterChange(t *testing.T) {
+	tests := []struct {
+		name         string
+		before       func(mainPath, incPath string) []string // set at startup
+		after        func(mainPath, incPath string) []string // set once the hosts file has changed
+		incExists    bool                                    // whether the include file exists before the hosts file changes
+		wantTriggers bool                                    // whether changing the include file fires after the refresh
+	}{
+		{
+			name:         "newly listed file starts triggering",
+			before:       func(m, _ string) []string { return []string{m} },
+			after:        func(m, inc string) []string { return []string{m, inc} },
+			wantTriggers: true,
+		},
+		{
+			name:      "dropped file stops triggering",
+			before:    func(m, inc string) []string { return []string{m, inc} },
+			after:     func(m, _ string) []string { return []string{m} },
+			incExists: true,
+		},
 	}
-	var called atomic.Int32
-	stop := startWatch(t, func(ctx context.Context) error {
-		return WatchPaths(ctx, paths, func() { called.Add(1) })
-	})
-	defer stop()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			refreshed := hookRefreshes(t)
+			mainPath := filepath.Join(t.TempDir(), "hosts.yaml")
+			incPath := filepath.Join(t.TempDir(), "inc.csv")
+			writeFile(t, mainPath, "x\n")
+			if tt.incExists {
+				writeFile(t, incPath, "x\n")
+			}
+			var called atomic.Int32
+			paths := pathSets(tt.before(mainPath, incPath), tt.after(mainPath, incPath))
+			stop := startWatch(t, func(ctx context.Context) error {
+				return WatchPaths(ctx, paths, func() { called.Add(1) })
+			})
+			defer stop()
 
-	writeUntilCalled(t, mainPath, &called) // watcher is live, include not listed yet
-	drain(refreshed)
-	withInclude.Store(true) // the hosts-file edit that adds the include
-	before := called.Load()
-	writeFile(t, mainPath, "include: new.csv\n")
-	waitForMore(t, &called, before, "editing the hosts file")
-	waitRefresh(t, refreshed)
-	before = settle(t, &called)
+			// The hosts-file change that fires also re-reads the path set.
+			triggerUntilCalled(t, &called, func() { touch(t, mainPath) })
+			waitRefresh(t, refreshed)
+			before := called.Load()
 
-	writeFile(t, incPath, "10.0.0.1\n")
+			writeFile(t, incPath, "changed\n")
 
-	waitForMore(t, &called, before, "creating the newly listed include file")
+			if tt.wantTriggers {
+				waitForMore(t, &called, before, "changing the newly listed include file")
+			} else if n := settle(t, &called); n != before {
+				t.Fatalf("dropped include still triggered onChange (%d → %d calls)", before, n)
+			}
+		})
+	}
 }
 
-// TestWatchPaths_DroppedPathStopsTriggering covers the reverse: once a file
-// leaves the path set (e.g. an include removed from the hosts file),
-// changes to it no longer fire onChange.
-func TestWatchPaths_DroppedPathStopsTriggering(t *testing.T) {
+// TestWatchPaths_RefreshRetriesDirectoryThatCouldNotBeWatched covers a path
+// whose directory does not exist yet when the set is refreshed: it is
+// skipped without stopping the watcher, and once the directory appears the
+// next refresh picks it up.
+func TestWatchPaths_RefreshRetriesDirectoryThatCouldNotBeWatched(t *testing.T) {
 	refreshed := hookRefreshes(t)
 	mainPath := filepath.Join(t.TempDir(), "hosts.yaml")
-	incPath := filepath.Join(t.TempDir(), "old.csv")
+	lateDir := filepath.Join(t.TempDir(), "later")
+	latePath := filepath.Join(lateDir, "inc.csv")
 	writeFile(t, mainPath, "x\n")
-	writeFile(t, incPath, "x\n")
-	var dropped atomic.Bool
-	paths := func() []string {
-		if dropped.Load() {
-			return []string{mainPath}
-		}
-		return []string{mainPath, incPath}
-	}
 	var called atomic.Int32
+	paths := pathSets([]string{mainPath}, []string{mainPath, latePath})
 	stop := startWatch(t, func(ctx context.Context) error {
 		return WatchPaths(ctx, paths, func() { called.Add(1) })
 	})
 	defer stop()
 
-	writeUntilCalled(t, mainPath, &called)
-	drain(refreshed)
-	dropped.Store(true) // the hosts-file edit that removes the include
-	before := called.Load()
-	writeFile(t, mainPath, "hosts: [a]\n")
-	waitForMore(t, &called, before, "editing the hosts file")
+	// The first change lists latePath, whose directory is missing: skipped.
+	triggerUntilCalled(t, &called, func() { touch(t, mainPath) })
 	waitRefresh(t, refreshed)
-	before = settle(t, &called)
+	before := called.Load()
 
-	writeFile(t, incPath, "changed\n")
-
-	if n := settle(t, &called); n != before {
-		t.Fatalf("dropped include still triggered onChange (%d → %d calls)", before, n)
+	// The watcher must still run, and the next refresh must see the directory.
+	if err := os.Mkdir(lateDir, 0o755); err != nil {
+		t.Fatal(err)
 	}
+	touch(t, mainPath)
+	waitForMore(t, &called, before, "changing the hosts file after the failed refresh")
+	waitRefresh(t, refreshed)
+	before = called.Load()
+
+	writeFile(t, latePath, "10.0.0.1\n")
+
+	waitForMore(t, &called, before, "creating a file in the directory that became watchable")
+}
+
+// TestWatchPaths_RefreshSkipsPathItCannotResolve covers a refresh that lists
+// a relative path while the working directory is unusable: the path is
+// skipped, but the watcher keeps reacting to the files it already watches.
+func TestWatchPaths_RefreshSkipsPathItCannotResolve(t *testing.T) {
+	refreshed := hookRefreshes(t)
+	mainPath := filepath.Join(t.TempDir(), "hosts.yaml")
+	writeFile(t, mainPath, "x\n")
+	var called atomic.Int32
+	paths := pathSets([]string{mainPath}, []string{mainPath, "inc.csv"})
+	stop := startWatch(t, func(ctx context.Context) error {
+		return WatchPaths(ctx, paths, func() { called.Add(1) })
+	})
+	defer stop()
+	breakCwd(t) // after the start, so only the refresh sees the broken directory
+
+	triggerUntilCalled(t, &called, func() { touch(t, mainPath) })
+	waitRefresh(t, refreshed)
+	before := called.Load()
+
+	touch(t, mainPath)
+
+	waitForMore(t, &called, before, "changing the hosts file after the failed refresh")
 }
