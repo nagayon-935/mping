@@ -89,10 +89,7 @@ func TestHeadlessRunnerStreamsExternalLogLines(t *testing.T) {
 	out, errc := runHeadlessAsync(opts, nil)
 
 	logCh <- "[red]route flap on a.example[-]"
-	deadline := time.Now().Add(2 * time.Second)
-	for !strings.Contains(out.String(), "route flap on a.example") && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
+	pollUntil(2*time.Second, func() bool { return strings.Contains(out.String(), "route flap on a.example") })
 	close(closeCh)
 	waitReturn(t, errc)
 
@@ -143,10 +140,7 @@ func TestRunNoTUIRunsWithoutTheTUIUntilInterrupted(t *testing.T) {
 		return nil
 	})
 	sigs := stubHeadlessSignals(t)
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		sigs <- os.Interrupt
-	}()
+	sigs <- os.Interrupt // buffered: the runner picks it up once it is waiting
 
 	var out, errOut bytes.Buffer
 	code := run([]string{"-S", "10.0.0.2", "--no-tui", "example.com"}, &out, &errOut)
@@ -164,10 +158,7 @@ func TestRunNoTUIRunsWithoutTheTUIUntilInterrupted(t *testing.T) {
 func TestRunNoTUIHidesTheControlTokenFromNonTerminalOutput(t *testing.T) {
 	started := stubRunSeams(t, nil)
 	sigs := stubHeadlessSignals(t)
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		sigs <- os.Interrupt
-	}()
+	sigs <- os.Interrupt // buffered: the runner picks it up once it is waiting
 
 	var out, errOut bytes.Buffer
 	code := run([]string{"-S", "10.0.0.2", "--no-tui", "--web", "example.com"}, &out, &errOut)
@@ -325,11 +316,9 @@ func TestRunNoTUIQuitWinsOverAReloadPendingDuringTeardown(t *testing.T) {
 	done := make(chan int, 1)
 	var out, errOut bytes.Buffer
 	go func() { done <- run([]string{"-f", yamlPath, "-S", "127.0.0.1", "--no-tui"}, &out, &errOut) }()
-	go func() {
-		// If a second iteration does start, end it so the test can report.
-		time.Sleep(4 * time.Second)
-		sigs <- os.Interrupt
-	}()
+	// If a second iteration does start, end it so the test can report.
+	watchdog := time.AfterFunc(4*time.Second, func() { sigs <- os.Interrupt })
+	defer watchdog.Stop()
 
 	select {
 	case code := <-done:

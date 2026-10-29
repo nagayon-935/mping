@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"net"
+	"strings"
 	"testing"
 )
 
@@ -308,4 +309,25 @@ func TestDetectAutoSourceIPs(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGetInterfaceIP_LoopbackAddressesAreSkipped runs getInterfaceIP against
+// the machine's real loopback interface (so Addrs() is exercised end to end):
+// loopback addresses are never usable as a source, hence no address is found.
+func TestGetInterfaceIP_LoopbackAddressesAreSkipped(t *testing.T) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		t.Skipf("cannot list interfaces: %v", err)
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback == 0 {
+			continue
+		}
+		got, err := getInterfaceIP(iface.Name, false)
+		if err == nil || !strings.Contains(err.Error(), "no IPv4 address found") {
+			t.Fatalf("getInterfaceIP(%q) = %q, %v; want a no-IPv4-address error", iface.Name, got, err)
+		}
+		return
+	}
+	t.Skip("no loopback interface found")
 }

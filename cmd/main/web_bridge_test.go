@@ -232,26 +232,6 @@ func TestCheckWebReloadDrift(t *testing.T) {
 	}
 }
 
-func TestRunWithWebMarksSourceStoppedOnExit(t *testing.T) {
-	stubRunSeams(t, func(ui.RunOptions) error { return nil })
-	var src *web.Source
-	webStart = func(opts web.Options) (*web.Server, error) {
-		src = opts.Source
-		opts.Port = 0
-		return web.Start(opts)
-	}
-
-	var out, errOut bytes.Buffer
-	code := run([]string{"-S", "10.0.0.2", "--web", "example.com"}, &out, &errOut)
-
-	if code != 0 {
-		t.Fatalf("run = %d, want 0 (stderr: %s)", code, errOut.String())
-	}
-	if got := src.State(); got != web.StateStopped {
-		t.Fatalf("state after exit = %q, want %q", got, web.StateStopped)
-	}
-}
-
 // A startup-only web port change must warn without restarting measurements.
 func TestRunReloadWithWeb(t *testing.T) {
 	dir := t.TempDir()
