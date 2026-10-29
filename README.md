@@ -37,6 +37,9 @@
 | :--- | :--- | :--- |
 | Linux | amd64, arm64 | Recommended: grant `CAP_NET_RAW` via `setcap` |
 | macOS | amd64, arm64 (Apple Silicon) | Uses `setuid` |
+| Windows | amd64 | **Experimental** — see below |
+
+> **Windows** — Each release includes a Windows build, but CI only checks that it compiles; it is not tested on Windows. Run it from an Administrator shell (raw ICMP sockets need it). TTL is not reported and `-I` (interface binding) has no effect there; `-m` (PMTU discovery) is unverified.
 
 > **Privileges required** — mping uses raw ICMP sockets to obtain accurate TTL values. On Linux the preferred approach is granting `CAP_NET_RAW` with `setcap`; `install.sh` handles this automatically. On macOS a `setuid` bit is set instead. With a `setuid` install, mping keeps root only for opening raw sockets: every file it reads or writes (`-f`, `include:`, `-o`, `-j`, saved reports) is accessed with the invoking user's permissions, so it cannot be used to read or modify files that user couldn't access directly.
 

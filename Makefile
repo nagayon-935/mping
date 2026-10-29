@@ -7,7 +7,7 @@ BUILD_CMD := go build -o $(BINARY) ./cmd/main/
 STATICCHECK_VERSION ?= latest
 GOVULNCHECK_VERSION ?= latest
 
-.PHONY: build install clean test coverage lint
+.PHONY: build install clean test integration coverage lint
 
 build:
 	$(BUILD_CMD)
@@ -18,11 +18,17 @@ install: build
 test:
 	go test ./...
 
+# integration sends real ICMP echo requests to the loopback addresses, so the
+# test binary runs as root; it is built as the invoking user first.
+integration:
+	go test -c -tags integration -o pinger-integration.test ./internal/pinger
+	sudo ./pinger-integration.test -test.run Integration -test.v
+
 coverage:
 	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
 
-# lint runs the same four checks the CI workflow does, in the same order.
+# lint runs the same five checks the CI workflow does, in the same order.
 # gofmt is checked rather than applied — CI fails on unformatted files, so
 # this has to fail the same way.
 #
@@ -45,8 +51,9 @@ lint:
 		exit 1; \
 	fi
 	go vet ./...
+	GOOS=windows GOARCH=amd64 go vet ./...
 	go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) ./...
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 clean:
-	rm -f $(BINARY) coverage.out
+	rm -f $(BINARY) coverage.out pinger-integration.test
