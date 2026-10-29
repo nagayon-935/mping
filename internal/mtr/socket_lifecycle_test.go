@@ -34,6 +34,10 @@ func (p *replacingProber) ProbeHop(context.Context, HopSocket, string, int, int,
 }
 func (p *replacingProber) NextTraceID() int                 { return 10 }
 func (p *replacingProber) ASNInfoFor(string) pinger.ASNInfo { return pinger.ASNInfo{} }
+
+// TestReplacedMTRSocketClosedOnStop verifies that when the target's address
+// changes and a rediscovery swaps in a new hop socket, both the replaced
+// socket and the final one are closed exactly once.
 func TestReplacedMTRSocketClosedOnStop(t *testing.T) {
 	ts := stats.NewTargetStats("example.invalid")
 	ts.SetIP("127.0.0.1")
@@ -62,6 +66,10 @@ func (p *cancelableOpenProber) OpenHopSocket(ctx context.Context, _ string) (Hop
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
+
+// TestEngineStopCancelsSocketResolution verifies that Stop does not block on
+// OpenHopSocket (which resolves the target's name): the context it is given
+// is cancelled.
 func TestEngineStopCancelsSocketResolution(t *testing.T) {
 	p := &cancelableOpenProber{entered: make(chan struct{})}
 	engine := NewEngine(p, []*stats.TargetStats{stats.NewTargetStats("example.invalid")}, Config{})

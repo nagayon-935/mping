@@ -11,24 +11,22 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
-// concurrencyTrackingProber wraps a fakeProber, recording the high-water
-// mark of concurrent in-flight ProbeHop calls. delay, if set, is slept
+// trackingProber wraps a fakeProber, counting ProbeHop calls and recording
+// the high-water mark of concurrent in-flight ones. delay, if set, is slept
 // inside ProbeHop to widen the window in which concurrent calls overlap —
 // without it, calls can complete faster than goroutines are scheduled,
 // masking real concurrency even without a semaphore.
-type concurrencyTrackingProber struct {
-	delegate *fakeProber
-	delay    time.Duration
+type trackingProber struct {
+	*fakeProber
+	delay time.Duration
 
-	current atomic.Int32
-	peak    atomic.Int32
+	calls   atomic.Int32 // total ProbeHop calls
+	current atomic.Int32 // calls in flight now
+	peak    atomic.Int32 // high-water mark of current
 }
 
-func (c *concurrencyTrackingProber) OpenHopSocket(ctx context.Context, dest string) (HopSocket, error) {
-	return c.delegate.OpenHopSocket(ctx, dest)
-}
-
-func (c *concurrencyTrackingProber) ProbeHop(ctx context.Context, sock HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error) {
+func (c *trackingProber) ProbeHop(ctx context.Context, sock HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error) {
+	c.calls.Add(1)
 	n := c.current.Add(1)
 	for {
 		p := c.peak.Load()
@@ -40,12 +38,7 @@ func (c *concurrencyTrackingProber) ProbeHop(ctx context.Context, sock HopSocket
 		time.Sleep(c.delay)
 	}
 	defer c.current.Add(-1)
-	return c.delegate.ProbeHop(ctx, sock, dest, ttl, traceID, timeout)
-}
-
-func (c *concurrencyTrackingProber) NextTraceID() int { return c.delegate.NextTraceID() }
-func (c *concurrencyTrackingProber) ASNInfoFor(ip string) pinger.ASNInfo {
-	return pinger.ASNInfo{}
+	return c.fakeProber.ProbeHop(ctx, sock, dest, ttl, traceID, timeout)
 }
 
 // TestDiscover_BoundsConcurrentProbeHopCalls verifies the F4 fix: discover()
@@ -53,11 +46,10 @@ func (c *concurrencyTrackingProber) ASNInfoFor(ip string) pinger.ASNInfo {
 // how many ProbeHop calls are actually in flight at once, regardless of how
 // many TTLs are being probed.
 func TestDiscover_BoundsConcurrentProbeHopCalls(t *testing.T) {
-	target := stats.NewTargetStats("8.8.8.8")
-	target.SetIP("8.8.8.8")
+	target := newTestTarget("8.8.8.8")
 
-	tracker := &concurrencyTrackingProber{
-		delegate: newFakeProber(map[int]pinger.HopReply{
+	tracker := &trackingProber{
+		fakeProber: newFakeProber(map[int]pinger.HopReply{
 			30: {SrcIP: "8.8.8.8", Responded: true, ReachedDest: true},
 		}),
 		delay: 20 * time.Millisecond,
@@ -90,12 +82,11 @@ func TestDiscover_BoundsConcurrentProbeHopCalls(t *testing.T) {
 // waiting to acquire the semaphore — returns promptly without leaking
 // goroutines, mirroring cmd/main's TestRunStop_NoGoroutineLeak pattern.
 func TestEngine_StopDuringDiscover_NoGoroutineLeak(t *testing.T) {
-	target := stats.NewTargetStats("8.8.8.8")
-	target.SetIP("8.8.8.8")
+	target := newTestTarget("8.8.8.8")
 
-	tracker := &concurrencyTrackingProber{
-		delegate: newFakeProber(nil), // nothing ever responds
-		delay:    500 * time.Millisecond,
+	tracker := &trackingProber{
+		fakeProber: newFakeProber(nil), // nothing ever responds
+		delay:      500 * time.Millisecond,
 	}
 
 	cfg := Config{
@@ -109,17 +100,17 @@ func TestEngine_StopDuringDiscover_NoGoroutineLeak(t *testing.T) {
 	before := runtime.NumGoroutine()
 	eng := NewEngine(tracker, []*stats.TargetStats{target}, cfg)
 	eng.Start()
-	time.Sleep(50 * time.Millisecond) // let discover start; several goroutines will be queued on the semaphore
-	eng.Stop()                        // must return without leaking goroutines stuck in acquire()
-
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if runtime.NumGoroutine() <= before+2 { // small slack for unrelated background goroutines
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
+	// Every semaphore slot is in use, so the remaining TTL goroutines are
+	// queued in acquire().
+	if !waitUntil(3*time.Second, func() bool { return tracker.current.Load() == 4 }) {
+		t.Fatalf("only %d ProbeHop calls in flight, want 4 (MaxConcurrentProbes)", tracker.current.Load())
 	}
-	t.Errorf("goroutine leak suspected: before=%d after=%d", before, runtime.NumGoroutine())
+	eng.Stop() // must return without leaking goroutines stuck in acquire()
+
+	// small slack for unrelated background goroutines
+	if !waitUntil(3*time.Second, func() bool { return runtime.NumGoroutine() <= before+2 }) {
+		t.Errorf("goroutine leak suspected: before=%d after=%d", before, runtime.NumGoroutine())
+	}
 }
 
 // TestDiscover_CancelledRoundStillDiscardsResults is a regression guard:
