@@ -1,6 +1,6 @@
 // Selected-host summary. Global logs, HTTP checks and routes have their own views.
 import { el, statusChip } from "./dom.js";
-import { dscpName, formatPct, formatRTT, lossRate, rowLevel, statusReasons } from "./model.js";
+import { dscpName, formatPct, formatRTT, lossRate, rowLevel, statusReason } from "./model.js";
 import { formatTime, formatDateTime } from "./time.js";
 import { portsFor } from "./checks.js";
 
@@ -21,9 +21,9 @@ function section(title, ...children) {
 function summaryParts(t, meta) {
   const asn = [t.asn, t.org, t.country && `(${t.country})`].filter(Boolean).join(" ");
   const done = t.recv + t.loss;
-  const level = rowLevel(t, meta.thresholds);
+  const level = rowLevel(t);
   return {
-    status: [statusChip(level), el("span", { text: statusReasons(t, meta.thresholds).join(" · ") })],
+    status: [statusChip(level), el("span", { text: statusReason(t) })],
     columns: [
       section("Current", facts([
         ["IP", t.ip || "–"],

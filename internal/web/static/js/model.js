@@ -1,13 +1,6 @@
 // Pure dashboard logic: no DOM, so it can be unit-tested under node.
-// Threshold semantics mirror internal/ui (styles.go, mtr_view.go).
-
-/** Level for a value against warn/crit, strictly greater-than like the TUI. */
-export function levelAbove(value, warn, crit) {
-  if (value == null || !(value > 0)) return "none";
-  if (value > crit) return "crit";
-  if (value > warn) return "warn";
-  return "ok";
-}
+// Levels (ok/warn/crit/...) are decided by the server (internal/stats) and
+// arrive with each snapshot; nothing here compares values with thresholds.
 
 /** Loss rate in percent over completed probes, excluding in-flight ones. */
 export function lossRate(t) {
@@ -15,68 +8,21 @@ export function lossRate(t) {
   return done === 0 ? 0 : (t.loss / done) * 100;
 }
 
-function lossLevel(t, th) {
-  const rate = lossRate(t);
-  if (rate > th.loss_crit_pct) return "crit";
-  if (rate > th.loss_warn_pct) return "warn";
-  return "ok";
+const rowLevels = new Set(["pending", "ok", "warn", "crit"]);
+
+/** Overall status of a target row: the server's current health judgment. */
+export function rowLevel(t) {
+  return rowLevels.has(t.health?.status) ? t.health.status : "pending";
 }
 
-const rank = { none: 0, pending: 0, ok: 1, warn: 2, crit: 3 };
-
-function worst(...levels) {
-  return levels.reduce((a, b) => (rank[b] > rank[a] ? b : a), "ok");
-}
-
-/** Overall status of a target row. */
-export function rowLevel(t, th) {
-  if (t.health?.configured && ["pending", "ok", "warn", "crit"].includes(t.health.status)) return t.health.status;
-  if (t.recv + t.loss === 0) return "pending";
-  if (t.recv === 0) return "crit";
-  return worst(
-    lossLevel(t, th),
-    levelAbove(t.last_rtt_ms, th.rtt_warn_ms, th.rtt_crit_ms),
-    levelAbove(t.jitter_ms, th.jitter_warn_ms, th.jitter_crit_ms),
-  );
-}
-
-/** Explain the same measurements used by rowLevel; historical peaks do not affect status. */
-export function statusReasons(t, th) {
-  if (t.health?.configured && t.health.reason) return [t.health.reason];
-  const level = rowLevel(t, th);
-  if (level === "pending") return ["Waiting for a completed probe"];
-  if (t.recv === 0) return ["No replies received"];
-  const reasons = [];
-  const checks = [
-    ["Loss", lossRate(t), th.loss_warn_pct, th.loss_crit_pct, formatPct, "%"],
-    ["RTT", t.last_rtt_ms, th.rtt_warn_ms, th.rtt_crit_ms, formatMs, " ms"],
-    ["Jitter", t.jitter_ms, th.jitter_warn_ms, th.jitter_crit_ms, formatMs, " ms"],
-  ];
-  for (const [name, value, warn, crit, format, unit] of checks) {
-    if (value > warn || value > crit) {
-      const limit = value > crit ? crit : warn;
-      // Thresholds can be zero; unlike an RTT sample, zero is a real limit.
-      reasons.push(`${name} ${format(value)}${unit} > ${limit}${unit}`);
-    }
-  }
-  return reasons.length ? reasons : ["Within thresholds"];
+/** Why the target has its rowLevel, as the server explained it. */
+export function statusReason(t) {
+  return t.health?.reason || "Waiting for a completed probe";
 }
 
 /** Per-cell levels for the colour-coded columns. */
-export function cellLevels(t, th) {
-  const rtt = (v) => levelAbove(v, th.rtt_warn_ms, th.rtt_crit_ms);
-  return {
-    loss: t.recv + t.loss === 0 ? "none" : lossLevel(t, th),
-    last: rtt(t.last_rtt_ms),
-    jitter: levelAbove(t.jitter_ms, th.jitter_warn_ms, th.jitter_crit_ms),
-  };
-}
-
-/** MTR hop loss level: any loss warns, crit at or above the loss threshold. */
-export function hopLossLevel(pct, th) {
-  if (pct >= th.loss_crit_pct) return "crit";
-  if (pct > 0) return "warn";
-  return "ok";
+export function cellLevels(t) {
+  return { loss: t.levels?.loss ?? "none", last: t.levels?.last_rtt ?? "none", jitter: t.levels?.jitter ?? "none" };
 }
 
 /** Milliseconds with precision chosen by magnitude; "–" for no sample. */
@@ -146,9 +92,9 @@ export function buildSections(targets, groups) {
   return sections;
 }
 
-export function summarize(targets, th) {
+export function summarize(targets) {
   const out = { total: targets.length, ok: 0, warn: 0, crit: 0, pending: 0 };
-  for (const t of targets) out[rowLevel(t, th)]++;
+  for (const t of targets) out[rowLevel(t)]++;
   return out;
 }
 

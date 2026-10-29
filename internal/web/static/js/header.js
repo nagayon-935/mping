@@ -32,7 +32,7 @@ export function renderHeader(view) {
     : "";
 
   const counts = view.snapshot
-    ? summarize(view.snapshot.targets, view.meta.thresholds)
+    ? summarize(view.snapshot.targets)
     : { total: 0, crit: 0, warn: 0, pending: 0, ok: 0 };
   for (const button of $("summary").querySelectorAll("button")) {
     const status = button.dataset.status;

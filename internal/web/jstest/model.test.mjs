@@ -4,12 +4,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  levelAbove,
   lossRate,
   rowLevel,
-  statusReasons,
+  statusReason,
   cellLevels,
-  hopLossLevel,
   formatMs,
   formatRTT,
   formatCount,
@@ -26,29 +24,10 @@ import {
   targetAddress,
 } from "../static/js/model.js";
 
-const th = {
-  rtt_warn_ms: 50, rtt_crit_ms: 200,
-  jitter_warn_ms: 10, jitter_crit_ms: 50,
-  loss_warn_pct: 20, loss_crit_pct: 80,
-};
-
 const target = (over = {}) => ({
   id: 1, host: "a.example", ip: "192.0.2.1", sent: 10, recv: 10, loss: 0,
   last_rtt_ms: 12, avg_rtt_ms: 12, min_rtt_ms: 10, max_rtt_ms: 15, jitter_ms: 1,
   ...over,
-});
-
-test("levelAbove is strictly greater-than, like the TUI", () => {
-  assert.equal(levelAbove(50, 50, 200), "ok");
-  assert.equal(levelAbove(50.1, 50, 200), "warn");
-  assert.equal(levelAbove(200, 50, 200), "warn");
-  assert.equal(levelAbove(200.1, 50, 200), "crit");
-});
-
-test("levelAbove treats missing or zero samples as none", () => {
-  assert.equal(levelAbove(0, 50, 200), "none");
-  assert.equal(levelAbove(undefined, 50, 200), "none");
-  assert.equal(levelAbove(null, 50, 200), "none");
 });
 
 test("lossRate excludes in-flight probes (loss / (recv + loss))", () => {
@@ -56,48 +35,33 @@ test("lossRate excludes in-flight probes (loss / (recv + loss))", () => {
   assert.equal(lossRate(target({ sent: 1, recv: 0, loss: 0 })), 0);
 });
 
-test("rowLevel is pending before any probe completes", () => {
-  assert.equal(rowLevel(target({ sent: 1, recv: 0, loss: 0 }), th), "pending");
+const health = (status, reason = "") => ({ health: { configured: true, status, reason } });
+
+test("rowLevel is the server's health status", () => {
+  for (const status of ["pending", "ok", "warn", "crit"]) assert.equal(rowLevel(target(health(status))), status);
 });
 
-test("rowLevel takes the worst of loss, last RTT and jitter", () => {
-  assert.equal(rowLevel(target(), th), "ok");
-  assert.equal(rowLevel(target({ last_rtt_ms: 60 }), th), "warn");
-  assert.equal(rowLevel(target({ jitter_ms: 60 }), th), "crit");
-  assert.equal(rowLevel(target({ recv: 1, loss: 9 }), th), "crit");
+test("rowLevel ignores lifetime counters the server did not judge by", () => {
+  // A healthy lifetime average does not hide a current outage, and the
+  // other way round: only the server's judgment counts.
+  assert.equal(rowLevel(target({ recv: 10000, loss: 3, ...health("crit") })), "crit");
+  assert.equal(rowLevel(target({ recv: 0, loss: 50, ...health("ok") })), "ok");
 });
 
-test("rowLevel is crit when every probe was lost", () => {
-  assert.equal(rowLevel(target({ recv: 0, loss: 5, last_rtt_ms: 0, jitter_ms: 0 }), th), "crit");
+test("rowLevel is pending without a known health status", () => {
+  assert.equal(rowLevel(target()), "pending");
+  assert.equal(rowLevel(target(health("bogus"))), "pending");
 });
 
-test("backend health wins over a healthy lifetime average", () => {
-  const target = {recv: 10000, loss: 3, last_rtt_ms: 1, jitter_ms: 1, health: {configured: true, status: "crit", reason: "3 consecutive failures"}};
-  assert.equal(rowLevel(target, th), "crit");
-  assert.deepEqual(statusReasons(target, th), ["3 consecutive failures"]);
+test("statusReason is the server's explanation", () => {
+  assert.equal(statusReason(target(health("crit", "3 consecutive failures"))), "3 consecutive failures");
+  assert.equal(statusReason(target()), "Waiting for a completed probe");
 });
 
-test("status reasons distinguish missing replies, current threshold breaches and historical peaks", () => {
-  assert.deepEqual(statusReasons(target({ recv: 0, loss: 0 }), th), ["Waiting for a completed probe"]);
-  assert.deepEqual(statusReasons(target({ recv: 0, loss: 5 }), th), ["No replies received"]);
-  assert.deepEqual(statusReasons(target({ max_rtt_ms: 900, avg_rtt_ms: 300 }), th), ["Within thresholds"]);
-  assert.deepEqual(statusReasons(target({ recv: 6, loss: 4, last_rtt_ms: 300, jitter_ms: 11 }), th),
-    ["Loss 40.0% > 20%", "RTT 300 ms > 200 ms", "Jitter 11.0 ms > 10 ms"]);
-  assert.deepEqual(statusReasons(target({ last_rtt_ms: 50, jitter_ms: 10 }), th), ["Within thresholds"]);
-  assert.ok(statusReasons(target(), { ...th, rtt_warn_ms: 0 })[0].endsWith("> 0 ms"));
-});
-
-test("cellLevels colours each RTT column by its own value", () => {
-  const got = cellLevels(target({ last_rtt_ms: 300, jitter_ms: 11 }), th);
-  assert.equal(got.last, "crit");
-  assert.equal(got.jitter, "warn");
-  assert.equal(got.loss, "ok");
-});
-
-test("hopLossLevel mirrors the MTR pane (>= crit, > 0 warn)", () => {
-  assert.equal(hopLossLevel(0, th), "ok");
-  assert.equal(hopLossLevel(0.1, th), "warn");
-  assert.equal(hopLossLevel(80, th), "crit");
+test("cellLevels reads the server's per-measurement levels", () => {
+  assert.deepEqual(cellLevels(target({ levels: { loss: "ok", last_rtt: "crit", jitter: "warn" } })),
+    { loss: "ok", last: "crit", jitter: "warn" });
+  assert.deepEqual(cellLevels(target()), { loss: "none", last: "none", jitter: "none" });
 });
 
 test("formatMs picks precision by magnitude and dashes missing values", () => {
@@ -160,8 +124,8 @@ test("buildSections drops groups left empty", () => {
 });
 
 test("summarize counts targets per level", () => {
-  const ts = [target(), target({ last_rtt_ms: 60 }), target({ recv: 0, loss: 3 }), target({ sent: 1, recv: 0 })];
-  assert.deepEqual(summarize(ts, th), { total: 4, ok: 1, warn: 1, crit: 1, pending: 1 });
+  const ts = [target(health("ok")), target(health("warn")), target(health("crit")), target()];
+  assert.deepEqual(summarize(ts), { total: 4, ok: 1, warn: 1, crit: 1, pending: 1 });
 });
 
 test("matchesFilter searches host, IP, PTR and AS fields case-insensitively", () => {

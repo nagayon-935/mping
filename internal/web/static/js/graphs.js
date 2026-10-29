@@ -145,7 +145,7 @@ export function createGraphs(dom) {
       const ordered = state.targets.map((t) => {
         const card = cards.get(t.id) ?? makeCard(t);
         cards.set(t.id, card);
-        card.status.replaceChildren(statusChip(state.meta ? rowLevel(t, state.meta.thresholds) : "pending"));
+        card.status.replaceChildren(statusChip(rowLevel(t)));
         card.title.textContent = t.host;
         card.title.title = t.host;
         card.root.setAttribute("aria-label", `${t.host} RTT graph, select to inspect`);

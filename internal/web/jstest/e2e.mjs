@@ -515,6 +515,7 @@ try {
     const body = await (await fetch(`${base}api/v1/snapshot`)).json();
     body.meta = {...body.meta, groups: [], features: {}, measurement_state: "running"};
     body.snapshot.targets = [{...body.snapshot.targets[0], host: "8.8.8.8", ip: "8.8.8.8", ptr: "", jitter_ms: 60.4, last_rtt_ms: 6.23,
+      levels: {...body.snapshot.targets[0].levels, last_rtt: "ok", jitter: "crit"},
       health: {...body.snapshot.targets[0].health, configured: true, status: "crit", reason: "Jitter 60.4 ms > 50 ms"}}];
     const single = await open({viewport: {width: 2400, height: 1000}}, browser, base, body);
     assert.equal(await single.locator("#targets .col-ip").count(), 0);
