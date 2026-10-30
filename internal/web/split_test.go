@@ -2,6 +2,7 @@ package web
 
 import (
 	"net"
+	"os"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -10,13 +11,26 @@ import (
 	"time"
 )
 
+// socketPath returns a socket path short enough for sun_path (104 bytes on
+// macOS), which t.TempDir() names can exceed.
+func socketPath(t *testing.T, name string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "mw")
+	if err != nil {
+		dir = t.TempDir()
+	} else {
+		t.Cleanup(func() { os.RemoveAll(dir) })
+	}
+	return filepath.Join(dir, name)
+}
+
 // startSplit runs the backend on a UNIX socket and the frontend in front of
 // it, as mping does across two processes.
 func startSplit(t *testing.T, p Provider) (*Source, *Server) {
 	t.Helper()
 	src := NewSource()
 	src.Set(p)
-	socket := filepath.Join(t.TempDir(), "backend.sock")
+	socket := socketPath(t, "backend.sock")
 	ln, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +80,7 @@ func TestSplitFrontendRelaysTheAPIToTheBackendSocket(t *testing.T) {
 }
 
 func TestSplitFrontendReportsAnUnreachableBackend(t *testing.T) {
-	front, err := StartFrontend(FrontendOptions{Port: 0, Backend: filepath.Join(t.TempDir(), "missing.sock")})
+	front, err := StartFrontend(FrontendOptions{Port: 0, Backend: socketPath(t, "missing.sock")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +115,7 @@ func TestSnapshotHonoursItsETag(t *testing.T) {
 }
 
 func TestServeBackendRejectsAWeakToken(t *testing.T) {
-	ln, err := net.Listen("unix", filepath.Join(t.TempDir(), "b.sock"))
+	ln, err := net.Listen("unix", socketPath(t, "b.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
