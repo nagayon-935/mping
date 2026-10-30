@@ -22,7 +22,7 @@ import (
 )
 
 func TestRunWithWebServesLiveSnapshotWhileUIRuns(t *testing.T) {
-	var started func() *web.Server
+	var started func() webServer
 	var status int
 	var snap web.SnapshotResponse
 	var logs []string
@@ -93,7 +93,7 @@ func TestRunWithoutWebDoesNotStartServer(t *testing.T) {
 		return nil
 	})
 	called := false
-	webStart = func(web.Options) (*web.Server, error) {
+	webStart = func(web.Options) (webServer, error) {
 		called = true
 		return nil, errors.New("unexpected")
 	}
@@ -114,7 +114,7 @@ func TestRunExitsWhenWebServerCannotStart(t *testing.T) {
 		t.Error("UI started even though the web server failed")
 		return nil
 	})
-	webStart = func(web.Options) (*web.Server, error) {
+	webStart = func(web.Options) (webServer, error) {
 		return nil, errors.New("address already in use")
 	}
 
@@ -263,7 +263,7 @@ func TestRunReloadWithWeb(t *testing.T) {
 		sawWarning = containsSubstring(opts.InitialLogs, "web: change detected")
 		return nil
 	})
-	webStart = func(opts web.Options) (*web.Server, error) {
+	webStart = func(opts web.Options) (webServer, error) {
 		src = opts.Source
 		opts.Port = 0
 		return web.Start(opts)
@@ -297,7 +297,7 @@ func TestRunReloadWithWeb(t *testing.T) {
 }
 
 // webDo sends an authorised control request the way the dashboard does.
-func webDo(t *testing.T, srv *web.Server, method, path, body string) int {
+func webDo(t *testing.T, srv webServer, method, path, body string) int {
 	t.Helper()
 	_, token, ok := strings.Cut(srv.ControlURL(), "#token=")
 	if !ok {
@@ -322,7 +322,7 @@ func webDo(t *testing.T, srv *web.Server, method, path, body string) int {
 }
 
 func TestRunWebControlEditsTheLiveRunAndLogsToTUI(t *testing.T) {
-	var started func() *web.Server
+	var started func() webServer
 	var statuses []int
 	var hostsAfter, logs []string
 	var announced []string
@@ -423,7 +423,7 @@ func TestRunWebStopsAcceptingEditsOnceTheUIIterationEnds(t *testing.T) {
 	var src *web.Source
 	var atTeardown []web.State
 	stubRunSeams(t, func(ui.RunOptions) error { return nil })
-	webStart = func(opts web.Options) (*web.Server, error) {
+	webStart = func(opts web.Options) (webServer, error) {
 		src = opts.Source
 		opts.Port = 0
 		return web.Start(opts)
@@ -501,7 +501,7 @@ func TestRunUsesMPINGWEBTOKENForTheWebServer(t *testing.T) {
 	t.Setenv("MPING_WEB_TOKEN", token)
 	stubRunSeams(t, func(ui.RunOptions) error { return nil })
 	var got string
-	webStart = func(opts web.Options) (*web.Server, error) {
+	webStart = func(opts web.Options) (webServer, error) {
 		got = opts.Token
 		opts.Port = 0
 		return web.Start(opts)

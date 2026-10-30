@@ -76,10 +76,11 @@ func closed(ch <-chan struct{}) bool {
 // stubRunSeams swaps newPinger/uiRun/webStart/openBrowser for the duration of a
 // test: every pinger is a fresh fakePinger and uiRun is uiFn (tests that need
 // their own pinger or to set uiRun later assign newPinger / uiRun after the
-// call). webStart is wrapped so the real server binds a kernel-chosen port
-// instead of the configured one, keeping tests independent of what is free
-// locally. The returned func yields the web server once run() has started it.
-func stubRunSeams(t *testing.T, uiFn func(ui.RunOptions) error) (started func() *web.Server) {
+// call). webStart runs the real split web UI with its frontend in-process
+// (inProcessFrontend) on a kernel-chosen port instead of the configured one,
+// keeping tests independent of what is free locally. The returned func
+// yields the web server once run() has started it.
+func stubRunSeams(t *testing.T, uiFn func(ui.RunOptions) error) (started func() webServer) {
 	t.Helper()
 	origPinger, origUI, origWeb, origBrowser := newPinger, uiRun, webStart, openBrowser
 	t.Cleanup(func() { newPinger, uiRun, webStart, openBrowser = origPinger, origUI, origWeb, origBrowser })
@@ -87,14 +88,17 @@ func stubRunSeams(t *testing.T, uiFn func(ui.RunOptions) error) (started func() 
 	newPinger = func([]*stats.TargetStats, pinger.Options) pingerController { return &fakePinger{} }
 	uiRun = uiFn
 	openBrowser = func(string) {}
-	var srv *web.Server
-	webStart = func(opts web.Options) (*web.Server, error) {
+	var srv webServer
+	origFrontend := startWebFrontend
+	t.Cleanup(func() { startWebFrontend = origFrontend })
+	startWebFrontend = inProcessFrontend
+	webStart = func(opts web.Options) (webServer, error) {
 		opts.Port = 0
-		s, err := web.Start(opts)
+		s, err := startSplitWebUI(opts)
 		srv = s
 		return s, err
 	}
-	return func() *web.Server { return srv }
+	return func() webServer { return srv }
 }
 
 // fakePinger is the pingerController double shared by the whole package. The
@@ -343,4 +347,10 @@ func doCmd(t *testing.T, s *supervisor, k cmdKind) error {
 func plainLogLine(line string) string {
 	text := tview.NewTextView().SetDynamicColors(true).SetText(line).GetText(true)
 	return strings.TrimRight(text, "\n")
+}
+
+// inProcessFrontend serves the web UI frontend in the test process instead
+// of a separate web process.
+func inProcessFrontend(socket string, port int, _ identity) (webFrontend, error) {
+	return web.StartFrontend(web.FrontendOptions{Port: port, Backend: socket})
 }

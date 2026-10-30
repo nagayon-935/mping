@@ -17,7 +17,7 @@ import (
 
 // webStart and openBrowser are seams for tests, mirroring uiRun.
 var (
-	webStart    = web.Start
+	webStart    = startSplitWebUI
 	openBrowser = defaultOpenBrowser
 )
 
@@ -52,7 +52,7 @@ func defaultOpenBrowser(targetURL string) {
 // startWebUI starts the dashboard when --web is set, returning a nil server
 // when it is off. ok=false means it was requested but could not start; the
 // error has already been written to errOut.
-func startWebUI(cfg config, src *web.Source, errOut io.Writer) (srv *web.Server, ok bool) {
+func startWebUI(cfg config, src *web.Source, errOut io.Writer) (srv webServer, ok bool) {
 	if !cfg.webEnabled {
 		return nil, true
 	}
@@ -73,13 +73,13 @@ func startWebUI(cfg config, src *web.Source, errOut io.Writer) (srv *web.Server,
 
 // webAnnouncement is the Log line offering the web UI. The control link
 // carries the token; the TUI's Log never leaves the terminal.
-func webAnnouncement(srv *web.Server) string {
+func webAnnouncement(srv webServer) string {
 	return fmt.Sprintf("[blue][%s] %s[-]", clock(), tview.Escape("Web UI: "+srv.ControlURL()))
 }
 
 // closeWebUI stops srv (nil-safe). A shutdown error only means a stream
 // had to be cut off; it never changes mping's exit status.
-func closeWebUI(srv *web.Server, errOut io.Writer) {
+func closeWebUI(srv webServer, errOut io.Writer) {
 	if srv == nil {
 		return
 	}

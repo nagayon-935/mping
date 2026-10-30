@@ -120,7 +120,8 @@ func CheckToken(token string) error {
 	return nil
 }
 
-func newToken() (string, error) {
+// NewToken returns a random control token.
+func NewToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("generate control token: %w", err)

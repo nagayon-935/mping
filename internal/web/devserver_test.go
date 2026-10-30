@@ -44,7 +44,7 @@ func TestDevServer(t *testing.T) {
 	src.Set(sim)
 	token := os.Getenv("MPING_WEB_DEV_TOKEN")
 	if token == "" {
-		if token, err = newToken(); err != nil {
+		if token, err = NewToken(); err != nil {
 			t.Fatal(err)
 		}
 	}

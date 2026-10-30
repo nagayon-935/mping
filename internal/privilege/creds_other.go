@@ -11,6 +11,10 @@ var errUnsupported = errors.New("changing effective IDs is not supported on this
 var sys = credentials{
 	getuid: func() int { return -1 }, geteuid: func() int { return -1 },
 	getgid: func() int { return -1 }, getegid: func() int { return -1 },
-	seteuid: func(int) error { return errUnsupported },
-	setegid: func(int) error { return errUnsupported },
+	seteuid:      func(int) error { return errUnsupported },
+	setegid:      func(int) error { return errUnsupported },
+	setuid:       func(int) error { return errUnsupported },
+	setgid:       func(int) error { return errUnsupported },
+	setgroups:    func([]int) error { return errUnsupported },
+	capabilities: func() (string, error) { return "", nil },
 }

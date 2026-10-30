@@ -65,7 +65,7 @@ func Start(opts Options) (*Server, error) {
 	token := opts.Token
 	if token == "" {
 		var err error
-		if token, err = newToken(); err != nil {
+		if token, err = NewToken(); err != nil {
 			return nil, fmt.Errorf("web: %w", err)
 		}
 	} else if err := CheckToken(token); err != nil {

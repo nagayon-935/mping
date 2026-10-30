@@ -19,7 +19,7 @@ type session struct {
 	errOut    io.Writer
 	startup   config // as started; startup-only settings are read from here
 	webSrc    *web.Source
-	webSrv    *web.Server
+	webSrv    webServer
 	runUI     func(ui.RunOptions) error
 	rc        *reloadCoordinator
 	ids       *pinger.IDAllocator

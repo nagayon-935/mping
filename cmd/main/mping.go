@@ -33,6 +33,9 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	if len(args) > 0 && args[0] == "__complete-interfaces" {
 		return runCompleteInterfaces(out)
 	}
+	if len(args) > 0 && args[0] == webProcessCommand {
+		return runWebProcess(args[1:], os.Stdin, out)
+	}
 
 	sp, code, ok := parseAndLoadHosts(args, out, errOut)
 	if !ok {
