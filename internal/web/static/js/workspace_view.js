@@ -58,7 +58,9 @@ export function createWorkspaceView({ graphs, inspect, canControl, selectTarget,
    * and a horizontal scrollbar (non-overlay scrollbars) are measured. */
   function measureMonitor() {
     const table = $("targets");
-    setMonitorSize("--monitor-head", `${Math.ceil(table.tHead.getBoundingClientRect().height * 4) / 4}px`);
+    const head = table.tHead.getBoundingClientRect().height;
+    if (!head) return; // not laid out (hidden): keep the last measurement
+    setMonitorSize("--monitor-head", `${Math.ceil(head * 4) / 4}px`);
     const scroll = table.closest(".pane-scroll");
     setMonitorSize("--monitor-hscroll", `${scroll.offsetHeight - scroll.clientHeight}px`);
   }

@@ -365,34 +365,43 @@ try {
       snapshot:{...response.snapshot,targets}});
     // fit: rows fill the scroll area with no blank band and no inner scroll.
     // Rows can differ by a fraction of a pixel and the tallest one is used.
-    const fit=(p)=>p.$eval("#pane-monitor .pane-scroll",n=>({blank:n.clientHeight-n.firstElementChild.offsetHeight,
+    // Sub-pixel rects. Shared table borders leave the reserve up to half a
+    // pixel per row edge and a pixel per group heading spare, never short.
+    const fit=(p)=>p.$eval("#pane-monitor .pane-scroll",n=>({
+      blank:Math.round((n.getBoundingClientRect().height-(n.offsetHeight-n.clientHeight)-n.firstElementChild.getBoundingClientRect().height)*100)/100,
       overflow:n.scrollHeight-n.clientHeight,
       rows:[n.querySelector("thead").offsetHeight,...[...n.querySelectorAll("tbody tr")].map(r=>r.getBoundingClientRect().height)].join(" ")}));
-    const fits=(size)=>size.blank>=-1&&size.blank<=3&&size.overflow<=1;
+    const fits=(size,groups=0)=>size.blank>=-0.6&&size.blank<=groups+1&&size.overflow<=0;
     // One named group, one empty group (not drawn) and an ungrouped host.
     const grouped=await open({viewport:{width:1400,height:900}},browser,base,body([a,b,c],
       [{name:"core",target_ids:[a.id,b.id]},{name:"gone",target_ids:[9999]}]));
     assert.equal(await grouped.locator("#targets tr.group-row").count(),2,"core and Ungrouped headings");
     let size=await fit(grouped);
-    assert.ok(fits(size),`grouped table fits: ${JSON.stringify(size)}`);
+    assert.ok(fits(size,2),`grouped table fits: ${JSON.stringify(size)}`);
     await grouped.click('#targets [data-sort="host"]');
     await grouped.waitForFunction(()=>!document.querySelector("#targets tr.group-row"));
     size=await fit(grouped);
     assert.ok(fits(size),`flat sorted table fits: ${JSON.stringify(size)}`);
+    // Summary scrolls inside the monitor's height rather than growing it.
+    await grouped.click("#targets tr.target-row >> nth=0");
+    await grouped.waitForSelector("#pane-inspect:not([hidden])");
+    size=await fit(grouped);
+    assert.ok(fits(size,2),`table fits with Summary open: ${JSON.stringify(size)}`);
     await grouped.close();
     // Mixed hosts (status reasons, PTR lines, health tints) must all draw
     // rows of one height, so filtering to any one host, before or after a
     // reload that restores the filter, never moves the lower panes. The
     // viewport keeps the monitor under its 3/5 cap.
     const mixed=await open({viewport:{width:1400,height:1100}},browser,base,body(response.snapshot.targets,[]));
-    // Rows between the first and last share their borders on both sides and
-    // must match the height style.css reserves per host.
+    // Whatever their content, host rows never exceed the height style.css
+    // reserves per host (shared borders can take up to a pixel off).
     const pitch=await mixed.$eval("#targets",t=>{
       const rows=[...t.querySelectorAll("tr.target-row")].slice(1,-1);
       return {heights:[...new Set(rows.map(r=>r.getBoundingClientRect().height))],
-        reserved:parseFloat(getComputedStyle(document.getElementById("pane-monitor")).getPropertyValue("--monitor-row"))};
+        reserved:parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-target"))};
     });
-    assert.deepEqual(pitch.heights,[pitch.reserved],`host rows match the reserved height: ${JSON.stringify(pitch)}`);
+    assert.ok(pitch.heights.length>0&&pitch.heights.every(h=>h<=pitch.reserved&&h>=pitch.reserved-1),
+      `host rows stay within the reserved height: ${JSON.stringify(pitch)}`);
     const lower=()=>mixed.$eval("#pane-traceroute",n=>n.getBoundingClientRect().top);
     // Wait until the redraw shows only rows for this host (the filter
     // re-renders on the next frame).

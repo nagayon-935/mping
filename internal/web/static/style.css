@@ -14,11 +14,17 @@
   --good: #087a2c;
   --warning: #936000;
   --critical: #d03b3b;
+  --critical-ink: #b83030; /* critical as text: 4.5:1 on surface-2 */
   --warn-tint: rgba(250, 178, 25, 0.18);
   --crit-tint: rgba(208, 59, 59, 0.14);
   --focus: #2a78d6;
   --font: system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* Monitor row heights, borders included: 53px holds the status and its
+     reason (or host and PTR line), padding and the 1px border, so rows never
+     grow with content. The route layout reserves monitor height from them. */
+  --row-target: 53px;
+  --row-group: 36px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -37,6 +43,7 @@
     --series-ink: #4a93ea;
     --good: #40ba65;
     --warning: #fab219;
+    --critical-ink: #e86d6d;
     --warn-tint: rgba(250, 178, 25, 0.16);
     --crit-tint: rgba(208, 59, 59, 0.24);
     --focus: #3987e5;
@@ -108,7 +115,7 @@ body {
   font: inherit; font-size: 13px; cursor: pointer;
 }
 .btn:disabled { opacity: 0.6; cursor: progress; }
-.btn-danger { color: var(--critical); border-color: var(--critical); background: transparent; }
+.btn-danger { color: var(--critical-ink); border-color: var(--critical); background: transparent; }
 .report-dialog {
   width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 32px);
   padding: 24px; border: 1px solid var(--border); border-radius: 10px;
@@ -123,7 +130,7 @@ body {
   border-radius: 6px; background: var(--page); color: var(--ink); font: inherit;
 }
 .report-dialog .pane-hint { margin: -8px 0 0; }
-.report-error { margin: 0; font-size: 13px; color: var(--critical); }
+.report-error { margin: 0; font-size: 13px; color: var(--critical-ink); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* The desktop workspace fills the space left below the header. On narrower
@@ -236,13 +243,13 @@ body {
 .cell-text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .grid .mono { font-family: var(--mono); font-size: 12px; }
 .grid tr.group-row td {
-  height: 36px; padding-top: 8px; overflow: hidden; text-overflow: ellipsis;
+  height: var(--row-group); padding-top: 8px; overflow: hidden; text-overflow: ellipsis;
   background: var(--surface-2);
   color: var(--ink-2);
   font-size: 12px; font-weight: 600;
 }
 .grid tr.target-row { cursor: pointer; }
-.grid tr.target-row td { height: 52px; }
+.grid tr.target-row td { height: var(--row-target); }
 .grid tr.target-row[aria-current="true"] td { background: var(--surface-2); box-shadow: inset 0 1px 0 var(--border), inset 0 -1px 0 var(--border); }
 .grid tr.target-row[aria-current="true"] td:first-child { box-shadow: inset 3px 0 0 var(--series); }
 
@@ -279,6 +286,8 @@ td.lvl-crit { background: var(--crit-tint); font-weight: 600; }
    its border) whatever the status reason or PTR line; the route layout
    reserves height from it. */
 #targets .col-status .status { display: flex; line-height: 18px; }
+/* OK rows have no reason; centre the status like the other cells. */
+#targets .status-reason:empty { display: none; }
 .status-icon { font-size: 11px; width: 12px; text-align: center; }
 .status.lvl-ok .status-icon { color: var(--good); }
 .status.lvl-warn .status-icon { color: var(--warning); }
@@ -315,7 +324,7 @@ td.lvl-crit { background: var(--crit-tint); font-weight: 600; }
 .graph-status .status { font-size: 12px; }
 .graph-host { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .graph-value { flex: none; width: 104px; text-align: right; font: 12px var(--mono); color: var(--ink-2); }
-.graph-value.is-lost { color: var(--critical); font-weight: 600; }
+.graph-value.is-lost { color: var(--critical-ink); font-weight: 600; }
 canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 280px); }
 
 /* Summary has one persistent header and no mode-switching tabs. */
@@ -353,16 +362,20 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
      fit every host (up to 3/5) instead of leaving a few rows in empty space.
      workspace_view.js counts every host and group heading the unfiltered
      table draws and measures the header and scrollbar, so filtering never
-     resizes the lower row. Host rows are 52px plus a 1px border (the first
-     and last rows give back half a pixel each), group rows 36px. 136px fits
-     the empty-state message and its button. */
+     resizes the lower row. Host and group rows are at most --row-target and
+     --row-group; shared table borders can take up to a pixel off a row, so
+     the reserve never falls short and leaves at most about a pixel per group
+     spare. 136px fits the empty-state message
+     and its button. */
   .workspace.has-route { grid-template-rows: fit-content(60%) minmax(0, 1fr);
     grid-template-areas: "monitor monitor" "route graphs"; }
-  .workspace.has-route #pane-monitor { --monitor-row: 53px; --monitor-group: 36px; }
   .workspace.has-route #pane-monitor .pane-scroll { flex: 1 1 auto;
     height: calc(var(--monitor-head, 32px) + var(--monitor-hscroll, 0px) + max(136px,
-      var(--monitor-rows, 0) * var(--monitor-row) + var(--monitor-groups, 0) * var(--monitor-group))); }
+      var(--monitor-rows, 0) * var(--row-target) + var(--monitor-groups, 0) * var(--row-group))); }
   .workspace.has-inspect.has-route { grid-template-areas: "monitor inspect" "route graphs"; }
+  /* Summary scrolls inside the monitor's height instead of growing the row
+     past the host table; 320px keeps a few facts in view. */
+  .workspace.has-inspect.has-route #pane-inspect { contain: size; min-height: 320px; }
   #workspace > .pane { height: auto; max-height: none; }
   .page-view { display: flex; flex: 1; min-height: 0; }
   .page-view > .pane { flex: 1; min-height: 0; }
@@ -374,7 +387,9 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
 
 /* Reserve scrollbar space so arrival of rows never changes column budgets. */
 .pane-scroll, .inspect-body { scrollbar-gutter: stable; }
-#measurement-controls { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+#measurement-controls { display: inline-flex; flex-wrap: nowrap; gap: 6px; margin-left: auto; }
+/* On narrow screens the control group moves to its own line as a whole. */
+.topbar > .header-row:first-child { flex-wrap: wrap; row-gap: 6px; }
 
 /* Stable global chrome and compact monitor controls. Live data cannot add rows. */
 .header-row { display: flex; align-items: center; gap: 10px; min-height: 34px; min-width: 0; }
@@ -400,9 +415,9 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
 .monitor-filters select { max-width: 160px; padding: 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--page); color: var(--ink); font: 12px var(--font); }
 #refresh-sort { min-width: 125px; }
 #shown-count { flex: none; min-width: 10ch; font-size: 12px; text-align: right; }
-.sort-heading { border: 0; padding: 0; width: 100%; text-align: inherit; font: inherit; color: inherit; background: transparent; cursor: pointer; white-space: nowrap; }
+.sort-heading { border: 0; padding: 0; width: 100%; text-align: inherit; font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; background: transparent; cursor: pointer; white-space: nowrap; }
 .grid th[aria-sort=ascending], .grid th[aria-sort=descending] { color: var(--ink); }
-.target-row.health-crit .status { color: var(--critical); }
+.target-row.health-crit .status { color: var(--critical-ink); }
 .target-row.health-warn .status { color: var(--ink); }
 .target-row.health-crit:not([aria-current=true]) td:first-child { box-shadow: inset 3px 0 var(--critical); }
 #mtr .mtr-target-row.is-selected th, .trace-target.is-selected .trace-target-head { box-shadow: inset 4px 0 var(--series), inset 0 1px var(--series), inset 0 -1px var(--series); background: var(--page); }
