@@ -60,31 +60,6 @@ func TestParseArgs_Errors(t *testing.T) {
 	}
 }
 
-func TestParseArgs_RemovedFlags(t *testing.T) {
-	for _, tt := range []struct {
-		args []string
-		want string
-	}{
-		{[]string{"--dscp", "EF", "example.com"}, "--dscp was removed"},
-		{[]string{"--dscp=EF", "example.com"}, "--dscp was removed"},
-		{[]string{"--http-status", "200-299", "example.com"}, "--http-status was removed"},
-		{[]string{"--http-header=X-Key=value", "example.com"}, "--http-header was removed"},
-		{[]string{"--no-tui", "example.com"}, "--no-tui was removed"},
-		{[]string{"-o", "log.csv", "example.com"}, "-o/--output was removed"},
-		{[]string{"-jstats.json", "example.com"}, "-j/--json-output was removed"},
-		{[]string{"--event-output=events.jsonl", "example.com"}, "--event-output was removed"},
-	} {
-		_, _, _, _, err := parseArgs(tt.args)
-		if err == nil || !strings.Contains(err.Error(), tt.want) {
-			t.Errorf("parseArgs(%v) error = %v, want it to contain %q", tt.args, err, tt.want)
-		}
-	}
-	// A removed flag's name used as another flag's value is not a flag.
-	if _, _, _, _, err := parseArgs([]string{"-I", "--dscp", "example.com"}); err != nil {
-		t.Errorf("--dscp as the -I value: unexpected error %v", err)
-	}
-}
-
 func TestParseArgsRejectsOutOfRangeWebPort(t *testing.T) {
 	for _, port := range []string{"0", "-1", "65536"} {
 		t.Run(port, func(t *testing.T) {

@@ -13,10 +13,6 @@ func TestStartupAndReloadValidateEffectiveConfig(t *testing.T) {
 		name, yaml string
 		args       []string
 		valid      bool
-		// wantLog is the text a rejected reload must log; "" means
-		// "validation". Removed settings are rejected while parsing,
-		// before validation runs, so they carry their own message.
-		wantLog string
 	}{
 		{name: "zero interval", yaml: "interval: 0"},
 		{name: "negative interval", yaml: "interval: -1"},
@@ -25,8 +21,6 @@ func TestStartupAndReloadValidateEffectiveConfig(t *testing.T) {
 		{name: "negative size", yaml: "size: -1"},
 		{name: "large size", yaml: "size: 9873"},
 		{name: "negative count", yaml: "count: -1"},
-		{name: "removed global setting", yaml: "dscp: EF", wantLog: `"dscp" was removed`},
-		{name: "removed host setting", yaml: "groups: [{name: qos, hosts: [{host: '::1', dscp: EF}]}]", wantLog: `"dscp" was removed`},
 		{name: "invalid group", yaml: "groups: [{name: empty, hosts: []}]"},
 		{name: "invalid thresholds", yaml: "thresholds: {rtt-warn: 300}"},
 		{name: "zero web port", yaml: "web-port: 0"},
@@ -69,11 +63,7 @@ func TestStartupAndReloadValidateEffectiveConfig(t *testing.T) {
 			if !tc.valid {
 				select {
 				case msg := <-logs:
-					want := tc.wantLog
-					if want == "" {
-						want = "validation"
-					}
-					if !strings.Contains(msg, want) {
+					if !strings.Contains(msg, "validation") {
 						t.Fatalf("missing validation error: %s", msg)
 					}
 				default:

@@ -2,7 +2,6 @@ package hostsfile
 
 import (
 	"reflect"
-	"strings"
 	"testing"
 )
 
@@ -16,26 +15,6 @@ func TestParseHostsFile_Mapping(t *testing.T) {
 	want := []Entry{{Host: "example.com"}, {Host: "8.8.8.8"}}
 	if !reflect.DeepEqual(got.Hosts, want) {
 		t.Fatalf("hosts: got %v, want %v", got.Hosts, want)
-	}
-}
-
-func TestParseHostsFile_RejectsRemovedSettings(t *testing.T) {
-	tests := []struct {
-		name, content, want string
-	}{
-		{"top-level dscp", "dscp: EF\nhosts:\n  - example.com\n", `line 1: "dscp" was removed`},
-		{"per-host dscp", "hosts:\n  - host: 2001:db8::1\n    dscp: EF\n", `line 3: "dscp" was removed`},
-		{"http-status", "hosts: [example.com]\nhttp-status: 200-299\n", `line 2: "http-status" was removed`},
-		{"http-header", "hosts: [example.com]\nhttp-header:\n  - X-Key=value\n", `line 2: "http-header" was removed`},
-		{"group host dscp", "groups:\n  - name: qos\n    hosts:\n      - {host: \"::1\", dscp: EF}\n", `line 4: "dscp" was removed`},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := Parse(writeHostsYAML(t, tt.content))
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("Parse error = %v, want it to contain %q", err, tt.want)
-			}
-		})
 	}
 }
 

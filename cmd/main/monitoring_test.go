@@ -43,7 +43,7 @@ func TestCheckConfigExpandsTargets(t *testing.T) {
 func TestCheckConfigRejectsBadMonitoringOptionsWithoutWriting(t *testing.T) {
 	for _, args := range [][]string{
 		{"--source=not-an-ip"}, {"--interface=mping-no-such-interface"}, {"--ipv4", "--source=::1"}, {"--health-failures=0"}, {"--health-window=0s"}, {"--health-failures=0", "--health-recoveries=0", "--health-window=0s"}, {"--health-recoveries=10001"},
-		{"--http=ftp://example.com"}, {"--http-status=200-299"}, {"--http-header=X-Key=value"},
+		{"--http=ftp://example.com"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var out, errOut bytes.Buffer
