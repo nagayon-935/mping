@@ -22,9 +22,7 @@ const (
 // one of its TCP/UDP port checks. It holds a pre-fetched snapshot rather than
 // a live *stats.TargetStats reference: buildSeries takes exactly one
 // GetViewWindow() call per target, and the draw code just reads the
-// already-fetched fields instead of each re-fetching from TargetStats
-// (previously 3 separate GetView() calls per target per Draw — one for the
-// label, one directly, one via windowMax's own snapshot call).
+// already-fetched fields instead of each re-fetching from TargetStats.
 type graphSeries struct {
 	label   string
 	history []time.Duration

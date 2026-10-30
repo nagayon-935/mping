@@ -3,31 +3,39 @@ package main
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/nagayon-935/mping/internal/hostsfile"
 	"github.com/nagayon-935/mping/internal/mtr"
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/nagayon-935/mping/internal/ui"
 	"github.com/nagayon-935/mping/internal/web"
+	"github.com/rivo/tview"
 )
 
-// hostEntries builds a []hostEntry from bare hostnames, for tests written
-// before hostsFileYAML.Hosts/groupYAML.Hosts gained per-target DSCP
-// overrides (hostEntry) and still want the old "just a list of strings"
-// shorthand.
-func hostEntries(hosts ...string) []hostEntry {
-	entries := make([]hostEntry, len(hosts))
+// hostEntries builds a []hostsfile.Entry from bare hostnames.
+func hostEntries(hosts ...string) []hostsfile.Entry {
+	entries := make([]hostsfile.Entry, len(hosts))
 	for i, h := range hosts {
-		entries[i] = hostEntry{Host: h}
+		entries[i] = hostsfile.Entry{Host: h}
 	}
 	return entries
+}
+
+func writeTestFile(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+	return path
 }
 
 // writeHostsYAML writes content to hosts.yaml in a fresh temp dir and returns
@@ -54,16 +62,6 @@ func pollUntil(timeout time.Duration, cond func() bool) bool {
 	return true
 }
 
-// waitFor fails the test if cond does not hold within timeout. It replaces
-// fixed time.Sleep calls wherever a test waits for a background goroutine to
-// reach an observable state.
-func waitFor(t *testing.T, timeout time.Duration, what string, cond func() bool) {
-	t.Helper()
-	if !pollUntil(timeout, cond) {
-		t.Fatalf("timed out after %s waiting for %s", timeout, what)
-	}
-}
-
 // closed reports, without blocking, whether ch has been closed.
 func closed(ch <-chan struct{}) bool {
 	select {
@@ -77,10 +75,11 @@ func closed(ch <-chan struct{}) bool {
 // stubRunSeams swaps newPinger/uiRun/webStart/openBrowser for the duration of a
 // test: every pinger is a fresh fakePinger and uiRun is uiFn (tests that need
 // their own pinger or to set uiRun later assign newPinger / uiRun after the
-// call). webStart is wrapped so the real server binds a kernel-chosen port
-// instead of the configured one, keeping tests independent of what is free
-// locally. The returned func yields the web server once run() has started it.
-func stubRunSeams(t *testing.T, uiFn func(ui.RunOptions) error) (started func() *web.Server) {
+// call). webStart runs the real split web UI with its frontend in-process
+// (inProcessFrontend) on a kernel-chosen port instead of the configured one,
+// keeping tests independent of what is free locally. The returned func
+// yields the web server once run() has started it.
+func stubRunSeams(t *testing.T, uiFn func(ui.RunOptions) error) (started func() webServer) {
 	t.Helper()
 	origPinger, origUI, origWeb, origBrowser := newPinger, uiRun, webStart, openBrowser
 	t.Cleanup(func() { newPinger, uiRun, webStart, openBrowser = origPinger, origUI, origWeb, origBrowser })
@@ -88,19 +87,23 @@ func stubRunSeams(t *testing.T, uiFn func(ui.RunOptions) error) (started func() 
 	newPinger = func([]*stats.TargetStats, pinger.Options) pingerController { return &fakePinger{} }
 	uiRun = uiFn
 	openBrowser = func(string) {}
-	var srv *web.Server
-	webStart = func(opts web.Options) (*web.Server, error) {
+	var srv webServer
+	origFrontend := startWebFrontend
+	t.Cleanup(func() { startWebFrontend = origFrontend })
+	startWebFrontend = inProcessFrontend
+	webStart = func(opts web.Options) (webServer, error) {
 		opts.Port = 0
-		s, err := web.Start(opts)
+		s, err := startSplitWebUI(opts)
 		srv = s
 		return s, err
 	}
-	return func() *web.Server { return srv }
+	return func() webServer { return srv }
 }
 
 // fakePinger is the pingerController double shared by the whole package. The
 // zero value is a working, well-behaved pinger: Start succeeds, Wait returns
-// immediately and TraceRoute yields two hops. Tests opt into other behaviour
+// immediately and its route prober declines to open a hop socket. Tests opt
+// into other behaviour
 // through the exported-by-convention knobs below, set before the pinger is
 // handed to the code under test.
 //
@@ -113,16 +116,14 @@ type fakePinger struct {
 	discoverBottleneckIP string
 	discoverErr          error
 	discoverLogs         []string
-	traceErr             error
 
-	// blockTraceUntilCtxDone makes TraceRoute block on ctx.Done() (a slow,
-	// in-flight network trace) instead of returning immediately.
-	// traceRouteStarted, when non-nil, is closed as TraceRoute begins to block;
-	// traceRouteReturned, when non-nil, is closed right before it returns, so a
-	// test can observe when it actually exited.
-	blockTraceUntilCtxDone bool
-	traceRouteStarted      chan struct{}
-	traceRouteReturned     chan struct{}
+	// routeStarted and routeReturned, when set, make the route prober's
+	// OpenHopSocket block on ctx.Done() (a slow, in-flight lookup) instead
+	// of failing at once; it closes routeStarted as it begins to block and
+	// routeReturned right before it returns, so a test can observe when the
+	// route engine actually exited.
+	routeStarted  chan struct{}
+	routeReturned chan struct{}
 
 	// workersDone, when non-nil, makes WaitWorkers block until finish() is
 	// called, modelling a count-limited run whose probes complete on demand.
@@ -226,41 +227,42 @@ func (f *fakePinger) DiscoverMaxPayload(ctx context.Context, dest string, start 
 	return f.discoverMTU, f.discoverBottleneckIP, nil
 }
 
-func (f *fakePinger) TraceRoute(ctx context.Context, dest string, maxHops int, timeout time.Duration) ([]string, error) {
-	if f.blockTraceUntilCtxDone {
-		if f.traceRouteStarted != nil {
-			close(f.traceRouteStarted)
-		}
-		<-ctx.Done()
-		if f.traceRouteReturned != nil {
-			close(f.traceRouteReturned)
-		}
-		return nil, ctx.Err()
-	}
-	if f.traceErr != nil {
-		return nil, f.traceErr
-	}
-	return []string{"hop1", "hop2"}, nil
-}
-
 func (f *fakePinger) SetSource(ip string)                       {}
 func (f *fakePinger) SetSize(size int)                          {}
 func (f *fakePinger) SetCount(count int)                        {}
 func (f *fakePinger) SetResolveInterval(interval time.Duration) {}
-func (f *fakePinger) SetLogWriter(w io.Writer)                  {}
 func (f *fakePinger) SetInterface(name string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.interfaceSet = name
 }
 
-// MTRProber returns a stub prober rather than nil: cmdResetMTR starts an
+// MTRProber returns a stub prober rather than nil: cmdResetRoute starts an
 // mtr.Engine unconditionally whenever it is invoked, without checking
-// cfg.mtrEnabled itself (that gating lives at the call site), so the engine's
-// per-target goroutine really does call prober.OpenHopSocket. A nil
+// cfg.routeEnabled itself (that gating lives at the call site), so the
+// engine's per-target goroutine really does call prober.OpenHopSocket. A nil
 // mtr.HopProber is a nil interface value and calling a method on it panics;
 // noopHopProber gives it a safe implementation that declines to open a socket.
-func (f *fakePinger) MTRProber() mtr.HopProber { return noopHopProber{} }
+func (f *fakePinger) MTRProber() mtr.HopProber {
+	if f.routeStarted != nil {
+		return blockingHopProber{started: f.routeStarted, returned: f.routeReturned}
+	}
+	return noopHopProber{}
+}
+
+// blockingHopProber's OpenHopSocket blocks until ctx is cancelled; see
+// fakePinger.routeStarted. Use it with a single target.
+type blockingHopProber struct {
+	noopHopProber
+	started, returned chan struct{}
+}
+
+func (p blockingHopProber) OpenHopSocket(ctx context.Context, dest string) (mtr.HopSocket, error) {
+	close(p.started)
+	<-ctx.Done()
+	close(p.returned)
+	return nil, ctx.Err()
+}
 
 // noopHopProber is a minimal mtr.HopProber that always fails to open a hop
 // socket, so an mtr.Engine started against it exits its per-target goroutine
@@ -278,6 +280,7 @@ func (noopHopProber) ProbeHop(ctx context.Context, sock mtr.HopSocket, dest stri
 func (noopHopProber) NextTraceID() int { return 0 }
 
 func (noopHopProber) ASNInfoFor(ip string) pinger.ASNInfo { return pinger.ASNInfo{} }
+func (noopHopProber) PTRFor(string) string                { return "" }
 
 // liveFakePinger is a fakePinger that also implements dynamicPinger, so the
 // supervisor takes its live-edit and event-driven completion paths.
@@ -288,10 +291,12 @@ type liveFakePinger struct {
 	failAdd bool
 }
 
+var _ dynamicPinger = (*liveFakePinger)(nil)
+
 func newLiveFakePinger() *liveFakePinger {
 	return &liveFakePinger{events: make(chan struct{}, 1), done: make(chan struct{})}
 }
-func (p *liveFakePinger) AddTarget(*stats.TargetStats, string, *int) error {
+func (p *liveFakePinger) AddTarget(*stats.TargetStats, string) error {
 	if p.failAdd {
 		return errors.New("ID allocation failed")
 	}
@@ -333,4 +338,17 @@ func newStateTestSupervisor(t *testing.T) (*supervisor, *[]*fakePinger) {
 func doCmd(t *testing.T, s *supervisor, k cmdKind) error {
 	t.Helper()
 	return s.handle(command{kind: k})
+}
+
+// plainLogLine renders a Log-pane line without tview colour tags, using
+// tview's own parser so escaped brackets (e.g. "[red[]") come out literally.
+func plainLogLine(line string) string {
+	text := tview.NewTextView().SetDynamicColors(true).SetText(line).GetText(true)
+	return strings.TrimRight(text, "\n")
+}
+
+// inProcessFrontend serves the web UI frontend in the test process instead
+// of a separate web process.
+func inProcessFrontend(socket string, port int, _ identity) (webFrontend, error) {
+	return web.StartFrontend(web.FrontendOptions{Port: port, Backend: socket})
 }

@@ -8,7 +8,6 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/rivo/tview"
 
-	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
@@ -20,11 +19,7 @@ func formatRTT(d time.Duration) string {
 }
 
 func calcLossRate(view stats.TargetView) float64 {
-	totalAttempts := view.Recv + view.Loss
-	if totalAttempts == 0 {
-		return 0.0
-	}
-	return (float64(view.Loss) / float64(totalAttempts)) * 100
+	return stats.LossRatio(view.Recv, view.Loss)
 }
 
 func formatLossAgo(lastLossTime time.Time) string {
@@ -44,18 +39,6 @@ func intOrDash(n int) string {
 	return fmt.Sprintf("%d", n)
 }
 
-// dscpDisplayString formats the DSCP column cell for a target's most recent
-// reply. Mirrors intOrDash's "<=0 means unknown" convention: 0 is both the
-// pre-first-reply default and IPv4's permanent value (x/net has no
-// receive-side DSCP support — see pinger.Reply.DSCP), so it reads as "-"
-// rather than the misleading "CS0".
-func dscpDisplayString(dscp int) string {
-	if dscp <= 0 {
-		return "-"
-	}
-	return pinger.DSCPName(dscp)
-}
-
 // inferInitialTTL returns the likely initial TTL the remote host used,
 // inferred from the received TTL (LastTTL).
 // Common OS defaults: 64 (Linux/macOS), 128 (Windows), 255 (network devices).
@@ -72,15 +55,14 @@ func inferInitialTTL(lastTTL int) string {
 	}
 }
 
-func hopCountString(hops []string) string {
-	if len(hops) == 0 {
-		return "-"
+// hopLabels labels each hop as the route pane shows it: "IP(ASN Org) ptr",
+// or "*" for a hop that never answered.
+func hopLabels(hops []stats.HopView) []string {
+	labels := make([]string, len(hops))
+	for i, h := range hops {
+		labels[i] = stats.FormatHop(h.IP, h.ASN, h.Org, h.PTR)
 	}
-	// Status messages occupy the route field but are not measured hops.
-	if len(hops) == 1 && (hops[0] == "Tracing..." || hops[0] == "no route found" || strings.HasPrefix(hops[0], "error: ")) {
-		return "-"
-	}
-	return fmt.Sprintf("%d", len(hops))
+	return labels
 }
 
 // wrapHops splits hops into lines that fit within maxWidth display columns.

@@ -78,8 +78,7 @@ func TestMarshalProbe_IPv6_MatchesNilMarshal(t *testing.T) {
 // verifies every byte survives. Before the fix, sizes >= 28 corrupt
 // payload bytes 24-27 because x/net's icmp.Message.Marshal writes a
 // 4-byte pseudo-header length field at buffer offset 32 whenever psh is
-// non-nil -- even when psh is the empty-but-non-nil buf[:0] slice this
-// package used to pass in.
+// non-nil -- even when psh is an empty-but-non-nil buf[:0] slice.
 func TestMarshalProbe_IPv6_PayloadIntegrity(t *testing.T) {
 	sizes := []int{0, 8, 20, 23, 24, 27, 28, 29, 32, 56, 100, 1400, 1401, 1500}
 

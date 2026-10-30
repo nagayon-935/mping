@@ -43,8 +43,8 @@ type PortChecker struct {
 	targets []*stats.TargetStats
 	specs   []PortSpec
 	// results[i][j] is the PortCheckResult for targets[i] × specs[j].
-	// Stored here so Start() never reads t.PortResults directly, eliminating
-	// the data race between NewPortChecker and concurrent GetView() calls.
+	// Kept here because a target's own results are private to stats: the
+	// loops need the live *PortCheckResult, not a view.
 	results  [][]*stats.PortCheckResult
 	interval time.Duration
 	timeout  time.Duration
@@ -64,7 +64,7 @@ type PortChecker struct {
 // NewPortChecker creates a PortChecker and initialises PortResults on each
 // target. bind carries the -S source address and -I interface name so port
 // checks leave the host by the same path as the ICMP probes; a zero BindConfig
-// leaves dialling exactly as it was before those flags were wired in.
+// leaves dialling to the OS defaults.
 func NewPortChecker(targets []*stats.TargetStats, specs []PortSpec, interval, timeout time.Duration, bind BindConfig) *PortChecker {
 	results := make([][]*stats.PortCheckResult, len(targets))
 	for i, t := range targets {
@@ -259,7 +259,7 @@ func (pc *PortChecker) RemoveTarget(t *stats.TargetStats) {
 func newPortResults(specs []PortSpec) []*stats.PortCheckResult {
 	results := make([]*stats.PortCheckResult, len(specs))
 	for i, spec := range specs {
-		results[i] = &stats.PortCheckResult{Port: spec.Port, Protocol: spec.Protocol, Status: "Checking..."}
+		results[i] = stats.NewPortCheckResult(spec.Port, spec.Protocol)
 	}
 	return results
 }

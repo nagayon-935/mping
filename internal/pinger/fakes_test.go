@@ -48,10 +48,6 @@ type fakePacketConn struct {
 	// recorded. A non-nil result fails the write.
 	onWrite func(b []byte, dst net.Addr) error
 
-	// tosCalls records every SetTOS argument, so tests can assert the
-	// global DSCP Start() derives from Pinger.DSCP was actually armed on
-	// the socket.
-	tosCalls []int
 	// written holds a copy of every WriteTo payload, so tests can parse back
 	// what was actually put on the wire.
 	written [][]byte
@@ -99,13 +95,6 @@ func (f *fakePacketConn) SetControlMessage(ipv4.ControlFlags, bool) error {
 	return nil
 }
 
-func (f *fakePacketConn) SetTOS(tos int) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.tosCalls = append(f.tosCalls, tos)
-	return nil
-}
-
 // writes returns a snapshot of the recorded WriteTo payloads.
 func (f *fakePacketConn) writes() [][]byte {
 	f.mu.Lock()
@@ -124,15 +113,7 @@ type readResultV6 struct {
 // fakePacketConnV6 is the IPv6 PacketConnV6 fake.
 type fakePacketConnV6 struct {
 	readQueue []readResultV6
-
-	// tosCalls records every SetTrafficClass argument (see
-	// fakePacketConn.tosCalls).
-	tosCalls []int
-
-	// writeCMs records every ControlMessage passed to WriteTo (nil entries
-	// included), so tests can assert a per-target DSCP override reached the
-	// per-packet write path.
-	writeCMs []*ipv6.ControlMessage
+	writes    int // WriteTo calls
 }
 
 func (f *fakePacketConnV6) ReadFrom(b []byte) (int, *ipv6.ControlMessage, net.Addr, error) {
@@ -145,8 +126,8 @@ func (f *fakePacketConnV6) ReadFrom(b []byte) (int, *ipv6.ControlMessage, net.Ad
 	return n, r.cm, r.addr, r.err
 }
 
-func (f *fakePacketConnV6) WriteTo(b []byte, cm *ipv6.ControlMessage, _ net.Addr) (int, error) {
-	f.writeCMs = append(f.writeCMs, cm)
+func (f *fakePacketConnV6) WriteTo(b []byte, _ *ipv6.ControlMessage, _ net.Addr) (int, error) {
+	f.writes++
 	return len(b), nil
 }
 
@@ -154,11 +135,6 @@ func (f *fakePacketConnV6) SetReadDeadline(time.Time) error                 { re
 func (f *fakePacketConnV6) Close() error                                    { return nil }
 func (f *fakePacketConnV6) SetControlMessage(ipv6.ControlFlags, bool) error { return nil }
 func (f *fakePacketConnV6) SetICMPFilter(*ipv6.ICMPFilter) error            { return nil }
-
-func (f *fakePacketConnV6) SetTrafficClass(tc int) error {
-	f.tosCalls = append(f.tosCalls, tc)
-	return nil
-}
 
 // fakeNetPacketConn is the net.PacketConn (and net.Conn) fake handed out by
 // the Pinger's ListenPacket seam. It is not a real socket, so the ipv4/ipv6

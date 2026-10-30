@@ -4,71 +4,59 @@ import (
 	"fmt"
 	"time"
 
-	ui "github.com/nagayon-935/mping/internal/ui"
+	"github.com/nagayon-935/mping/internal/hostsfile"
+	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/spf13/pflag"
 )
 
-type config struct {
-	intervalMs     int
-	timeoutMs      int
-	outputFile     string
-	hostsFile      string
-	ifaceName      string
-	sourceAddr     string
-	packetSize     int
-	count          int
-	mtuEnabled     bool
-	trace          bool
-	asnEnabled     bool
-	ptrEnabled     bool
-	ipv4Only       bool
-	ipv6Only       bool
-	portSpecs      []string
-	httpURLs       []string
-	jsonOutputFile string
-	mtr            bool
-	dnsServer      string
-	resolveAll     bool
-	duration       time.Duration
-	// dscp is the raw --dscp / dscp: value (a name like "EF" or a bare
-	// number), applied as the global outbound DSCP-derived TOS/TrafficClass
-	// default for every target that has no per-target override (see
-	// targetSpec.DSCP). Empty means "not configured" — parsed lazily by
-	// buildPingerOptions rather than here, so validateHostsDoc/parseArgs can
-	// reject a malformed spec before any pinger is constructed.
-	dscp string
+// routeEnabled reports whether the route engine runs: traceroute (-T)
+// discovers the path only, mtr (-M) also probes every hop.
+func (c config) routeEnabled() bool { return c.trace || c.mtr }
 
+type config struct {
+	intervalMs int
+	timeoutMs  int
+	hostsFile  string
+	ifaceName  string
+	sourceAddr string
+	packetSize int
+	count      int
+	mtuEnabled bool
+	trace      bool
+	asnEnabled bool
+	ptrEnabled bool
+	ipv4Only   bool
+	ipv6Only   bool
+	portSpecs  []string
+	httpURLs   []string
+	mtr        bool
+	dnsServer  string
+	resolveAll bool
+	duration   time.Duration
 	// webEnabled/webPort control the loopback-only browser dashboard. Like
 	// --duration they are read once at startup: a YAML reload does not
 	// start, stop or move the web server.
 	webEnabled bool
 	webPort    int
 
-	// noTUI replaces the terminal UI with plain log output (headless.go).
 	// CLI only and read once at startup.
-	noTUI bool
 
 	// thresholds holds the colour-coding / alert boundaries (warn = orange,
-	// crit = red), unified onto ui.Thresholds directly (TD-10) instead of
-	// six separate ms/pct fields that had to be converted at every use site.
-	thresholds                       ui.Thresholds
+	// crit = red), already converted from the raw ms/pct flag values.
+	thresholds                       stats.Thresholds
 	healthFailures, healthRecoveries int
 	healthWindow                     time.Duration
-	eventOutput                      string
 	checkConfig                      bool
-	httpStatus                       string
 	httpFollowRedirects              bool
-	httpHeaders                      []string
 }
 
 // applyDocToCfg applies YAML document fields to cfg, respecting CLI flag
 // overrides (a field is only applied when the CLI flag was not explicitly set).
 // Returns the ungrouped hosts listed in the document, the raw group definitions,
 // and the updated cfg.
-func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]hostEntry, []groupYAML, config, error) {
+func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsfile.Document) ([]hostsfile.Entry, []hostsfile.Group, config, error) {
 	syncField(fs, "interval", doc.IntervalMs, &cfg.intervalMs)
 	syncField(fs, "timeout", doc.TimeoutMs, &cfg.timeoutMs)
-	syncField(fs, "output", doc.OutputFile, &cfg.outputFile)
 	syncField(fs, "interface", doc.IfaceName, &cfg.ifaceName)
 	syncField(fs, "source", doc.SourceAddr, &cfg.sourceAddr)
 	syncField(fs, "size", doc.PacketSize, &cfg.packetSize)
@@ -81,19 +69,14 @@ func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]hostEntr
 	syncField(fs, "ipv6", doc.Ipv6Only, &cfg.ipv6Only)
 	syncSlice(fs, "port", doc.PortSpecs, &cfg.portSpecs)
 	syncSlice(fs, "http", doc.HTTPURLs, &cfg.httpURLs)
-	syncField(fs, "json-output", doc.JsonOutput, &cfg.jsonOutputFile)
 	syncField(fs, "mtr", doc.Mtr, &cfg.mtr)
 	syncField(fs, "dns-server", doc.DNSServer, &cfg.dnsServer)
 	syncField(fs, "resolve-all", doc.ResolveAll, &cfg.resolveAll)
-	syncField(fs, "dscp", doc.DSCP, &cfg.dscp)
 	syncField(fs, "web", doc.Web, &cfg.webEnabled)
 	syncField(fs, "web-port", doc.WebPort, &cfg.webPort)
 	syncField(fs, "health-failures", doc.HealthFailures, &cfg.healthFailures)
 	syncField(fs, "health-recoveries", doc.HealthRecoveries, &cfg.healthRecoveries)
-	syncField(fs, "event-output", doc.EventOutput, &cfg.eventOutput)
-	syncField(fs, "http-status", doc.HTTPStatus, &cfg.httpStatus)
 	syncField(fs, "http-follow-redirects", doc.HTTPFollowRedirects, &cfg.httpFollowRedirects)
-	syncSlice(fs, "http-header", doc.HTTPHeaders, &cfg.httpHeaders)
 	if err := syncDuration(fs, "health-window", doc.HealthWindow, &cfg.healthWindow); err != nil {
 		return nil, nil, cfg, err
 	}
@@ -109,9 +92,7 @@ func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsFileYAML) ([]hostEntr
 
 // syncField applies *docVal into *cfgField when non-nil and its CLI flag
 // wasn't explicitly set on the command line. This is the flag > YAML >
-// default precedence shared by every simple (non-threshold) config field —
-// TD-19②: adding a new config field now costs one call here instead of a
-// bespoke 3-line if-block.
+// default precedence shared by every simple (non-threshold) config field.
 func syncField[T any](fs *pflag.FlagSet, flag string, docVal *T, cfgField *T) {
 	if fs.Changed(flag) || docVal == nil {
 		return
@@ -163,9 +144,8 @@ func syncDuration(fs *pflag.FlagSet, flag string, docVal *string, cfgField *time
 // merging a reload into the running cfg.thresholds, where CLI flags must
 // keep winning). When fs is nil, every non-nil doc field is applied
 // unconditionally (used by validateHostsDoc, which checks a doc's raw values
-// against a baseline and has no fs to consult). This single function
-// replaces the former applyThresholdsDoc/overlayThresholds pair (TD-10).
-func overlayThresholdsDoc(base ui.Thresholds, fs *pflag.FlagSet, th *thresholdsYAML) ui.Thresholds {
+// against a baseline and has no fs to consult).
+func overlayThresholdsDoc(base stats.Thresholds, fs *pflag.FlagSet, th *hostsfile.Thresholds) stats.Thresholds {
 	if th == nil {
 		return base
 	}

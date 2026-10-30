@@ -1,6 +1,11 @@
 // Package web serves a loopback-only browser view of mping's live
-// statistics: a JSON API plus a server-sent-events stream that pushes a fresh
-// snapshot whenever stats.Generation() moves.
+// statistics in two halves. The backend (ServeBackend) is the JSON API over
+// the measurement state, including the token-protected controls. The
+// frontend (StartFrontend) is what the browser talks to: it checks Host and
+// Origin, serves the dashboard, pushes a fresh snapshot over server-sent
+// events whenever the backend's changes, and relays every other API request
+// to the backend. mping runs the frontend in its own unprivileged process;
+// Start runs both halves in one process.
 package web
 
 import (
@@ -36,7 +41,6 @@ type Features struct {
 	ASN        bool `json:"asn"`
 	PTR        bool `json:"ptr"`
 	MTU        bool `json:"mtu"`
-	DSCP       bool `json:"dscp"`
 }
 
 // Thresholds are the warn/crit colour boundaries, in JSON-friendly units.
@@ -49,7 +53,7 @@ type Thresholds struct {
 	LossCritPct  float64 `json:"loss_crit_pct"`
 }
 
-// Group is a named set of targets, identified by stats.TargetStats.ID so the
+// Group is a named set of targets, identified by stats.TargetStats.ID() so the
 // grouping stays valid while hosts are added or removed at runtime.
 type Group struct {
 	Name      string   `json:"name"`

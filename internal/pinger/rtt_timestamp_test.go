@@ -212,7 +212,7 @@ func TestHandleEchoReply_SetsRTTFromEmbeddedTimestamp(t *testing.T) {
 	embedSendTimestamp(payload, sent)
 
 	msg := &icmp.Message{Body: &icmp.Echo{ID: id, Seq: 5, Data: payload}}
-	p.handleEchoReply(msg, 64, 0)
+	p.handleEchoReply(msg, 64)
 
 	select {
 	case reply := <-p.targetChans[id]:
@@ -240,7 +240,7 @@ func TestHandleEchoReply_FallsBackWhenTimestampInvalid(t *testing.T) {
 	copy(payload, "XXXXX") // corrupt signature, as a middlebox rewrite would
 
 	msg := &icmp.Message{Body: &icmp.Echo{ID: id, Seq: 5, Data: payload}}
-	p.handleEchoReply(msg, 64, 0)
+	p.handleEchoReply(msg, 64)
 
 	select {
 	case reply := <-p.targetChans[id]:
@@ -273,8 +273,8 @@ func TestRunWorker_UsesEmbeddedRTTWhenValid(t *testing.T) {
 
 // TestRunWorker_FallsBackToStartTimeWhenRTTZero pins that runWorker still
 // derives RTT from pend.start when reply.RTT is left at its zero value
-// (the fallback signal from handleEchoReply), preserving pre-existing
-// behavior for small payloads / untrusted timestamps.
+// (the fallback signal from handleEchoReply), as happens for small
+// payloads / untrusted timestamps.
 func TestRunWorker_FallsBackToStartTimeWhenRTTZero(t *testing.T) {
 	r := newWorkerRig(t, 1)
 	// The probe's start time is taken just before WriteTo, so a reply

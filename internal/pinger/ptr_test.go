@@ -248,40 +248,6 @@ func TestResolveTarget_PTRLookup_TracksGoroutineInWaitGroup(t *testing.T) {
 
 // TestAnnotateHopIP covers the ASN/PTR annotation helper used by TraceRoute
 // to append AS/organization and reverse-DNS info to a hop's responder IP.
-func TestAnnotateHopIP(t *testing.T) {
-	getASN := func(ip string) ASNInfo { return ASNInfo{Number: "AS15169", Org: "Google LLC"} }
-	getPTR := func(ip string) string { return "dns.google" }
-	noASN := func(ip string) ASNInfo { return ASNInfo{} }
-	noPTR := func(ip string) string { return "" }
-
-	tests := []struct {
-		name       string
-		ip         string
-		asnEnabled bool
-		ptrEnabled bool
-		getASN     func(string) ASNInfo
-		getPTR     func(string) string
-		want       string
-	}{
-		{"star passthrough", "*", true, true, getASN, getPTR, "*"},
-		{"empty passthrough", "", true, true, getASN, getPTR, ""},
-		{"neither enabled", "8.8.8.8", false, false, getASN, getPTR, "8.8.8.8"},
-		{"asn only", "8.8.8.8", true, false, getASN, getPTR, "8.8.8.8(AS15169 Google LLC)"},
-		{"ptr only", "8.8.8.8", false, true, getASN, getPTR, "8.8.8.8 dns.google"},
-		{"both", "8.8.8.8", true, true, getASN, getPTR, "8.8.8.8(AS15169 Google LLC) dns.google"},
-		{"ptr enabled but lookup fails", "8.8.8.8", false, true, noASN, noPTR, "8.8.8.8"},
-		{"asn enabled but lookup fails", "8.8.8.8", true, false, noASN, noPTR, "8.8.8.8"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := annotateHopIP(tt.ip, tt.asnEnabled, tt.getASN, tt.ptrEnabled, tt.getPTR)
-			if got != tt.want {
-				t.Errorf("annotateHopIP(%q) = %q, want %q", tt.ip, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestGetPTR_JitterAndEmptyName(t *testing.T) {
 	t.Run("stopping during the jitter delay abandons the lookup", func(t *testing.T) {
 		p := NewPingerWithOptions(nil, Options{LookupAddr: func(string) ([]string, error) {

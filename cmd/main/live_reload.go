@@ -10,13 +10,14 @@ import (
 )
 
 // These settings do not change a probe's identity or transport. Everything
-// else deliberately takes the existing full-rebuild path.
+// else deliberately takes the existing full-rebuild path. Switching between
+// traceroute and mtr only restarts the route engine (reloadLive); turning
+// route monitoring on or off still rebuilds, since it adds or removes a pane.
 func probeConfig(cfg config) config {
-	cfg.thresholds = ui.Thresholds{}
+	cfg.trace, cfg.mtr = cfg.routeEnabled(), false
+	cfg.thresholds = stats.Thresholds{}
 	cfg.healthFailures, cfg.healthRecoveries, cfg.healthWindow = 0, 0, 0
-	cfg.webEnabled, cfg.webPort, cfg.noTUI, cfg.checkConfig = false, 0, false, false
-	cfg.eventOutput = ""
-	cfg.outputFile = ""
+	cfg.webEnabled, cfg.webPort, cfg.checkConfig = false, 0, false
 	cfg.duration = 0 // startup deadline is intentionally session-wide
 	return cfg
 }
@@ -33,8 +34,8 @@ func diffProbeConfig(oldCfg, newCfg config) []string {
 }
 
 func (s *supervisor) reconcileTargets(cfg config, specs []targetSpec) (targets []*stats.TargetStats, added []int, reused map[*stats.TargetStats]bool) {
-	type key struct{ host, ip, dscp string }
-	identity := func(spec targetSpec) key { return key{spec.Host, spec.PinnedIP, spec.DSCP} }
+	type key struct{ host, ip string }
+	identity := func(spec targetSpec) key { return key{spec.Host, spec.PinnedIP} }
 	old := map[key][]*stats.TargetStats{}
 	for i, spec := range s.cfg.specs {
 		old[identity(spec)] = append(old[identity(spec)], s.cfg.targets[i])
@@ -91,9 +92,7 @@ func (s *supervisor) reloadLive(cfg config, specs []targetSpec, groups []ui.Targ
 		}
 		previous := s.cfg.config
 		s.cfg.config = cfg
-		// Startup-only writers/servers keep their actual configuration in reports.
-		s.cfg.config.eventOutput = previous.eventOutput
-		s.cfg.config.outputFile = previous.outputFile
+		// The startup-only web server keeps its actual configuration in reports.
 		s.cfg.config.webEnabled, s.cfg.config.webPort = previous.webEnabled, previous.webPort
 		s.cfg.config.duration = previous.duration
 		for i, t := range targets {
@@ -106,21 +105,20 @@ func (s *supervisor) reloadLive(cfg config, specs []targetSpec, groups []ui.Targ
 			s.attachTargetMonitors(t)
 			t.RecordEvent("added", "Target added by configuration reload")
 		}
+		// After the target list is final, so the new engine probes exactly
+		// the surviving and added targets.
+		if cfg.mtr != previous.mtr {
+			if s.state == stateRunning {
+				s.restartRoute(false)
+			}
+			reason += routeModeNotice(cfg)
+		}
 		applied = true
 		if len(added) > 0 {
 			s.clearFinished()
 		}
-		for _, change := range []struct {
-			changed bool
-			name    string
-		}{
-			{cfg.eventOutput != previous.eventOutput, "event-output"},
-			{cfg.outputFile != previous.outputFile, "CSV output"},
-			{cfg.duration != previous.duration, "duration limit"},
-		} {
-			if change.changed {
-				reason += change.name + " changes require restarting mping. "
-			}
+		if cfg.duration != previous.duration {
+			reason += "duration limit changes require restarting mping. "
 		}
 		if warning := checkWebReloadDrift(previous, cfg); warning != "" {
 			reason += " " + warning
@@ -158,12 +156,20 @@ func reflectValue(v reflect.Value) any {
 	return nil
 }
 
+// routeModeNotice tells the user which route mode a reload switched to.
+func routeModeNotice(cfg config) string {
+	if cfg.mtr {
+		return "Route monitoring switched to mtr: every hop is probed each second. "
+	}
+	return "Route monitoring switched to traceroute: the path is rediscovered every 10 minutes. "
+}
+
 func reloadNotice(logCh chan<- string, message string) {
 	postLog(logCh, fmt.Sprintf("[%s] %s", clock(), message))
 }
 
 func settingName(field string) string {
-	names := map[string]string{"intervalMs": "interval", "timeoutMs": "timeout", "packetSize": "size", "ifaceName": "interface", "sourceAddr": "source", "mtuEnabled": "discovery-mtu", "trace": "traceroute", "asnEnabled": "asn", "ptrEnabled": "ptr", "ipv4Only": "ipv4", "ipv6Only": "ipv6", "portSpecs": "port", "httpURLs": "http", "jsonOutputFile": "json-output", "dnsServer": "dns-server", "resolveAll": "resolve-all", "httpStatus": "http-status", "httpFollowRedirects": "http-follow-redirects", "httpHeaders": "http-header"}
+	names := map[string]string{"intervalMs": "interval", "timeoutMs": "timeout", "packetSize": "size", "ifaceName": "interface", "sourceAddr": "source", "mtuEnabled": "discovery-mtu", "trace": "traceroute/mtr", "asnEnabled": "asn", "ptrEnabled": "ptr", "ipv4Only": "ipv4", "ipv6Only": "ipv6", "portSpecs": "port", "httpURLs": "http", "jsonOutputFile": "json-output", "dnsServer": "dns-server", "resolveAll": "resolve-all", "httpFollowRedirects": "http-follow-redirects"}
 	if name, ok := names[field]; ok {
 		return name
 	}

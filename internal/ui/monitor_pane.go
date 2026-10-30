@@ -6,13 +6,14 @@ import (
 )
 
 // monitorPane bundles construction, per-tick rendering, and focus-cycle
-// wiring for one of the four optional side panels (Traceroute/MTR/Port/HTTP
-// Monitor). TD-23①: replaces four near-identical ~20-line construction
-// blocks in Run(), plus their separately hand-maintained render/focus-cycle
-// /layout-assembly call sites, with one constructor and two methods shared
-// by all four.
+// wiring for one of the optional side panels (Traceroute or MTR, Port and
+// HTTP Monitor), so they share one constructor and the same render and
+// focus-cycle methods.
 type monitorPane struct {
-	title   string
+	title string
+	// titleFn, when set, replaces title on every draw (the route pane is
+	// renamed when its mode switches).
+	titleFn func() string
 	enabled bool
 	view    *tview.TextView
 	pane    *tview.Flex
@@ -56,11 +57,21 @@ func newMonitorPane(enabled bool, title string, render func(availW int) string) 
 		borderColor = c
 		pane.SetBorderColor(c)
 	}
-	pane.SetDrawFunc(makeDoubleBorderDrawFunc(title, &borderColor))
+	pane.SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
+		return makeDoubleBorderDrawFunc(mp.currentTitle(), &borderColor)(screen, x, y, width, height)
+	})
 
 	mp.view = view
 	mp.pane = pane
 	return mp
+}
+
+// currentTitle is the title the pane's border shows now.
+func (mp *monitorPane) currentTitle() string {
+	if mp.titleFn != nil {
+		return mp.titleFn()
+	}
+	return mp.title
 }
 
 // refresh re-renders the pane's content in place. No-op when disabled.

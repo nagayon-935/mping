@@ -16,7 +16,7 @@ type Event struct {
 
 func (t *TargetStats) recordEventLocked(kind, message string) {
 	now := time.Now()
-	e := Event{At: now, TargetID: t.ID, Kind: kind, Message: message, Count: 1, LastAt: now}
+	e := Event{At: now, TargetID: t.id, Kind: kind, Message: message, Count: 1, LastAt: now}
 	if t.health.configured && kind == "ping" && len(t.events) > 0 {
 		// Health transitions can sit between two identical probe failures.
 		for i := len(t.events) - 1; i >= 0; i-- {

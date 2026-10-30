@@ -4,117 +4,44 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nagayon-935/mping/internal/stats"
+
 	"github.com/gdamore/tcell/v2"
 )
 
-func TestThresholds_Validate(t *testing.T) {
-	tests := []struct {
-		name    string
-		th      Thresholds
-		wantErr bool
-	}{
-		{"defaults", DefaultThresholds(), false},
-		{
-			name: "rtt warn >= crit",
-			th: Thresholds{
-				RTTWarn: 200 * time.Millisecond, RTTCrit: 200 * time.Millisecond,
-				JitterWarn: 10 * time.Millisecond, JitterCrit: 50 * time.Millisecond,
-				LossWarn: 20, LossCrit: 80,
-			},
-			wantErr: true,
-		},
-		{
-			name: "jitter warn > crit",
-			th: Thresholds{
-				RTTWarn: 50 * time.Millisecond, RTTCrit: 200 * time.Millisecond,
-				JitterWarn: 60 * time.Millisecond, JitterCrit: 50 * time.Millisecond,
-				LossWarn: 20, LossCrit: 80,
-			},
-			wantErr: true,
-		},
-		{
-			name: "loss out of range",
-			th: Thresholds{
-				RTTWarn: 50 * time.Millisecond, RTTCrit: 200 * time.Millisecond,
-				JitterWarn: 10 * time.Millisecond, JitterCrit: 50 * time.Millisecond,
-				LossWarn: 20, LossCrit: 120,
-			},
-			wantErr: true,
-		},
-		{
-			name: "loss warn >= crit",
-			th: Thresholds{
-				RTTWarn: 50 * time.Millisecond, RTTCrit: 200 * time.Millisecond,
-				JitterWarn: 10 * time.Millisecond, JitterCrit: 50 * time.Millisecond,
-				LossWarn: 80, LossCrit: 80,
-			},
-			wantErr: true,
-		},
-		{
-			name: "zero rtt",
-			th: Thresholds{
-				RTTWarn: 0, RTTCrit: 200 * time.Millisecond,
-				JitterWarn: 10 * time.Millisecond, JitterCrit: 50 * time.Millisecond,
-				LossWarn: 20, LossCrit: 80,
-			},
-			wantErr: true,
-		},
-		{
-			name: "custom valid",
-			th: Thresholds{
-				RTTWarn: 30 * time.Millisecond, RTTCrit: 100 * time.Millisecond,
-				JitterWarn: 5 * time.Millisecond, JitterCrit: 20 * time.Millisecond,
-				LossWarn: 10, LossCrit: 50,
-			},
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.th.Validate()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-// withThresholds temporarily swaps the active thresholds for a test and restores them.
-func withThresholds(th Thresholds, fn func()) {
-	prev := getActiveThresholds()
-	setActiveThresholds(th)
-	defer setActiveThresholds(prev)
-	fn()
-}
-
-func TestColorFns_UseActiveThresholds(t *testing.T) {
-	custom := Thresholds{
+// TestTableColorsFollowTheTargetsThresholds renders a row for a target whose
+// health policy carries custom thresholds and checks the cells are coloured
+// by those, not by the defaults (30ms RTT is fine under the defaults).
+func TestTableColorsFollowTheTargetsThresholds(t *testing.T) {
+	target := stats.NewTargetStats("example.com")
+	target.SetIP("192.0.2.1")
+	policy := stats.DefaultHealthPolicy()
+	policy.Thresholds = stats.Thresholds{
 		RTTWarn: 10 * time.Millisecond, RTTCrit: 20 * time.Millisecond,
 		JitterWarn: 2 * time.Millisecond, JitterCrit: 4 * time.Millisecond,
 		LossWarn: 5, LossCrit: 10,
 	}
-	withThresholds(custom, func() {
-		// RTT: 15ms is above warn (10) but below crit (20) → orange
-		if c := rttColorForRTT(15 * time.Millisecond); c != tcell.ColorOrange {
-			t.Errorf("rtt 15ms: got %v, want orange (warn=10ms,crit=20ms)", c)
+	target.ConfigureHealth(policy)
+	target.IncSent()
+	target.OnSuccess(30*time.Millisecond, 64)
+	target.IncSent()
+	target.OnSuccess(33*time.Millisecond, 64) // jitter 3ms/16: below warn
+	for range 2 {
+		target.IncSent()
+		target.OnFailure("timeout") // loss 2/4 = 50%: above crit
+	}
+
+	tr := newTestTableRenderer([]*stats.TargetStats{target}, 200)
+	tr.update()
+
+	want := map[string]tcell.Color{"Loss Ratio": vividRed, "RTT": vividRed, "Jitter": tcell.ColorGreen}
+	for name, color := range want {
+		idx := columnsByName(tr.cols, name)
+		if idx < 0 {
+			t.Fatalf("column %q missing", name)
 		}
-		if c := rttColorForRTT(25 * time.Millisecond); c != vividRed {
-			t.Errorf("rtt 25ms: got %v, want red (crit=20ms)", c)
+		if got := cellForeground(tr.table.GetCell(1, idx)); got != color {
+			t.Errorf("%s cell color = %v, want %v", name, got, color)
 		}
-		// Jitter: 3ms → orange, 5ms → red
-		if c := jitterColorForJitter(3 * time.Millisecond); c != tcell.ColorOrange {
-			t.Errorf("jitter 3ms: got %v, want orange (warn=2ms,crit=4ms)", c)
-		}
-		if c := jitterColorForJitter(5 * time.Millisecond); c != vividRed {
-			t.Errorf("jitter 5ms: got %v, want red (crit=4ms)", c)
-		}
-		// Loss: 7% → orange, 12% → red under custom thresholds
-		if c := lossColorForRate(7); c != tcell.ColorOrange {
-			t.Errorf("loss 7%%: got %v, want orange (warn=5,crit=10)", c)
-		}
-		if c := lossColorForRate(12); c != vividRed {
-			t.Errorf("loss 12%%: got %v, want red (crit=10)", c)
-		}
-	})
+	}
 }

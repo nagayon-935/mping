@@ -17,7 +17,7 @@ import (
 
 // webStart and openBrowser are seams for tests, mirroring uiRun.
 var (
-	webStart    = web.Start
+	webStart    = startSplitWebUI
 	openBrowser = defaultOpenBrowser
 )
 
@@ -52,7 +52,7 @@ func defaultOpenBrowser(targetURL string) {
 // startWebUI starts the dashboard when --web is set, returning a nil server
 // when it is off. ok=false means it was requested but could not start; the
 // error has already been written to errOut.
-func startWebUI(cfg config, src *web.Source, errOut io.Writer) (srv *web.Server, ok bool) {
+func startWebUI(cfg config, src *web.Source, errOut io.Writer) (srv webServer, ok bool) {
 	if !cfg.webEnabled {
 		return nil, true
 	}
@@ -72,20 +72,14 @@ func startWebUI(cfg config, src *web.Source, errOut io.Writer) (srv *web.Server,
 }
 
 // webAnnouncement is the Log line offering the web UI. The control link
-// carries the token, so it is printed only where it stays private: the TUI,
-// or a headless run writing to an interactive terminal (not a pipe, file or
-// service journal).
-func webAnnouncement(srv *web.Server, showToken bool) string {
-	text := "Web UI: " + srv.URL() + " (read-only: the control link is printed only to a terminal; to make changes, set MPING_WEB_TOKEN as described in the README)"
-	if showToken {
-		text = "Web UI: " + srv.ControlURL()
-	}
-	return fmt.Sprintf("[blue][%s] %s[-]", clock(), tview.Escape(text))
+// carries the token; the TUI's Log never leaves the terminal.
+func webAnnouncement(srv webServer) string {
+	return fmt.Sprintf("[blue][%s] %s[-]", clock(), tview.Escape("Web UI: "+srv.ControlURL()))
 }
 
 // closeWebUI stops srv (nil-safe). A shutdown error only means a stream
 // had to be cut off; it never changes mping's exit status.
-func closeWebUI(srv *web.Server, errOut io.Writer) {
+func closeWebUI(srv webServer, errOut io.Writer) {
 	if srv == nil {
 		return
 	}
@@ -143,7 +137,7 @@ func (c webController) AddHost(host string) error {
 func (c webController) DeleteTarget(id uint64) error {
 	host := fmt.Sprintf("#%d", id)
 	for _, t := range c.sup.liveTargets().Targets {
-		if t.ID == id {
+		if t.ID() == id {
 			host = t.DisplayName()
 		}
 	}
@@ -216,7 +210,6 @@ func webMeta(cfg config, hosts []targetSpec, portCount int) web.Meta {
 			ASN:        cfg.asnEnabled,
 			PTR:        cfg.ptrEnabled,
 			MTU:        cfg.mtuEnabled,
-			DSCP:       dscpColumnEnabled(cfg, hosts),
 		},
 		Thresholds: web.Thresholds{
 			RTTWarnMs:    durationMs(th.RTTWarn),
@@ -237,7 +230,7 @@ func webGroups(set ui.TargetSet) []web.Group {
 		ids := make([]uint64, 0, len(g.Indices))
 		for _, i := range g.Indices {
 			if i >= 0 && i < len(set.Targets) {
-				ids = append(ids, set.Targets[i].ID)
+				ids = append(ids, set.Targets[i].ID())
 			}
 		}
 		groups = append(groups, web.Group{Name: g.Name, TargetIDs: ids})

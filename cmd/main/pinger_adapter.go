@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/mtr"
@@ -23,13 +22,11 @@ type pingerController interface {
 	WaitWorkers()
 	Close()
 	DiscoverMaxPayload(ctx context.Context, dest string, start int, min int, logf func(string)) (int, string, error)
-	TraceRoute(ctx context.Context, dest string, maxHops int, timeout time.Duration) ([]string, error)
 	SetSource(ip string)
 	SetInterface(name string)
 	SetSize(size int)
 	SetCount(count int)
 	SetResolveInterval(interval time.Duration)
-	SetLogWriter(w io.Writer)
 	// MTRProber returns an mtr.HopProber view onto this controller, used to
 	// wire up the MTR engine without the caller needing to downcast to a
 	// concrete pinger type.
@@ -64,10 +61,6 @@ func (p *pingerAdapter) SetResolveInterval(interval time.Duration) {
 	p.ResolveInterval = interval
 }
 
-func (p *pingerAdapter) SetLogWriter(w io.Writer) {
-	p.LogWriter = w
-}
-
 func (p *pingerAdapter) MTRProber() mtr.HopProber {
 	return &pingerMTRAdapter{p: p.Pinger}
 }
@@ -93,6 +86,7 @@ func (a *pingerMTRAdapter) NextTraceID() int { return a.p.NextTraceID() }
 func (a *pingerMTRAdapter) ASNInfoFor(ip string) pinger.ASNInfo {
 	return a.p.GetASNInfoFor(ip)
 }
+func (a *pingerMTRAdapter) PTRFor(ip string) string { return a.p.GetPTRFor(ip) }
 
 var newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 	return &pingerAdapter{Pinger: pinger.NewPingerWithOptions(targets, opts)}

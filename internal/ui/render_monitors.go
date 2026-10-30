@@ -38,8 +38,7 @@ func statusChangeMessage(subject, prevStatus, newStatus, healthyStatus string) s
 // it changed, appends a log line built by statusChangeMessage. It always
 // records newStatus under key afterward (a no-op for the initial ""/
 // "Checking..." placeholder status). Shared by the port and HTTP monitor
-// panes, whose status-change detection was previously duplicated verbatim
-// (TD-45).
+// panes.
 func logStatusChangeIfNeeded(lastStatuses map[string]string, key, newStatus, healthyStatus, subject string,
 	errorLogs *[]string, errorView *tview.TextView) {
 	if newStatus == "" || newStatus == "Checking..." {
@@ -51,8 +50,9 @@ func logStatusChangeIfNeeded(lastStatuses map[string]string, key, newStatus, hea
 	lastStatuses[key] = newStatus
 }
 
-// renderTracerouteTable builds the traceroute monitor table string. Narrow
-// panes drop the Hops and Init TTL columns.
+// renderTracerouteTable builds the route pane in path mode (-T): one row per
+// target with its discovered hops. Narrow panes drop the Hops and Init TTL
+// columns.
 func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
 	hostColW := maxHostWidth("Host", targets)
 	hopsColW := runewidth.StringWidth("Hops") + 2
@@ -74,17 +74,28 @@ func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
 	var groups [][][]boxCell
 	for _, t := range targets {
 		view := t.GetViewWindow(0)
-		if len(view.TraceHops) == 0 {
-			continue
+		route, hopCount := hopLabels(view.MTRHops), fmt.Sprint(len(view.MTRHops))
+		switch {
+		case len(route) > 0:
+		case view.MTRError != "":
+			route, hopCount = []string{"Route discovery failed: " + view.MTRError}, "-"
+		default:
+			route, hopCount = []string{"Discovering..."}, "-"
 		}
-		routeLines := wrapHops(view.TraceHops, routeContentW)
+		routeLines := wrapHops(route, routeContentW)
 		if len(routeLines) == 0 {
 			routeLines = []string{""}
+		}
+		for j := range routeLines {
+			routeLines[j] = tview.Escape(routeLines[j])
+		}
+		if view.MTRFlapCount > 0 {
+			routeLines = append(routeLines, fmt.Sprintf("[FLAP ×%d %s]", view.MTRFlapCount, view.MTRLastFlapAt.Format("15:04:05")))
 		}
 		// Host, hop count and initial TTL go on the first line only.
 		first := []string{tview.Escape(view.Host)}
 		if !compact {
-			first = append(first, hopCountString(view.TraceHops), inferInitialTTL(view.LastTTL))
+			first = append(first, hopCount, inferInitialTTL(view.LastTTL))
 		}
 		rows := make([][]boxCell, len(routeLines))
 		for j, line := range routeLines {

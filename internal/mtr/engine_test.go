@@ -20,7 +20,9 @@ func (f *fakeHopSocket) Close() {}
 type fakeProber struct {
 	mu      sync.Mutex
 	replies map[int]pinger.HopReply // keyed by ttl
+	ptrs    map[string]string       // PTRFor results, keyed by IP
 	idSeq   int
+	calls   int // ProbeHop calls so far
 }
 
 func newFakeProber(replies map[int]pinger.HopReply) *fakeProber {
@@ -41,6 +43,7 @@ func (f *fakeProber) OpenHopSocket(ctx context.Context, dest string) (HopSocket,
 func (f *fakeProber) ProbeHop(_ context.Context, _ HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.calls++
 	if r, ok := f.replies[ttl]; ok {
 		return r, nil
 	}
@@ -55,6 +58,18 @@ func (f *fakeProber) NextTraceID() int {
 }
 
 func (f *fakeProber) ASNInfoFor(ip string) pinger.ASNInfo { return pinger.ASNInfo{} }
+
+func (f *fakeProber) PTRFor(ip string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ptrs[ip]
+}
+
+func (f *fakeProber) probeCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
 
 // newTestTarget returns TargetStats for host with its IP already resolved.
 func newTestTarget(host string) *stats.TargetStats {
@@ -273,7 +288,7 @@ func TestEngine_MultipleTargets(t *testing.T) {
 	for _, ts := range []*stats.TargetStats{t1, t2} {
 		hops := ts.MTR().View()
 		if len(hops) == 0 {
-			t.Errorf("%s: no hops", ts.Host)
+			t.Errorf("%s: no hops", ts.Host())
 		}
 	}
 }

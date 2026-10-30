@@ -24,11 +24,10 @@ test("MTR omits the AS column when AS lookup is disabled",()=>{
 });
 
 test("overview retains minimum fields, feature flags and current RTT only",()=>{
- const columns=targetColumns({asn:false,dscp:false});
+ const columns=targetColumns({asn:false});
  assert.deepEqual(columns.filter(c=>c.required).map(c=>c.key),["status","host","loss","last"]);
- assert.ok(!columns.some(c=>["asn","dscp","avg","min","max","spark"].includes(c.key)));
- assert.ok(targetColumns({asn:true,dscp:true}).some(c=>c.key==="asn"));
- assert.ok(targetColumns({asn:true,dscp:true}).some(c=>c.key==="dscp"));
+ assert.ok(!columns.some(c=>["asn","avg","min","max","spark"].includes(c.key)));
+ assert.ok(targetColumns({asn:true}).some(c=>c.key==="asn"));
 });
 
 test("a stored sort is restored only when its key and direction are still offered",()=>{

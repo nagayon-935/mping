@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"slices"
 	"sync"
 	"time"
 
+	"github.com/nagayon-935/mping/internal/hostsfile"
 	"github.com/nagayon-935/mping/internal/pinger"
 	"github.com/nagayon-935/mping/internal/stats"
 	ui "github.com/nagayon-935/mping/internal/ui"
@@ -18,9 +18,8 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// TD-22④: the helpers below carve run()'s former parse/setup/per-iteration
-// wiring/cleanup steps out into named functions so run() itself is left as
-// parse → construct → loop-control only.
+// The helpers below hold run()'s parse, setup, per-iteration wiring and
+// cleanup steps so run() itself reads as parse → construct → loop control.
 
 // startupParams holds everything parseAndLoadHosts derives from argv and the
 // optional YAML hosts file, before any network/logger setup happens.
@@ -58,7 +57,13 @@ func parseAndLoadHosts(args []string, out, errOut io.Writer) (p startupParams, e
 	var groups []ui.TargetGroup
 	hosts, groups, cfg, err := mergeHosts(cfg, fs, cliHostsRaw)
 	if err != nil {
-		fmt.Fprintf(errOut, "Error reading hosts file: %v\n", err)
+		// mergeHosts also validates the effective configuration, which
+		// fails without any hosts file for a bad combination of flags.
+		prefix := "Error reading hosts file"
+		if cfg.hostsFile == "" {
+			prefix = "Error"
+		}
+		fmt.Fprintf(errOut, "%s: %v\n", prefix, err)
 		return startupParams{}, 1, false
 	}
 	hosts, groups, err = expandTargets(hosts, groups, cfg)
@@ -79,14 +84,12 @@ func parseAndLoadHosts(args []string, out, errOut io.Writer) (p startupParams, e
 }
 
 // runEnv holds the one-time (non-reloadable) environment run() needs for the
-// lifetime of the process: network family, source IP, log file, and parsed
-// port specs.
+// lifetime of the process: network family, source IP and parsed port specs.
 type runEnv struct {
 	resNetwork string
 	bindIP     string
 	dispV4     string
 	dispV6     string
-	logFile    *os.File
 	portSpecs  []pinger.PortSpec
 }
 
@@ -106,13 +109,6 @@ func prepareRunEnv(cfg config, hosts []targetSpec, out, errOut io.Writer) (env r
 	if cfg.ifaceName != "" && bindIP != "" {
 		fmt.Fprintf(out, "Binding to interface %s (%s)\n", cfg.ifaceName, bindIP)
 	}
-
-	logFile, err := setupLogger(cfg.outputFile)
-	if err != nil {
-		fmt.Fprintf(errOut, "Error opening log file: %v\n", err)
-		return runEnv{}, 1, false
-	}
-	env.logFile = logFile
 
 	for _, raw := range cfg.portSpecs {
 		spec, err := pinger.ParsePortSpec(raw)
@@ -159,10 +155,6 @@ func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetSta
 	for i, t := range targets {
 		t.SetResolveAddress(specs[i].resolveAddr())
 		t.ConfigureHealth(healthPolicy(cfg))
-		t.DSCP = cfg.dscp
-		if specs[i].DSCP != "" {
-			t.DSCP = specs[i].DSCP
-		}
 		hostName := specs[i].Host
 		if net.ParseIP(hostName) == nil {
 			if cfg.dnsServer != "" {
@@ -179,43 +171,15 @@ func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetSta
 
 // buildPingerOptions constructs the pinger.Options for one loop iteration,
 // including the address resolver. specs supplies an address lookup (keyed
-// by targetSpec.display(), the same string used for stats.TargetStats.Host)
+// by targetSpec.display(), the same string as stats.TargetStats.Host())
 // so --resolve-all entries resolve straight to their pinned IP and named
 // entries resolve to their configured host rather than their name.
-//
-// errors are collected rather than returned as a second value: cfg.dscp and
-// every spec's DSCP were already validated (parseArgs / validateHostsDoc), so
-// a parse failure here would mean that validation was skipped somewhere —
-// buildPingerOptions ignores an unparsable spec (treating it as "no
-// override") rather than propagating a signature change through every
-// caller for a case that should be unreachable in practice.
 func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resolver, specs []targetSpec) pinger.Options {
 	pinned := make(map[string]string, len(specs))
 	for _, s := range specs {
 		if label, addr := s.display(), s.resolveAddr(); label != addr {
 			pinned[label] = addr
 		}
-	}
-
-	var dscp *int
-	if cfg.dscp != "" {
-		if v, err := pinger.ParseDSCP(cfg.dscp); err == nil {
-			dscp = &v
-		}
-	}
-	var targetDSCP map[int]int
-	for i, s := range specs {
-		if s.DSCP == "" {
-			continue
-		}
-		v, err := pinger.ParseDSCP(s.DSCP)
-		if err != nil {
-			continue
-		}
-		if targetDSCP == nil {
-			targetDSCP = make(map[int]int, len(specs))
-		}
-		targetDSCP[i] = v
 	}
 
 	resolve := func(ctx context.Context, _ string, address string) (*net.IPAddr, error) {
@@ -236,8 +200,6 @@ func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resol
 		Resolver:             customResolver,
 		AsnEnabled:           cfg.asnEnabled,
 		PtrEnabled:           cfg.ptrEnabled,
-		DSCP:                 dscp,
-		TargetDSCP:           targetDSCP,
 	}
 }
 
@@ -268,41 +230,13 @@ func startWatcher(hostsFile string, onFileChange func(), logCh chan<- string) (c
 	watchCtx, cancelFn := context.WithCancel(context.Background())
 	go func() {
 		defer close(innerDone)
-		paths := func() []string { return hostsFileWatchPaths(hostsFile) }
+		paths := func() []string { return hostsfile.WatchPaths(hostsFile) }
 		if err := watcher.WatchPaths(watchCtx, paths, onFileChange); err != nil {
 			postLog(logCh, fmt.Sprintf("[red][%s] Watcher error: %v — auto-reload disabled, restart mping to re-enable[-]",
 				clock(), err))
 		}
 	}()
 	return cancelFn, innerDone
-}
-
-// startLiveJSONWriter launches the periodic JSON snapshot writer goroutine when
-// path is set. When it isn't, it still returns a valid cancel func (safe to
-// call unconditionally) and a pre-closed done channel.
-func startLiveJSONWriter(path string, targets func() []*stats.TargetStats, httpResults func() []*stats.HTTPCheckResult, errOut io.Writer) (cancel func(), done chan struct{}) {
-	ctx, cancelFn := context.WithCancel(context.Background())
-	doneCh := make(chan struct{})
-	if path == "" {
-		close(doneCh)
-		return cancelFn, doneCh
-	}
-	go func() {
-		defer close(doneCh)
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if err := writeJSONSnapshot(path, targets(), httpResults()); err != nil {
-					fmt.Fprintf(errOut, "Warning: JSON snapshot write failed: %v\n", err)
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return cancelFn, doneCh
 }
 
 // watchDurationLimit arms sig to fire once durationCtx's deadline elapses,
@@ -359,22 +293,15 @@ type runOptionsParams struct {
 	currentGroups []ui.TargetGroup
 }
 
-// dscpColumnEnabled decides whether the TUI's DSCP column should show,
-// following the ASN/PTR dynamic-column pattern (ui.RunOptions.DSCPEnabled):
-// shown when DSCP marking is actually in play, either globally (--dscp /
-// dscp:) or via any target's per-target override — matching how ASNEnabled/
-// PTREnabled key off the flag that turns the underlying lookups on, rather
-// than always reserving screen space for a column most runs never populate.
-func dscpColumnEnabled(cfg config, hosts []targetSpec) bool {
-	if cfg.dscp != "" {
-		return true
+// uiRouteMode is what the TUI's route pane shows for cfg.
+func uiRouteMode(cfg config) ui.RouteMode {
+	switch {
+	case cfg.mtr:
+		return ui.RouteMonitor
+	case cfg.trace:
+		return ui.RoutePath
 	}
-	for _, h := range hosts {
-		if h.DSCP != "" {
-			return true
-		}
-	}
-	return false
+	return ui.RouteOff
 }
 
 // buildRunOptions assembles the ui.RunOptions for one loop iteration. Every
@@ -391,15 +318,13 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 		SourceIPv6:       p.dispV6,
 		PacketSize:       p.packetSize,
 		InitialLogs:      p.preLogs,
-		TraceEnabled:     p.cfg.trace,
+		Route:            uiRouteMode(p.cfg),
 		MTUEnabled:       p.cfg.mtuEnabled,
-		MTREnabled:       p.cfg.mtr,
 		PortEnabled:      len(p.cfg.portSpecs) > 0,
 		HTTPEnabled:      len(p.cfg.httpURLs) > 0,
 		HTTPResults:      p.sup.httpResults,
 		ASNEnabled:       p.cfg.asnEnabled,
 		PTREnabled:       p.cfg.ptrEnabled,
-		DSCPEnabled:      dscpColumnEnabled(p.cfg, p.currentHosts),
 		Thresholds:       &p.cfg.thresholds,
 		MeasurementState: p.sup.measurementState,
 		ExternalCloseCh:  p.sig.ch,
@@ -409,15 +334,14 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 			return p.sup.do(cmdRestart)
 		},
 		OnReset:        p.sup.resetStats,
-		OnResetTrace:   p.sup.resetTrace,
 		OnAddHost:      p.sup.addHost,
 		OnDeleteHost:   p.sup.deleteHost,
 		OnDeleteTarget: p.sup.deleteTargetID,
 		OnSaveReport:   p.sup.saveReport,
 		Groups:         p.currentGroups,
 	}
-	if p.cfg.mtr {
-		opts.OnResetMTR = p.sup.resetMTR
+	if p.cfg.routeEnabled() {
+		opts.OnResetRoute = p.sup.resetRoute
 	}
 	if len(p.cfg.httpURLs) > 0 {
 		opts.OnResetHTTP = p.sup.resetHTTP
@@ -428,21 +352,10 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 	return opts
 }
 
-// finishIteration performs the standard post-uiRun cleanup: stop the JSON
-// writer, join all measurement producers, write their final snapshot, stop
-// the command loop, and join the file watcher.
-//
-// Terminate before exporting so the final snapshot includes every completed
-// measurement. Shutdown also terminates defensively and joins the loop.
-func finishIteration(cfg config, targets []*stats.TargetStats, sup *supervisor, errOut io.Writer, jsonCancel func(), jsonDone chan struct{}, watchCancel func(), watchDone chan struct{}) {
-	jsonCancel()
-	<-jsonDone
+// finishIteration performs the standard post-uiRun cleanup: join all
+// measurement producers, stop the command loop, and join the file watcher.
+func finishIteration(sup *supervisor, watchCancel func(), watchDone chan struct{}) {
 	_ = sup.do(cmdTerminate)
-	if cfg.jsonOutputFile != "" {
-		if err := writeJSONSnapshot(cfg.jsonOutputFile, targets, sup.httpResults()); err != nil {
-			fmt.Fprintf(errOut, "Warning: Final JSON snapshot write failed: %v\n", err)
-		}
-	}
 	sup.Shutdown()
 	watchCancel()
 	<-watchDone

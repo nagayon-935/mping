@@ -102,7 +102,7 @@ func (p *Pinger) launchTarget(t *stats.TargetStats, id int) {
 
 // AddTarget/RemoveTarget are called by the supervisor command loop. Wait and
 // Stop run only after its final mutation, while the receiver keeps wg nonzero.
-func (p *Pinger) AddTarget(t *stats.TargetStats, address string, dscp *int) error {
+func (p *Pinger) AddTarget(t *stats.TargetStats, address string) error {
 	p.dynamicMu.Lock()
 	defer p.dynamicMu.Unlock()
 	if p.stopped() {
@@ -120,12 +120,6 @@ func (p *Pinger) AddTarget(t *stats.TargetStats, address string, dscp *int) erro
 	}
 	p.mapMu.Lock()
 	p.resolveAddresses[t] = address
-	if dscp != nil {
-		if p.TargetDSCP == nil {
-			p.TargetDSCP = make(map[*stats.TargetStats]int)
-		}
-		p.TargetDSCP[t] = *dscp
-	}
 	p.mapMu.Unlock()
 	p.launchTarget(t, id)
 	return nil
@@ -148,7 +142,6 @@ func (p *Pinger) RemoveTarget(t *stats.TargetStats) {
 	p.mapMu.Lock()
 	delete(p.workerStates, t)
 	delete(p.resolveAddresses, t)
-	delete(p.TargetDSCP, t)
 	p.mapMu.Unlock()
 }
 

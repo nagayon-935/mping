@@ -18,6 +18,10 @@ type fakeIDs struct {
 	calls                []string
 	failSeteuidTo        int // seteuid(id) fails when id equals this; -1: never fail
 	failSetegidTo        int // setegid(id) fails when id equals this; -1: never fail
+	// permanent is set once setuid ran as root, like the kernel clearing the
+	// saved ID: from then on seteuid can no longer regain root.
+	permanent bool
+	caps      string // what capabilities reports
 }
 
 // newFakeIDs returns credentials that never fail; tests set failSeteuidTo or
@@ -39,12 +43,43 @@ func installFake(t *testing.T, f *fakeIDs) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
 			f.calls = append(f.calls, "seteuid "+strconv.Itoa(id))
-			if id == f.failSeteuidTo {
+			if id == f.failSeteuidTo || (id == 0 && f.permanent) {
 				return errors.New("operation not permitted")
 			}
 			f.euid = id
 			return nil
 		},
+		setuid: func(id int) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.calls = append(f.calls, "setuid "+strconv.Itoa(id))
+			if f.euid == 0 {
+				f.permanent = true
+				f.uid = id
+			}
+			f.euid = id
+			return nil
+		},
+		setgid: func(id int) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.calls = append(f.calls, "setgid "+strconv.Itoa(id))
+			if id == f.failSetegidTo {
+				return errors.New("operation not permitted")
+			}
+			if f.euid == 0 {
+				f.gid = id
+			}
+			f.egid = id
+			return nil
+		},
+		setgroups: func([]int) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.calls = append(f.calls, "setgroups")
+			return nil
+		},
+		capabilities: func() (string, error) { return f.caps, nil },
 		setegid: func(id int) error {
 			f.mu.Lock()
 			defer f.mu.Unlock()
@@ -270,4 +305,50 @@ func TestPrivileged_SectionsRunConcurrently(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("a second Privileged section was blocked by the first")
 	}
+}
+
+func TestDropTo_FromSetuidRootIsPermanent(t *testing.T) {
+	f := newFakeIDs(501, 0, 20, 0)
+	installFake(t, f)
+
+	if err := DropTo(501, 20); err != nil {
+		t.Fatalf("DropTo: %v", err)
+	}
+	// Groups and group first (they need root), then the user; the final
+	// seteuid is the check that root is gone for good.
+	want := []string{"setgroups", "setgid 20", "setuid 501", "seteuid 0"}
+	if !reflect.DeepEqual(f.calls, want) {
+		t.Fatalf("calls = %v, want %v", f.calls, want)
+	}
+	if f.uid != 501 || f.euid != 501 || f.gid != 20 || f.egid != 20 {
+		t.Fatalf("IDs after DropTo = %d/%d %d/%d", f.uid, f.euid, f.gid, f.egid)
+	}
+}
+
+func TestDropTo_RefusesWhatItCannotDrop(t *testing.T) {
+	t.Run("root can be regained", func(t *testing.T) {
+		// Not root, so setuid leaves the saved ID alone in this model and
+		// seteuid(0) still works: privileges were never really dropped.
+		f := newFakeIDs(501, 501, 20, 20)
+		installFake(t, f)
+		if err := DropTo(501, 20); err == nil || !strings.Contains(err.Error(), "regained") {
+			t.Fatalf("DropTo = %v, want a regain error", err)
+		}
+	})
+	t.Run("capabilities remain", func(t *testing.T) {
+		f := newFakeIDs(501, 0, 20, 0)
+		f.caps = "CapEff 0000000000002000"
+		installFake(t, f)
+		if err := DropTo(501, 20); err == nil || !strings.Contains(err.Error(), "CapEff") {
+			t.Fatalf("DropTo = %v, want a capabilities error", err)
+		}
+	})
+	t.Run("group change fails", func(t *testing.T) {
+		f := newFakeIDs(501, 0, 20, 0)
+		f.failSetegidTo = 20
+		installFake(t, f)
+		if err := DropTo(501, 20); err == nil || !strings.Contains(err.Error(), "drop group") {
+			t.Fatalf("DropTo = %v, want a group error", err)
+		}
+	})
 }

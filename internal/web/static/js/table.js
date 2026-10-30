@@ -5,8 +5,8 @@ import { countCell, numCell, rttCell, textCell } from "./cells.js";
 import { columnWidthPx, setColumns } from "./columns.js";
 import { SORTS } from "./workspace.js";
 import {
-  buildSections, cellLevels, dscpName, formatPct, isIPLiteral, lossRate, matchesFilter, rowLevel,
-  selectColumns, statusReasons,
+  buildSections, cellLevels, formatPct, isIPLiteral, lossRate, matchesFilter, rowLevel,
+  selectColumns, statusReason,
 } from "./model.js";
 
 /** The overview keeps current measurements; historical RTT statistics live
@@ -26,7 +26,6 @@ export function targetColumns(features, targets = []) {
     { key: "last", label: "RTT", num: true, required: true, title: "Round-trip time of the latest probe" },
     { key: "jitter", label: "Jitter", num: true, priority: 3 },
     { key: "ttl", label: "TTL", num: true, priority: 7 },
-    features.dscp && { key: "dscp", label: "DSCP", priority: 9 },
   ].filter(Boolean);
 }
 
@@ -40,13 +39,13 @@ function hostCell(t, features, group, focused) {
   return td;
 }
 
-function targetCell(col, t, th, cells, features, group, focused) {
+function targetCell(col, t, cells, features, group, focused) {
   switch (col.key) {
     case "status": {
       // An OK row needs no explanation; leaving it blank makes the rows that
       // do need attention stand out. Summary still states the reason.
-      const level = rowLevel(t, th);
-      const reasons = statusReasons(t, th).join(" · ");
+      const level = rowLevel(t);
+      const reasons = statusReason(t);
       return el("td", { attrs: { title: reasons } }, statusChip(level),
         el("span", { className: "status-reason", text: level === "ok" ? "" : reasons }));
     }
@@ -59,7 +58,6 @@ function targetCell(col, t, th, cells, features, group, focused) {
     case "last": return metricCell(rttCell(t.last_rtt_ms, cells.last));
     case "jitter": return metricCell(rttCell(t.jitter_ms, cells.jitter));
     case "ttl": return numCell(t.last_ttl > 0 ? String(t.last_ttl) : "–");
-    case "dscp": return el("td", { text: dscpName(t.last_dscp) });
     default: return el("td");
   }
 }
@@ -78,7 +76,6 @@ function metricCell(td) {
  */
 export function renderTargets(table, view, onOpen, onSort) {
   const { snapshot, meta, filter, selectedId } = view;
-  const th = meta.thresholds;
   // The table is as wide as its wrapper; widths come from the CSS contract,
   // which already reflects the current breakpoint and pane layout.
   const available = table.parentElement.clientWidth;
@@ -110,9 +107,9 @@ export function renderTargets(table, view, onOpen, onSort) {
         el("td", { text: `${section.name} (${section.targets.length})`, attrs: { colspan: String(columns.length) } })));
     }
     for (const t of section.targets) {
-      const cells = cellLevels(t, th);
+      const cells = cellLevels(t);
       const tr = el("tr", {
-        className: `target-row health-${rowLevel(t, th)}`,
+        className: `target-row health-${rowLevel(t)}`,
         attrs: {
           tabindex: "-1",
           ...(t.id === selectedId ? { "aria-current": "true" } : {}),
@@ -121,7 +118,7 @@ export function renderTargets(table, view, onOpen, onSort) {
         },
       });
       for (const c of columns) {
-        const cell = targetCell(c, t, th, cells, meta.features, sortedFlat ? groupsById.get(t.id) : null, t.id === focusId);
+        const cell = targetCell(c, t, cells, meta.features, sortedFlat ? groupsById.get(t.id) : null, t.id === focusId);
         cell.classList.add(`col-${c.key}`);
         tr.append(cell);
       }

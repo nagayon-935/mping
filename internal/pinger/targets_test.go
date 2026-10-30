@@ -45,7 +45,7 @@ func TestLiveTargetRemovalRejectsOldRepliesAndPreservesSurvivor(t *testing.T) {
 	p.Size = 0
 	a, b := stats.NewTargetStats("same"), stats.NewTargetStats("other")
 	for _, target := range []*stats.TargetStats{a, b} {
-		if err := p.AddTarget(target, target.Host, nil); err != nil {
+		if err := p.AddTarget(target, target.Host()); err != nil {
 			t.Fatal(err)
 		}
 		awaitTarget(t, target, func(v stats.TargetView) bool { return v.Sent == 1 })
@@ -54,14 +54,14 @@ func TestLiveTargetRemovalRejectsOldRepliesAndPreservesSurvivor(t *testing.T) {
 	old := p.workerStates[a].id
 	survivor := p.workerStates[b]
 	p.mapMu.RUnlock()
-	p.handleEchoReply(echoReply(survivor.id, 1), 64, 0)
+	p.handleEchoReply(echoReply(survivor.id, 1), 64)
 	awaitTarget(t, b, func(v stats.TargetView) bool { return v.Recv == 1 })
 	p.RemoveTarget(a)
 	if v := a.GetView(); v.Cancelled != 1 || v.Loss != 0 {
 		t.Fatalf("deletion counted as loss: %+v", v)
 	}
 	readded := stats.NewTargetStats("same")
-	if err := p.AddTarget(readded, "same", nil); err != nil {
+	if err := p.AddTarget(readded, "same"); err != nil {
 		t.Fatal(err)
 	}
 	awaitTarget(t, readded, func(v stats.TargetView) bool { return v.Sent == 1 })
@@ -72,8 +72,8 @@ func TestLiveTargetRemovalRejectsOldRepliesAndPreservesSurvivor(t *testing.T) {
 	if newID == old || still != survivor {
 		t.Fatal("worker or wire identity reused")
 	}
-	p.handleEchoReply(echoReply(old, 1), 64, 0)
-	p.handleEchoReply(echoReply(newID, 1), 64, 0)
+	p.handleEchoReply(echoReply(old, 1), 64)
+	p.handleEchoReply(echoReply(newID, 1), 64)
 	awaitTarget(t, readded, func(v stats.TargetView) bool { return v.Recv == 1 })
 	p.RemoveTarget(readded)
 	if v := readded.GetView(); v.Recv != 1 || v.Duplicates != 0 {
@@ -89,7 +89,7 @@ func TestLiveTargetCountBudgetAndCompletionCanRepeat(t *testing.T) {
 	p.Count = 2
 	p.probeTimeout = 5 * time.Millisecond
 	a := stats.NewTargetStats("a")
-	if err := p.AddTarget(a, "a", nil); err != nil {
+	if err := p.AddTarget(a, "a"); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -98,7 +98,7 @@ func TestLiveTargetCountBudgetAndCompletionCanRepeat(t *testing.T) {
 		t.Fatal("initial completion missing")
 	}
 	b := stats.NewTargetStats("b")
-	if err := p.AddTarget(b, "b", nil); err != nil {
+	if err := p.AddTarget(b, "b"); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -120,7 +120,7 @@ func TestRemoveTargetCancelsDNSWithoutRecordingFailure(t *testing.T) {
 		return nil, ctx.Err()
 	}
 	a := stats.NewTargetStats("slow")
-	if err := p.AddTarget(a, "slow", nil); err != nil {
+	if err := p.AddTarget(a, "slow"); err != nil {
 		t.Fatal(err)
 	}
 	<-entered
@@ -155,10 +155,10 @@ func TestAddTarget_Rejections(t *testing.T) {
 	t.Run("duplicate target", func(t *testing.T) {
 		p := liveTestPinger(t)
 		a := stats.NewTargetStats("a")
-		if err := p.AddTarget(a, "a", nil); err != nil {
+		if err := p.AddTarget(a, "a"); err != nil {
 			t.Fatal(err)
 		}
-		if err := p.AddTarget(a, "a", nil); err == nil {
+		if err := p.AddTarget(a, "a"); err == nil {
 			t.Fatal("expected an error for an already registered target")
 		}
 	})
@@ -166,7 +166,7 @@ func TestAddTarget_Rejections(t *testing.T) {
 	t.Run("stopped pinger", func(t *testing.T) {
 		p := liveTestPinger(t)
 		p.Stop()
-		if err := p.AddTarget(stats.NewTargetStats("a"), "a", nil); err == nil {
+		if err := p.AddTarget(stats.NewTargetStats("a"), "a"); err == nil {
 			t.Fatal("expected an error once the pinger is stopped")
 		}
 	})
@@ -174,7 +174,7 @@ func TestAddTarget_Rejections(t *testing.T) {
 	t.Run("echo IDs exhausted", func(t *testing.T) {
 		p := liveTestPinger(t)
 		p.ids = &IDAllocator{echo: 32768}
-		if err := p.AddTarget(stats.NewTargetStats("a"), "a", nil); err == nil {
+		if err := p.AddTarget(stats.NewTargetStats("a"), "a"); err == nil {
 			t.Fatal("expected an ID exhaustion error")
 		}
 	})
@@ -183,26 +183,10 @@ func TestAddTarget_Rejections(t *testing.T) {
 		p := liveTestPinger(t)
 		p.ids = nil
 		p.nextWorkerID = 65536
-		if err := p.AddTarget(stats.NewTargetStats("a"), "a", nil); err == nil {
+		if err := p.AddTarget(stats.NewTargetStats("a"), "a"); err == nil {
 			t.Fatal("expected an ID exhaustion error")
 		}
 	})
-}
-
-func TestAddTarget_RecordsDSCPOverride(t *testing.T) {
-	p := liveTestPinger(t)
-	a := stats.NewTargetStats("a")
-	dscp := 46 << 2
-	if err := p.AddTarget(a, "a", &dscp); err != nil {
-		t.Fatal(err)
-	}
-	if got, ok := p.dscpFor(a); !ok || got != dscp {
-		t.Fatalf("dscpFor = (%d, %v), want (%d, true)", got, ok, dscp)
-	}
-	p.RemoveTarget(a)
-	if _, ok := p.dscpFor(a); ok {
-		t.Fatal("DSCP override survived RemoveTarget")
-	}
 }
 
 func TestPingerDone_ClosesOnStop(t *testing.T) {

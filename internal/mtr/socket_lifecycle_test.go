@@ -34,6 +34,7 @@ func (p *replacingProber) ProbeHop(context.Context, HopSocket, string, int, int,
 }
 func (p *replacingProber) NextTraceID() int                 { return 10 }
 func (p *replacingProber) ASNInfoFor(string) pinger.ASNInfo { return pinger.ASNInfo{} }
+func (p *replacingProber) PTRFor(string) string             { return "" }
 
 // TestReplacedMTRSocketClosedOnStop verifies that when the target's address
 // changes and a rediscovery swaps in a new hop socket, both the replaced

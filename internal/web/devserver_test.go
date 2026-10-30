@@ -44,7 +44,7 @@ func TestDevServer(t *testing.T) {
 	src.Set(sim)
 	token := os.Getenv("MPING_WEB_DEV_TOKEN")
 	if token == "" {
-		if token, err = newToken(); err != nil {
+		if token, err = NewToken(); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -119,14 +119,15 @@ func newSimulation(includeUntrusted, longValues bool) *simulation {
 		client.ts.SetASNInfo("AS4294967295", "JP", strings.Repeat("Long organization name ", 20))
 		client.baseMs, client.jitterMs = 1e9, 1e8
 	}
-	hops := []string{"192.0.2.254", "198.51.100.1", "", "198.51.100.10"}
-	sim.targets[2].ts.SetTraceHops(hops)
 	m := sim.targets[2].ts.MTR()
-	m.EnsureLen(len(hops))
-	ports := []*stats.PortCheckResult{{Port: 443, Protocol: "tcp"}, {Port: 53, Protocol: "udp"}}
+	m.EnsureLen(4)
+	m.SetIP(1, "192.0.2.254", "", "", "")
+	m.SetPTR(1, "192.0.2.254", "gw1.lab.example")
+	firstPort := 443
 	if longValues {
-		ports[0].Port = 65535
+		firstPort = 65535
 	}
+	ports := []*stats.PortCheckResult{stats.NewPortCheckResult(firstPort, "tcp"), stats.NewPortCheckResult(53, "udp")}
 	ports[0].SetResult("Open", 4*time.Millisecond)
 	ports[1].SetResult("Filtered", 0)
 	sim.targets[0].ts.SetPortResults(ports)
@@ -190,7 +191,7 @@ func (s *simulation) AddHost(host string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, st := range s.targets {
-		if st.ts.Host == host {
+		if st.ts.Host() == host {
 			return fmt.Errorf("host %q is already in the list", host)
 		}
 	}
@@ -211,7 +212,7 @@ func (s *simulation) DeleteTarget(id uint64) error {
 		return errors.New("cannot delete the last host")
 	}
 	for i, st := range s.targets {
-		if st.ts.ID == id {
+		if st.ts.ID() == id {
 			s.targets = slices.Delete(slices.Clone(s.targets), i, i+1)
 			return nil
 		}
@@ -235,15 +236,15 @@ func (s *simulation) Meta() Meta {
 	ids := func(hosts ...string) []uint64 {
 		var out []uint64
 		for _, st := range s.targets {
-			if slices.Contains(hosts, st.ts.Host) {
-				out = append(out, st.ts.ID)
+			if slices.Contains(hosts, st.ts.Host()) {
+				out = append(out, st.ts.ID())
 			}
 		}
 		return out
 	}
 	return Meta{
 		IntervalMs: 250,
-		Features:   Features{Traceroute: true, MTR: true, Port: true, HTTP: true, ASN: true, PTR: true},
+		Features:   Features{MTR: true, Port: true, HTTP: true, ASN: true, PTR: true},
 		Thresholds: Thresholds{RTTWarnMs: 50, RTTCritMs: 200, JitterWarnMs: 10, JitterCritMs: 50, LossWarnPct: 20, LossCritPct: 80},
 		Groups: []Group{
 			{Name: "core", TargetIDs: ids("core-rtr1.example", "core-rtr2.example")},

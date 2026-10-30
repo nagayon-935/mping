@@ -173,7 +173,7 @@ func TestPinger_LookupASN(t *testing.T) {
 	}
 }
 
-// TestResolveTarget_TracksASNGoroutineInWaitGroup verifies the F2 fix:
+// TestResolveTarget_TracksASNGoroutineInWaitGroup verifies that
 // resolveTarget's ASN lookup goroutine is added to p.wg, so Wait() blocks
 // until the (slow, uncancellable) DNS lookup finishes rather than letting
 // it outlive the pinger.
@@ -227,7 +227,7 @@ func TestResolveTarget_TracksASNGoroutineInWaitGroup(t *testing.T) {
 	}
 }
 
-// TestLookupASN_ReturnsEarlyAfterStop verifies the F2 fix's early-exit guard:
+// TestLookupASN_ReturnsEarlyAfterStop verifies lookupASN's early-exit guard:
 // once p.done is closed, lookupASN must not perform a new DNS lookup.
 func TestLookupASN_ReturnsEarlyAfterStop(t *testing.T) {
 	called := false

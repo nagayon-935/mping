@@ -1,4 +1,4 @@
-package main
+package hostsfile
 
 import (
 	"reflect"
@@ -8,33 +8,11 @@ import (
 func TestParseHostsFile_Mapping(t *testing.T) {
 	path := writeHostsYAML(t, "hosts:\n  - example.com\n  - 8.8.8.8\n")
 
-	got, err := parseHostsFile(path)
+	got, err := Parse(path)
 	if err != nil {
-		t.Fatalf("parseHostsFile: %v", err)
+		t.Fatalf("Parse: %v", err)
 	}
-	want := []hostEntry{{Host: "example.com"}, {Host: "8.8.8.8"}}
-	if !reflect.DeepEqual(got.Hosts, want) {
-		t.Fatalf("hosts: got %v, want %v", got.Hosts, want)
-	}
-}
-
-func TestParseHostsFile_PerHostDSCPMapping(t *testing.T) {
-	// The feature's primary use case: the same destination monitored twice,
-	// once per DSCP marking, side by side.
-	path := writeHostsYAML(t, "hosts:\n"+
-		"  - host: 2001:db8::1\n    dscp: EF\n"+
-		"  - host: 2001:db8::1\n    dscp: CS0\n"+
-		"  - plain.example.com\n")
-
-	got, err := parseHostsFile(path)
-	if err != nil {
-		t.Fatalf("parseHostsFile: %v", err)
-	}
-	want := []hostEntry{
-		{Host: "2001:db8::1", DSCP: "EF"},
-		{Host: "2001:db8::1", DSCP: "CS0"},
-		{Host: "plain.example.com"},
-	}
+	want := []Entry{{Host: "example.com"}, {Host: "8.8.8.8"}}
 	if !reflect.DeepEqual(got.Hosts, want) {
 		t.Fatalf("hosts: got %v, want %v", got.Hosts, want)
 	}
@@ -43,9 +21,9 @@ func TestParseHostsFile_PerHostDSCPMapping(t *testing.T) {
 func TestParseHostsFile_GroupsYAML(t *testing.T) {
 	path := writeHostsYAML(t, "groups:\n  - name: \"Site A\"\n    hosts:\n      - 1.1.1.1\n      - 8.8.8.8\n")
 
-	doc, err := parseHostsFile(path)
+	doc, err := Parse(path)
 	if err != nil {
-		t.Fatalf("parseHostsFile: %v", err)
+		t.Fatalf("Parse: %v", err)
 	}
 	if len(doc.Groups) != 1 {
 		t.Fatalf("Groups: want 1, got %d", len(doc.Groups))
@@ -61,9 +39,9 @@ func TestParseHostsFile_GroupsYAML(t *testing.T) {
 func TestParseHostsFile_EmptyFileIsNotAnError(t *testing.T) {
 	path := writeHostsYAML(t, "")
 
-	got, err := parseHostsFile(path)
+	got, err := Parse(path)
 	if err != nil {
-		t.Fatalf("parseHostsFile on empty file: unexpected error: %v", err)
+		t.Fatalf("Parse on empty file: unexpected error: %v", err)
 	}
 	if len(got.Hosts) != 0 {
 		t.Errorf("hosts: got %v, want empty", got.Hosts)
@@ -77,15 +55,15 @@ func TestParseHostsFile_RejectsInvalidDocuments(t *testing.T) {
 		name    string
 		content string
 	}{
-		{"host mapping missing the required 'host' key", "hosts:\n  - dscp: EF\n"},
-		{"unknown key in host mapping (typo of dscp)", "hosts:\n  - host: example.com\n    dscpp: EF\n"},
+		{"host mapping missing the required 'host' key", "hosts:\n  - name: edge\n"},
+		{"unknown key in host mapping (typo of name)", "hosts:\n  - host: example.com\n    nmae: edge\n"},
 		{"unknown top-level key (typo of interval)", "hosts:\n  - example.com\ninterva: 500\n"},
 		{"unknown key in nested group (host for hosts)", "groups:\n  - name: web\n    host:\n      - example.com\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := parseHostsFile(writeHostsYAML(t, tt.content)); err == nil {
-				t.Fatal("parseHostsFile: expected an error, got nil")
+			if _, err := Parse(writeHostsYAML(t, tt.content)); err == nil {
+				t.Fatal("Parse: expected an error, got nil")
 			}
 		})
 	}

@@ -132,17 +132,14 @@ try{
   await p.getByRole('button',{name:'Reset stats',exact:true}).click();assert.match(await p.textContent('#confirm-description'),/all hosts/);
   await p.click('#confirm-cancel');
  });
- await check('mobile action menu and filters fit 320/360/390px in both themes without moving panes',async()=>{
+ await check('controls and filters fit the narrowest supported width in both themes',async()=>{
   await p.click('#clear-filter');await settle(p);
-  for(const theme of ['light','dark'])for(const width of [320,360,390]){
-   await p.emulateMedia({colorScheme:theme});await p.setViewportSize({width,height:844});await settle(p);
-   assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${theme} ${width}`);
-   assert.ok((await p.locator('#status-filter').boundingBox()).width>100);
-   const before=await geometry(p);await p.click('#toggle-actions');assert.ok(await p.isVisible('#open-report'));assert.deepEqual(await geometry(p),before);
-   await p.keyboard.press('Escape');assert.ok(await p.isHidden('#open-report'));
+  for(const theme of ['light','dark']){
+   await p.emulateMedia({colorScheme:theme});await p.setViewportSize({width:720,height:844});await settle(p);
+   assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,theme);
+   assert.ok(await p.locator('.monitor-filters').evaluate(n=>n.scrollWidth<=n.clientWidth),`${theme} filters overflow`);
+   assert.ok(await p.isVisible('#open-report'));
   }
-  await p.click('#toggle-actions');await p.click('#open-add');await p.waitForSelector('#add-dialog[open]');await p.keyboard.press('Escape');
-  await p.waitForFunction(()=>document.activeElement.id==='toggle-actions');
  });
  await p.close();
  await check('filter, sort and graph preferences survive reloading the page',async()=>{

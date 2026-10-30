@@ -73,7 +73,7 @@ var receiverV6Config = receiverConfig{
 }
 
 // icmpv6FilterSetter is satisfied by both PacketConnV6 (the main receiver
-// socket) and hopSendConnV6 (MTR/traceroute's HopSocket). Sharing it lets
+// socket) and hopSendConnV6 (the route engine's HopSocket). Sharing it lets
 // applyICMPv6Filter serve both call sites without a second interface.
 type icmpv6FilterSetter interface {
 	SetICMPFilter(f *ipv6.ICMPFilter) error
@@ -83,7 +83,7 @@ type icmpv6FilterSetter interface {
 // ICMPv6 type except cfg.echoReply and cfg.errorTypes. It is derived from
 // cfg rather than a second, independently-maintained type list, so a future
 // addition to receiverV6Config.errorTypes (e.g. another ICMP error type
-// needed for traceroute/MTR) automatically widens the kernel filter too -
+// needed for route probes) automatically widens the kernel filter too -
 // there is exactly one place that enumerates the types mping cares about.
 func icmpv6FilterFromConfig(cfg receiverConfig) ipv6.ICMPFilter {
 	var filt ipv6.ICMPFilter
@@ -107,7 +107,7 @@ func icmpv6FilterFromConfig(cfg receiverConfig) ipv6.ICMPFilter {
 // goroutine for a message it immediately discards. Mirrors Apple's ping6.c
 // (ICMP6_FILTER_SETBLOCKALL + SETPASS on ECHO_REPLY only), except mping
 // also passes the ICMP error types receiverV6Config needs for its error
-// column, traceroute, and MTR.
+// column and route probes.
 //
 // Non-fatal: ICMP6_FILTER is unsupported on some platforms (and by
 // definition on any non-syscall.Conn, such as the fakes used in tests),
@@ -119,45 +119,40 @@ func applyICMPv6Filter(conn icmpv6FilterSetter) {
 }
 
 func (p *Pinger) runReceiverV4() {
-	p.runReceiver(receiverV4Config, func(buf []byte) (int, int, int, net.Addr, error) {
+	p.runReceiver(receiverV4Config, func(buf []byte) (int, int, net.Addr, error) {
 		n, cm, src, err := p.connV4.ReadFrom(buf)
 		ttl := 0
 		if cm != nil {
 			ttl = cm.TTL
 		}
-		// dscp is always 0 for IPv4: x/net's ipv4.ControlMessage has no TOS
-		// field, so there is no receive-side observation available here
-		// (see PacketConnV4.SetTOS's doc) — only IPv6 replies ever carry a
-		// real Reply.DSCP.
-		return n, ttl, 0, src, err
+		return n, ttl, src, err
 	}, func(t time.Time) error {
 		return p.connV4.SetReadDeadline(t)
 	})
 }
 
 func (p *Pinger) runReceiverV6() {
-	p.runReceiver(receiverV6Config, func(buf []byte) (int, int, int, net.Addr, error) {
+	p.runReceiver(receiverV6Config, func(buf []byte) (int, int, net.Addr, error) {
 		n, cm, src, err := p.connV6.ReadFrom(buf)
-		hopLimit, dscp := 0, 0
+		hopLimit := 0
 		if cm != nil {
 			hopLimit = cm.HopLimit
-			dscp = cm.TrafficClass
 		}
-		return n, hopLimit, dscp, src, err
+		return n, hopLimit, src, err
 	}, func(t time.Time) error {
 		return p.connV6.SetReadDeadline(t)
 	})
 }
 
 // runReceiver is the unified receiver loop for both IPv4 and IPv6.
-// readFrom returns (bytesRead, ttlOrHopLimit, dscp, srcAddr, error).
+// readFrom returns (bytesRead, ttlOrHopLimit, srcAddr, error).
 //
 // buf[:n] is always a bare ICMP message: ipv4.PacketConn.ReadFrom on a raw
 // *net.IPConn reads the IPv4 header into a buffer of its own and strips it
 // on every platform, and raw IPv6 sockets never deliver the IPv6 header.
 func (p *Pinger) runReceiver(
 	cfg receiverConfig,
-	readFrom func(buf []byte) (int, int, int, net.Addr, error),
+	readFrom func(buf []byte) (int, int, net.Addr, error),
 	setDeadline func(time.Time) error,
 ) {
 	buf := make([]byte, receiverBufferSize)
@@ -169,7 +164,7 @@ func (p *Pinger) runReceiver(
 			if err := setDeadline(time.Now().Add(receiverReadTimeout)); err != nil {
 				return
 			}
-			n, ttl, dscp, src, err := readFrom(buf)
+			n, ttl, src, err := readFrom(buf)
 			if err != nil {
 				var opErr *net.OpError
 				if errors.As(err, &opErr) && opErr.Timeout() {
@@ -186,7 +181,7 @@ func (p *Pinger) runReceiver(
 			p.broadcastTrace(msg, src)
 
 			if msg.Type == cfg.echoReply {
-				p.handleEchoReply(msg, ttl, dscp)
+				p.handleEchoReply(msg, ttl)
 			} else if isErrorType(msg.Type, cfg.errorTypes) {
 				p.handleICMPError(msg, cfg.errorStringFn)
 			}
@@ -198,7 +193,7 @@ func isErrorType(t icmp.Type, errorTypes []icmp.Type) bool {
 	return slices.Contains(errorTypes, t)
 }
 
-func (p *Pinger) handleEchoReply(msg *icmp.Message, ttl, dscp int) {
+func (p *Pinger) handleEchoReply(msg *icmp.Message, ttl int) {
 	echo, ok := msg.Body.(*icmp.Echo)
 	if !ok {
 		return
@@ -207,7 +202,7 @@ func (p *Pinger) handleEchoReply(msg *icmp.Message, ttl, dscp int) {
 	ch, exists := p.targetChans[echo.ID]
 	p.mapMu.RUnlock()
 	if exists {
-		reply := Reply{TTL: ttl, DSCP: dscp, Seq: echo.Seq}
+		reply := Reply{TTL: ttl, Seq: echo.Seq}
 		if rtt, ok := extractSendTimestamp(echo.Data, p.now(), p.probeTimeout); ok {
 			reply.RTT = rtt
 		}

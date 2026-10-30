@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -32,7 +31,6 @@ type supervisorConfig struct {
 	sourceIPv4          string
 	sourceIPv6          string
 	network             string
-	reservedOutputs     []string
 	packetSize          int
 	targets             []*stats.TargetStats
 	interval            time.Duration
@@ -43,18 +41,15 @@ type supervisorConfig struct {
 	// bound to; the port and HTTP checkers get the same one so a single mping
 	// invocation cannot split its probes across different egress paths.
 	bind         pinger.BindConfig
-	traceEnabled bool
-	mtrEnabled   bool
 	countLimited bool
 	logCh        chan string
-	eventSink    func(string, stats.Event)
 }
 
 // supervisorState tracks whether this supervisor's components are running.
-// The previous code used a single `stopped bool`, which conflated "the user
-// pressed 's'" with "run() is tearing this iteration down" — a restart
-// racing with the teardown could therefore resurrect the pinger and
-// checkers. stateTerminated is one-way: nothing revives a supervisor from it.
+// "The user pressed 's'" (stopped) and "run() is tearing this iteration
+// down" (terminated) are separate states so a restart racing with the
+// teardown cannot resurrect the pinger and checkers. stateTerminated is
+// one-way: nothing revives a supervisor from it.
 //
 // Command       stopped           running               terminated
 // start         start -> running  no-op                 error
@@ -88,15 +83,14 @@ func (s supervisorState) String() string {
 
 // cmdKind identifies a supervisor operation. Every mutation of supervisor
 // state goes through one of these, processed one at a time, so the
-// components no longer need to defend themselves against concurrent callers.
+// components need not defend themselves against concurrent callers.
 type cmdKind int
 
 const (
 	cmdStart cmdKind = iota
 	cmdStop
 	cmdRestart
-	cmdResetTrace
-	cmdResetMTR
+	cmdResetRoute
 	cmdResetPort
 	cmdResetHTTP
 	cmdTerminate
@@ -113,10 +107,8 @@ func (k cmdKind) String() string {
 		return "stop"
 	case cmdRestart:
 		return "restart"
-	case cmdResetTrace:
-		return "resetTrace"
-	case cmdResetMTR:
-		return "resetMTR"
+	case cmdResetRoute:
+		return "resetRoute"
 	case cmdResetPort:
 		return "resetPort"
 	case cmdResetHTTP:
@@ -146,26 +138,21 @@ type command struct {
 // something after run() began tearing this iteration down.
 var errSupervisorTerminated = errors.New("supervisor terminated")
 
-// supervisor owns the pinger/traceroute/MTR/port/HTTP checker lifecycle for
+// supervisor owns the pinger/route engine/port/HTTP checker lifecycle for
 // one run() loop iteration.
 //
 // Component references and state belong exclusively to the command loop.
-// It creates and joins traceDone, owns Stop/Wait for the pinger and checkers,
-// and calls MTR.Stop (which joins internally). Shutdown joins the command
+// It owns Stop/Wait for the pinger and checkers, and calls the route
+// engine's Stop (which joins internally). Shutdown joins the command
 // loop and count observers. Readers outside the loop use atomic snapshots.
 type supervisor struct {
 	cfg supervisorConfig
 
 	p              pingerController
-	traceCancel    context.CancelFunc
-	traceCtx       context.Context
-	traceWG        *sync.WaitGroup
-	traceDone      chan struct{} // closed when the current runTraceroutes goroutine returns
 	portChecker    *pinger.PortChecker
 	httpChecker    *pinger.HTTPChecker
-	mtrEngine      *mtr.Engine
+	routeEngine    *mtr.Engine
 	state          supervisorState
-	traces         map[*stats.TargetStats]*traceRun
 	targetSnap     atomic.Pointer[targetSnapshot]
 	removed        []report.Target
 	removedDropped int
@@ -202,24 +189,7 @@ func newSupervisor(cfg supervisorConfig) *supervisor {
 	return s
 }
 
-// startTraceroutes cancels and joins any previous traceroute, launches a new
-// one, and tracks it via s.traceDone so tearDownAll can join it on shutdown
-// instead of leaving it to be reaped by process exit. Caller must be running
-// on the command goroutine (see supervisor_loop.go).
-func (s *supervisor) startTraceroutes(pr tracer) {
-	s.stopTraceroutes()
-	s.traces = make(map[*stats.TargetStats]*traceRun)
-	s.traceCtx, s.traceCancel = context.WithCancel(context.Background())
-	s.traceWG = &sync.WaitGroup{}
-	s.traceDone = make(chan struct{})
-	ctx, wg, done := s.traceCtx, s.traceWG, s.traceDone
-	go func() { <-ctx.Done(); wg.Wait(); close(done) }()
-	for _, t := range s.cfg.targets {
-		s.startTargetTrace(pr, t)
-	}
-}
-
-// onFlap is the shared callback for MTR route-flap events.
+// onFlap is the shared callback for route-change events.
 func (s *supervisor) onFlap(host, desc string) {
 	postLog(s.cfg.logCh, fmt.Sprintf("[yellow][%s] Route flap %s: %s[-]", clock(), host, desc))
 }
@@ -238,39 +208,22 @@ func (s *supervisor) handle(c command) error {
 		return c.edit(s)
 	case cmdProbesFinished:
 		if s.state == stateRunning && s.p == c.pinger {
-			if dynamic, ok := s.p.(dynamicPinger); ok && !dynamic.WorkersFinished() {
-				return nil
-			}
-			select {
-			case s.finished <- struct{}{}:
-			default:
-			}
-			for _, t := range s.cfg.targets {
-				t.SetMeasurementState("finished")
-			}
+			s.markProbesFinished()
 		}
 		return nil
 	case cmdStart:
-		if s.state == stateTerminated {
+		switch s.state {
+		case stateTerminated:
 			return errSupervisorTerminated
-		}
-		if s.state == stateRunning {
+		case stateRunning:
 			return nil
 		}
 		return s.startAll()
-
 	case cmdStop:
-		if s.state != stateRunning {
-			return nil
+		if s.state == stateRunning {
+			s.stopRunning()
 		}
-		s.tearDownAll()
-		for _, t := range s.cfg.targets {
-			t.SetMeasurementState("stopped")
-			t.RecordEvent("stopped", "Measurements stopped")
-		}
-		s.state = stateStopped
 		return nil
-
 	case cmdRestart:
 		if s.state == stateTerminated {
 			return errSupervisorTerminated
@@ -280,78 +233,91 @@ func (s *supervisor) handle(c command) error {
 			s.state = stateStopped
 		}
 		return s.startAll()
-
-	case cmdResetTrace:
-		if s.state != stateRunning {
-			return nil
-		}
-		s.startTraceroutes(s.p)
-		return nil
-
 	case cmdResetStats:
-		if s.state == stateTerminated {
-			return nil
+		if s.state != stateTerminated {
+			s.resetAll()
 		}
-		// Stop route writers before resetting their state. Ping workers keep
-		// their count budget; TargetStats.Reset invalidates their old probes.
-		s.stopTraceroutes()
-		s.stopMTR()
-		for _, t := range s.cfg.targets {
-			t.Reset()
-			if s.state == stateRunning && s.cfg.traceEnabled {
-				t.SetTraceHops(nil)
-			}
-		}
-		if s.state != stateRunning {
-			return nil // a reset never resumes stopped measurements
-		}
-		if s.cfg.traceEnabled {
-			s.startTraceroutes(s.p)
-		}
-		if s.cfg.mtrEnabled {
-			s.restartMTR(false)
-		}
-		s.restartPortChecker()
-		s.restartHTTPChecker()
 		return nil
-
-	case cmdResetMTR:
-		if s.state != stateRunning {
-			return nil
-		}
-		s.restartMTR(true)
-		return nil
-
-	case cmdResetPort:
-		if s.state != stateRunning {
-			return nil
-		}
-		s.restartPortChecker()
-		return nil
-
-	case cmdResetHTTP:
-		if s.state != stateRunning {
-			return nil
-		}
-		s.restartHTTPChecker()
-		return nil
-
-	case cmdTerminate:
-		if s.state == stateTerminated {
-			return nil
-		}
+	case cmdResetRoute:
 		if s.state == stateRunning {
-			s.tearDownAll()
+			s.restartRoute(true)
 		}
-		s.state = stateTerminated
-		for _, t := range s.cfg.targets {
-			if t.MeasurementState() != "finished" {
-				t.SetMeasurementState("stopped")
-			}
+		return nil
+	case cmdResetPort:
+		if s.state == stateRunning {
+			s.restartPortChecker()
+		}
+		return nil
+	case cmdResetHTTP:
+		if s.state == stateRunning {
+			s.restartHTTPChecker()
+		}
+		return nil
+	case cmdTerminate:
+		if s.state != stateTerminated {
+			s.terminate()
 		}
 		return nil
 	}
 	return fmt.Errorf("supervisor: unknown command %d", c.kind)
+}
+
+// markProbesFinished notifies count completion once every worker of the
+// current pinger has sent its last probe.
+func (s *supervisor) markProbesFinished() {
+	if dynamic, ok := s.p.(dynamicPinger); ok && !dynamic.WorkersFinished() {
+		return
+	}
+	select {
+	case s.finished <- struct{}{}:
+	default:
+	}
+	for _, t := range s.cfg.targets {
+		t.SetMeasurementState("finished")
+	}
+}
+
+// stopRunning tears every component down, keeping the statistics.
+func (s *supervisor) stopRunning() {
+	s.tearDownAll()
+	for _, t := range s.cfg.targets {
+		t.SetMeasurementState("stopped")
+		t.RecordEvent("stopped", "Measurements stopped")
+	}
+	s.state = stateStopped
+}
+
+// resetAll clears every target's statistics. While running it also
+// recreates the route, port and HTTP monitors; a reset never resumes
+// stopped measurements.
+func (s *supervisor) resetAll() {
+	// Stop route writers before resetting their state. Ping workers keep
+	// their count budget; TargetStats.Reset invalidates their old probes.
+	s.stopRoute()
+	for _, t := range s.cfg.targets {
+		t.Reset()
+	}
+	if s.state != stateRunning {
+		return
+	}
+	if s.cfg.config.routeEnabled() {
+		s.restartRoute(false)
+	}
+	s.restartPortChecker()
+	s.restartHTTPChecker()
+}
+
+// terminate ends the supervisor for good: nothing restarts it afterwards.
+func (s *supervisor) terminate() {
+	if s.state == stateRunning {
+		s.tearDownAll()
+	}
+	s.state = stateTerminated
+	for _, t := range s.cfg.targets {
+		if t.MeasurementState() != "finished" {
+			t.SetMeasurementState("stopped")
+		}
+	}
 }
 
 // clearFinished drops a pending count-completion notification so a membership
@@ -380,11 +346,8 @@ func (s *supervisor) startAll() error {
 		return err
 	}
 	s.p = next
-	if s.cfg.traceEnabled {
-		s.startTraceroutes(next)
-	}
-	if s.cfg.mtrEnabled {
-		s.restartMTR(false)
+	if s.cfg.config.routeEnabled() {
+		s.restartRoute(false)
 	}
 	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout, s.cfg.bind)
 	s.httpChecker = s.setupHTTPChecker()
@@ -440,11 +403,8 @@ func (s *supervisor) startCountObserver(next pingerController) {
 func (s *supervisor) configureTarget(t *stats.TargetStats) {
 	t.ConfigureHealth(healthPolicy(s.cfg.config))
 	host := t.DisplayName()
-	sink, logCh := s.cfg.eventSink, s.cfg.logCh
+	logCh := s.cfg.logCh
 	t.SetEventSink(func(e stats.Event) {
-		if sink != nil {
-			sink(host, e)
-		}
 		if e.Kind == "health" {
 			postLog(logCh, fmt.Sprintf("[%s] %s: %s", e.At.Format("15:04:05"), tview.Escape(host), tview.Escape(e.Message)))
 		}
@@ -464,17 +424,16 @@ func (s *supervisor) setupHTTPChecker() *pinger.HTTPChecker {
 	return hc
 }
 
-// tearDownAll stops everything in dependency order: the traceroute goroutine
-// is joined first (it probes through the pinger), then the MTR engine, then
-// the pinger itself — Stop (signal), Wait (join), Close (release the raw
-// socket), so the receiver goroutine has exited before its fd is closed.
+// tearDownAll stops everything in dependency order: the route engine is
+// joined first (it probes through the pinger), then the pinger itself —
+// Stop (signal), Wait (join), Close (release the raw socket), so the
+// receiver goroutine has exited before its fd is closed.
 //
 // s.p, s.portChecker and s.httpChecker are deliberately NOT set to nil: the
 // UI keeps showing each pane's last values after a stop instead of blanking
-// them, which is the pre-existing behaviour.
+// them.
 func (s *supervisor) tearDownAll() {
-	s.stopTraceroutes()
-	s.stopMTR()
+	s.stopRoute()
 	if s.p != nil {
 		s.p.Stop()
 		s.p.Wait()
@@ -490,32 +449,18 @@ func (s *supervisor) tearDownAll() {
 	}
 }
 
-func (s *supervisor) stopTraceroutes() {
-	if s.traceCancel != nil {
-		s.traceCancel()
-		s.traceCancel = nil
-	}
-	for t := range s.traces {
-		s.stopTargetTrace(t)
-	}
-	if s.traceDone != nil {
-		<-s.traceDone
-		s.traceDone = nil
+func (s *supervisor) stopRoute() {
+	if s.routeEngine != nil {
+		s.routeEngine.Stop()
+		s.routeEngine = nil
 	}
 }
 
-func (s *supervisor) stopMTR() {
-	if s.mtrEngine != nil {
-		s.mtrEngine.Stop()
-		s.mtrEngine = nil
-	}
-}
-
-// restartMTR joins the outgoing engine before replacing it. resetStats
+// restartRoute joins the outgoing engine before replacing it. resetStats
 // clears per-hop counters only; cmdResetStats owns resetting ping counters.
 // A plain start/restart preserves both sets of counters.
-func (s *supervisor) restartMTR(resetStats bool) {
-	s.stopMTR()
+func (s *supervisor) restartRoute(resetStats bool) {
+	s.stopRoute()
 	// Cleared here rather than by the 'R' key handler: Stop above has joined
 	// the outgoing engine's goroutines and the replacement has not started,
 	// so this is the only window in which a probe reply cannot land in the
@@ -528,10 +473,11 @@ func (s *supervisor) restartMTR(resetStats bool) {
 	if s.p == nil {
 		return
 	}
-	s.mtrEngine = mtr.NewEngine(s.p.MTRProber(), s.cfg.targets, mtr.Config{
-		OnFlap: s.onFlap,
+	s.routeEngine = mtr.NewEngine(s.p.MTRProber(), s.cfg.targets, mtr.Config{
+		PathOnly: !s.cfg.config.mtr,
+		OnFlap:   s.onFlap,
 	})
-	s.mtrEngine.Start()
+	s.routeEngine.Start()
 }
 
 // restartPortChecker stops any existing port checker and replaces it with a
@@ -556,8 +502,7 @@ func (s *supervisor) restartHTTPChecker() {
 
 func (s *supervisor) startPinger() error { return s.do(cmdStart) }
 func (s *supervisor) stopAll()           { _ = s.do(cmdStop) }
-func (s *supervisor) resetTrace()        { _ = s.do(cmdResetTrace) }
-func (s *supervisor) resetMTR()          { _ = s.do(cmdResetMTR) }
+func (s *supervisor) resetRoute()        { _ = s.do(cmdResetRoute) }
 func (s *supervisor) resetHTTP()         { _ = s.do(cmdResetHTTP) }
 func (s *supervisor) resetPort()         { _ = s.do(cmdResetPort) }
 func (s *supervisor) resetStats()        { _ = s.do(cmdResetStats) }

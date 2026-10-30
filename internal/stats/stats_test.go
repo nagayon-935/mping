@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-// TestTargetStats_GetViewWindow_MatchesGetViewExceptHistory guards the P2
-// fix: GetViewWindow must produce the exact same TargetView as GetView for
-// every field except History, which should be truncated to the trailing n
+// TestTargetStats_GetViewWindow_MatchesGetViewExceptHistory checks that
+// GetViewWindow produces the exact same TargetView as GetView for every
+// field except History, which is truncated to the trailing n
 // entries instead of the full ring.
 func TestTargetStats_GetViewWindow_MatchesGetViewExceptHistory(t *testing.T) {
 	tgt := NewTargetStats("example.com")
@@ -134,7 +134,7 @@ func TestTargetStatsHistoryRing(t *testing.T) {
 }
 
 func TestPortCheckResult_SetAndGetResult(t *testing.T) {
-	r := &PortCheckResult{Port: 443, Protocol: "tcp", Status: "Checking..."}
+	r := &PortCheckResult{port: 443, protocol: "tcp", status: "Checking..."}
 
 	r.SetResult("Open", 10*time.Millisecond)
 	v := r.GetView()
@@ -171,10 +171,10 @@ func TestPortCheckResult_SetAndGetResult(t *testing.T) {
 }
 
 func TestPortCheckResult_SetResult_LastChange(t *testing.T) {
-	r := &PortCheckResult{Port: 80, Protocol: "tcp", Status: "Open"}
+	r := &PortCheckResult{port: 80, protocol: "tcp", status: "Open"}
 
 	// Same status: LastChange should not be updated
-	before := r.LastChange
+	before := r.lastChange
 	r.SetResult("Open", 5*time.Millisecond)
 	lastChange := r.GetView().LastChange
 	if lastChange != before {
@@ -203,33 +203,13 @@ func TestPortCheckResult_SetResult_AllStatuses(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.status, func(t *testing.T) {
-			r := &PortCheckResult{Status: "Checking..."}
+			r := &PortCheckResult{status: "Checking..."}
 			r.SetResult(tt.status, 0)
 			v := r.GetView()
 			if v.OpenCount != tt.wantOpenCount || v.ClosedCount != tt.wantClosedCount {
 				t.Errorf("OpenCount/ClosedCount = %d/%d, want %d/%d", v.OpenCount, v.ClosedCount, tt.wantOpenCount, tt.wantClosedCount)
 			}
 		})
-	}
-}
-
-func TestTargetStats_SetTraceHops(t *testing.T) {
-	tgt := NewTargetStats("example.com")
-	hops := []string{"10.0.0.1", "10.0.0.2", "1.2.3.4"}
-	tgt.SetTraceHops(hops)
-	view := tgt.GetView()
-	if len(view.TraceHops) != len(hops) {
-		t.Fatalf("TraceHops len: got %d, want %d", len(view.TraceHops), len(hops))
-	}
-	for i, h := range hops {
-		if view.TraceHops[i] != h {
-			t.Errorf("TraceHops[%d]: got %q, want %q", i, view.TraceHops[i], h)
-		}
-	}
-	// Verify it's a copy (mutation should not affect stored value)
-	hops[0] = "mutated"
-	if tgt.GetView().TraceHops[0] == "mutated" {
-		t.Error("SetTraceHops should store a copy, not a reference")
 	}
 }
 
@@ -283,7 +263,7 @@ func TestTargetStatsFailureAndReset(t *testing.T) {
 		t.Fatalf("LastError: got %q, want %q", view.LastError, "Timeout")
 	}
 
-	tgt.NewProbe().OnSuccess(time.Millisecond, 64, 46<<2)
+	tgt.NewProbe().OnSuccess(time.Millisecond, 64)
 	tgt.OnDuplicate()
 	tgt.OnLateReply()
 	tgt.Reset()
@@ -303,9 +283,6 @@ func TestTargetStatsFailureAndReset(t *testing.T) {
 	}
 	if !view.LastLossTime.IsZero() || view.LastError != "" {
 		t.Fatalf("Reset did not clear error state: lastLoss=%v lastError=%q", view.LastLossTime, view.LastError)
-	}
-	if view.LastDSCP != 0 {
-		t.Fatalf("Reset did not clear LastDSCP: got %d", view.LastDSCP)
 	}
 }
 
@@ -381,7 +358,7 @@ func TestPortCheckResult_RTTStats(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := &PortCheckResult{Port: 443, Protocol: "tcp", Status: "Checking..."}
+			r := &PortCheckResult{port: 443, protocol: "tcp", status: "Checking..."}
 			for _, inp := range tt.inputs {
 				r.SetResult(inp.status, inp.rtt)
 			}
@@ -404,7 +381,7 @@ func TestPortCheckResult_RTTStats(t *testing.T) {
 
 func TestPortCheckResult_GetView_History(t *testing.T) {
 	t.Run("history under capacity", func(t *testing.T) {
-		r := &PortCheckResult{Port: 80, Protocol: "tcp", Status: "Checking..."}
+		r := &PortCheckResult{port: 80, protocol: "tcp", status: "Checking..."}
 		rtts := []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 30 * time.Millisecond}
 		for _, rtt := range rtts {
 			r.SetResult("Open", rtt)
@@ -421,7 +398,7 @@ func TestPortCheckResult_GetView_History(t *testing.T) {
 	})
 
 	t.Run("history wraps at historySize", func(t *testing.T) {
-		r := &PortCheckResult{Port: 80, Protocol: "tcp", Status: "Checking..."}
+		r := &PortCheckResult{port: 80, protocol: "tcp", status: "Checking..."}
 		for i := 1; i <= historySize+1; i++ {
 			r.SetResult("Open", time.Duration(i)*time.Millisecond)
 		}
@@ -438,7 +415,7 @@ func TestPortCheckResult_GetView_History(t *testing.T) {
 	})
 
 	t.Run("non-open results not added to history", func(t *testing.T) {
-		r := &PortCheckResult{Port: 443, Protocol: "tcp", Status: "Checking..."}
+		r := &PortCheckResult{port: 443, protocol: "tcp", status: "Checking..."}
 		r.SetResult("Closed", 5*time.Millisecond)
 		r.SetResult("Filtered", 5*time.Millisecond)
 		view := r.GetView()
@@ -449,7 +426,7 @@ func TestPortCheckResult_GetView_History(t *testing.T) {
 }
 
 func TestPortCheckResult_ConcurrentAccess(t *testing.T) {
-	r := &PortCheckResult{Port: 80, Protocol: "tcp", Status: "Checking..."}
+	r := &PortCheckResult{port: 80, protocol: "tcp", status: "Checking..."}
 	done := make(chan struct{})
 	go func() {
 		for i := range 1000 {
@@ -470,8 +447,8 @@ func TestPortCheckResult_ConcurrentAccess(t *testing.T) {
 func TestTargetStats_SetPortResults(t *testing.T) {
 	tgt := NewTargetStats("example.com")
 	results := []*PortCheckResult{
-		{Port: 80, Protocol: "tcp", Status: "Open"},
-		{Port: 443, Protocol: "tcp", Status: "Closed"},
+		{port: 80, protocol: "tcp", status: "Open"},
+		{port: 443, protocol: "tcp", status: "Closed"},
 	}
 	tgt.SetPortResults(results)
 	view := tgt.GetView()
@@ -512,12 +489,27 @@ func TestLightweightReadAccessors(t *testing.T) {
 		t.Fatalf("EffectiveAddress() after SetIP = %q, want %q", got, "93.184.216.34")
 	}
 
-	r := &PortCheckResult{Port: 443, Protocol: "tcp", Status: "Checking..."}
+	r := &PortCheckResult{port: 443, protocol: "tcp", status: "Checking..."}
 	if got := r.CurrentStatus(); got != "Checking..." {
 		t.Fatalf("CurrentStatus() = %q, want %q", got, "Checking...")
 	}
 	r.SetResult("Open", 3*time.Millisecond)
 	if got := r.CurrentStatus(); got != "Open" {
 		t.Fatalf("CurrentStatus() after SetResult = %q, want %q", got, "Open")
+	}
+}
+
+func TestTargetStatsIdentity(t *testing.T) {
+	a, b := NewTargetStats("192.0.2.1"), NewTargetStats("192.0.2.1")
+	if a.ID() == 0 || a.ID() == b.ID() {
+		t.Fatalf("IDs = %d, %d; want distinct non-zero IDs", a.ID(), b.ID())
+	}
+
+	a.SetDisplayName("edge")
+	if a.Host() != "192.0.2.1" || a.DisplayName() != "edge" {
+		t.Fatalf("Host() = %q, DisplayName() = %q; want the configured host kept apart from the label", a.Host(), a.DisplayName())
+	}
+	if v := a.GetView(); v.ID != a.ID() {
+		t.Fatalf("view ID = %d, want %d", v.ID, a.ID())
 	}
 }

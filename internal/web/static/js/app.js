@@ -8,7 +8,6 @@ import { createControl } from "./control.js";
 import { createReportDialog } from "./report.js";
 import { createConfirmation } from "./dialogs.js";
 import { createNotice } from "./notice.js";
-import { createActionsMenu } from "./actions_menu.js";
 import { createAddDialog, createAuthDialog } from "./control_dialogs.js";
 import { installShortcuts } from "./shortcuts.js";
 import { createActions } from "./actions.js";
@@ -24,7 +23,6 @@ const SHORTCUTS_KEY = "mping.shortcuts";
 // Must run before anything reads location.hash: it consumes "#token=".
 const control = createControl();
 const notify = createNotice({ node: $("notice"), text: $("notice-message"), dismiss: $("dismiss-notice") });
-const menu = createActionsMenu({ toggle: $("toggle-actions"), menu: $("measurement-controls") });
 
 const view = {
   snapshot: null,
@@ -336,7 +334,7 @@ async function reloadSnapshot() {
 
 function renderControls() {
   const on = control.allowed;
-  menu.setAvailable(on);
+  $("measurement-controls").hidden = !on;
   $("open-auth").textContent = on ? "Controls enabled" : "Enable controls";
   $("open-auth").disabled = on;
   if (!on) {
@@ -383,7 +381,6 @@ function initShortcuts() {
   installShortcuts({
     table: $("targets"),
     filter: $("filter"),
-    menu,
     charactersEnabled: () => $("shortcuts-enabled").checked,
     canControl: () => control.allowed,
     focusFilter() {

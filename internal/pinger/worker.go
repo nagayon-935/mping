@@ -12,31 +12,11 @@ import (
 	"golang.org/x/net/ipv6"
 )
 
-// dscpFor returns the override belonging to this target instance. Without an
-// override, the write uses the socket-wide default armed by Start.
-func (p *Pinger) dscpFor(t *stats.TargetStats) (int, bool) {
-	p.mapMu.RLock()
-	defer p.mapMu.RUnlock()
-	v, ok := p.TargetDSCP[t] // a nil map yields (0, false)
-	return v, ok
-}
-
 // getWriteFunc returns the appropriate ICMP message type and write function
-// for the given destination address. For IPv6, dscp (when ok) is attached as
-// an explicit per-packet ipv6.ControlMessage.TrafficClass on every WriteTo
-// the returned func makes — overriding, for this target only, the
-// socket-wide default Start() set via SetTrafficClass (or the OS default
-// when that wasn't set either). IPv4 has no per-packet equivalent, so dscp
-// is ignored there (see below).
-func (p *Pinger) getWriteFunc(dstAddr *net.IPAddr, dscp int, ok bool) (icmp.Type, func([]byte, net.Addr) (int, error), string) {
-	isV4 := dstAddr.IP.To4() != nil
-	if isV4 {
+// for the given destination address.
+func (p *Pinger) getWriteFunc(dstAddr *net.IPAddr) (icmp.Type, func([]byte, net.Addr) (int, error), string) {
+	if dstAddr.IP.To4() != nil {
 		if p.connV4 != nil {
-			// dscp/ok are intentionally unused here: x/net's
-			// ipv4.ControlMessage has no TOS field, so IPv4 has no
-			// per-packet write-side hook to attach a per-target override
-			// to (see PacketConnV4.SetTOS's doc) — every IPv4 target gets
-			// only the socket-wide default Start() armed via SetTOS.
 			return ipv4.ICMPTypeEcho, func(b []byte, dst net.Addr) (int, error) {
 				return p.connV4.WriteTo(b, nil, dst)
 			}, ""
@@ -44,28 +24,23 @@ func (p *Pinger) getWriteFunc(dstAddr *net.IPAddr, dscp int, ok bool) (icmp.Type
 		return nil, nil, "No IPv4 Conn"
 	}
 	if p.connV6 != nil {
-		var cm *ipv6.ControlMessage
-		if ok {
-			cm = &ipv6.ControlMessage{TrafficClass: dscp}
-		}
 		return ipv6.ICMPTypeEchoRequest, func(b []byte, dst net.Addr) (int, error) {
-			return p.connV6.WriteTo(b, cm, dst)
+			return p.connV6.WriteTo(b, nil, dst)
 		}, ""
 	}
 	return nil, nil, "No IPv6 Conn"
 }
 
 func (p *Pinger) sendProbeWithStats(t *stats.TargetStats, probe stats.Probe, id, seq int, payload []byte, dstAddr *net.IPAddr) (time.Time, bool) {
-	dscp, dscpOK := p.dscpFor(t)
-	msgType, writeFunc, errStr := p.getWriteFunc(dstAddr, dscp, dscpOK)
+	msgType, writeFunc, errStr := p.getWriteFunc(dstAddr)
 	if writeFunc == nil {
 		probe.OnFailure(errStr)
 		return time.Time{}, false
 	}
 
 	// start is captured before the payload is marshaled (rather than right
-	// before the write, as before) because embedSendTimestamp needs it
-	// embedded in `payload` first. This is the same instant used for both
+	// before the write) because embedSendTimestamp needs it embedded in
+	// `payload` first. This is the same instant used for both
 	// the embedded timestamp and the pendingProbe fallback in runTargetWorker, so
 	// the two stay consistent with each other.
 	start := time.Now()
@@ -89,7 +64,6 @@ func (p *Pinger) sendProbeWithStats(t *stats.TargetStats, probe stats.Probe, id,
 	if err != nil {
 		errMsg := p.applyLastErrSource(err.Error())
 		probe.OnFailure(errMsg)
-		p.log(t, seq, "SendError", 0, 0, err.Error())
 		return time.Time{}, false
 	}
 
@@ -97,12 +71,11 @@ func (p *Pinger) sendProbeWithStats(t *stats.TargetStats, probe stats.Probe, id,
 	return start, true
 }
 
-// pendingProbe tracks one in-flight probe: the logical (unbounded) seq used
-// for CSV logging, and the time it was sent (for RTT and expiry).
+// pendingProbe tracks one in-flight probe: the time it was sent (for RTT and
+// expiry) and the statistics generation it belongs to.
 type pendingProbe struct {
-	logicalSeq int
-	start      time.Time
-	stats      stats.Probe
+	start time.Time
+	stats stats.Probe
 }
 
 // resolutionKind records how a wire seq was most recently resolved, so a
@@ -121,22 +94,18 @@ const (
 )
 
 // recentEntry is one record in recentSeqHistory: how wireSeq was resolved,
-// its logical seq (for CSV logging, matching pendingProbe.logicalSeq), and
-// the original send time (for the same RTT fallback runTargetWorker's normal
-// success path uses when no payload-embedded timestamp is available).
+// and the statistics generation it belongs to.
 type recentEntry struct {
-	wireSeq    int
-	logicalSeq int
-	kind       resolutionKind
-	start      time.Time
-	stats      stats.Probe
+	wireSeq int
+	kind    resolutionKind
+	stats   stats.Probe
 }
 
 // recentSeqHistory is a small, size-bounded FIFO cache mapping a
 // just-resolved wire seq to how it was resolved. runTargetWorker consults it only
 // when a reply doesn't match anything in `unacked`, to tell a duplicate or a
-// late arrival apart from a genuinely unrecognized/bogus seq (which stays
-// silently discarded, exactly as before this feature existed).
+// late arrival apart from a genuinely unrecognized/bogus seq (which is
+// silently discarded).
 //
 // Capacity, not time, bounds it (see recentSeqHistoryCap's doc for why a
 // bounded size rather than a time window is what keeps this safe across the
@@ -159,11 +128,11 @@ func newRecentSeqHistory() *recentSeqHistory {
 // already-present wireSeq (not expected in normal operation -- a given wire
 // seq is only resolved once per generation -- but handled safely) replaces
 // its entry and moves it to the back as the newest.
-func (h *recentSeqHistory) record(wireSeq, logicalSeq int, kind resolutionKind, start time.Time, probe stats.Probe) {
+func (h *recentSeqHistory) record(wireSeq int, kind resolutionKind, probe stats.Probe) {
 	if el, ok := h.index[wireSeq]; ok {
 		h.order.Remove(el)
 	}
-	el := h.order.PushBack(recentEntry{wireSeq: wireSeq, logicalSeq: logicalSeq, kind: kind, start: start, stats: probe})
+	el := h.order.PushBack(recentEntry{wireSeq: wireSeq, kind: kind, stats: probe})
 	h.index[wireSeq] = el
 
 	for h.order.Len() > recentSeqHistoryCap {
@@ -329,7 +298,7 @@ func (p *Pinger) runTargetWorker(t *stats.TargetStats, id int, interval, timeout
 				if addr := p.resolveTargetContext(ctx, t); addr != nil {
 					dstAddr = addr
 				} else {
-					sendTimer.Reset(interval) // retry resolution on the next tick, as before
+					sendTimer.Reset(interval) // retry resolution on the next tick
 					continue
 				}
 			}
@@ -339,7 +308,7 @@ func (p *Pinger) runTargetWorker(t *stats.TargetStats, id int, interval, timeout
 			probe := t.NewProbe()
 			start, ok := p.sendProbeWithStats(t, probe, id, seq, payload, dstAddr)
 			if ok {
-				unacked[seq&seqMask] = pendingProbe{logicalSeq: seq, start: start, stats: probe}
+				unacked[seq&seqMask] = pendingProbe{start: start, stats: probe}
 				rearmSweepTimer(sweepTimer, unacked, timeout)
 				replyCh = ch
 			}
@@ -376,7 +345,6 @@ func (p *Pinger) settleReply(t *stats.TargetStats, reply Reply, unacked map[int]
 		delete(unacked, reply.Seq)
 		if reply.Err != "" {
 			pend.stats.OnFailure(reply.Err)
-			p.log(t, pend.logicalSeq, "ICMPError", 0, 0, reply.Err)
 		} else {
 			// Prefer the RTT the receiver goroutine computed from the
 			// payload-embedded send timestamp (see handleEchoReply):
@@ -386,28 +354,22 @@ func (p *Pinger) settleReply(t *stats.TargetStats, reply Reply, unacked map[int]
 			// whenever that timestamp couldn't be trusted (payload
 			// too small for -s, signature mismatch, or a result
 			// isPlausibleRTT rejected), in which case fall back to
-			// this goroutine's own start-time bookkeeping, exactly
-			// as before this feature existed.
+			// this goroutine's own start-time bookkeeping.
 			rtt := reply.RTT
 			if rtt <= 0 {
 				rtt = time.Since(pend.start)
 			}
-			pend.stats.OnSuccess(rtt, reply.TTL, reply.DSCP)
-			p.log(t, pend.logicalSeq, "OK", rtt, reply.TTL, "")
+			pend.stats.OnSuccess(rtt, reply.TTL)
 		}
 		// Remember how this wire seq was resolved so a further reply
 		// for it (a genuine network-level duplicate) can be
 		// classified as a DUP below instead of silently discarded.
-		hist.record(reply.Seq, pend.logicalSeq, resolvedAcked, pend.start, pend.stats)
+		hist.record(reply.Seq, resolvedAcked, pend.stats)
 		return true
 	}
 	if entry, foundHist := hist.lookup(reply.Seq); foundHist {
 		// No `unacked` entry, but this wire seq was recently
 		// resolved: classify instead of silently discarding.
-		rtt := reply.RTT
-		if rtt <= 0 {
-			rtt = time.Since(entry.start)
-		}
 		switch entry.kind {
 		case resolvedAcked:
 			// A second reply for an already-resolved seq: a
@@ -416,14 +378,12 @@ func (p *Pinger) settleReply(t *stats.TargetStats, reply Reply, unacked map[int]
 			// see TargetStats.Duplicates' doc -- so the loss rate
 			// isn't understated.
 			entry.stats.OnDuplicate()
-			p.log(t, entry.logicalSeq, "DUP", rtt, reply.TTL, "")
 		case resolvedTimeout:
 			// Arrived after its probe was already swept as a loss:
 			// the target is slow but reachable, not truly dropping
 			// this probe. The Loss already recorded stands; see
 			// TargetStats.LateReplies' doc.
 			entry.stats.OnLateReply()
-			p.log(t, entry.logicalSeq, "LateReply", rtt, reply.TTL, "")
 		}
 	}
 	// A reply matching neither `unacked` nor recent history is for a
@@ -441,11 +401,10 @@ func (p *Pinger) sweepTimeouts(t *stats.TargetStats, unacked map[int]pendingProb
 			delete(unacked, wireSeq)
 			errMsg := p.applyLastErrSource("Timeout")
 			pend.stats.OnFailure(errMsg)
-			p.log(t, pend.logicalSeq, "Timeout", 0, 0, "Request timed out")
 			// Remember this seq timed out so a reply that shows up
 			// later is classified as a late arrival by settleReply,
 			// instead of silently discarded.
-			hist.record(wireSeq, pend.logicalSeq, resolvedTimeout, pend.start, pend.stats)
+			hist.record(wireSeq, resolvedTimeout, pend.stats)
 		}
 	}
 }
@@ -471,9 +430,9 @@ func buildPayload(size int) []byte {
 // here. For ICMPv4 it's ignored entirely, but for ICMPv6, x/net treats a
 // non-nil psh as real pseudo-header bytes: it writes a 4-byte message
 // length field at a fixed offset (2*net.IPv6len = 32) into the buffer
-// and computes a checksum over it. A non-nil-but-empty slice (as this
-// package used to pass via a pooled buffer for size<=1400) satisfies
-// "non-nil" without being an actual pseudo header, so that length write
+// and computes a checksum over it. A non-nil-but-empty slice (such as a
+// pooled scratch buffer) satisfies "non-nil" without being an actual
+// pseudo header, so that length write
 // lands inside the ICMP payload once it's long enough to reach offset
 // 32, silently corrupting it. Passing nil defers checksum computation to
 // the kernel, which is required anyway since a raw ICMPv6 socket always

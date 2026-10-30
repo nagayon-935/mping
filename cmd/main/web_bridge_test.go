@@ -22,7 +22,7 @@ import (
 )
 
 func TestRunWithWebServesLiveSnapshotWhileUIRuns(t *testing.T) {
-	var started func() *web.Server
+	var started func() webServer
 	var status int
 	var snap web.SnapshotResponse
 	var logs []string
@@ -47,7 +47,7 @@ func TestRunWithWebServesLiveSnapshotWhileUIRuns(t *testing.T) {
 	openBrowser = func(u string) { openedURL = u }
 
 	var out, errOut bytes.Buffer
-	code := run([]string{"-S", "10.0.0.2", "--web", "--dscp", "EF", "example.com"}, &out, &errOut)
+	code := run([]string{"-S", "10.0.0.2", "--web", "example.com"}, &out, &errOut)
 
 	if code != 0 {
 		t.Fatalf("run = %d, want 0 (stderr: %s)", code, errOut.String())
@@ -60,9 +60,6 @@ func TestRunWithWebServesLiveSnapshotWhileUIRuns(t *testing.T) {
 	}
 	if len(snap.Snapshot.Targets) != 1 || snap.Snapshot.Targets[0].Host != "example.com" {
 		t.Errorf("targets = %+v, want example.com", snap.Snapshot.Targets)
-	}
-	if !snap.Meta.Features.DSCP {
-		t.Error("meta.features.dscp = false, want true with --dscp")
 	}
 	if !containsSubstring(logs, "Web UI: "+started().URL()) {
 		t.Errorf("initial logs %q do not announce %s", logs, started().URL())
@@ -96,7 +93,7 @@ func TestRunWithoutWebDoesNotStartServer(t *testing.T) {
 		return nil
 	})
 	called := false
-	webStart = func(web.Options) (*web.Server, error) {
+	webStart = func(web.Options) (webServer, error) {
 		called = true
 		return nil, errors.New("unexpected")
 	}
@@ -117,7 +114,7 @@ func TestRunExitsWhenWebServerCannotStart(t *testing.T) {
 		t.Error("UI started even though the web server failed")
 		return nil
 	})
-	webStart = func(web.Options) (*web.Server, error) {
+	webStart = func(web.Options) (webServer, error) {
 		return nil, errors.New("address already in use")
 	}
 
@@ -135,8 +132,8 @@ func TestRunExitsWhenWebServerCannotStart(t *testing.T) {
 func TestWebMetaReflectsConfig(t *testing.T) {
 	cfg := config{
 		intervalMs: 500, trace: true, mtr: true, asnEnabled: true, ptrEnabled: true, mtuEnabled: true,
-		httpURLs: []string{"https://example.com/"}, dscp: "EF",
-		thresholds: ui.Thresholds{
+		httpURLs: []string{"https://example.com/"},
+		thresholds: stats.Thresholds{
 			RTTWarn: 40 * time.Millisecond, RTTCrit: 150 * time.Millisecond,
 			JitterWarn: 5 * time.Millisecond, JitterCrit: 25 * time.Millisecond,
 			LossWarn: 10, LossCrit: 50,
@@ -147,7 +144,7 @@ func TestWebMetaReflectsConfig(t *testing.T) {
 
 	want := web.Meta{
 		IntervalMs: 500,
-		Features:   web.Features{Traceroute: true, MTR: true, Port: true, HTTP: true, ASN: true, PTR: true, DSCP: true, MTU: true},
+		Features:   web.Features{Traceroute: true, MTR: true, Port: true, HTTP: true, ASN: true, PTR: true, MTU: true},
 		Thresholds: web.Thresholds{RTTWarnMs: 40, RTTCritMs: 150, JitterWarnMs: 5, JitterCritMs: 25, LossWarnPct: 10, LossCritPct: 50},
 	}
 	if got.IntervalMs != want.IntervalMs || got.Features != want.Features || got.Thresholds != want.Thresholds {
@@ -156,7 +153,7 @@ func TestWebMetaReflectsConfig(t *testing.T) {
 }
 
 func TestWebMetaLeavesOptionalFeaturesOffByDefault(t *testing.T) {
-	got := webMeta(config{intervalMs: 1000, thresholds: ui.DefaultThresholds()}, nil, 0)
+	got := webMeta(config{intervalMs: 1000, thresholds: stats.DefaultThresholds()}, nil, 0)
 
 	if got.Features != (web.Features{}) {
 		t.Fatalf("features = %+v, want all off", got.Features)
@@ -178,11 +175,11 @@ func TestWebGroupsMapsIndicesToTargetIDs(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("groups = %+v, want 2", got)
 	}
-	if got[0].Name != "core" || len(got[0].TargetIDs) != 2 || got[0].TargetIDs[0] != a.ID || got[0].TargetIDs[1] != c.ID {
-		t.Errorf("core = %+v, want IDs [%d %d]", got[0], a.ID, c.ID)
+	if got[0].Name != "core" || len(got[0].TargetIDs) != 2 || got[0].TargetIDs[0] != a.ID() || got[0].TargetIDs[1] != c.ID() {
+		t.Errorf("core = %+v, want IDs [%d %d]", got[0], a.ID(), c.ID())
 	}
-	if got[1].Name != "edge" || len(got[1].TargetIDs) != 1 || got[1].TargetIDs[0] != b.ID {
-		t.Errorf("edge = %+v, want only ID %d (out-of-range indices dropped)", got[1], b.ID)
+	if got[1].Name != "edge" || len(got[1].TargetIDs) != 1 || got[1].TargetIDs[0] != b.ID() {
+		t.Errorf("edge = %+v, want only ID %d (out-of-range indices dropped)", got[1], b.ID())
 	}
 }
 
@@ -266,7 +263,7 @@ func TestRunReloadWithWeb(t *testing.T) {
 		sawWarning = containsSubstring(opts.InitialLogs, "web: change detected")
 		return nil
 	})
-	webStart = func(opts web.Options) (*web.Server, error) {
+	webStart = func(opts web.Options) (webServer, error) {
 		src = opts.Source
 		opts.Port = 0
 		return web.Start(opts)
@@ -300,7 +297,7 @@ func TestRunReloadWithWeb(t *testing.T) {
 }
 
 // webDo sends an authorised control request the way the dashboard does.
-func webDo(t *testing.T, srv *web.Server, method, path, body string) int {
+func webDo(t *testing.T, srv webServer, method, path, body string) int {
 	t.Helper()
 	_, token, ok := strings.Cut(srv.ControlURL(), "#token=")
 	if !ok {
@@ -325,7 +322,7 @@ func webDo(t *testing.T, srv *web.Server, method, path, body string) int {
 }
 
 func TestRunWebControlEditsTheLiveRunAndLogsToTUI(t *testing.T) {
-	var started func() *web.Server
+	var started func() webServer
 	var statuses []int
 	var hostsAfter, logs []string
 	var announced []string
@@ -337,12 +334,12 @@ func TestRunWebControlEditsTheLiveRunAndLogsToTUI(t *testing.T) {
 		before[0].IncSent()
 		statuses = append(statuses,
 			webDo(t, srv, http.MethodPost, "api/v1/targets", `{"host":"added.example"}`),
-			webDo(t, srv, http.MethodDelete, fmt.Sprintf("api/v1/targets/%d", before[1].ID), ""),
+			webDo(t, srv, http.MethodDelete, fmt.Sprintf("api/v1/targets/%d", before[1].ID()), ""),
 			webDo(t, srv, http.MethodPost, "api/v1/reset", ""),
 		)
 		resetSent = before[0].GetView().Sent
 		for _, ts := range opts.TargetSource().Targets {
-			hostsAfter = append(hostsAfter, ts.Host)
+			hostsAfter = append(hostsAfter, ts.Host())
 		}
 		for {
 			select {
@@ -426,7 +423,7 @@ func TestRunWebStopsAcceptingEditsOnceTheUIIterationEnds(t *testing.T) {
 	var src *web.Source
 	var atTeardown []web.State
 	stubRunSeams(t, func(ui.RunOptions) error { return nil })
-	webStart = func(opts web.Options) (*web.Server, error) {
+	webStart = func(opts web.Options) (webServer, error) {
 		src = opts.Source
 		opts.Port = 0
 		return web.Start(opts)
@@ -468,7 +465,7 @@ func TestWebControllerReportsRejectionsWithoutLogging(t *testing.T) {
 	c := webController{sup: sup, logCh: logCh}
 
 	addErr := c.AddHost("only.example")
-	delErr := c.DeleteTarget(only.ID)
+	delErr := c.DeleteTarget(only.ID())
 
 	if addErr == nil || !strings.Contains(addErr.Error(), "already in the list") {
 		t.Errorf("AddHost duplicate err = %v, want already-in-the-list", addErr)
@@ -490,13 +487,51 @@ func TestWebAnnouncementIsATimestampedLogLine(t *testing.T) {
 	defer srv.Close()
 
 	want := regexp.MustCompile(`^\[\d{2}:\d{2}:\d{2}\] Web UI: http://localhost:\d+/`)
-	for _, showToken := range []bool{true, false} {
-		line := webAnnouncement(srv, showToken)
-		if got := plainLogLine(line); !want.MatchString(got) {
-			t.Errorf("showToken=%v: rendered line = %q, want %v", showToken, got, want)
-		}
-		if strings.Contains(line, "#token=") != showToken {
-			t.Errorf("showToken=%v: line %q", showToken, line)
-		}
+	line := webAnnouncement(srv)
+	if got := plainLogLine(line); !want.MatchString(got) {
+		t.Errorf("rendered line = %q, want %v", got, want)
+	}
+	if !strings.Contains(line, "#token=") {
+		t.Errorf("line %q lacks the control link", line)
+	}
+}
+
+func TestRunUsesMPINGWEBTOKENForTheWebServer(t *testing.T) {
+	token := strings.Repeat("t", 32)
+	t.Setenv("MPING_WEB_TOKEN", token)
+	stubRunSeams(t, func(ui.RunOptions) error { return nil })
+	var got string
+	webStart = func(opts web.Options) (webServer, error) {
+		got = opts.Token
+		opts.Port = 0
+		return web.Start(opts)
+	}
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"-S", "10.0.0.2", "--web", "example.com"}, &out, &errOut)
+
+	if code != 0 {
+		t.Fatalf("run = %d, want 0 (stderr: %s)", code, errOut.String())
+	}
+	if got != token {
+		t.Fatalf("web token = %q, want MPING_WEB_TOKEN", got)
+	}
+}
+
+func TestRunRejectsAWeakMPINGWEBTOKENWithoutEchoingIt(t *testing.T) {
+	t.Setenv("MPING_WEB_TOKEN", "short")
+	stubRunSeams(t, func(ui.RunOptions) error {
+		t.Error("UI started with an invalid token")
+		return nil
+	})
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"-S", "10.0.0.2", "--web", "example.com"}, &out, &errOut)
+
+	if code != 1 {
+		t.Fatalf("run = %d, want 1", code)
+	}
+	if !strings.Contains(errOut.String(), "MPING_WEB_TOKEN") || strings.Contains(errOut.String(), "short") {
+		t.Fatalf("stderr = %q, want an MPING_WEB_TOKEN error that does not echo the value", errOut.String())
 	}
 }

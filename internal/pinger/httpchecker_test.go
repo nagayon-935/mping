@@ -24,7 +24,7 @@ func statusServer(t *testing.T, code int) *httptest.Server {
 // awaitHTTPCheck blocks until r has recorded at least one check outcome.
 func awaitHTTPCheck(t *testing.T, r *stats.HTTPCheckResult) {
 	t.Helper()
-	eventually(t, 5*time.Second, "first HTTP check outcome for "+r.URL, func() bool {
+	eventually(t, 5*time.Second, "first HTTP check outcome for "+r.URL(), func() bool {
 		v := r.GetView()
 		return v.UpCount+v.DownCount >= 1
 	})
@@ -70,6 +70,7 @@ func TestHTTPChecker_ClassifiesResponses(t *testing.T) {
 		wantUp     bool // UpCount >= 1 (otherwise DownCount >= 1)
 	}{
 		{"200 is Up", statusServer(t, http.StatusOK).URL, "Up", http.StatusOK, true},
+		{"401 is Down", statusServer(t, http.StatusUnauthorized).URL, "Down", http.StatusUnauthorized, false},
 		{"503 is Down", statusServer(t, http.StatusServiceUnavailable).URL, "Down", http.StatusServiceUnavailable, false},
 		{"redirects are followed", redirect.URL, "Up", http.StatusOK, true},
 		// The last redirect response is reported once maxRedirects is exceeded.
@@ -92,6 +93,32 @@ func TestHTTPChecker_ClassifiesResponses(t *testing.T) {
 				t.Errorf("DownCount=%d, want >= 1", v.DownCount)
 			}
 		})
+	}
+}
+
+func TestHTTPChecker_WithoutFollowJudgesTheFirstResponse(t *testing.T) {
+	followed := make(chan struct{}, 1)
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		followed <- struct{}{}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer destination.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, destination.URL, http.StatusFound)
+	}))
+	defer origin.Close()
+
+	hc := NewHTTPCheckerWithOptions([]string{origin.URL}, time.Second, time.Second, BindConfig{}, HTTPOptions{FollowRedirects: false})
+	hc.check(hc.results[0])
+	hc.Stop()
+
+	if v := hc.results[0].GetView(); v.Status != "Up" || v.StatusCode != http.StatusFound {
+		t.Fatalf("Status=%q StatusCode=%d, want Up / 302", v.Status, v.StatusCode)
+	}
+	select {
+	case <-followed:
+		t.Fatal("redirect was followed")
+	default:
 	}
 }
 

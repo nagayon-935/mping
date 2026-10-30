@@ -13,12 +13,9 @@ import (
 	"github.com/nagayon-935/mping/internal/ui"
 )
 
-func TestCheckConfigExpandsTargetsAndNeverStartsMeasurementsOrWritesFiles(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "hosts.yaml")
-	output := filepath.Join(dir, "events.jsonl")
-	t.Setenv("MPING_TEST_SECRET", "private-auth-value")
-	doc := "hosts:\n  - '192.0.2.{1..3}'\ninterval: 2000\nhealth-failures: 5\nhttp-header:\n  - 'Authorization=Bearer ${MPING_TEST_SECRET}'\nevent-output: " + output + "\n"
+func TestCheckConfigExpandsTargets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts.yaml")
+	doc := "hosts:\n  - '192.0.2.{1..3}'\ninterval: 2000\nhealth-failures: 5\n"
 	if err := os.WriteFile(path, []byte(doc), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -26,9 +23,6 @@ func TestCheckConfigExpandsTargetsAndNeverStartsMeasurementsOrWritesFiles(t *tes
 	code := run([]string{"--check-config", "-f", path, "--interval", "500"}, &out, &errOut)
 	if code != 0 {
 		t.Fatalf("code=%d: %s", code, errOut.String())
-	}
-	if strings.Contains(out.String(), "private-auth-value") {
-		t.Fatal("secret leaked")
 	}
 	var body struct {
 		Valid    bool `json:"valid"`
@@ -44,16 +38,12 @@ func TestCheckConfigExpandsTargetsAndNeverStartsMeasurementsOrWritesFiles(t *tes
 	if !body.Valid || body.Count != 3 || body.Settings.Interval != 500 || body.Settings.Failures != 5 {
 		t.Fatalf("output=%s", out.String())
 	}
-	if _, err := os.Stat(output); !os.IsNotExist(err) {
-		t.Fatal("check-config wrote event output")
-	}
 }
 
 func TestCheckConfigRejectsBadMonitoringOptionsWithoutWriting(t *testing.T) {
 	for _, args := range [][]string{
 		{"--source=not-an-ip"}, {"--interface=mping-no-such-interface"}, {"--ipv4", "--source=::1"}, {"--health-failures=0"}, {"--health-window=0s"}, {"--health-failures=0", "--health-recoveries=0", "--health-window=0s"}, {"--health-recoveries=10001"},
-		{"--http-status=600"}, {"--http-status=399-200"}, {"--http-header=Authorization=${MPING_NO_SUCH_VARIABLE_935}"},
-		{"--http-header=Bad Header=value"}, {"--http-header=X-Key=bad\r\nvalue"}, {"--http=ftp://example.com"},
+		{"--http=ftp://example.com"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var out, errOut bytes.Buffer
@@ -73,7 +63,7 @@ func TestLiveReloadPreservesIDsHistoryNamesAndStoppedState(t *testing.T) {
 	specs := []targetSpec{{Host: "192.0.2.1", Name: "before"}, {Host: "192.0.2.2"}}
 	targets := buildTargetsForIteration(specs, cfg)
 	targets[0].OnSuccess(3*time.Millisecond, 64)
-	firstID := targets[0].ID
+	firstID := targets[0].ID()
 	s := newSupervisor(supervisorConfig{config: cfg, specs: specs, targets: targets})
 	s.Start()
 	defer s.Shutdown()
@@ -125,27 +115,13 @@ func TestLiveReloadAddFailureIsAtomic(t *testing.T) {
 	}
 }
 
-func TestEventOutputFlushesAndSharedEventsReachHeadlessLog(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "events.jsonl")
-	var errOut bytes.Buffer
-	sink, closeOutput, err := startEventOutput(path, &errOut)
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestHealthTransitionsReachTheLog(t *testing.T) {
 	target := stats.NewTargetStats("router")
 	logs := make(chan string, 16)
-	s := newSupervisor(supervisorConfig{targets: []*stats.TargetStats{target}, logCh: logs, eventSink: sink})
+	newSupervisor(supervisorConfig{targets: []*stats.TargetStats{target}, logCh: logs})
 	target.OnSuccess(time.Millisecond, 64)
 	for range 3 {
 		target.OnFailure("timeout")
-	}
-	closeOutput()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Contains(data, []byte(`"kind":"health"`)) || !bytes.Contains(data, []byte(`"count":3`)) || errOut.Len() != 0 {
-		t.Fatalf("output %s; err %s", data, errOut.String())
 	}
 	found := false
 	for len(logs) > 0 {
@@ -154,9 +130,8 @@ func TestEventOutputFlushesAndSharedEventsReachHeadlessLog(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("headless/TUI did not receive backend health transition")
+		t.Fatal("the TUI Log did not receive the backend health transition")
 	}
-	_ = s
 }
 
 func TestWebStopRestartAndReportUseSupervisorWithoutReset(t *testing.T) {

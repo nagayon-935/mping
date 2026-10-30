@@ -2,10 +2,11 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/nagayon-935/mping/internal/hostsfile"
 )
 
 const sampleNetBoxCSV = `IP Address,VRF,Status,Role,Tenant,Assigned,DNS name,Description,ID,Tenant Group,NAT (Inside),NAT (Outside),Comments,Contacts,Tags,Created,Last updated,Owner Group,Owner,Interface,Parent,DNS Address Records
@@ -87,9 +88,9 @@ func TestNetBoxCSV_SampleExport(t *testing.T) {
 	dir := t.TempDir()
 	path := writeTestFile(t, dir, "netbox.csv", sampleNetBoxCSV)
 
-	doc, err := parseHostsFile(path)
+	doc, err := hostsfile.Parse(path)
 	if err != nil {
-		t.Fatalf("parseHostsFile: %v", err)
+		t.Fatalf("hostsfile.Parse: %v", err)
 	}
 	if err := validateHostsDoc(doc); err != nil {
 		t.Fatalf("validateHostsDoc: %v", err)
@@ -142,9 +143,9 @@ func TestNetBoxCSV_IncludeInYAML(t *testing.T) {
 	writeTestFile(t, dir, "netbox.csv", sampleNetBoxCSV)
 	yamlPath := writeTestFile(t, dir, "hosts.yaml", "groups:\n  - name: Lab\n    include: netbox.csv\n")
 
-	doc, err := parseHostsFile(yamlPath)
+	doc, err := hostsfile.Parse(yamlPath)
 	if err != nil {
-		t.Fatalf("parseHostsFile: %v", err)
+		t.Fatalf("hostsfile.Parse: %v", err)
 	}
 	if err := validateHostsDoc(doc); err != nil {
 		t.Fatalf("validateHostsDoc: %v", err)
@@ -160,9 +161,9 @@ func TestNetBoxCSV_IncludeTildePath(t *testing.T) {
 	writeTestFile(t, home, "netbox.csv", sampleNetBoxCSV)
 	yamlPath := writeTestFile(t, t.TempDir(), "hosts.yaml", "include: ~/netbox.csv\n")
 
-	doc, err := parseHostsFile(yamlPath)
+	doc, err := hostsfile.Parse(yamlPath)
 	if err != nil {
-		t.Fatalf("parseHostsFile: %v", err)
+		t.Fatalf("hostsfile.Parse: %v", err)
 	}
 	if len(doc.Hosts) != 72 {
 		t.Fatalf("len(doc.Hosts) = %d, want 72", len(doc.Hosts))
@@ -183,35 +184,6 @@ func TestNetBoxCSV_CheckConfigCLI(t *testing.T) {
 	}
 }
 
-func TestNetBoxCSV_StatusFilteringAndVariants(t *testing.T) {
-	content := "\xef\xbb\xbf# NetBox export\n" +
-		"Address,Status,DNS_Name,Device,Virtual Machine,Interface\n" +
-		"10.0.0.1/24,Active,web01,srv01,,eth0\n" +
-		"10.0.0.2/24,Deprecated,old01,srv02,,eth0\n" +
-		"10.0.0.3/24,Reserved,res01,,,\n" +
-		"10.0.0.4/24,DHCP,dhcp01,,,\n" +
-		"10.0.0.5/24,active,,srv05,,eth0\n" +
-		"2001:db8::1/64,,, ,vm01,ens3\n" +
-		"10.0.0.6,,,,,\n"
-
-	dir := t.TempDir()
-	path := writeTestFile(t, dir, "export.txt", content)
-
-	doc, err := parseHostsFile(path)
-	if err != nil {
-		t.Fatalf("parseHostsFile: %v", err)
-	}
-	want := []hostEntry{
-		{Host: "10.0.0.1", Name: "web01"},
-		{Host: "10.0.0.5", Name: "srv05"},
-		{Host: "2001:db8::1", Name: "vm01"},
-		{Host: "10.0.0.6"},
-	}
-	if !reflect.DeepEqual(doc.Hosts, want) {
-		t.Fatalf("got %#v, want %#v", doc.Hosts, want)
-	}
-}
-
 func TestNetBoxCSV_DisambiguationEdgeCases(t *testing.T) {
 	content := "IP Address,Status,DNS name,Interface,Parent\n" +
 		// Same baseName, no interface -> disambiguate with IP
@@ -227,14 +199,14 @@ func TestNetBoxCSV_DisambiguationEdgeCases(t *testing.T) {
 	dir := t.TempDir()
 	path := writeTestFile(t, dir, "edge.csv", content)
 
-	doc, err := parseHostsFile(path)
+	doc, err := hostsfile.Parse(path)
 	if err != nil {
-		t.Fatalf("parseHostsFile: %v", err)
+		t.Fatalf("hostsfile.Parse: %v", err)
 	}
 	if err := validateHostsDoc(doc); err != nil {
 		t.Fatalf("validateHostsDoc: %v", err)
 	}
-	want := []hostEntry{
+	want := []hostsfile.Entry{
 		{Host: "10.0.0.1", Name: "dup-no-iface (10.0.0.1)"},
 		{Host: "10.0.0.2", Name: "dup-no-iface (10.0.0.2)"},
 		{Host: "10.0.0.3", Name: "dup-same-iface (eth0 10.0.0.3)"},
@@ -247,60 +219,6 @@ func TestNetBoxCSV_DisambiguationEdgeCases(t *testing.T) {
 	}
 }
 
-func TestNetBoxCSV_Errors(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		wantErr string
-	}{
-		{
-			name:    "empty IP address column",
-			content: "IP Address,Status\n,Active\n",
-			wantErr: "line 2: IP Address column is empty",
-		},
-		{
-			name:    "invalid CIDR in IP address column",
-			content: "IP Address,Status\nnot-an-ip/24,Active\n",
-			wantErr: "line 2: invalid IP address",
-		},
-		{
-			name:    "invalid bare IP in IP address column",
-			content: "IP Address,Status\ns3cret-hostname,Active\n",
-			wantErr: "line 2: invalid IP address",
-		},
-		{
-			name:    "malformed CSV quote",
-			content: "IP Address,Status,Comments\n10.0.0.1/24,Active,\"unclosed\n",
-			wantErr: "line 2:",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			path := writeTestFile(t, t.TempDir(), "bad.csv", tt.content)
-			_, err := readIncludeFile(path)
-			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-				t.Fatalf("err = %v, want it to contain %q", err, tt.wantErr)
-			}
-			if strings.Contains(err.Error(), "s3cret") {
-				t.Fatalf("error %q echoes file content", err)
-			}
-		})
-	}
-}
-
-func TestNetBoxCSV_StopsAtTotalLimit(t *testing.T) {
-	var b strings.Builder
-	b.WriteString("IP Address,Status\n")
-	for i := range maxHostsFileTargets + 2 {
-		fmt.Fprintf(&b, "10.0.%d.%d/24,Active\n", i/256, i%256)
-	}
-	path := writeTestFile(t, t.TempDir(), "huge.csv", b.String())
-	_, err := parseHostsFile(path)
-	if err == nil || !strings.Contains(err.Error(), "more than 4096 targets") {
-		t.Fatalf("err = %v, want total-limit error", err)
-	}
-}
-
 func TestNetBoxCSV_NamesAcrossIncludes(t *testing.T) {
 	for _, field := range []string{"DNS name", "Parent"} {
 		t.Run(field, func(t *testing.T) {
@@ -309,7 +227,7 @@ func TestNetBoxCSV_NamesAcrossIncludes(t *testing.T) {
 			writeTestFile(t, dir, "second.csv", "IP Address,"+field+",Interface\n10.0.0.2/24,router,eth0\n")
 			path := writeTestFile(t, dir, "hosts.yaml", "include: first.csv\ngroups:\n  - name: site\n    include: second.csv\n")
 			for range 2 { // Startup and reload use the same deterministic names.
-				doc, err := parseHostsFile(path)
+				doc, err := hostsfile.Parse(path)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -327,16 +245,15 @@ func TestNetBoxCSV_NamesAcrossIncludes(t *testing.T) {
 func TestNetBoxCSV_ReservesExplicitNamesAndHosts(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "netbox.csv", "IP Address,DNS name,Interface\n10.0.0.1/24,router,eth0\n10.0.0.2/24,other-host,eth1\n")
-	writeTestFile(t, dir, "manual.csv", "10.0.0.9,router (eth0)\n")
-	path := writeTestFile(t, dir, "hosts.yaml", "hosts:\n  - host: 10.0.0.8\n    name: router\n  - other-host\ninclude: [manual.csv, netbox.csv]\n")
-	doc, err := parseHostsFile(path)
+	path := writeTestFile(t, dir, "hosts.yaml", "hosts:\n  - host: 10.0.0.8\n    name: router\n  - other-host\n  - {host: 10.0.0.9, name: router (eth0)}\ninclude: netbox.csv\n")
+	doc, err := hostsfile.Parse(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := validateHostsDoc(doc); err != nil {
 		t.Fatal(err)
 	}
-	want := []hostEntry{
+	want := []hostsfile.Entry{
 		{Host: "10.0.0.8", Name: "router"},
 		{Host: "other-host"},
 		{Host: "10.0.0.9", Name: "router (eth0)"},

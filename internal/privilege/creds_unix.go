@@ -13,4 +13,6 @@ var sys = credentials{
 	getuid: os.Getuid, geteuid: os.Geteuid,
 	getgid: os.Getgid, getegid: os.Getegid,
 	seteuid: syscall.Seteuid, setegid: syscall.Setegid,
+	setuid: syscall.Setuid, setgid: syscall.Setgid, setgroups: syscall.Setgroups,
+	capabilities: capabilities,
 }

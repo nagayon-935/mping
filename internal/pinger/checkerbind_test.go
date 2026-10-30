@@ -54,8 +54,7 @@ func TestNewPortChecker_ExposesBindConfig(t *testing.T) {
 // TestNewPortChecker_DialersHonourBindConfig verifies both per-protocol
 // dialers are built from the BindConfig: the TCP dialer needs a *net.TCPAddr
 // LocalAddr and the UDP dialer a *net.UDPAddr, and both need the interface
-// Control hook. Before this wiring existed the checker used a bare
-// &net.Dialer{Timeout: timeout} for both, so -S/-I never reached the socket.
+// Control hook, or -S/-I would never reach the socket.
 func TestNewPortChecker_DialersHonourBindConfig(t *testing.T) {
 	bind := BindConfig{Source: "192.0.2.5", Interface: "eth0"}
 	pc := NewPortChecker(nil, nil, time.Second, 3*time.Second, bind)
@@ -125,8 +124,7 @@ func TestNewHTTPChecker_ExposesBindConfig(t *testing.T) {
 }
 
 // TestNewHTTPChecker_ZeroBindConfigKeepsDefaultTransport pins the fallback:
-// with neither -S nor -I the client must keep using http.DefaultTransport,
-// leaving HTTP checks exactly as they behaved before this feature.
+// with neither -S nor -I the client must keep using http.DefaultTransport.
 func TestNewHTTPChecker_ZeroBindConfigKeepsDefaultTransport(t *testing.T) {
 	hc := NewHTTPChecker(nil, time.Second, time.Second, BindConfig{})
 	if hc.client.Transport != nil {

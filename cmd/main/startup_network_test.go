@@ -83,7 +83,7 @@ func TestNewCustomResolver(t *testing.T) {
 	})
 
 	// With no --dns-server the resolver must stay net.DefaultResolver
-	// regardless of bind, exactly as before the -S/-I wiring existed — bind
+	// regardless of bind — bind
 	// only takes effect once --dns-server picks a specific server to dial.
 	t.Run("no --dns-server keeps the default resolver", func(t *testing.T) {
 		r := newCustomResolver("", pinger.BindConfig{Source: "192.0.2.5", Interface: "eth0"})

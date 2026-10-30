@@ -1,6 +1,10 @@
 package ui
 
-import "time"
+import (
+	"time"
+
+	"github.com/nagayon-935/mping/internal/stats"
+)
 
 // monitorColumn is a box-table column together with the cell it shows for one
 // value of type V (a hop, an HTTP check, a port result, ...). A full column is
@@ -39,11 +43,11 @@ func plainCell[V any](text func(V) string) func(V) boxCell {
 	return func(v V) boxCell { return boxCell{text: text(v)} }
 }
 
-// rttCell shows the duration get(v) formatted by format and coloured by RTT
-// threshold.
-func rttCell[V any](get func(V) time.Duration, format func(time.Duration) string) func(V) boxCell {
+// rttCell shows the duration get(v) formatted by format and coloured by the
+// level classify assigns it.
+func rttCell[V any](get func(V) time.Duration, format func(time.Duration) string, classify func(time.Duration) stats.Level) func(V) boxCell {
 	return func(v V) boxCell {
 		d := get(v)
-		return boxCell{text: format(d), tag: mtrRTTColorTag(d)}
+		return boxCell{text: format(d), tag: rttColorTag(classify(d))}
 	}
 }

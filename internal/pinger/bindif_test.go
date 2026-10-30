@@ -119,8 +119,7 @@ func TestStart_IPv6Source_DispatchesBindToInterfaceOnce(t *testing.T) {
 
 // TestStart_NoInterface_StillDispatchesWithEmptyName documents that Start()
 // always calls the seam (so the platform layer, not Start, is the single
-// place that decides whether an empty interface name is a no-op) — this
-// keeps Start()'s branching identical to before this feature existed.
+// place that decides whether an empty interface name is a no-op).
 func TestStart_NoInterface_StillDispatchesWithEmptyName(t *testing.T) {
 	calls := spyBindToInterface(t)
 

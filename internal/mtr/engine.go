@@ -1,4 +1,5 @@
-// Package mtr implements MTR-style continuous per-hop loss/latency monitoring.
+// Package mtr discovers the route to each target and, unless configured for
+// the path only, monitors per-hop loss and latency MTR-style.
 package mtr
 
 import (
@@ -36,10 +37,15 @@ type HopProber interface {
 	ProbeHop(ctx context.Context, sock HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error)
 	NextTraceID() int
 	ASNInfoFor(ip string) pinger.ASNInfo
+	// PTRFor returns ip's reverse DNS name, or "" when unknown or disabled.
+	PTRFor(ip string) string
 }
 
 // Config holds tunable parameters for the MTR engine.
 type Config struct {
+	// PathOnly limits the engine to discovering the route, at start and every
+	// RediscoverEvery, without probing each hop every ProbeInterval.
+	PathOnly        bool
 	MaxHops         int
 	ProbeInterval   time.Duration
 	HopTimeout      time.Duration
@@ -126,62 +132,76 @@ func (e *Engine) Stop() {
 	e.wg.Wait()
 }
 
-// runTarget is the per-target goroutine: discover hops, then continuously probe.
+// runTarget is the per-target goroutine: discover the route, rediscover it
+// every RediscoverEvery and, unless PathOnly, probe every hop each
+// ProbeInterval. A failed socket open is recorded on the target's MTRStats
+// and retried at the next rediscovery.
 func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg Config, sem chan struct{}) {
-	dest := ts.EffectiveAddress()
-
-	sock, err := prober.OpenHopSocket(ctx, dest)
-	if err != nil {
-		return
-	}
-	defer func() { sock.Close() }()
-
 	mtr := ts.MTR()
+	var sock HopSocket
+	var dest string
+	defer func() {
+		if sock != nil {
+			sock.Close()
+		}
+	}()
+	hopCount := 0
 
-	// Initial discovery
-	hopCount := discover(ctx, prober, sock, mtr, dest, cfg, sem)
-	if hopCount == 0 || ctx.Err() != nil {
-		return
+	rediscover := func() {
+		// Reopen the socket when the target's address changed after DNS
+		// re-resolution.
+		if current := ts.EffectiveAddress(); sock == nil || current != dest {
+			next, err := prober.OpenHopSocket(ctx, current)
+			if err != nil {
+				if ctx.Err() == nil {
+					mtr.SetError(err.Error())
+				}
+				return
+			}
+			if sock != nil {
+				sock.Close()
+			}
+			sock, dest = next, current
+		}
+		prevIPs := mtr.RouteSnapshot()
+		newHopCount := discover(ctx, prober, sock, mtr, dest, cfg, sem)
+		if newHopCount == 0 || ctx.Err() != nil {
+			// Round was cancelled mid-flight (e.g. Stop() racing this
+			// tick); discover() registered nothing this round, so
+			// comparing against prevIPs would report a bogus flap.
+			return
+		}
+		mtr.SetError("")
+		first := hopCount == 0
+		hopCount = newHopCount
+		if first {
+			return
+		}
+		if changed, desc := mtr.CheckFlap(prevIPs, time.Now()); changed && cfg.OnFlap != nil {
+			cfg.OnFlap(ts.DisplayName(), desc)
+		}
 	}
+	rediscover()
 
-	probeTicker := time.NewTicker(cfg.ProbeInterval)
-	defer probeTicker.Stop()
 	rediscoverTicker := time.NewTicker(cfg.RediscoverEvery)
 	defer rediscoverTicker.Stop()
+	var probeC <-chan time.Time
+	if !cfg.PathOnly {
+		probeTicker := time.NewTicker(cfg.ProbeInterval)
+		defer probeTicker.Stop()
+		probeC = probeTicker.C
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-rediscoverTicker.C:
-			// Check if target IP has changed after DNS re-resolution and recreate socket
-			currentDest := ts.EffectiveAddress()
-			if currentDest != dest {
-				newSock, err := prober.OpenHopSocket(ctx, currentDest)
-				if err != nil {
-					return
-				}
-				sock.Close()
-				sock = newSock
-				dest = currentDest
+			rediscover()
+		case <-probeC:
+			if hopCount > 0 {
+				probe(ctx, prober, sock, mtr, dest, hopCount, cfg, sem)
 			}
-
-			prevIPs := mtr.RouteSnapshot()
-			newHopCount := discover(ctx, prober, sock, mtr, dest, cfg, sem)
-			if newHopCount == 0 || ctx.Err() != nil {
-				// Round was cancelled mid-flight (e.g. Stop() racing this
-				// tick); discover() registered nothing this round, so
-				// comparing against prevIPs would report a bogus flap.
-				// Keep the previous hopCount and let the next loop
-				// iteration observe ctx.Done().
-				continue
-			}
-			hopCount = newHopCount
-			if changed, desc := mtr.CheckFlap(prevIPs, time.Now()); changed && cfg.OnFlap != nil {
-				cfg.OnFlap(ts.DisplayName(), desc)
-			}
-		case <-probeTicker.C:
-			probe(ctx, prober, sock, mtr, dest, hopCount, cfg, sem)
 		}
 	}
 }
@@ -262,9 +282,12 @@ func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.
 	// Register hops only up to the discovered hopCount to avoid leaking outer hops
 	for _, res := range results {
 		if res.ttl <= hopCount {
-			if res.reply.Responded && res.reply.SrcIP != "" {
-				info := prober.ASNInfoFor(res.reply.SrcIP)
-				mtr.SetIP(res.ttl, res.reply.SrcIP, info.Number, info.Country, info.Org)
+			if ip := res.reply.SrcIP; res.reply.Responded && ip != "" {
+				info := prober.ASNInfoFor(ip)
+				mtr.SetIP(res.ttl, ip, info.Number, info.Country, info.Org)
+				if name := prober.PTRFor(ip); name != "" {
+					mtr.SetPTR(res.ttl, ip, name)
+				}
 			}
 		}
 	}

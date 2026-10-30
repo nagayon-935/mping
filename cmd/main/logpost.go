@@ -3,7 +3,7 @@ package main
 import "time"
 
 // clock returns the current wall-clock time in the HH:MM:SS form used by every
-// TUI Log / headless line.
+// TUI Log line.
 func clock() string {
 	return time.Now().Format("15:04:05")
 }

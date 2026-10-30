@@ -9,37 +9,15 @@ package pinger
 // passing unmodified across any further rewrite of the loop.
 
 import (
-	"bytes"
 	"errors"
 	"net"
 	"runtime"
-	"strconv"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/stats"
 )
-
-// csvFields splits p.log's CSV output into records of
-// [timestamp, host, ip, seq, status, rttMs, ttl, errMsg].
-func csvFields(t *testing.T, logOutput string) [][]string {
-	t.Helper()
-	lines := strings.Split(strings.TrimRight(logOutput, "\n"), "\n")
-	var records [][]string
-	for _, line := range lines {
-		if line == "" {
-			continue
-		}
-		fields := strings.SplitN(line, ",", 8)
-		if len(fields) != 8 {
-			t.Fatalf("malformed CSV line %q: got %d fields, want 8", line, len(fields))
-		}
-		records = append(records, fields)
-	}
-	return records
-}
 
 // workerRig wires one target to a Pinger with fake sockets so runWorker can
 // be driven deterministically.
@@ -50,7 +28,6 @@ type workerRig struct {
 	conn   *fakePacketConn
 	id     int
 	ch     chan Reply
-	logs   bytes.Buffer
 
 	// scripted maps "the n-th probe written" to the replies delivered the
 	// moment it hits the wire. Only the worker goroutine touches writes/scripted.
@@ -64,7 +41,6 @@ func newWorkerRig(t *testing.T, count int) *workerRig {
 	r.p = NewPingerWithOptions([]*stats.TargetStats{r.target}, Options{ResolveIPAddr: resolveTo("1.1.1.1")})
 	r.p.connV4 = r.conn
 	r.p.Count = count
-	r.p.LogWriter = &r.logs
 	r.id = r.p.baseID & 0xffff
 	r.ch = make(chan Reply, 16)
 	r.p.targetChans[r.id] = r.ch
@@ -111,10 +87,8 @@ func (r *workerRig) stopAndJoin(done <-chan struct{}) {
 	}
 }
 
-func (r *workerRig) records() [][]string { return csvFields(r.t, r.logs.String()) }
-
 // TestRunWorker_SingleProbeOutcomes pins, for a one-probe run, the stats
-// transitions and the exact CSV record for each way a probe can end.
+// transitions for each way a probe can end.
 func TestRunWorker_SingleProbeOutcomes(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -124,33 +98,26 @@ func TestRunWorker_SingleProbeOutcomes(t *testing.T) {
 		wantRecv int
 		wantLoss int
 		wantErr  string // TargetView.LastError
-		// CSV record: empty wantStatus means no record is written.
-		wantStatus string
-		wantTTL    string
-		wantErrCol string
 	}{
 		{
 			name:     "reply",
 			setup:    func(r *workerRig) { r.replyOnWrite(1, Reply{TTL: 55, Seq: 1}) },
 			timeout:  200 * time.Millisecond,
 			wantSent: 1, wantRecv: 1,
-			wantStatus: "OK", wantTTL: "55",
 		},
 		{
 			name:     "timeout",
 			setup:    func(*workerRig) {},
 			timeout:  20 * time.Millisecond,
 			wantSent: 1, wantLoss: 1,
-			wantErr:    "Timeout",
-			wantStatus: "Timeout", wantTTL: "0", wantErrCol: "Request timed out",
+			wantErr: "Timeout",
 		},
 		{
 			name:     "ICMP error reply",
 			setup:    func(r *workerRig) { r.replyOnWrite(1, Reply{Seq: 1, Err: "Time Exceeded"}) },
 			timeout:  200 * time.Millisecond,
 			wantSent: 1, wantLoss: 1,
-			wantErr:    "Time Exceeded",
-			wantStatus: "ICMPError", wantTTL: "0", wantErrCol: "Time Exceeded",
+			wantErr: "Time Exceeded",
 		},
 		{
 			// IncSent only fires after a successful WriteTo, so a failed
@@ -159,7 +126,7 @@ func TestRunWorker_SingleProbeOutcomes(t *testing.T) {
 			setup:    func(r *workerRig) { r.conn.writeErr = errors.New("send failed") },
 			timeout:  200 * time.Millisecond,
 			wantLoss: 1,
-			wantErr:  "send failed", wantStatus: "SendError", wantTTL: "0", wantErrCol: "send failed",
+			wantErr:  "send failed",
 		},
 		{
 			name:     "no socket for the address family",
@@ -191,28 +158,13 @@ func TestRunWorker_SingleProbeOutcomes(t *testing.T) {
 					t.Fatalf("LastTTL=%d LastRTT=%v, want 55 and a positive RTT", v.LastTTL, v.LastRTT)
 				}
 			}
-
-			records := r.records()
-			if tt.wantStatus == "" {
-				if len(records) != 0 {
-					t.Fatalf("unexpected log records: %q", r.logs.String())
-				}
-				return
-			}
-			if len(records) != 1 {
-				t.Fatalf("log records = %d, want 1: %q", len(records), r.logs.String())
-			}
-			rec := records[0]
-			if rec[3] != "1" || rec[4] != tt.wantStatus || rec[6] != tt.wantTTL || rec[7] != tt.wantErrCol {
-				t.Fatalf("record = %q, want seq=1 status=%q ttl=%q err=%q", rec, tt.wantStatus, tt.wantTTL, tt.wantErrCol)
-			}
 		})
 	}
 }
 
 // TestRunWorker_MismatchedReplyDiscarded pins the rule that a reply whose Seq
 // doesn't match any outstanding probe is silently discarded: it must not be
-// counted as Recv, Loss, duplicate or late arrival, nor logged, and the
+// counted as Recv, Loss, duplicate or late arrival, and the
 // eventual correctly-matching reply must still be recorded normally. (Only
 // seqs the worker actually resolved earlier are classified as DUP/LateReply;
 // see dup_late_reply_test.go.)
@@ -233,13 +185,11 @@ func TestRunWorker_MismatchedReplyDiscarded(t *testing.T) {
 	if v.LastTTL != 64 {
 		t.Fatalf("LastTTL = %d, want 64 (from the matching reply, not the discarded one)", v.LastTTL)
 	}
-	if n := len(r.records()); n != 1 {
-		t.Fatalf("log records = %d, want 1 (discarded reply must not be logged): %q", n, r.logs.String())
-	}
 }
 
-// TestRunWorker_CountSendsThenDrains pins the seq numbering (1, 2, 3, ...) and
-// per-probe CSV lines across a multi-probe Count run, all replies succeeding.
+// TestRunWorker_CountSendsThenDrains pins the seq numbering (1, 2, 3, ...)
+// across a multi-probe Count run, all replies succeeding: each reply carries
+// the seq it answers, so a numbering slip would leave probes unmatched.
 func TestRunWorker_CountSendsThenDrains(t *testing.T) {
 	r := newWorkerRig(t, 3)
 	for n := 1; n <= 3; n++ {
@@ -250,15 +200,6 @@ func TestRunWorker_CountSendsThenDrains(t *testing.T) {
 
 	if v := r.target.GetView(); v.Sent != 3 || v.Recv != 3 {
 		t.Fatalf("Sent=%d Recv=%d, want 3 and 3", v.Sent, v.Recv)
-	}
-	records := r.records()
-	if len(records) != 3 {
-		t.Fatalf("log records = %d, want 3: %q", len(records), r.logs.String())
-	}
-	for i, rec := range records {
-		if want := strconv.Itoa(i + 1); rec[3] != want || rec[4] != "OK" {
-			t.Fatalf("record %d seq=%q status=%q, want seq=%q status=OK", i, rec[3], rec[4], want)
-		}
 	}
 }
 

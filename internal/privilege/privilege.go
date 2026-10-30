@@ -18,6 +18,11 @@ import (
 type credentials struct {
 	getuid, geteuid, getgid, getegid func() int
 	seteuid, setegid                 func(int) error
+	setuid, setgid                   func(int) error
+	setgroups                        func([]int) error
+	// capabilities reports Linux capabilities the process still holds; ""
+	// when there are none (or the platform has none).
+	capabilities func() (string, error)
 }
 
 // mu is held shared by Privileged sections and exclusively by AsRealUser,
@@ -74,6 +79,40 @@ func restore(euid, egid int) error {
 	}
 	if err := sys.setegid(egid); err != nil {
 		return fmt.Errorf("restore privileges: %w", err)
+	}
+	return nil
+}
+
+// DropTo permanently switches the process to uid and gid, clearing its
+// supplementary groups when it may, and then makes sure nothing privileged
+// is left: root cannot be regained and, on Linux, no capability remains.
+// It is for a process that never needs privileges again; nothing restores
+// them.
+func DropTo(uid, gid int) error {
+	if sys.geteuid() == 0 {
+		if err := sys.setgroups([]int{}); err != nil {
+			return fmt.Errorf("drop supplementary groups: %w", err)
+		}
+	}
+	// The group first: changing it needs the privileges setuid gives up.
+	if err := sys.setgid(gid); err != nil {
+		return fmt.Errorf("drop group: %w", err)
+	}
+	if err := sys.setuid(uid); err != nil {
+		return fmt.Errorf("drop user: %w", err)
+	}
+	if sys.getuid() != uid || sys.geteuid() != uid || sys.getgid() != gid || sys.getegid() != gid {
+		return errors.New("drop privileges: the process IDs did not change")
+	}
+	if uid != 0 && sys.seteuid(0) == nil {
+		return errors.New("drop privileges: root can still be regained")
+	}
+	caps, err := sys.capabilities()
+	if err != nil {
+		return fmt.Errorf("drop privileges: %w", err)
+	}
+	if caps != "" {
+		return fmt.Errorf("drop privileges: capabilities remain (%s)", caps)
 	}
 	return nil
 }

@@ -1,4 +1,4 @@
-host,name,dscp
-# Lines are host[,name[,dscp]]; '#' starts a comment.
-210.130.0.1,iij
-203.137.20.1,ntt,EF
+# NetBox IP Addresses export (IPAM > IP Addresses > Export). Only Active rows are loaded.
+IP Address,Status,DNS Name,Device,Interface
+210.130.0.1/32,Active,iij,,
+203.137.20.1/32,Active,ntt,,

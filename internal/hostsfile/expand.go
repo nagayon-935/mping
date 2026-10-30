@@ -1,4 +1,4 @@
-package main
+package hostsfile
 
 import (
 	"encoding/binary"
@@ -8,8 +8,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	"github.com/nagayon-935/mping/internal/pinger"
 )
 
 // maxPatternExpansion caps how many hosts a single hosts-file pattern may
@@ -192,19 +190,13 @@ func parseOctet(s string) (byte, bool) {
 }
 
 // expandHostEntries expands every YAML entry's host pattern, copying the
-// entry's name and DSCP onto each result. location (e.g. "hosts" or
+// entry's name onto each result. location (e.g. "hosts" or
 // `groups["Core"]`) prefixes errors together with the entry's index in the
-// original, unexpanded list, so DSCP is validated here too — after
-// expansion the index would no longer match what the user wrote.
-func expandHostEntries(entries []hostEntry, location string) ([]hostEntry, error) {
-	out := make([]hostEntry, 0, len(entries))
+// original, unexpanded list.
+func expandHostEntries(entries []Entry, location string) ([]Entry, error) {
+	out := make([]Entry, 0, len(entries))
 	for i, e := range entries {
 		where := fmt.Sprintf("%s[%d]", location, i)
-		if e.DSCP != "" {
-			if _, err := pinger.ParseDSCP(e.DSCP); err != nil {
-				return nil, fmt.Errorf("%s: dscp: %w", where, err)
-			}
-		}
 		expanded, err := expandHostEntry(e)
 		if err != nil {
 			return nil, fmt.Errorf("%s %q: %w", where, e.Host, err)
@@ -216,7 +208,7 @@ func expandHostEntries(entries []hostEntry, location string) ([]hostEntry, error
 
 // expandHostEntry expands one entry. Like expandHostPattern, its errors
 // never quote the entry's text.
-func expandHostEntry(e hostEntry) ([]hostEntry, error) {
+func expandHostEntry(e Entry) ([]Entry, error) {
 	hosts, err := expandHostPattern(e.Host)
 	if err != nil {
 		return nil, err
@@ -224,9 +216,9 @@ func expandHostEntry(e hostEntry) ([]hostEntry, error) {
 	if e.Name != "" && len(hosts) > 1 {
 		return nil, fmt.Errorf("name cannot be used with a pattern that expands to %d hosts", len(hosts))
 	}
-	out := make([]hostEntry, 0, len(hosts))
+	out := make([]Entry, 0, len(hosts))
 	for _, h := range hosts {
-		out = append(out, hostEntry{Host: h, Name: e.Name, DSCP: e.DSCP})
+		out = append(out, Entry{Host: h, Name: e.Name})
 	}
 	return out, nil
 }

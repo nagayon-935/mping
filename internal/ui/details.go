@@ -33,7 +33,7 @@ func newHostDetails(opts RunOptions) *hostDetails {
 
 func (d *hostDetails) refresh(targets []*stats.TargetStats) bool {
 	for _, t := range targets {
-		if t.ID != d.targetID {
+		if t.ID() != d.targetID {
 			continue
 		}
 		d.text.SetText(renderHostDetails(t, d.opts))
@@ -53,9 +53,6 @@ func renderHostDetails(t *stats.TargetStats, opts RunOptions) string {
 		fmt.Fprintf(&b, "Measurements: %s | Health: %s — %s\nRecent loss (%.0fs): %.1f%% | Consecutive failures / replies: %d / %d\nLast probe: %s | Last reply: %s\n", tview.Escape(v.MeasurementState), v.Health.Status, tview.Escape(v.Health.Reason), v.Health.WindowSeconds, v.Health.RecentLossPct, v.Health.ConsecutiveFailures, v.Health.ConsecutiveSuccesses, detailTimestamp(v.Health.LastProbeAt), detailTimestamp(v.Health.LastReplyAt))
 	}
 	fmt.Fprintf(&b, "Interval: %s | Timeout: %s | Payload: %d bytes", opts.Interval, opts.Timeout, opts.PacketSize)
-	if opts.DSCPEnabled {
-		fmt.Fprintf(&b, " | DSCP: %s", tview.Escape(v.DSCP))
-	}
 	fmt.Fprint(&b, "\n\n")
 	fmt.Fprintf(&b, "[yellow]Ping[-]\nSent: %d | Received: %d | Loss: %d | Cancelled: %d\nLoss ratio (completed attempts): %.1f%% | DUP: %d | Late: %d\n", v.Sent, v.Recv, v.Loss, v.Cancelled, calcLossRate(v), v.Duplicates, v.LateReplies)
 	fmt.Fprintf(&b, "RTT last/min/avg/max: %s / %s / %s / %s\nJitter: %s | TTL: %s | Last loss: %s\nError: %s\n", formatRTT(v.LastRTT), formatRTT(v.MinRTT), formatRTT(v.AvgRTT), formatRTT(v.MaxRTT), formatRTT(v.Jitter), intOrDash(v.LastTTL), formatLossAgo(v.LastLossTime), tview.Escape(v.LastError))
@@ -81,19 +78,19 @@ func renderHostDetails(t *stats.TargetStats, opts RunOptions) string {
 	for _, change := range v.IPHistory {
 		fmt.Fprintf(&b, "  %s  IP %s\n", change.At.Local().Format("15:04:05"), tview.Escape(change.IP))
 	}
-	if opts.TraceEnabled {
+	switch {
+	case opts.Route != RouteOff && len(v.MTRHops) == 0:
 		fmt.Fprintln(&b, "\n[yellow]Route[-]")
-		if len(v.TraceHops) == 0 {
-			fmt.Fprintln(&b, "Traceroute not available.")
+		if v.MTRError != "" {
+			fmt.Fprintln(&b, "Route discovery failed: "+tview.Escape(v.MTRError))
 		} else {
-			fmt.Fprintln(&b, tview.Escape(strings.Join(v.TraceHops, " → ")))
+			fmt.Fprintln(&b, "Route not discovered yet.")
 		}
-	}
-	if opts.MTREnabled {
+	case opts.Route == RoutePath:
+		fmt.Fprintln(&b, "\n[yellow]Route[-]")
+		fmt.Fprintln(&b, tview.Escape(strings.Join(hopLabels(v.MTRHops), " → ")))
+	case opts.Route == RouteMonitor:
 		fmt.Fprintln(&b, "\n[yellow]MTR[-]")
-		if len(v.MTRHops) == 0 {
-			fmt.Fprintln(&b, "MTR not available.")
-		}
 		for _, hop := range v.MTRHops {
 			fmt.Fprintf(&b, "%2d  %-20s Loss %.1f%%  Sent %d  Last %s  Avg %s\n", hop.TTL, tview.Escape(hop.IP), hop.LossPct, hop.Sent, formatRTT(hop.LastRTT), formatRTT(hop.AvgRTT))
 		}

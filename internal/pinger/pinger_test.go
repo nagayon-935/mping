@@ -1,13 +1,9 @@
 package pinger
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"io"
 	"net"
-	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -245,62 +241,6 @@ func TestPingerStopConcurrent(t *testing.T) {
 		}
 	}
 }
-
-func TestLog(t *testing.T) {
-	t.Run("writes a CSV record", func(t *testing.T) {
-		var buf bytes.Buffer
-		target := stats.NewTargetStats("example.com")
-		target.SetIP("1.1.1.1")
-		p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{})
-		p.LogWriter = &buf
-
-		p.log(target, 1, "OK", 10*time.Millisecond, 64, "")
-
-		records := csvFields(t, buf.String())
-		if len(records) != 1 {
-			t.Fatalf("records = %d, want 1: %q", len(records), buf.String())
-		}
-		rec := records[0]
-		// [timestamp, host, ip, seq, status, rttMs, ttl, errMsg]
-		want := []string{"example.com", "1.1.1.1", "1", "OK", "10.000", "64", ""}
-		for i, w := range want {
-			if rec[i+1] != w {
-				t.Errorf("column %d = %q, want %q (record %q)", i+1, rec[i+1], w, rec)
-			}
-		}
-	})
-
-	t.Run("without a writer does nothing", func(t *testing.T) {
-		p := NewPingerWithOptions([]*stats.TargetStats{stats.NewTargetStats("example.com")}, Options{})
-		p.LogWriter = nil
-		p.log(p.Targets[0], 1, "OK", 0, 0, "") // must not panic
-	})
-
-	t.Run("write errors are reported on stderr and are non-fatal", func(t *testing.T) {
-		r, w, err := os.Pipe()
-		if err != nil {
-			t.Fatal(err)
-		}
-		origStderr := os.Stderr
-		os.Stderr = w
-		defer func() { os.Stderr = origStderr }()
-
-		p := NewPingerWithOptions([]*stats.TargetStats{stats.NewTargetStats("example.com")}, Options{})
-		p.LogWriter = errWriter{errors.New("disk full")}
-		p.log(p.Targets[0], 1, "OK", 0, 0, "")
-
-		w.Close()
-		os.Stderr = origStderr
-		out, _ := io.ReadAll(r)
-		if !strings.Contains(string(out), "log write error: disk full") {
-			t.Fatalf("stderr = %q, want it to mention the write error", out)
-		}
-	})
-}
-
-type errWriter struct{ err error }
-
-func (w errWriter) Write([]byte) (int, error) { return 0, w.err }
 
 // TestResolveTargetUnblocksOnStop verifies a hung DNS resolution does not
 // hold the shutdown path. resolveIPAddr takes no context and cannot be

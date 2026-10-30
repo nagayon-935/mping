@@ -21,11 +21,6 @@ thresholds:
   loss-crit: 80
 http:
   - https://status.example/health
-http-status: 200-299
 http-follow-redirects: false
-# Uncomment after setting HEALTH_TOKEN. Never put credentials in the URL.
-# http-header:
-#   - 'Authorization=Bearer ${HEALTH_TOKEN}'
-# event-output: events.jsonl
 # web: true
 # web-port: 8080

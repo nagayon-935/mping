@@ -17,7 +17,7 @@ func TestTargetSnapshotRemainsImmutableAcrossResetAndUpdates(t *testing.T) {
 	target.SetIP("192.0.2.1")
 	target.IncSent()
 	target.OnSuccess(2500*time.Microsecond, 64)
-	port := &stats.PortCheckResult{Port: 443, Protocol: "tcp"}
+	port := stats.NewPortCheckResult(443, "tcp")
 	port.SetResult("Open", 3500*time.Microsecond)
 	target.SetPortResults([]*stats.PortCheckResult{port})
 	target.RecordEvent("test", "before capture")
@@ -34,9 +34,9 @@ func TestTargetSnapshotRemainsImmutableAcrossResetAndUpdates(t *testing.T) {
 		t.Fatal("reset did not start a new statistics window with the same identity")
 	}
 	r := Report{SchemaVersion: 1, Targets: []Target{snapshot}}
-	text := r.Text()
-	if !strings.Contains(text, "2.500") || !strings.Contains(text, "3.500") || strings.Contains(text, "after capture") {
-		t.Fatalf("incorrect text snapshot: %s", text)
+	table, err := r.CSV()
+	if err != nil || !strings.Contains(string(table), ",2.500,") {
+		t.Fatalf("incorrect CSV snapshot: %s (%v)", table, err)
 	}
 	data, err := json.Marshal(r)
 	if err != nil {
@@ -46,7 +46,7 @@ func TestTargetSnapshotRemainsImmutableAcrossResetAndUpdates(t *testing.T) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Targets[0].PortDetails[0].LastRTTMS != 3.5 || decoded.Targets[0].Statistics.ID != target.ID {
+	if decoded.Targets[0].PortDetails[0].LastRTTMS != 3.5 || decoded.Targets[0].Statistics.ID != target.ID() {
 		t.Fatal("JSON units or identity changed")
 	}
 }
@@ -82,7 +82,7 @@ func TestWriteNeverOverwritesAndPublishesCompleteFile(t *testing.T) {
 	if saved.SchemaVersion != 1 || saved.Scope != "session" {
 		t.Fatal("incomplete file")
 	}
-	if err := Write(path, "text", r); err == nil {
+	if err := Write(path, "csv", r); err == nil {
 		t.Fatal("existing file overwritten")
 	}
 	after, _ := os.ReadFile(path)

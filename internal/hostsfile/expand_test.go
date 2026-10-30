@@ -1,4 +1,4 @@
-package main
+package hostsfile
 
 import (
 	"fmt"
@@ -116,8 +116,8 @@ func TestExpandHostPattern_LimitBoundary(t *testing.T) {
 }
 
 func TestExpandHostEntries(t *testing.T) {
-	entries := []hostEntry{
-		{Host: "10.0.0.1-2", DSCP: "EF"},
+	entries := []Entry{
+		{Host: "10.0.0.1-2"},
 		{Host: "gw.example.com", Name: "gateway"},
 		{Host: "10.0.0.9/32", Name: "single"},
 	}
@@ -125,9 +125,9 @@ func TestExpandHostEntries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := []hostEntry{
-		{Host: "10.0.0.1", DSCP: "EF"},
-		{Host: "10.0.0.2", DSCP: "EF"},
+	want := []Entry{
+		{Host: "10.0.0.1"},
+		{Host: "10.0.0.2"},
 		{Host: "gw.example.com", Name: "gateway"},
 		{Host: "10.0.0.9", Name: "single"},
 	}
@@ -137,7 +137,7 @@ func TestExpandHostEntries(t *testing.T) {
 }
 
 func TestExpandHostEntries_NameOnMultiHostPatternIsRejected(t *testing.T) {
-	_, err := expandHostEntries([]hostEntry{{Host: "10.0.0.1-2", Name: "pair"}}, `groups["Core"]`)
+	_, err := expandHostEntries([]Entry{{Host: "10.0.0.1-2", Name: "pair"}}, `groups["Core"]`)
 	if err == nil {
 		t.Fatal("expected error for name on a multi-host pattern")
 	}
@@ -149,18 +149,13 @@ func TestExpandHostEntries_NameOnMultiHostPatternIsRejected(t *testing.T) {
 func TestExpandHostEntries_ErrorsUseUnexpandedIndex(t *testing.T) {
 	tests := []struct {
 		name    string
-		entries []hostEntry
+		entries []Entry
 		wantErr string
 	}{
 		{
 			name:    "pattern error quotes the YAML value",
-			entries: []hostEntry{{Host: "a"}, {Host: "10.0.0.0/16"}},
+			entries: []Entry{{Host: "a"}, {Host: "10.0.0.0/16"}},
 			wantErr: `hosts[1] "10.0.0.0/16": expands to more than`,
-		},
-		{
-			name:    "DSCP is checked before expansion",
-			entries: []hostEntry{{Host: "10.0.0.1-50"}, {Host: "10.0.1.1-50", DSCP: "bogus"}},
-			wantErr: "hosts[1]: dscp:",
 		},
 	}
 	for _, tt := range tests {

@@ -1,6 +1,6 @@
 // Selected-host summary. Global logs, HTTP checks and routes have their own views.
 import { el, statusChip } from "./dom.js";
-import { dscpName, formatPct, formatRTT, lossRate, rowLevel, statusReasons } from "./model.js";
+import { formatPct, formatRTT, lossRate, rowLevel, statusReason } from "./model.js";
 import { formatTime, formatDateTime } from "./time.js";
 import { portsFor } from "./checks.js";
 
@@ -21,9 +21,9 @@ function section(title, ...children) {
 function summaryParts(t, meta) {
   const asn = [t.asn, t.org, t.country && `(${t.country})`].filter(Boolean).join(" ");
   const done = t.recv + t.loss;
-  const level = rowLevel(t, meta.thresholds);
+  const level = rowLevel(t);
   return {
-    status: [statusChip(level), el("span", { text: statusReasons(t, meta.thresholds).join(" · ") })],
+    status: [statusChip(level), el("span", { text: statusReason(t) })],
     columns: [
       section("Current", facts([
         ["IP", t.ip || "–"],
@@ -49,7 +49,6 @@ function summaryParts(t, meta) {
         ["PTR", meta.features.ptr ? t.ptr : null],
         ["AS", meta.features.asn ? asn : null],
         ["Latest TTL", t.last_ttl > 0 ? t.last_ttl : "–"],
-        ["DSCP", meta.features.dscp ? dscpName(t.last_dscp) : null],
         ["Path MTU", meta.features.mtu && t.pmtu ? `${t.pmtu}${t.pmtu_bottleneck_ip ? ` (bottleneck ${t.pmtu_bottleneck_ip})` : ""}` : null],
         ["Started", formatDateTime(t.started_at)],
         ["Last error", t.last_error],

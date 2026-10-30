@@ -53,7 +53,7 @@ func TestRenderTracerouteTable(t *testing.T) {
 
 	t.Run("with data targets full mode", func(t *testing.T) {
 		target := stats.NewTargetStats("example.com")
-		target.SetTraceHops([]string{"1.1.1.1", "2.2.2.2", "8.8.8.8"})
+		setRouteHops(target, "1.1.1.1", "2.2.2.2", "8.8.8.8")
 		got := renderTracerouteTable([]*stats.TargetStats{target}, 120)
 		if !strings.Contains(got, "example.com") {
 			t.Fatalf("expected hostname in output, got: %s", got)
@@ -65,7 +65,7 @@ func TestRenderTracerouteTable(t *testing.T) {
 
 	t.Run("compact mode narrow width", func(t *testing.T) {
 		target := stats.NewTargetStats("example.com")
-		target.SetTraceHops([]string{"1.1.1.1"})
+		setRouteHops(target, "1.1.1.1")
 		got := renderTracerouteTable([]*stats.TargetStats{target}, 30)
 		if !strings.Contains(got, "example.com") {
 			t.Fatalf("expected hostname in output, got: %s", got)
@@ -75,11 +75,40 @@ func TestRenderTracerouteTable(t *testing.T) {
 		}
 	})
 
+	t.Run("discovery failure", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		target.MTR().SetError("resolve example.com: no such host")
+		got := renderTracerouteTable([]*stats.TargetStats{target}, 120)
+		if !strings.Contains(got, "Route discovery failed: resolve example.com: no such host") {
+			t.Fatalf("expected the discovery error, got: %s", got)
+		}
+	})
+
+	t.Run("hop names are escaped", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		setRouteHops(target, "10.0.0.1")
+		target.MTR().SetPTR(1, "10.0.0.1", "gw[red]")
+		got := renderTracerouteTable([]*stats.TargetStats{target}, 120)
+		if !strings.Contains(got, "10.0.0.1 gw[red[]") {
+			t.Fatalf("expected an escaped PTR name, got: %s", got)
+		}
+	})
+
+	t.Run("route changes are flagged", func(t *testing.T) {
+		target := stats.NewTargetStats("example.com")
+		setRouteHops(target, "10.0.0.1")
+		target.MTR().CheckFlap([]string{"10.0.0.9"}, time.Date(2026, 1, 2, 3, 4, 5, 0, time.Local))
+		got := renderTracerouteTable([]*stats.TargetStats{target}, 120)
+		if !strings.Contains(got, "[FLAP ×1 03:04:05]") {
+			t.Fatalf("expected a flap badge, got: %s", got)
+		}
+	})
+
 	t.Run("multiple targets", func(t *testing.T) {
 		t1 := stats.NewTargetStats("a.com")
-		t1.SetTraceHops([]string{"1.1.1.1"})
+		setRouteHops(t1, "1.1.1.1")
 		t2 := stats.NewTargetStats("b.com")
-		t2.SetTraceHops([]string{"2.2.2.2"})
+		setRouteHops(t2, "2.2.2.2")
 		got := renderTracerouteTable([]*stats.TargetStats{t1, t2}, 120)
 		if !strings.Contains(got, "a.com") || !strings.Contains(got, "b.com") {
 			t.Fatalf("expected both hosts in output, got: %s", got)
@@ -102,9 +131,9 @@ func TestRenderPortMonitorTable(t *testing.T) {
 	t.Run("with data full mode", func(t *testing.T) {
 		target := stats.NewTargetStats("example.com")
 		target.SetIP("1.1.1.1")
-		result := &stats.PortCheckResult{Port: 443, Protocol: "tcp"}
+		result := stats.NewPortCheckResult(443, "tcp")
 		result.SetResult("Open", 5*time.Millisecond)
-		target.PortResults = []*stats.PortCheckResult{result}
+		target.SetPortResults([]*stats.PortCheckResult{result})
 
 		lastStatuses := make(map[string]string)
 		errorLogs := []string{}
@@ -121,9 +150,9 @@ func TestRenderPortMonitorTable(t *testing.T) {
 	t.Run("compact mode narrow width", func(t *testing.T) {
 		target := stats.NewTargetStats("example.com")
 		target.SetIP("1.1.1.1")
-		result := &stats.PortCheckResult{Port: 80, Protocol: "tcp"}
+		result := stats.NewPortCheckResult(80, "tcp")
 		result.SetResult("Closed", 0)
-		target.PortResults = []*stats.PortCheckResult{result}
+		target.SetPortResults([]*stats.PortCheckResult{result})
 
 		lastStatuses := make(map[string]string)
 		errorLogs := []string{}
@@ -140,9 +169,9 @@ func TestRenderPortMonitorTable(t *testing.T) {
 	t.Run("status change logs", func(t *testing.T) {
 		target := stats.NewTargetStats("example.com")
 		target.SetIP("1.1.1.1")
-		result := &stats.PortCheckResult{Port: 443, Protocol: "tcp"}
+		result := stats.NewPortCheckResult(443, "tcp")
 		result.SetResult("Open", 5*time.Millisecond)
-		target.PortResults = []*stats.PortCheckResult{result}
+		target.SetPortResults([]*stats.PortCheckResult{result})
 
 		lastStatuses := map[string]string{
 			targetViewKey(target.GetView()) + "|443/tcp": "Closed",

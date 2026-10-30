@@ -24,14 +24,14 @@ func newTestTableRenderer(targets []*stats.TargetStats, width int) *tableRendere
 	errorView := tview.NewTextView()
 	vs := newViewState(errorView)
 
-	return newTableRenderer(targets, "10.0.0.1", "", 56, false, false, false, nil, table, tablePane, nil, vs)
+	return newTableRenderer(targets, "10.0.0.1", "", 56, false, false, nil, table, tablePane, nil, vs)
 }
 
-// TestTableRendererUpdate_LayoutByWidth guards the P3 fix: update() builds
-// the compact layout (and its per-target GetView() work) only as a fallback,
-// so a terminal wide enough for the full layout must resolve to it — width 200
+// TestTableRendererUpdate_LayoutByWidth checks that update() builds the
+// compact layout (and its per-target GetView() work) only as a fallback, so a
+// terminal wide enough for the full layout must resolve to it — width 200
 // matches the wide screens used by the Run tests — while a narrow one (70)
-// must still fall back to compact exactly as before the P3 change.
+// falls back to compact.
 func TestTableRendererUpdate_LayoutByWidth(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -64,8 +64,7 @@ func TestTableRendererUpdate_LayoutByWidth(t *testing.T) {
 	}
 }
 
-// TestTableRendererUpdate_VirtualizesOffscreenRows guards the P1 fix: only
-// rows within the visible scroll window (plus rowRenderMargin on each side)
+// TestTableRendererUpdate_VirtualizesOffscreenRows checks that only rows within the visible scroll window (plus rowRenderMargin on each side)
 // should actually get SetCell'd; targets far outside that window must be
 // left empty despite rowCount still reflecting every target.
 func TestTableRendererUpdate_VirtualizesOffscreenRows(t *testing.T) {
@@ -122,7 +121,7 @@ func TestTableRendererUpdate_TallPaneRendersAllVisibleRows(t *testing.T) {
 	table := newPingTable()
 	tablePane := newTablePane(table)
 	vs := newViewState(newLogView())
-	tr := newTableRenderer(targets, "10.0.0.1", "", 56, false, false, false, nil, table, tablePane, nil, vs)
+	tr := newTableRenderer(targets, "10.0.0.1", "", 56, false, false, nil, table, tablePane, nil, vs)
 	tr.selectionEnabled = true
 
 	graph := newGraphPane(targets, time.Second)
@@ -173,7 +172,7 @@ func TestTableRendererUpdate_TallPaneRendersAllVisibleRows(t *testing.T) {
 	}
 
 	// Scroll selection to the very last target (#72) and verify the bottom visible rows and selection render.
-	tr.selectedID = targets[numTargets-1].ID
+	tr.selectedID = targets[numTargets-1].ID()
 	tr.scrollToSelection = true
 	tr.update()
 	if got := tr.table.GetCell(numTargets, 1).Text; got == "" {
@@ -183,15 +182,11 @@ func TestTableRendererUpdate_TallPaneRendersAllVisibleRows(t *testing.T) {
 
 // TestColumnWidthsFollowLateArrivingASN verifies the ASN column widens once
 // the Cymru lookup lands. Widths feed formatCellText's truncation
-// (internal/ui/tui_helpers.go), so a width frozen at startup silently
-// clipped "AS15169 Google LLC" down to the header's 4 columns until the
-// user resized the terminal.
-//
-// This drives calcColumnWidths directly (the fix). It used to drive
-// calcColumnWidthsCached — the deleted function that held the bug: the
-// renderer is not attached to a running tview app, so GetInnerRect reported
-// width 0 on both calls, exactly the "terminal width unchanged" condition
-// under which the old cache served stale widths forever.
+// (internal/ui/format.go), so a width frozen at startup would clip
+// "AS15169 Google LLC" down to the header's 4 columns until the user resized
+// the terminal. The renderer is not attached to a running tview app, so
+// GetInnerRect reports width 0 on both calls — the "terminal width
+// unchanged" condition under which a width cache would serve stale widths.
 func TestColumnWidthsFollowLateArrivingASN(t *testing.T) {
 	tr := newBenchTableRenderer(t, 1)
 
@@ -206,9 +201,8 @@ func TestColumnWidthsFollowLateArrivingASN(t *testing.T) {
 		t.Fatal("ASN column not present; construct the renderer with asnEnabled=true")
 	}
 
-	// calcColumnWidths returns a fresh slice per call (unlike the deleted
-	// calcColumnWidthsCached, which aliased the same backing slice across
-	// calls); copying here is just defensive.
+	// calcColumnWidths returns a fresh slice per call; copying here is just
+	// defensive.
 	before := []stats.TargetView{{Host: "example.com", IP: "192.0.2.1"}}
 	widthsBefore := append([]int(nil), tr.calcColumnWidths(before)...)
 

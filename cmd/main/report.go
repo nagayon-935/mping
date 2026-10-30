@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
 	"slices"
 	"time"
 
@@ -50,11 +49,11 @@ func (s *supervisor) captureReport(selectedID uint64) (report.Report, error) {
 		IntervalMS: s.cfg.interval.Milliseconds(), TimeoutMS: s.cfg.timeout.Milliseconds(),
 		PayloadBytes: s.cfg.packetSize, Interface: s.cfg.bind.Interface, BoundSource: s.cfg.bind.Source,
 		SourceIPv4Hint: s.cfg.sourceIPv4, SourceIPv6Hint: s.cfg.sourceIPv6, Network: s.cfg.network,
-		Count: cfg.count, Duration: s.cfg.durationLimit.String(), DSCP: cfg.dscp,
+		Count: cfg.count, Duration: s.cfg.durationLimit.String(),
 		DNSServer: cfg.dnsServer, ResolveAll: cfg.resolveAll,
-		Traceroute: s.cfg.traceEnabled, MTR: s.cfg.mtrEnabled, PMTUDiscovery: cfg.mtuEnabled,
+		Traceroute: cfg.trace, MTR: cfg.mtr, PMTUDiscovery: cfg.mtuEnabled,
 		HTTPURLs:       append([]string(nil), s.cfg.httpURLs...),
-		HealthFailures: healthPolicy(cfg).Failures, HealthRecoveries: healthPolicy(cfg).Recoveries, HealthWindowSeconds: healthPolicy(cfg).Window.Seconds(), HTTPStatus: cfg.httpStatus, HTTPFollowRedirects: cfg.httpFollowRedirects,
+		HealthFailures: healthPolicy(cfg).Failures, HealthRecoveries: healthPolicy(cfg).Recoveries, HealthWindowSeconds: healthPolicy(cfg).Window.Seconds(), HTTPFollowRedirects: cfg.httpFollowRedirects,
 		Thresholds: thresholdsMap(cfg.thresholds),
 	}
 	if !s.cfg.durationDeadline.IsZero() {
@@ -65,7 +64,7 @@ func (s *supervisor) captureReport(selectedID uint64) (report.Report, error) {
 		r.Settings.Ports = append(r.Settings.Ports, fmt.Sprintf("%d/%s", port.Port, port.Protocol))
 	}
 	for i, t := range s.cfg.targets {
-		if selectedID != 0 && t.ID != selectedID {
+		if selectedID != 0 && t.ID() != selectedID {
 			continue
 		}
 		record := report.NewTarget(t)
@@ -92,40 +91,12 @@ func (s *supervisor) captureReport(selectedID uint64) (report.Report, error) {
 	return r, nil
 }
 
-func canonicalOutputPath(path string) string {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return filepath.Clean(path)
-	}
-	parent, err := filepath.EvalSymlinks(filepath.Dir(abs))
-	if err == nil {
-		abs = filepath.Join(parent, filepath.Base(abs))
-	}
-	return abs
-}
-
 func (s *supervisor) saveReport(path, format string, selectedID uint64) error {
-	if format != "text" && format != "json" {
+	if format != "csv" && format != "json" {
 		return fmt.Errorf("unsupported report format %q", format)
-	}
-	// Resolve the requested path as the invoking user: resolving symlinks
-	// with root's permissions would reveal whether paths exist in
-	// directories the user can't read.
-	var target string
-	if err := asRealUser(func() error {
-		target = canonicalOutputPath(path)
-		return nil
-	}); err != nil {
-		return err
 	}
 	var snapshot report.Report
 	err := s.editTargets(func(s *supervisor) error {
-		reserved := append([]string{s.cfg.config.outputFile, s.cfg.config.jsonOutputFile}, s.cfg.reservedOutputs...)
-		for _, active := range reserved {
-			if active != "" && canonicalOutputPath(active) == target {
-				return fmt.Errorf("report path is reserved for an active CSV or JSON writer")
-			}
-		}
 		var err error
 		snapshot, err = s.captureReport(selectedID)
 		return err

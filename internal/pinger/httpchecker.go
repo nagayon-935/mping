@@ -12,6 +12,13 @@ import (
 
 const maxRedirects = 10
 
+// HTTPOptions configures how an HTTPChecker treats responses.
+type HTTPOptions struct {
+	// FollowRedirects follows up to maxRedirects redirects; when false the
+	// first response is judged on its own.
+	FollowRedirects bool
+}
+
 // maxDrainBytes caps how much of a response body the checker reads. The body
 // is drained only so the connection can go back into the keep-alive pool —
 // a health check has no use for the content — and client.Timeout bounds how
@@ -58,7 +65,7 @@ func NewHTTPCheckerWithOptions(urls []string, interval, timeout time.Duration, b
 		bind:     bind,
 		ctx:      ctx,
 		cancel:   cancel,
-		options:  options.Clone(),
+		options:  options,
 	}
 	hc.client = &http.Client{Timeout: timeout, CheckRedirect: hc.checkRedirect}
 	// Assign only when a bound transport is actually needed: leaving Transport
@@ -70,19 +77,10 @@ func NewHTTPCheckerWithOptions(urls []string, interval, timeout time.Duration, b
 	return hc
 }
 
-// checkRedirect is the client's redirect policy. It reads hc.options, the
-// checker's own copy, so it always agrees with the headers check sends.
-func (hc *HTTPChecker) checkRedirect(req *http.Request, via []*http.Request) error {
+// checkRedirect is the client's redirect policy.
+func (hc *HTTPChecker) checkRedirect(_ *http.Request, via []*http.Request) error {
 	if !hc.options.FollowRedirects || len(via) >= maxRedirects {
 		return http.ErrUseLastResponse
-	}
-	// Custom API-key headers are not covered by net/http's built-in
-	// Authorization/Cookie filtering. Keep configured headers on the
-	// original origin only, including across HTTPS -> HTTP redirects.
-	if len(via) > 0 && (req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host) {
-		for name := range hc.options.Headers {
-			req.Header.Del(name)
-		}
 	}
 	return nil
 }
@@ -124,12 +122,11 @@ func (hc *HTTPChecker) check(r *stats.HTTPCheckResult) {
 		return
 	}
 	start := time.Now()
-	req, err := http.NewRequestWithContext(hc.ctx, "GET", r.URL, nil)
+	req, err := http.NewRequestWithContext(hc.ctx, "GET", r.URL(), nil)
 	if err != nil {
 		r.SetResult(0, 0, err)
 		return
 	}
-	req.Header = hc.options.Headers.Clone()
 	resp, err := hc.client.Do(req)
 	rtt := time.Since(start)
 	if err != nil {
@@ -141,5 +138,5 @@ func (hc *HTTPChecker) check(r *stats.HTTPCheckResult) {
 	}
 	defer resp.Body.Close()
 	drainBody(resp.Body)
-	r.SetExpectedResult(resp.StatusCode, rtt, nil, hc.options.Accepts(resp.StatusCode))
+	r.SetResult(resp.StatusCode, rtt, nil)
 }

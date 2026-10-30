@@ -2,7 +2,6 @@ package stats
 
 import (
 	"encoding/json"
-	"reflect"
 	"testing"
 	"time"
 )
@@ -160,19 +159,25 @@ func TestBuildSnapshot_NoLoss(t *testing.T) {
 	}
 }
 
-// TestBuildSnapshot_CopiesPathFields verifies that the traceroute hops and
-// the path MTU details reach the snapshot.
+// TestBuildSnapshot_CopiesPathFields verifies that the route hops, the route
+// error and the path MTU details reach the snapshot.
 func TestBuildSnapshot_CopiesPathFields(t *testing.T) {
 	ts := NewTargetStats("host.local")
-	ts.SetTraceHops([]string{"1.1.1.1", "2.2.2.2"})
+	ts.MTR().EnsureLen(1)
+	ts.MTR().SetIP(1, "1.1.1.1", "AS13335", "", "Cloudflare")
+	ts.MTR().SetPTR(1, "1.1.1.1", "one.one.one.one")
+	ts.MTR().SetError("resolve host.local: timeout")
 	ts.SetPMTU(1400)
 	ts.SetPMTUBottleneckIP("10.0.0.1")
 
 	snap := BuildSnapshot([]*TargetStats{ts}, nil)
 
 	st := snap.Targets[0]
-	if want := []string{"1.1.1.1", "2.2.2.2"}; !reflect.DeepEqual(st.TraceHops, want) {
-		t.Errorf("trace hops = %v, want %v", st.TraceHops, want)
+	if len(st.MTRHops) != 1 || st.MTRHops[0].IP != "1.1.1.1" || st.MTRHops[0].ASN != "AS13335" || st.MTRHops[0].PTR != "one.one.one.one" {
+		t.Errorf("route hops = %+v, want 1.1.1.1 with its AS and PTR", st.MTRHops)
+	}
+	if st.MTRError != "resolve host.local: timeout" {
+		t.Errorf("route error = %q", st.MTRError)
 	}
 	if st.PMTU != 1400 {
 		t.Errorf("expected PMTU=1400, got %d", st.PMTU)
@@ -224,7 +229,8 @@ func TestBuildSnapshot_HTTPChecksSummarizeEachResult(t *testing.T) {
 
 func TestBuildSnapshotFromViews_PortsAndMTRHopsUseMilliseconds(t *testing.T) {
 	view := TargetView{
-		Host: "router.example",
+		Host:       "router.example",
+		Thresholds: DefaultThresholds(),
 		PortResults: []PortCheckView{
 			{Port: 443, Protocol: "tcp", Status: "Open", RTT: 2500 * time.Microsecond, OpenCount: 3, ClosedCount: 1},
 		},
@@ -238,12 +244,12 @@ func TestBuildSnapshotFromViews_PortsAndMTRHopsUseMilliseconds(t *testing.T) {
 	snap := BuildSnapshotFromViews([]TargetView{view}, nil)
 
 	target := snap.Targets[0]
-	wantPort := PortSummary{Port: 443, Protocol: "tcp", Status: "Open", RTTMs: 2.5, OpenCount: 3, ClosedCount: 1}
+	wantPort := PortSummary{Port: 443, Protocol: "tcp", Status: "Open", Level: LevelOK, RTTMs: 2.5, OpenCount: 3, ClosedCount: 1}
 	if len(target.PortResults) != 1 || target.PortResults[0] != wantPort {
 		t.Errorf("PortResults = %+v, want [%+v]", target.PortResults, wantPort)
 	}
 	wantHop := HopSummary{TTL: 1, IP: "192.0.2.1", ASN: "AS64500", Country: "JP", Org: "Example", Sent: 10, Recv: 9,
-		LossPct: 10, LastRTTMs: 1, AvgRTTMs: 2, MinRTTMs: 0.5, MaxRTTMs: 4, JitterMs: 0.25}
+		LossPct: 10, LossLevel: LevelWarn, LastRTTMs: 1, AvgRTTMs: 2, MinRTTMs: 0.5, MaxRTTMs: 4, JitterMs: 0.25}
 	if len(target.MTRHops) != 1 || target.MTRHops[0] != wantHop {
 		t.Errorf("MTRHops = %+v, want [%+v]", target.MTRHops, wantHop)
 	}

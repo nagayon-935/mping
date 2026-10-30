@@ -46,14 +46,14 @@ func (d *saveDialog) show(selectedID uint64) {
 		SetButtonStyle(tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlack)).
 		SetButtonActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorWhite))
 	d.form.SetBackgroundColor(tcell.ColorBlack)
-	d.path = tview.NewInputField().SetText("mping-" + time.Now().Format("20060102-150405.000") + ".txt").SetChangedFunc(func(path string) {
+	d.path = tview.NewInputField().SetText("mping-" + time.Now().Format("20060102-150405.000") + ".json").SetChangedFunc(func(path string) {
 		_, format, err := report.PathFormat(path)
 		if err != nil {
-			d.formatPreview.SetText("Format: Use a .txt or .json file name")
-		} else if format == "json" {
-			d.formatPreview.SetText("Format: JSON (.json)")
+			d.formatPreview.SetText("Format: Use a .json or .csv file name")
+		} else if format == "csv" {
+			d.formatPreview.SetText("Format: CSV (.csv), one row per target")
 		} else {
-			d.formatPreview.SetText("Format: Text (.txt)")
+			d.formatPreview.SetText("Format: JSON (.json)")
 		}
 	})
 	d.path.SetBackgroundColor(tcell.ColorBlack)
@@ -66,7 +66,7 @@ func (d *saveDialog) show(selectedID uint64) {
 		d.path.SetTitle(" 保存先 (Path) ")
 		d.path.SetFieldStyle(tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlack))
 	})
-	d.formatPreview.SetText("Format: Text (.txt)")
+	d.formatPreview.SetText("Format: JSON (.json)")
 	d.form.AddButton("Save", d.submit).AddButton("Cancel", d.close)
 	d.form.SetCancelFunc(d.close)
 	title := " Save session report "

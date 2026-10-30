@@ -434,7 +434,7 @@ func TestFailedHopSendUnregistersChannel(t *testing.T) {
 // pending DNS lookup as soon as its context is cancelled, for both the
 // context-aware and the legacy context-free resolver hooks.
 func TestHopOperationsCancelDNS(t *testing.T) {
-	for _, operation := range []string{"traceroute", "open", "probe", "pmtu"} {
+	for _, operation := range []string{"open", "probe", "pmtu"} {
 		for _, legacy := range []bool{false, true} {
 			t.Run(operation+map[bool]string{true: "/legacy", false: "/context"}[legacy], func(t *testing.T) {
 				entered, release, exited := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -461,8 +461,6 @@ func TestHopOperationsCancelDNS(t *testing.T) {
 				go func() {
 					var err error
 					switch operation {
-					case "traceroute":
-						_, err = p.TraceRoute(ctx, "example.invalid", 1, time.Second)
 					case "open":
 						_, err = p.OpenHopSocketContext(ctx, "example.invalid")
 					case "probe":

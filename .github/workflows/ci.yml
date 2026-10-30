@@ -41,6 +41,28 @@ jobs:
         with:
           path-to-profile: profile.cov
 
+  test-icmp:
+    name: Raw ICMP integration (Linux, root)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The unit tests substitute every raw socket; this sends real ICMP echo
+      # requests to the loopback addresses. The binary is built as the runner
+      # user and only executed as root, so sudo needs no Go toolchain.
+      - name: Build integration test binary
+        run: go test -c -tags integration -o pinger-integration.test ./internal/pinger
+
+      - name: Run as root
+        run: sudo ./pinger-integration.test -test.run Integration -test.v
+
   test-web:
     name: Web logic tests
     runs-on: ubuntu-latest
@@ -83,6 +105,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      # Releases ship a Windows binary that no job runs; vetting the Windows
+      # build at least keeps it compiling.
+      - name: Vet (Windows)
+        run: GOOS=windows GOARCH=amd64 go vet ./...
 
       - name: staticcheck
         uses: dominikh/staticcheck-action@v1

@@ -9,7 +9,7 @@ const severity = { crit: 4, warn: 3, pending: 2, ok: 1 };
 // Read only the requested metric. Sorting by a name or count does not need
 // health classification or allocation of an object containing every metric.
 const sortValues = {
-  status: (target, thresholds) => severity[rowLevel(target, thresholds)],
+  status: (target) => severity[rowLevel(target)],
   host: (target) => target.host.toLowerCase(),
   loss: (target) => target.recv + target.loss ? lossRate(target) : null,
   last: (target) => target.last_rtt_ms,
@@ -23,10 +23,10 @@ export function configuredTargets(targets, groups) {
   return buildSections(targets, groups).flatMap(section => section.targets);
 }
 
-export function sortTargets(targets, sort, thresholds) {
+export function sortTargets(targets, sort) {
   if (!sort || sort.key === "config") return [...targets];
   const readValue = Object.hasOwn(sortValues, sort.key) ? sortValues[sort.key] : () => undefined;
-  return targets.map((target, index) => ({ target, index, value: readValue(target, thresholds) })).sort((a, b) => {
+  return targets.map((target, index) => ({ target, index, value: readValue(target) })).sort((a, b) => {
     if (a.value == null || b.value == null) return a.value == null && b.value == null ? a.index - b.index : a.value == null ? 1 : -1;
     const cmp = typeof a.value === "string" ? a.value.localeCompare(b.value, undefined, { numeric: true }) : a.value - b.value;
     return (sort.direction === "asc" ? cmp : -cmp) || a.index - b.index;
@@ -43,7 +43,7 @@ export function frozenOrder(targets, ids = []) {
 
 export function filterTargets(targets, query, status, meta) {
   return targets.filter(t => matchesFilter(t, query, meta.features) &&
-    (!status || status === "all" || rowLevel(t, meta.thresholds) === status));
+    (!status || status === "all" || rowLevel(t) === status));
 }
 
 export function editableTarget(target) {
@@ -55,7 +55,7 @@ export function createTargetOrder() {
   let savedIds = null;
   const ids = (targets) => targets.map((target) => target.id);
   const baseTargets = (view) => configuredTargets(view.snapshot.targets, view.meta.groups);
-  const rankedIds = (targets, view) => ids(sortTargets(targets, view.sort, view.meta.thresholds));
+  const rankedIds = (targets, view) => ids(sortTargets(targets, view.sort));
 
   return {
     refresh(view) {

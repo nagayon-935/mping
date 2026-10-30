@@ -5,7 +5,7 @@ import { editableTarget } from "./workspace.js";
 
 /**
  * @param {{
- *   table: HTMLTableElement, filter: HTMLInputElement, menu: object,
+ *   table: HTMLTableElement, filter: HTMLInputElement,
  *   charactersEnabled: () => boolean, canControl: () => boolean,
  *   focusFilter: () => void, openHelp: () => void, openReport: () => void,
  *   deleteTarget: (id: number) => void,
@@ -16,11 +16,6 @@ export function installShortcuts(deps) {
     if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey ||
         document.querySelector("dialog[open]")) return;
 
-    if (event.key === "Escape" && deps.menu.isOpen()) {
-      event.preventDefault();
-      deps.menu.close({ focus: true });
-      return;
-    }
     if (editableTarget(event.target)) {
       // Escape leaves search for the host list without clearing the query.
       if (event.key === "Escape" && event.target === deps.filter) {

@@ -4,12 +4,10 @@ package pinger
 // that don't match any entry in `unacked` because that entry was already
 // resolved (a second reply for an already-acked seq -> DUP) or already swept
 // as a timeout (a reply that shows up after loss was recorded -> late
-// arrival). Before this feature, both cases were silently discarded
-// (TestRunWorker_MismatchedReplyDiscarded pins that this stays true for a
-// seq the worker never even sent).
+// arrival). A reply for a seq the worker never sent is still silently
+// discarded (TestRunWorker_MismatchedReplyDiscarded).
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -36,9 +34,6 @@ func TestRunWorker_DuplicateReply_NotDoubleCountedAsRecv(t *testing.T) {
 		t.Fatalf("Recv=%d Duplicates=%d Loss=%d, want 1 1 0 (dup must not be double-counted as Recv)",
 			view.Recv, view.Duplicates, view.Loss)
 	}
-	if !strings.Contains(r.logs.String(), ",DUP,") {
-		t.Errorf("expected a DUP status line in the CSV log, got: %q", r.logs.String())
-	}
 }
 
 // TestRunWorker_LateReply_DoesNotChangeLoss pins that a reply arriving after
@@ -64,9 +59,6 @@ func TestRunWorker_LateReply_DoesNotChangeLoss(t *testing.T) {
 		t.Fatalf("Loss=%d Recv=%d LateReplies=%d, want 1 0 1 (the timeout stands; a late reply is not a Recv)",
 			view.Loss, view.Recv, view.LateReplies)
 	}
-	if !strings.Contains(r.logs.String(), ",LateReply,") {
-		t.Errorf("expected a LateReply status line in the CSV log, got: %q", r.logs.String())
-	}
 }
 
 // TestRecentSeqHistory_BoundedEviction pins that recentSeqHistory never
@@ -77,7 +69,7 @@ func TestRecentSeqHistory_BoundedEviction(t *testing.T) {
 	h := newRecentSeqHistory()
 	const n = recentSeqHistoryCap * 3
 	for i := range n {
-		h.record(i%(seqMask+1), i, resolvedAcked, time.Now(), stats.Probe{})
+		h.record(i%(seqMask+1), resolvedAcked, stats.Probe{})
 	}
 	if got := h.order.Len(); got > recentSeqHistoryCap {
 		t.Fatalf("recentSeqHistory grew to %d entries, want <= %d", got, recentSeqHistoryCap)
@@ -102,7 +94,7 @@ func TestRecentSeqHistory_WraparoundSafety(t *testing.T) {
 
 	h := newRecentSeqHistory()
 	const staleWireSeq = 42
-	h.record(staleWireSeq, 42, resolvedAcked, time.Now(), stats.Probe{})
+	h.record(staleWireSeq, resolvedAcked, stats.Probe{})
 
 	// Fill the cache with recentSeqHistoryCap other, distinct entries -- more
 	// than enough to evict the stale one above, but nowhere near a full
@@ -112,7 +104,7 @@ func TestRecentSeqHistory_WraparoundSafety(t *testing.T) {
 		if wire == staleWireSeq {
 			continue
 		}
-		h.record(wire, i+1000, resolvedAcked, time.Now(), stats.Probe{})
+		h.record(wire, resolvedAcked, stats.Probe{})
 	}
 
 	if _, ok := h.lookup(staleWireSeq); ok {
@@ -125,18 +117,17 @@ func TestRecentSeqHistory_WraparoundSafety(t *testing.T) {
 // the newest, rather than leaving a stale duplicate node behind.
 func TestRecentSeqHistory_ReRecordReplacesAndRefreshesEntry(t *testing.T) {
 	h := newRecentSeqHistory()
-	now := time.Now()
-	h.record(7, 7, resolvedAcked, now, stats.Probe{})
-	h.record(9, 9, resolvedAcked, now, stats.Probe{})
+	h.record(7, resolvedAcked, stats.Probe{})
+	h.record(9, resolvedAcked, stats.Probe{})
 
-	h.record(7, 71, resolvedTimeout, now, stats.Probe{})
+	h.record(7, resolvedTimeout, stats.Probe{})
 
 	if got := h.order.Len(); got != 2 {
 		t.Fatalf("history has %d entries, want 2 (re-recording must not add a duplicate)", got)
 	}
 	entry, ok := h.lookup(7)
-	if !ok || entry.logicalSeq != 71 || entry.kind != resolvedTimeout {
-		t.Fatalf("lookup(7) = %+v, %v; want the replaced timeout entry for logical seq 71", entry, ok)
+	if !ok || entry.kind != resolvedTimeout {
+		t.Fatalf("lookup(7) = %+v, %v; want the replaced timeout entry", entry, ok)
 	}
 	if newest := h.order.Back().Value.(recentEntry); newest.wireSeq != 7 {
 		t.Fatalf("newest entry is wire seq %d, want 7 (re-recorded entry moves to the back)", newest.wireSeq)

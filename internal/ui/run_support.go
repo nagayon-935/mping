@@ -32,7 +32,7 @@ func shouldRedraw(gen, lastGen uint64, sinceLastRedraw time.Duration) bool {
 // samples, but the tick is also the hard upper bound on redraw latency —
 // shouldRedraw can only suppress a redraw, never bring one forward — so it
 // is capped at redrawFloor, otherwise a long ping interval would silently
-// stretch that floor (a 10s interval used to mean a 5s tick, five times the
+// stretch that floor (a 10s interval would mean a 5s tick, five times the
 // floor the graph's auto-scale shrink relies on). Intervals below
 // minUIRefresh fall back to a fixed fast rate instead of halving further.
 func refreshTickInterval(interval time.Duration) time.Duration {
@@ -81,9 +81,7 @@ func wireHostInputs(
 
 // startRefreshLoop launches the goroutine that redraws the table on each
 // tick, delivers external log/close and count-completion signals, and stops
-// when the owning session stops. TD-23③:
-// extracted out of Run() so its ~50 lines don't compete with construction
-// for reading attention.
+// when the owning session stops.
 func startRefreshLoop(
 	app *tview.Application, tr *tableRenderer, footer *tview.TextView,
 	interval time.Duration,

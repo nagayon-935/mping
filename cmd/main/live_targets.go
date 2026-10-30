@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -11,12 +10,16 @@ import (
 )
 
 type dynamicPinger interface {
-	AddTarget(*stats.TargetStats, string, *int) error
+	AddTarget(*stats.TargetStats, string) error
 	RemoveTarget(*stats.TargetStats)
 	WorkerEvents() <-chan struct{}
 	WorkersFinished() bool
 	Done() <-chan struct{}
 }
+
+// The supervisor finds live-edit support by type assertion, so a signature
+// drift would silently disable live edits instead of failing the build.
+var _ dynamicPinger = (*pinger.Pinger)(nil)
 
 type targetSnapshot struct {
 	targets          []*stats.TargetStats
@@ -61,7 +64,7 @@ func (s *supervisor) liveTargets() ui.TargetSet {
 		return ui.TargetSet{}
 	}
 	th := v.config.thresholds
-	return ui.TargetSet{Targets: v.targets, Groups: v.groups, Thresholds: &th}
+	return ui.TargetSet{Targets: v.targets, Groups: v.groups, Thresholds: &th, Route: uiRouteMode(v.config)}
 }
 
 func (s *supervisor) editTargets(edit func(*supervisor) error) error {
@@ -69,12 +72,7 @@ func (s *supervisor) editTargets(edit func(*supervisor) error) error {
 }
 
 func (s *supervisor) registerDynamicTarget(p dynamicPinger, t *stats.TargetStats, spec targetSpec) error {
-	var dscp *int
-	if spec.DSCP != "" {
-		value, _ := pinger.ParseDSCP(spec.DSCP)
-		dscp = &value
-	}
-	return p.AddTarget(t, spec.resolveAddr(), dscp)
+	return p.AddTarget(t, spec.resolveAddr())
 }
 
 func (s *supervisor) attachTargetMonitors(t *stats.TargetStats) {
@@ -82,11 +80,8 @@ func (s *supervisor) attachTargetMonitors(t *stats.TargetStats) {
 		t.SetMeasurementState("stopped")
 		return
 	}
-	if s.cfg.traceEnabled {
-		s.startTargetTrace(s.p, t)
-	}
-	if s.mtrEngine != nil {
-		s.mtrEngine.AddTarget(t)
+	if s.routeEngine != nil {
+		s.routeEngine.AddTarget(t)
 	}
 	if s.portChecker != nil {
 		s.portChecker.AddTarget(t)
@@ -95,9 +90,8 @@ func (s *supervisor) attachTargetMonitors(t *stats.TargetStats) {
 
 func (s *supervisor) detachTargetMonitors(p dynamicPinger, t *stats.TargetStats, reason string) {
 	if p != nil {
-		s.stopTargetTrace(t)
-		if s.mtrEngine != nil {
-			s.mtrEngine.RemoveTarget(t)
+		if s.routeEngine != nil {
+			s.routeEngine.RemoveTarget(t)
 		}
 		if s.portChecker != nil {
 			s.portChecker.RemoveTarget(t)
@@ -220,47 +214,10 @@ func (s *supervisor) removeTarget(i int) error {
 	return nil
 }
 
-type traceRun struct {
-	cancel context.CancelFunc
-	done   chan struct{}
-}
-
-func (s *supervisor) startTargetTrace(p tracer, t *stats.TargetStats) {
-	if s.traces == nil {
-		s.traces = make(map[*stats.TargetStats]*traceRun)
-	}
-	parent := s.traceCtx
-	if parent == nil {
-		parent = context.Background()
-	}
-	ctx, cancel := context.WithCancel(parent)
-	r := &traceRun{cancel: cancel, done: make(chan struct{})}
-	s.traces[t] = r
-	wg := s.traceWG
-	if wg != nil {
-		wg.Add(1)
-	}
-	go func() {
-		defer close(r.done)
-		if wg != nil {
-			defer wg.Done()
-		}
-		runTraceroutes(ctx, p, t)
-	}()
-}
-
-func (s *supervisor) stopTargetTrace(t *stats.TargetStats) {
-	if r := s.traces[t]; r != nil {
-		r.cancel()
-		<-r.done
-		delete(s.traces, t)
-	}
-}
-
 func (s *supervisor) deleteTargetID(id uint64) error {
 	return s.editTargets(func(s *supervisor) error {
 		for i, t := range s.cfg.targets {
-			if t.ID == id {
+			if t.ID() == id {
 				return s.removeTarget(i)
 			}
 		}

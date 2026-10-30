@@ -84,8 +84,7 @@ func TestRunWithMTUIPv6Warning(t *testing.T) {
 // the (-c present/absent) x (total loss/partial/full response) matrix from
 // the exit-code spec: only a bounded (-c) run that received zero replies on
 // every target should exit exitCodeNoResponse; everything else stays 0. The
-// pre-existing error paths (return 1) are untouched by this feature and are
-// not re-tested here.
+// error paths (return 1) are covered elsewhere.
 func TestRun_ExitCode(t *testing.T) {
 	sentOnly := func(targets []*stats.TargetStats) {
 		for _, tgt := range targets {

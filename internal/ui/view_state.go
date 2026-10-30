@@ -3,15 +3,15 @@ package ui
 import (
 	"time"
 
+	"github.com/nagayon-935/mping/internal/stats"
+
 	"github.com/rivo/tview"
 )
 
-// viewState bundles the five render-state containers that Run() previously
-// declared as separate local variables and distributed as individual
-// pointers to three destinations: newTableRenderer (ballooning its
-// parameter list), inputHandlerDeps (five more individual pointer fields),
-// and the port/HTTP monitor pane render closures. A single *viewState now
-// flows to all three instead (TD-51).
+// viewState bundles the render-state containers shared by the table
+// renderer, the key handler (inputHandlerDeps) and the port/HTTP monitor
+// pane render closures. All three hold the same *viewState so they observe
+// each other's reassignments.
 //
 // Concurrency invariant: none of viewState's fields are guarded by a mutex.
 // This is safe only because every mutation happens on tview's single
@@ -27,11 +27,15 @@ type viewState struct {
 	alertState       map[string]alertFlags
 	lastPortStatuses map[string]string
 	lastHTTPStatuses map[string]string
+	// thresholds are the run's current thresholds, for the HTTP checks,
+	// which belong to no target (targets carry their own in TargetView).
+	thresholds stats.Thresholds
 }
 
 func newViewState(errorView *tview.TextView) *viewState {
 	return &viewState{
 		errorView:        errorView,
+		thresholds:       stats.DefaultThresholds(),
 		lastLossTimes:    make(map[string]time.Time),
 		alertState:       make(map[string]alertFlags),
 		lastPortStatuses: make(map[string]string),
@@ -45,7 +49,8 @@ func (vs *viewState) appendLog(msg string) {
 	appendErrorLog(&vs.errorLogs, vs.errorView, msg)
 }
 
-// reset clears all five containers — the 'R' key handler's log/state wipe.
+// reset clears the log and the status caches — the 'R' key handler's
+// log/state wipe. The thresholds are configuration and stay.
 func (vs *viewState) reset() {
 	vs.errorLogs = []string{}
 	vs.errorView.SetText("")

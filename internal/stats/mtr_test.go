@@ -419,3 +419,37 @@ func TestBuildFlapDescListsEveryChangedHopWithStarsForSilence(t *testing.T) {
 		t.Fatalf("buildFlapDesc = %q, want %q", got, want)
 	}
 }
+
+func TestMTRStats_PTRFollowsTheResponder(t *testing.T) {
+	m := NewMTRStats()
+	m.EnsureLen(1)
+	m.SetIP(1, "10.0.0.1", "", "", "")
+	m.SetPTR(1, "10.0.0.2", "other.example") // not this hop's responder
+	if got := m.View()[0].PTR; got != "" {
+		t.Fatalf("PTR for another IP was recorded: %q", got)
+	}
+	m.SetPTR(1, "10.0.0.1", "gw.example")
+	if got := m.View()[0].PTR; got != "gw.example" {
+		t.Fatalf("PTR = %q, want gw.example", got)
+	}
+	m.RecordReply(1, "10.0.0.1", "", "", "", time.Millisecond)
+	if got := m.View()[0].PTR; got != "gw.example" {
+		t.Fatalf("a reply from the same responder dropped the PTR: %q", got)
+	}
+	m.RecordReply(1, "10.0.0.9", "", "", "", time.Millisecond)
+	if got := m.View()[0].PTR; got != "" {
+		t.Fatalf("PTR of the previous responder kept: %q", got)
+	}
+}
+
+func TestMTRStats_ErrorIsClearedByReset(t *testing.T) {
+	m := NewMTRStats()
+	m.SetError("resolve example.invalid: no such host")
+	if got := m.Error(); got != "resolve example.invalid: no such host" {
+		t.Fatalf("Error() = %q", got)
+	}
+	m.Reset()
+	if got := m.Error(); got != "" {
+		t.Fatalf("Error() after Reset = %q, want empty", got)
+	}
+}

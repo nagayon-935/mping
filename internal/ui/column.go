@@ -24,13 +24,10 @@ type columnRowContext struct {
 // column describes one main-table column: its display properties, how its
 // cell text and color are derived from a row, and where it sits in the
 // shrink/grow priority order when the terminal is too narrow or too wide for
-// every column's desired width.
-//
-// TD-21: replaces the five parallel headers/aligns/base/min/max slices plus
-// the hardcoded-index shrinkOrder/growOrder arrays in tui_helpers.go, which
-// silently pointed at the wrong column whenever the DNS/ASN columns were
-// enabled (their presence shifts every later column's real index, but the
-// priority arrays didn't know that).
+// every column's desired width. Keeping the priority on the column itself
+// (rather than in index-based arrays) means the optional DNS/ASN columns
+// shifting later columns' positions cannot point width adjustment at the
+// wrong column.
 type column struct {
 	name           string
 	align          int
@@ -54,11 +51,10 @@ type column struct {
 }
 
 // mainTableColumns returns the Ping Monitor table's column schema in display
-// order. DNS/ASN are inserted after Dst IP only when enabled, exactly as the
-// legacy parallel-slice construction did — but every column now carries its
-// own shrink/grow priority, so enabling them can no longer desync width
-// adjustment from the wrong column.
-func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled, dscpEnabled bool) []column {
+// order. DNS/ASN are inserted after Dst IP only when enabled; every column
+// carries its own shrink/grow priority, so enabling them cannot desync width
+// adjustment.
+func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled bool) []column {
 	cols := []column{
 		{
 			name: "Src IP", align: tview.AlignLeft, base: 6, min: 4, max: 45,
@@ -102,16 +98,6 @@ func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled, dscpEnabled bool) []co
 			render: func(ctx columnRowContext) string { return ctx.view.PTR },
 		})
 	}
-	if dscpEnabled {
-		cols = append(cols, column{
-			// DSCP mirrors TTL: a fixed-width, always-populated column
-			// (once a reply arrives) rather than a "dynamic" one, since its
-			// values are short names/numbers, not variable-length text.
-			name: "DSCP", align: tview.AlignRight, base: 6, min: 4, max: 8,
-			shrinkPriority: 29, growPriority: 19,
-			render: func(ctx columnRowContext) string { return dscpDisplayString(ctx.view.LastDSCP) },
-		})
-	}
 	cols = append(cols,
 		column{
 			name: "Success", align: tview.AlignRight, base: 8, min: 5, max: 10,
@@ -128,7 +114,7 @@ func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled, dscpEnabled bool) []co
 			shrinkPriority: 70, growPriority: 80, bold: true,
 			render: func(ctx columnRowContext) string { return fmt.Sprintf("%.1f%%", ctx.lossRate) },
 			color: func(ctx columnRowContext, text string) (tcell.Color, bool) {
-				return lossColorForRate(ctx.lossRate), true
+				return levelColor(ctx.view.Levels.Loss), true
 			},
 		},
 		column{
@@ -136,7 +122,7 @@ func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled, dscpEnabled bool) []co
 			shrinkPriority: 60, growPriority: 50,
 			render: func(ctx columnRowContext) string { return formatRTT(ctx.view.LastRTT) },
 			color: func(ctx columnRowContext, text string) (tcell.Color, bool) {
-				return rttColorForRTT(ctx.view.LastRTT), true
+				return levelColor(ctx.view.Levels.LastRTT), true
 			},
 		},
 		column{
@@ -149,7 +135,7 @@ func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled, dscpEnabled bool) []co
 			shrinkPriority: 40, growPriority: 70,
 			render: func(ctx columnRowContext) string { return formatRTT(ctx.view.Jitter) },
 			color: func(ctx columnRowContext, text string) (tcell.Color, bool) {
-				return jitterColorForJitter(ctx.view.Jitter), true
+				return levelColor(ctx.view.Levels.Jitter), true
 			},
 		},
 		column{
@@ -212,7 +198,7 @@ func columnsByName(cols []column, name string) int {
 }
 
 // renderRowTexts renders every column's cell text for one row from a single
-// shared context, replacing the former buildFullColumns (TD-21③).
+// shared context.
 func renderRowTexts(cols []column, ctx columnRowContext) []string {
 	texts := make([]string, len(cols))
 	for i, c := range cols {
@@ -222,10 +208,8 @@ func renderRowTexts(cols []column, ctx columnRowContext) []string {
 }
 
 // renderRowCells builds formatted, colored table cells for one row from
-// already-rendered text, replacing the former buildFullRowCells and its
-// hardcoded "column index + dns/asn offset" color switch (TD-21③): each
-// column now owns its own color logic, so it can't drift out of sync with
-// where DNS/ASN happen to sit.
+// already-rendered text. Each column owns its own color logic, so it can't
+// drift out of sync with where DNS/ASN happen to sit.
 func renderRowCells(cols []column, texts []string, widths, aligns []int, ctx columnRowContext, rowColor tcell.Color) []*tview.TableCell {
 	cells := make([]*tview.TableCell, len(cols))
 	for i, c := range cols {

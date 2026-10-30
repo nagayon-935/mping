@@ -18,27 +18,27 @@ func TestSelectionKeepsIdentityAndSkipsGroupHeadings(t *testing.T) {
 	pane := tview.NewFlex().AddItem(table, 0, 1, true)
 	pane.SetRect(0, 0, 220, 40)
 	table.SetRect(0, 0, 218, 38)
-	tr := newTableRenderer([]*stats.TargetStats{a, b, c}, "", "", 56, false, false, false, []TargetGroup{{Name: "group", Indices: []int{0, 1}}}, table, pane, nil, newViewState(tview.NewTextView()))
+	tr := newTableRenderer([]*stats.TargetStats{a, b, c}, "", "", 56, false, false, []TargetGroup{{Name: "group", Indices: []int{0, 1}}}, table, pane, nil, newViewState(tview.NewTextView()))
 	tr.selectionEnabled = true
-	tr.selectedID = c.ID
+	tr.selectedID = c.ID()
 	tr.update()
 	tr.moveSelection(tcell.KeyDown)
-	if tr.selectedID != a.ID {
+	if tr.selectedID != a.ID() {
 		t.Fatal("selection did not follow displayed group order")
 	}
 	tr.moveSelection(tcell.KeyDown)
-	if tr.selectedID != b.ID {
+	if tr.selectedID != b.ID() {
 		t.Fatal("duplicate names conflated")
 	}
 	tr.targets = []*stats.TargetStats{c, b, a}
 	tr.groups = nil
 	tr.update()
-	if tr.selectedID != b.ID {
+	if tr.selectedID != b.ID() {
 		t.Fatal("selection changed during reorder")
 	}
 	tr.targets = []*stats.TargetStats{c, a}
 	tr.update()
-	if tr.selectedTarget() == nil || tr.selectedID == b.ID {
+	if tr.selectedTarget() == nil || tr.selectedID == b.ID() {
 		t.Fatal("removed selection remained active")
 	}
 	pane.SetRect(0, 0, 70, 30)
@@ -48,7 +48,7 @@ func TestSelectionKeepsIdentityAndSkipsGroupHeadings(t *testing.T) {
 		t.Fatal("fixture did not enter compact layout")
 	}
 	tr.moveSelection(tcell.KeyDown)
-	if tr.selectedID != a.ID || tr.selectedRow() != 3 {
+	if tr.selectedID != a.ID() || tr.selectedRow() != 3 {
 		t.Fatal("compact two-row selection incorrect")
 	}
 }
@@ -84,7 +84,7 @@ func TestDetailsSimulationSelectsDuplicateAndReturnsAfterDeletion(t *testing.T) 
 	h.wait("same")
 	h.key(tcell.KeyDown)
 	h.key(tcell.KeyEnter)
-	h.wait(fmt.Sprintf("Target #%d", b.ID))
+	h.wait(fmt.Sprintf("Target #%d", b.ID()))
 	h.key(tcell.KeyPgDn)
 	h.wait("Selected B event")
 	h.press('d')
@@ -103,7 +103,7 @@ func TestDetailsSimulationSelectsDuplicateAndReturnsAfterDeletion(t *testing.T) 
 	h.wait("このホストを削除しますか？")
 	h.key(tcell.KeyTab)
 	h.key(tcell.KeyEnter)
-	if id := recvWithin(t, deleted, "the delete callback"); id != b.ID {
+	if id := recvWithin(t, deleted, "the delete callback"); id != b.ID() {
 		t.Fatal("deleted wrong duplicate")
 	}
 	h.wait("Ping Monitor")
@@ -114,14 +114,12 @@ func TestDetailsOptionalSectionsFollowOptionsEvenWithCachedData(t *testing.T) {
 	target := stats.NewTargetStats("router")
 	target.SetASNInfo("AS64500", "JP", "Example")
 	target.SetPTR("router.example")
-	target.DSCP = "EF"
 	target.SetPMTU(1400)
-	target.SetTraceHops([]string{"192.0.2.1"})
-	target.MTR().EnsureLen(1)
-	target.SetPortResults([]*stats.PortCheckResult{{Port: 443, Protocol: "tcp"}})
+	setRouteHops(target, "192.0.2.1")
+	target.SetPortResults([]*stats.PortCheckResult{stats.NewPortCheckResult(443, "tcp")})
 	off := renderHostDetails(target, RunOptions{})
-	on := renderHostDetails(target, RunOptions{ASNEnabled: true, PTREnabled: true, DSCPEnabled: true, MTUEnabled: true, TraceEnabled: true, MTREnabled: true, PortEnabled: true})
-	for _, label := range []string{"ASN:", "PTR:", "DSCP:", "PMTU payload:", "[yellow]Route", "[yellow]MTR", "[yellow]Ports"} {
+	on := renderHostDetails(target, RunOptions{ASNEnabled: true, PTREnabled: true, MTUEnabled: true, Route: RoutePath, PortEnabled: true})
+	for _, label := range []string{"ASN:", "PTR:", "PMTU payload:", "[yellow]Route", "[yellow]Ports"} {
 		if strings.Contains(off, label) {
 			t.Fatalf("disabled option shown: %s", label)
 		}
@@ -129,7 +127,33 @@ func TestDetailsOptionalSectionsFollowOptionsEvenWithCachedData(t *testing.T) {
 			t.Fatalf("enabled option hidden: %s", label)
 		}
 	}
+	if perHop := renderHostDetails(target, RunOptions{Route: RouteMonitor}); !strings.Contains(perHop, "[yellow]MTR") || strings.Contains(perHop, "[yellow]Route") {
+		t.Fatalf("per-hop mode should show the MTR section instead of the route line:\n%s", perHop)
+	}
 	if detailTimestamp(time.Time{}) != "–" {
 		t.Fatal("zero timestamp shown as a year-one date")
 	}
+}
+
+// TestDetailsPageKeyRouting checks the details page's own keys: Tab moves
+// between its panes, other keys stay with the page, the global R shortcut
+// still reaches the reset callback, and Esc returns to the overview.
+func TestDetailsPageKeyRouting(t *testing.T) {
+	target := stats.NewTargetStats("router")
+	resets := make(chan struct{}, 1)
+	h := startTUI(t, RunOptions{Targets: []*stats.TargetStats{target}, OnReset: func() { resets <- struct{}{} }}, 140, 45)
+	h.wait("router")
+	h.key(tcell.KeyEnter)
+	h.wait(fmt.Sprintf("Target #%d", target.ID()))
+
+	h.key(tcell.KeyTab) // to the graph
+	h.key(tcell.KeyTab) // and back to the text
+	h.press('x')        // not a details or global key: no effect
+	h.press('R')
+	recvWithin(t, resets, "the reset callback")
+	h.wait(fmt.Sprintf("Target #%d", target.ID()))
+
+	h.key(tcell.KeyEscape)
+	h.waitWithout("Ping Monitor", fmt.Sprintf("Target #%d", target.ID()))
+	h.quit()
 }

@@ -16,10 +16,6 @@ import (
 // the error log and per-host alert/status caches) — pointers because both
 // sides must observe the same reassignment (e.g. the 'R' key resetting
 // errorLogs to a fresh slice).
-//
-// TD-23②: extracted out of Run()'s ~170-line app.SetInputCapture closure so
-// the key-handling logic lives in its own file, independently readable from
-// pane/table construction.
 type inputHandlerDeps struct {
 	app             *tview.Application
 	table           *tview.Table
@@ -42,8 +38,7 @@ type inputHandlerDeps struct {
 	openDetails    func()
 	deleteSelected func()
 
-	traceEnabled bool
-	mtrEnabled   bool
+	routeEnabled bool
 	portEnabled  bool
 	httpEnabled  bool
 
@@ -51,8 +46,7 @@ type inputHandlerDeps struct {
 	onStop           func()
 	measurementState func() string
 	onRestart        func() error
-	onResetTrace     func()
-	onResetMTR       func()
+	onResetRoute     func()
 	onResetPort      func()
 	onResetHTTP      func()
 	onAddHost        func(host string) error
@@ -264,16 +258,8 @@ func (h *inputHandler) reset() {
 		if !running {
 			return
 		}
-		if h.traceEnabled {
-			for _, t := range h.targets {
-				t.SetTraceHops(nil)
-			}
-			if h.onResetTrace != nil {
-				h.onResetTrace()
-			}
-		}
-		if h.mtrEnabled && h.onResetMTR != nil {
-			h.onResetMTR()
+		if h.routeEnabled && h.onResetRoute != nil {
+			h.onResetRoute()
 		}
 		if h.portEnabled && h.onResetPort != nil {
 			h.onResetPort()

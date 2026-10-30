@@ -5,15 +5,16 @@ import (
 	"time"
 )
 
-// HTTPCheckResult accumulates per-URL HTTP health check statistics.
+// HTTPCheckResult accumulates per-URL HTTP health check statistics. Its
+// fields are guarded by mu; read them through GetView.
 type HTTPCheckResult struct {
-	URL        string
-	StatusCode int
-	Status     string // "Up", "Down", "Error", "Checking..."
-	RTT        time.Duration
-	UpCount    int
-	DownCount  int
-	LastChange time.Time
+	url        string
+	statusCode int
+	status     string // "Up", "Down", "Error", "Checking..."
+	lastRTT    time.Duration
+	upCount    int
+	downCount  int
+	lastChange time.Time
 
 	rtt rttAccumulator
 
@@ -37,16 +38,16 @@ type HTTPCheckView struct {
 
 // NewHTTPCheckResult creates a new HTTPCheckResult for the given URL.
 func NewHTTPCheckResult(url string) *HTTPCheckResult {
-	return &HTTPCheckResult{URL: url, Status: "Checking..."}
+	return &HTTPCheckResult{url: url, status: "Checking..."}
 }
 
-// SetResult records the outcome of one HTTP health check.
-// statusCode is 0 when err is non-nil.
+// URL returns the checked URL, which never changes after construction.
+func (r *HTTPCheckResult) URL() string { return r.url }
+
+// SetResult records the outcome of one HTTP health check: a 2xx or 3xx
+// response is Up, any other response Down. statusCode is 0 when err is
+// non-nil.
 func (r *HTTPCheckResult) SetResult(statusCode int, rtt time.Duration, err error) {
-	r.SetExpectedResult(statusCode, rtt, err, statusCode >= 200 && statusCode < 400)
-}
-
-func (r *HTTPCheckResult) SetExpectedResult(statusCode int, rtt time.Duration, err error, expected bool) {
 	defer bumpGeneration()
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -55,25 +56,25 @@ func (r *HTTPCheckResult) SetExpectedResult(statusCode int, rtt time.Duration, e
 	switch {
 	case err != nil:
 		status = "Error"
-	case expected:
+	case statusCode >= 200 && statusCode < 400:
 		status = "Up"
 	default:
 		status = "Down"
 	}
 
-	if status != r.Status {
-		r.LastChange = time.Now()
+	if status != r.status {
+		r.lastChange = time.Now()
 	}
-	r.Status = status
-	r.StatusCode = statusCode
-	r.RTT = rtt
+	r.status = status
+	r.statusCode = statusCode
+	r.lastRTT = rtt
 
 	switch status {
 	case "Up":
-		r.UpCount++
+		r.upCount++
 		r.rtt.record(rtt)
 	default:
-		r.DownCount++
+		r.downCount++
 	}
 }
 
@@ -82,16 +83,16 @@ func (r *HTTPCheckResult) GetView() HTTPCheckView {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return HTTPCheckView{
-		URL:        r.URL,
-		StatusCode: r.StatusCode,
-		Status:     r.Status,
-		RTT:        r.RTT,
+		URL:        r.url,
+		StatusCode: r.statusCode,
+		Status:     r.status,
+		RTT:        r.lastRTT,
 		MinRTT:     r.rtt.min,
 		AvgRTT:     r.rtt.avg(),
 		MaxRTT:     r.rtt.max,
 		StdDev:     r.rtt.stddev(),
-		UpCount:    r.UpCount,
-		DownCount:  r.DownCount,
-		LastChange: r.LastChange,
+		UpCount:    r.upCount,
+		DownCount:  r.downCount,
+		LastChange: r.lastChange,
 	}
 }

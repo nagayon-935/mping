@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>mping</title>
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -21,7 +20,6 @@
     <span class="spacer"></span>
     <button id="open-shortcuts" class="btn" type="button" aria-label="Keyboard shortcuts" aria-haspopup="dialog">?</button>
     <button id="open-auth" class="btn" type="button" aria-haspopup="dialog">Enable controls</button>
-    <button id="toggle-actions" class="btn" type="button" aria-expanded="false" aria-controls="measurement-controls" hidden>Actions</button>
     <span id="measurement-controls" hidden>
       <button id="open-add" class="btn" type="button" aria-haspopup="dialog">Add host</button>
       <button id="open-report" class="btn" type="button" aria-haspopup="dialog">Report</button>
@@ -91,7 +89,7 @@
     <label class="report-field" for="report-format">Format
       <select id="report-format">
         <option value="json">JSON (.json)</option>
-        <option value="text">Text (.txt)</option>
+        <option value="csv">CSV (.csv), one row per target</option>
       </select>
     </label>
     <label class="report-field" for="report-name">File name

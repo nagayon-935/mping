@@ -7,8 +7,8 @@ import "sync/atomic"
 // bumpGeneration's call sites). The UI's refresh loop compares consecutive
 // reads of Generation() to decide whether anything actually changed since
 // the last tick, without needing a separate dirty flag threaded through
-// every producer (ping worker, MTR engine, port/HTTP checkers, traceroute,
-// ASN lookup, PMTU discovery).
+// every producer (ping worker, route engine, port/HTTP checkers, ASN
+// lookup, PMTU discovery).
 //
 // A single shared counter (rather than one per TargetStats) is deliberate:
 // it can't miss a source the way summing several independently-added

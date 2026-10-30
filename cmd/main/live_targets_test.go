@@ -15,7 +15,7 @@ func TestLiveEditsKeepStatisticsAndStoppedState(t *testing.T) {
 	a.OnSuccess(5*time.Millisecond, 64)
 	a.MTR().EnsureLen(1)
 	a.MTR().RecordReply(1, "1.1.1.1", "", "", "", time.Millisecond)
-	port := &stats.PortCheckResult{Port: 443, Protocol: "tcp"}
+	port := stats.NewPortCheckResult(443, "tcp")
 	port.SetResult("Open", time.Millisecond)
 	a.SetPortResults([]*stats.PortCheckResult{port})
 	s := newSupervisor(supervisorConfig{targets: []*stats.TargetStats{a, b}, specs: []targetSpec{{Host: "a"}, {Host: "b"}}, groups: []ui.TargetGroup{{Name: "group", Indices: []int{0, 1}}}})
@@ -41,7 +41,7 @@ func TestLiveEditsKeepStatisticsAndStoppedState(t *testing.T) {
 	if err := s.addHost("b"); err != nil {
 		t.Fatal(err)
 	}
-	if s.liveTargets().Targets[2].ID == b.ID {
+	if s.liveTargets().Targets[2].ID() == b.ID() {
 		t.Fatal("re-added target reused identity")
 	}
 	if !reflect.DeepEqual(a.GetView(), before) {
@@ -53,7 +53,7 @@ func TestLiveEditFailureAndAmbiguousDeletionPreserveTargets(t *testing.T) {
 	a, b := stats.NewTargetStats("same"), stats.NewTargetStats("same")
 	p := newLiveFakePinger()
 	p.failAdd = true
-	s := newSupervisor(supervisorConfig{targets: []*stats.TargetStats{a, b}, specs: []targetSpec{{Host: "same", DSCP: "EF"}, {Host: "same", DSCP: "CS0"}}, makePinger: func(int) pingerController { return p }})
+	s := newSupervisor(supervisorConfig{targets: []*stats.TargetStats{a, b}, specs: []targetSpec{{Host: "same"}, {Host: "same"}}, makePinger: func(int) pingerController { return p }})
 	s.Start()
 	defer s.Shutdown()
 	if err := s.startPinger(); err != nil {

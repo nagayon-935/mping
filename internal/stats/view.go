@@ -6,12 +6,16 @@ import (
 
 // TargetView represents a read-only snapshot of the stats for UI rendering.
 type TargetView struct {
-	Health           Health
+	Health Health
+	// Thresholds are the ones this target is judged by (its health policy's),
+	// and Levels classify the latest statistics against them, so every
+	// presentation colours the same values the same way.
+	Thresholds       Thresholds
+	Levels           Levels
 	MeasurementState string
 	ID               uint64
 	StartedAt        time.Time
 	WindowStartedAt  time.Time
-	DSCP             string
 	IPHistory        []IPChange
 	IPChanges        int
 	Cancelled        int
@@ -26,12 +30,12 @@ type TargetView struct {
 	IfaceMTU         int
 	PMTU             int
 	PMTUBottleneckIP string
-	TraceHops        []string
 	PortResults      []PortCheckView
 	MTRHops          []HopView
 	MTRFlapCount     int
 	MTRLastFlapAt    time.Time
 	MTRLastFlapDesc  string
+	MTRError         string // why the route could not be discovered, "" once it was
 	Sent             int
 	Recv             int
 	Loss             int
@@ -45,7 +49,6 @@ type TargetView struct {
 	Jitter           time.Duration // From RFC 1889 state
 	History          []time.Duration
 	LastTTL          int
-	LastDSCP         int
 	LastLossTime     time.Time
 	LastError        string
 }
@@ -56,15 +59,13 @@ type TargetView struct {
 // ReportData (full history plus events) so they stay in sync automatically.
 func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 	var avg time.Duration
-	if t.Recv > 0 {
-		avg = t.rtt.sum / time.Duration(t.Recv)
+	if t.recv > 0 {
+		avg = t.rtt.sum / time.Duration(t.recv)
 	}
 
 	histCopy := historyFn()
-	traceCopy := make([]string, len(t.TraceHops))
-	copy(traceCopy, t.TraceHops)
-	portCopy := make([]PortCheckView, len(t.PortResults))
-	for i, r := range t.PortResults {
+	portCopy := make([]PortCheckView, len(t.portResults))
+	for i, r := range t.portResults {
 		portCopy[i] = r.GetView()
 	}
 
@@ -73,51 +74,53 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 	var mtrHops []HopView
 	var mtrFlapCount int
 	var mtrLastFlapAt time.Time
-	var mtrLastFlapDesc string
+	var mtrLastFlapDesc, mtrError string
 	if t.mtrStats != nil {
 		mtrHops = t.mtrStats.View()
 		mtrFlapCount, mtrLastFlapAt, mtrLastFlapDesc = t.mtrStats.FlapInfo()
+		mtrError = t.mtrStats.Error()
 	}
 
+	th := t.healthPolicyLocked().Thresholds
 	return TargetView{
 		Health: t.healthViewLocked(), MeasurementState: t.measurementState,
-		DSCP: t.DSCP, IPHistory: append([]IPChange(nil), t.IPHistory...), IPChanges: t.IPChanges,
-		ID:               t.ID,
-		StartedAt:        t.StartedAt,
-		WindowStartedAt:  t.WindowStartedAt,
-		Cancelled:        t.Cancelled,
+		Thresholds: th, Levels: th.levels(t.recv, t.loss, t.lastRTT, time.Duration(t.jitter)),
+		IPHistory: append([]IPChange(nil), t.ipHistory...), IPChanges: t.ipChanges,
+		ID:               t.id,
+		StartedAt:        t.startedAt,
+		WindowStartedAt:  t.windowStartedAt,
+		Cancelled:        t.cancelled,
 		Host:             t.displayNameLocked(),
-		IP:               t.IP,
-		ASN:              t.ASN,
-		Country:          t.Country,
-		Org:              t.Org,
-		PTR:              t.PTR,
-		DNSServer:        t.DNSServer,
-		IfaceMTU:         t.IfaceMTU,
-		PMTU:             t.PMTU,
-		PMTUBottleneckIP: t.PMTUBottleneckIP,
-		TraceHops:        traceCopy,
+		IP:               t.ip,
+		ASN:              t.asn,
+		Country:          t.country,
+		Org:              t.org,
+		PTR:              t.ptr,
+		DNSServer:        t.dnsServer,
+		IfaceMTU:         t.ifaceMTU,
+		PMTU:             t.pmtu,
+		PMTUBottleneckIP: t.pmtuBottleneckIP,
 		PortResults:      portCopy,
 		MTRHops:          mtrHops,
 		MTRFlapCount:     mtrFlapCount,
 		MTRLastFlapAt:    mtrLastFlapAt,
 		MTRLastFlapDesc:  mtrLastFlapDesc,
-		Sent:             t.Sent,
-		Recv:             t.Recv,
-		Loss:             t.Loss,
-		Duplicates:       t.Duplicates,
-		LateReplies:      t.LateReplies,
-		LastRTT:          t.LastRTT,
+		MTRError:         mtrError,
+		Sent:             t.sent,
+		Recv:             t.recv,
+		Loss:             t.loss,
+		Duplicates:       t.duplicates,
+		LateReplies:      t.lateReplies,
+		LastRTT:          t.lastRTT,
 		MinRTT:           t.rtt.min,
 		MaxRTT:           t.rtt.max,
 		AvgRTT:           avg,
 		StdDev:           t.rtt.stddev(),
 		Jitter:           time.Duration(t.jitter),
 		History:          histCopy,
-		LastTTL:          t.LastTTL,
-		LastDSCP:         t.LastDSCP,
-		LastLossTime:     t.LastLossTime,
-		LastError:        t.LastError,
+		LastTTL:          t.lastTTL,
+		LastLossTime:     t.lastLossTime,
+		LastError:        t.lastError,
 	}
 }
 

@@ -11,22 +11,16 @@ import (
 
 // targetSpec identifies one monitored target as it flows through cmd/main's
 // host pipeline: CLI/YAML hosts → --resolve-all expansion → per-iteration
-// target construction (TD-24). Host is what the user configured (hostname
+// target construction. Host is what the user configured (hostname
 // or literal IP); PinnedIP is set only for a --resolve-all expansion entry
 // that pins this entry to one specific resolved address distinct from Host.
 type targetSpec struct {
 	Host     string
 	PinnedIP string
-	// Name is an optional display name from the hosts file (hostEntry.Name).
+	// Name is an optional display name from the hosts file (hostsfile.Entry.Name).
 	// When set it replaces Host in display(); the pinger still reaches
 	// Host, via the display→address map built by buildPingerOptions.
 	Name string
-	// DSCP is this target's raw per-target dscp: override (a name like
-	// "EF" or a bare number), sourced from a hosts-file mapping entry
-	// (hostEntry.DSCP). "" means no override — the target falls back to
-	// config.dscp, mping's global default. Parsed lazily by
-	// buildPingerOptions, same rationale as config.dscp.
-	DSCP string
 }
 
 // resolveAddr returns the address DNS/dial resolution should use: the
@@ -112,7 +106,7 @@ func expandTargets(specs []targetSpec, groups []ui.TargetGroup, cfg config) ([]t
 		startIdx := len(expandedSpecs)
 
 		for _, ip := range ips {
-			expanded := targetSpec{Host: spec.Host, Name: spec.Name, DSCP: spec.DSCP}
+			expanded := targetSpec{Host: spec.Host, Name: spec.Name}
 			if spec.Host != ip {
 				expanded.PinnedIP = ip
 			}

@@ -2,9 +2,9 @@ package ui
 
 import "testing"
 
-// TestMonitorPane_Refresh_SkipsSetTextWhenUnchanged guards the P5 fix:
-// refresh() must still call render() every tick (so the pane's underlying
-// data stays current), but should skip the tview SetText call when the
+// TestMonitorPane_Refresh_SkipsSetTextWhenUnchanged checks that refresh()
+// calls render() every tick (so the pane's underlying data stays
+// current), but skips the tview SetText call when the
 // rendered content is byte-for-byte identical to the previous tick.
 func TestMonitorPane_Refresh_SkipsSetTextWhenUnchanged(t *testing.T) {
 	renderCalls := 0
@@ -58,8 +58,8 @@ func TestMonitorPane_Refresh_UpdatesSetTextWhenChanged(t *testing.T) {
 	}
 }
 
-// TestMonitorPane_Refresh_DisabledIsNoOp confirms the pre-existing disabled
-// short-circuit still works after adding lastText caching.
+// TestMonitorPane_Refresh_DisabledIsNoOp confirms a disabled pane never
+// renders, lastText caching notwithstanding.
 func TestMonitorPane_Refresh_DisabledIsNoOp(t *testing.T) {
 	renderCalls := 0
 	mp := newMonitorPane(false, " Test Monitor ", func(availW int) string {

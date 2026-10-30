@@ -1,12 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strings"
 
+	"github.com/nagayon-935/mping/internal/hostsfile"
 	"github.com/nagayon-935/mping/internal/pinger"
-	ui "github.com/nagayon-935/mping/internal/ui"
+	"github.com/nagayon-935/mping/internal/stats"
 )
 
 // Interval bounds shared by the YAML validator and the -i flag check, so the
@@ -22,21 +24,24 @@ const (
 
 // Validate the effective configuration after CLI overrides are applied. This
 // is shared by initial loading and reload admission, before any probes stop.
-func validateMergedHosts(cfg config, hosts []hostEntry, groups []groupYAML, cliHosts []string) error {
-	allHosts := append([]hostEntry(nil), hosts...)
+func validateMergedHosts(cfg config, hosts []hostsfile.Entry, groups []hostsfile.Group, cliHosts []string) error {
+	allHosts := append([]hostsfile.Entry(nil), hosts...)
 	for _, host := range cliHosts {
-		allHosts = append(allHosts, hostEntry{Host: host})
+		allHosts = append(allHosts, hostsfile.Entry{Host: host})
 	}
 	duration := cfg.duration.String()
-	doc := hostsFileYAML{
+	doc := hostsfile.Document{
 		Hosts: allHosts, Groups: groups,
 		IntervalMs: &cfg.intervalMs, TimeoutMs: &cfg.timeoutMs,
 		PacketSize: &cfg.packetSize, Count: &cfg.count,
 		Duration: &duration, Ipv4Only: &cfg.ipv4Only, Ipv6Only: &cfg.ipv6Only,
-		DNSServer: &cfg.dnsServer, DSCP: &cfg.dscp, WebPort: &cfg.webPort,
+		DNSServer: &cfg.dnsServer, WebPort: &cfg.webPort,
 	}
 	if err := validateHostsDoc(doc); err != nil {
 		return err
+	}
+	if cfg.trace && cfg.mtr {
+		return errors.New("traceroute (-T) and mtr (-M) cannot be used together: -T shows the path only, -M also probes every hop each second")
 	}
 	if err := cfg.thresholds.Validate(); err != nil {
 		return err
@@ -56,23 +61,15 @@ func validateMergedHosts(cfg config, hosts []hostEntry, groups []groupYAML, cliH
 			return fmt.Errorf("invalid port spec %q: %w", raw, err)
 		}
 	}
-	if err := validateBinding(cfg); err != nil {
-		return err
-	}
-	return validateOutputPaths(cfg)
+	return validateBinding(cfg)
 }
 
 // validateHostEntries checks the rules shared by grouped and ungrouped hosts.
 // location identifies the containing list in validation errors.
-func validateHostEntries(hosts []hostEntry, location string) error {
+func validateHostEntries(hosts []hostsfile.Entry, location string) error {
 	for i, h := range hosts {
 		if strings.TrimSpace(h.Host) == "" {
 			return fmt.Errorf("%s[%d]: empty host entry", location, i)
-		}
-		if h.DSCP != "" {
-			if _, err := pinger.ParseDSCP(h.DSCP); err != nil {
-				return fmt.Errorf("%s[%d]: dscp: %w", location, i, err)
-			}
 		}
 	}
 	return nil
@@ -83,8 +80,8 @@ func validateHostEntries(hosts []hostEntry, location string) error {
 // host. A name is the target's identity in the UI and the key of the
 // display→address map (buildPingerOptions), so either would make one
 // target resolve to the other's address.
-func validateHostNames(doc hostsFileYAML) error {
-	all := append([]hostEntry(nil), doc.Hosts...)
+func validateHostNames(doc hostsfile.Document) error {
+	all := append([]hostsfile.Entry(nil), doc.Hosts...)
 	for _, g := range doc.Groups {
 		all = append(all, g.Hosts...)
 	}
@@ -112,9 +109,9 @@ func validateHostNames(doc hostsFileYAML) error {
 	return nil
 }
 
-// validateHostsDoc checks a hostsFileYAML for semantic errors.
+// validateHostsDoc checks a hostsfile.Document for semantic errors.
 // Returns a non-nil error if any field is out of range or logically invalid.
-func validateHostsDoc(doc hostsFileYAML) error {
+func validateHostsDoc(doc hostsfile.Document) error {
 	totalHosts := len(doc.Hosts)
 	for _, g := range doc.Groups {
 		totalHosts += len(g.Hosts)
@@ -138,11 +135,6 @@ func validateHostsDoc(doc hostsFileYAML) error {
 	}
 	if err := validateHostNames(doc); err != nil {
 		return err
-	}
-	if doc.DSCP != nil && *doc.DSCP != "" {
-		if _, err := pinger.ParseDSCP(*doc.DSCP); err != nil {
-			return fmt.Errorf("dscp: %w", err)
-		}
 	}
 	if doc.IntervalMs != nil && (*doc.IntervalMs < minIntervalMs || *doc.IntervalMs > maxIntervalMs) {
 		return fmt.Errorf("interval: must be %d–%d ms, got %d", minIntervalMs, maxIntervalMs, *doc.IntervalMs)
@@ -177,7 +169,7 @@ func validateHostsDoc(doc hostsFileYAML) error {
 		}
 	}
 	if doc.Thresholds != nil {
-		th := overlayThresholdsDoc(ui.DefaultThresholds(), nil, doc.Thresholds)
+		th := overlayThresholdsDoc(stats.DefaultThresholds(), nil, doc.Thresholds)
 		if err := th.Validate(); err != nil {
 			return fmt.Errorf("thresholds: %w", err)
 		}

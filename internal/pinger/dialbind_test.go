@@ -94,9 +94,8 @@ func TestNewBoundDialer_SourceSetsLocalAddrPerNetwork(t *testing.T) {
 }
 
 // TestNewBoundDialer_NoUsableSourceLeavesLocalAddrNil documents the fallback
-// contract: with no -S, or an -S value that isn't a literal IP, the dialer is
-// left exactly as it was before this feature existed so the OS picks the
-// source address.
+// contract: with no -S, or an -S value that isn't a literal IP, the dialer
+// has no LocalAddr so the OS picks the source address.
 func TestNewBoundDialer_NoUsableSourceLeavesLocalAddrNil(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -177,7 +176,7 @@ func TestNewBoundDialer_ControlDispatchesToBindSeam(t *testing.T) {
 
 // TestNewBoundTransport_ZeroBindConfigReturnsNil pins the fallback: when
 // neither -S nor -I is given the HTTP checker must keep using
-// http.DefaultTransport rather than a clone, leaving prior behavior untouched.
+// http.DefaultTransport rather than a clone.
 func TestNewBoundTransport_ZeroBindConfigReturnsNil(t *testing.T) {
 	if tr := newBoundTransport(time.Second, BindConfig{}); tr != nil {
 		t.Errorf("newBoundTransport: got %v, want nil for zero BindConfig", tr)

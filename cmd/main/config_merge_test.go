@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nagayon-935/mping/internal/hostsfile"
 	"github.com/spf13/pflag"
 )
 
@@ -31,7 +32,7 @@ func TestApplyDocToCfg_Duration(t *testing.T) {
 				t.Fatalf("parseArgs: %v", err)
 			}
 			v := tt.yaml
-			_, _, gotCfg, err := applyDocToCfg(cfg, fs, hostsFileYAML{Hosts: hostEntries("example.com"), Duration: &v})
+			_, _, gotCfg, err := applyDocToCfg(cfg, fs, hostsfile.Document{Hosts: hostEntries("example.com"), Duration: &v})
 			if tt.wantFail {
 				if err == nil {
 					t.Fatal("expected error for malformed duration in YAML doc")
@@ -56,7 +57,7 @@ func TestOverlayThresholdsDoc_YAMLApplied(t *testing.T) {
 	}
 	mi := func(v int) *int { return &v }
 	mf := func(v float64) *float64 { return &v }
-	cfg.thresholds = overlayThresholdsDoc(cfg.thresholds, fs, &thresholdsYAML{
+	cfg.thresholds = overlayThresholdsDoc(cfg.thresholds, fs, &hostsfile.Thresholds{
 		RTTWarn: mi(25), RTTCrit: mi(90),
 		LossWarn: mf(15), LossCrit: mf(60),
 	})
@@ -79,7 +80,7 @@ func TestOverlayThresholdsDoc_FlagOverridesYAML(t *testing.T) {
 		t.Fatalf("parseArgs: %v", err)
 	}
 	mi := func(v int) *int { return &v }
-	cfg.thresholds = overlayThresholdsDoc(cfg.thresholds, fs, &thresholdsYAML{
+	cfg.thresholds = overlayThresholdsDoc(cfg.thresholds, fs, &hostsfile.Thresholds{
 		RTTWarn: mi(25), RTTCrit: mi(90),
 	})
 	if cfg.thresholds.RTTWarn != 40*time.Millisecond {
@@ -113,48 +114,6 @@ func TestMergeHosts(t *testing.T) {
 	}
 }
 
-// TestMergeHosts_PerTargetDSCP exercises the feature's primary use case end
-// to end through the real hosts-file pipeline: the same destination
-// monitored twice under two different DSCP markings, plus a global default
-// and a plain (no-override) host.
-func TestMergeHosts_PerTargetDSCP(t *testing.T) {
-	yamlContent := `
-dscp: CS0
-hosts:
-  - host: 2001:db8::1
-    dscp: EF
-  - host: 2001:db8::1
-    dscp: DF
-  - plain.example.com
-`
-	path := writeHostsYAML(t, yamlContent)
-	cfg, _, _, _, err := parseArgs([]string{"-f", path})
-	if err != nil {
-		t.Fatal(err)
-	}
-	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
-
-	got, _, mergedCfg, err := mergeHosts(cfg, fs, nil)
-	if err != nil {
-		t.Fatalf("mergeHosts: %v", err)
-	}
-	if mergedCfg.dscp != "CS0" {
-		t.Fatalf("mergedCfg.dscp = %q, want %q", mergedCfg.dscp, "CS0")
-	}
-	if len(got) != 3 {
-		t.Fatalf("hosts len: got %d, want 3", len(got))
-	}
-	if got[0].Host != "2001:db8::1" || got[0].DSCP != "EF" {
-		t.Fatalf("got[0] = %+v, want Host=2001:db8::1 DSCP=EF", got[0])
-	}
-	if got[1].Host != "2001:db8::1" || got[1].DSCP != "DF" {
-		t.Fatalf("got[1] = %+v, want Host=2001:db8::1 DSCP=DF", got[1])
-	}
-	if got[2].Host != "plain.example.com" || got[2].DSCP != "" {
-		t.Fatalf("got[2] = %+v, want Host=plain.example.com DSCP=\"\"", got[2])
-	}
-}
-
 func TestMergeHosts_Options(t *testing.T) {
 	// Interface existence is now checked before a configuration is admitted;
 	// this merge fixture must not depend on the developer machine having eth0.
@@ -172,7 +131,6 @@ hosts:
   - example.com
 interval: 2000
 timeout: 3000
-output: log.csv
 interface: eth0
 source: 10.0.0.1
 size: 100
@@ -194,7 +152,6 @@ port:
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	fs.Int("interval", 1000, "")
 	fs.Int("timeout", 1000, "")
-	fs.String("output", "", "")
 	fs.String("interface", "", "")
 	fs.String("source", "", "")
 	fs.Int("size", 56, "")
@@ -219,9 +176,6 @@ port:
 	}
 	if gotCfg.timeoutMs != 3000 {
 		t.Errorf("timeoutMs: got %d", gotCfg.timeoutMs)
-	}
-	if gotCfg.outputFile != "log.csv" {
-		t.Errorf("outputFile: got %q", gotCfg.outputFile)
 	}
 	if gotCfg.ifaceName != "eth0" {
 		t.Errorf("ifaceName: got %q", gotCfg.ifaceName)

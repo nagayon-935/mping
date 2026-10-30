@@ -396,16 +396,19 @@ func TestMonitoringControls(t *testing.T) {
 	})
 
 	t.Run("reports download as attachments", func(t *testing.T) {
-		for _, format := range []string{"json", "text"} {
+		for format, contentType := range map[string]string{"json": "application/json", "csv": "text/csv; charset=utf-8"} {
 			status, header, data := do(t, base, req{method: "GET", path: "/api/v1/report?format=" + format, headers: map[string]string{tokenHeader: testToken}})
-			if status != 200 || !strings.Contains(header.Get("Content-Disposition"), "attachment") || len(data) == 0 {
+			if status != 200 || !strings.Contains(header.Get("Content-Disposition"), "mping-report."+format) || len(data) == 0 {
 				t.Fatalf("report %s: %d %s", format, status, data)
+			}
+			if got := header.Get("Content-Type"); !strings.HasPrefix(got, contentType) {
+				t.Errorf("report %s Content-Type = %q, want %q", format, got, contentType)
 			}
 		}
 	})
 
 	t.Run("unknown report format is rejected", func(t *testing.T) {
-		if status, _ := send(t, base, req{method: "GET", path: "/api/v1/report?format=csv", headers: authed(nil)}); status != 400 {
+		if status, _ := send(t, base, req{method: "GET", path: "/api/v1/report?format=text", headers: authed(nil)}); status != 400 {
 			t.Fatalf("invalid format=%d", status)
 		}
 	})

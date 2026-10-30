@@ -27,9 +27,7 @@ func TestRunRendersMonitorPanes(t *testing.T) {
 	ported := func(host, ip string, port int, status string) *stats.TargetStats {
 		target := stats.NewTargetStats(host)
 		target.SetIP(ip)
-		result := &stats.PortCheckResult{Port: port, Protocol: "tcp"}
-		result.SetResult(status, 5*time.Millisecond)
-		target.PortResults = []*stats.PortCheckResult{result}
+		target.SetPortResults([]*stats.PortCheckResult{portResult(port, "tcp", status)})
 		return target
 	}
 	tests := []struct {
@@ -41,8 +39,8 @@ func TestRunRendersMonitorPanes(t *testing.T) {
 			name: "traceroute",
 			opts: func() RunOptions {
 				target := stats.NewTargetStats("example.com")
-				target.SetTraceHops([]string{"10.0.0.1", "10.0.0.2", "1.1.1.1"})
-				return RunOptions{Targets: []*stats.TargetStats{target}, SourceIPv4: "10.0.0.1", TraceEnabled: true}
+				setRouteHops(target, "10.0.0.1", "10.0.0.2", "1.1.1.1")
+				return RunOptions{Targets: []*stats.TargetStats{target}, SourceIPv4: "10.0.0.1", Route: RoutePath}
 			},
 			wants: []string{"Traceroute Monitor", "10.0.0.1 -> 10.0.0.2 -> 1.1.1.1"},
 		},
@@ -51,10 +49,10 @@ func TestRunRendersMonitorPanes(t *testing.T) {
 			opts: func() RunOptions {
 				target := stats.NewTargetStats("example.com")
 				target.SetIP("127.0.0.1")
-				target.PortResults = []*stats.PortCheckResult{
-					{Port: 443, Protocol: "tcp", Status: "Open"},
-					{Port: 80, Protocol: "tcp", Status: "Closed"},
-				}
+				target.SetPortResults([]*stats.PortCheckResult{
+					portResult(443, "tcp", "Open"),
+					portResult(80, "tcp", "Closed"),
+				})
 				return RunOptions{Targets: []*stats.TargetStats{target}, SourceIPv4: "10.0.0.1", PortEnabled: true}
 			},
 			wants: []string{"Port Monitor", "443/tcp", "HTTPS", "Open", "80/tcp", "Closed"},
@@ -73,8 +71,8 @@ func TestRunRendersMonitorPanes(t *testing.T) {
 			opts: func() RunOptions {
 				target := stats.NewTargetStats("example.com")
 				target.SetIP("127.0.0.1")
-				result := &stats.PortCheckResult{Port: 443, Protocol: "tcp", Status: "Checking..."}
-				target.PortResults = []*stats.PortCheckResult{result}
+				result := stats.NewPortCheckResult(443, "tcp")
+				target.SetPortResults([]*stats.PortCheckResult{result})
 				result.SetResult("Open", 10*time.Millisecond)
 				result.SetResult("Closed", 5*time.Millisecond) // the status change sets LastChange
 				return RunOptions{Targets: []*stats.TargetStats{target}, PortEnabled: true}
@@ -85,13 +83,13 @@ func TestRunRendersMonitorPanes(t *testing.T) {
 			name: "traceroute and port for two targets",
 			opts: func() RunOptions {
 				first := ported("example.com", "127.0.0.1", 443, "Open")
-				first.SetTraceHops([]string{"10.0.0.1", "1.1.1.1"})
+				setRouteHops(first, "10.0.0.1", "1.1.1.1")
 				second := ported("example2.com", "8.8.8.8", 80, "Filtered")
-				second.SetTraceHops([]string{"10.0.0.9"})
+				setRouteHops(second, "10.0.0.9")
 				return RunOptions{
 					Targets:    []*stats.TargetStats{first, second},
 					SourceIPv4: "10.0.0.1", SourceIPv6: "2001::1",
-					TraceEnabled: true, PortEnabled: true,
+					Route: RoutePath, PortEnabled: true,
 				}
 			},
 			wants: []string{
@@ -193,9 +191,9 @@ func TestRunShowsInitialLogs(t *testing.T) {
 func TestRunPortStatusChangeLogged(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	target.SetIP("127.0.0.1")
-	result := &stats.PortCheckResult{Port: 443, Protocol: "tcp"}
+	result := stats.NewPortCheckResult(443, "tcp")
 	result.SetResult("Open", 5*time.Millisecond)
-	target.PortResults = []*stats.PortCheckResult{result}
+	target.SetPortResults([]*stats.PortCheckResult{result})
 	h := startTUI(t, RunOptions{Targets: []*stats.TargetStats{target}, PortEnabled: true}, 200, 50)
 	// The first render records the initial status; only then is a change visible.
 	h.wait("Open")

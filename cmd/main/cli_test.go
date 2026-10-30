@@ -85,21 +85,6 @@ func TestParseArgsHostsFileAllowsNoHosts(t *testing.T) {
 	}
 }
 
-func TestParseArgsNoTUIDefaultsOff(t *testing.T) {
-	cfg, _, _, _, err := parseArgs([]string{"example.com"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	on, _, _, _, err := parseArgs([]string{"--no-tui", "example.com"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if cfg.noTUI || !on.noTUI {
-		t.Fatalf("noTUI default=%v with flag=%v, want false/true", cfg.noTUI, on.noTUI)
-	}
-}
-
 func TestParseArgsDuration_Valid(t *testing.T) {
 	tests := []struct {
 		arg  string
@@ -118,28 +103,6 @@ func TestParseArgsDuration_Valid(t *testing.T) {
 			}
 			if cfg.duration != tt.want {
 				t.Fatalf("duration: got %s, want %s", cfg.duration, tt.want)
-			}
-		})
-	}
-}
-
-func TestParseArgs_JSONOutputFlag(t *testing.T) {
-	tests := []struct {
-		name string
-		args []string
-		want string
-	}{
-		{"short -j", []string{"-j", "/tmp/stats.json", "example.com"}, "/tmp/stats.json"},
-		{"long --json-output", []string{"--json-output", "/tmp/out.json", "example.com"}, "/tmp/out.json"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg, _, _, _, err := parseArgs(tt.args)
-			if err != nil {
-				t.Fatalf("parse error: %v", err)
-			}
-			if cfg.jsonOutputFile != tt.want {
-				t.Errorf("jsonOutputFile = %q, want %q", cfg.jsonOutputFile, tt.want)
 			}
 		})
 	}

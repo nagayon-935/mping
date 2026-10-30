@@ -27,7 +27,7 @@ type fakeHTTPError struct{}
 func (e *fakeHTTPError) Error() string { return "connection refused" }
 
 func TestRenderHTTPMonitorTable_Empty(t *testing.T) {
-	out := renderHTTPMonitorTable(nil, 120, nil, nil, nil)
+	out := renderHTTPMonitorTable(nil, stats.DefaultThresholds(), 120, nil, nil, nil)
 	if out == "" {
 		t.Error("renderHTTPMonitorTable returned empty string for nil results")
 	}
@@ -60,7 +60,7 @@ func TestRenderHTTPMonitorTable_Rows(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out := renderHTTPMonitorTable(tt.results, 160, nil, nil, nil)
+			out := renderHTTPMonitorTable(tt.results, stats.DefaultThresholds(), 160, nil, nil, nil)
 			for _, want := range tt.wants {
 				if !strings.Contains(out, want) {
 					t.Errorf("%q not found in output:\n%s", want, out)
@@ -73,8 +73,8 @@ func TestRenderHTTPMonitorTable_Rows(t *testing.T) {
 func TestRenderHTTPMonitorTable_NarrowTerminalCompact(t *testing.T) {
 	r := makeHTTPResult("https://example.com", "Up", 200, 5*time.Millisecond)
 	// Narrow width should trigger compact mode (no Min/Avg/Max columns)
-	outNarrow := renderHTTPMonitorTable([]*stats.HTTPCheckResult{r}, 60, nil, nil, nil)
-	outWide := renderHTTPMonitorTable([]*stats.HTTPCheckResult{r}, 160, nil, nil, nil)
+	outNarrow := renderHTTPMonitorTable([]*stats.HTTPCheckResult{r}, stats.DefaultThresholds(), 60, nil, nil, nil)
+	outWide := renderHTTPMonitorTable([]*stats.HTTPCheckResult{r}, stats.DefaultThresholds(), 160, nil, nil, nil)
 	// Wide output should be longer
 	if len(outWide) <= len(outNarrow) {
 		t.Errorf("Wide output (%d chars) should be longer than narrow (%d chars)", len(outWide), len(outNarrow))
@@ -92,7 +92,7 @@ func TestRenderHTTPMonitorTable_StatusChangeLogsToWriter(t *testing.T) {
 	logView := tview.NewTextView()
 	var logs []string
 
-	out := renderHTTPMonitorTable([]*stats.HTTPCheckResult{r}, 200, lastStatuses, &logs, logView)
+	out := renderHTTPMonitorTable([]*stats.HTTPCheckResult{r}, stats.DefaultThresholds(), 200, lastStatuses, &logs, logView)
 
 	if out == "" {
 		t.Error("expected non-empty output")

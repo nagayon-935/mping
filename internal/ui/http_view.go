@@ -54,10 +54,10 @@ func httpURLColW(views []stats.HTTPCheckView, availW int, compact bool) int {
 
 // httpStatusColorTag returns a tview color tag for an HTTP check status.
 func httpStatusColorTag(status string) string {
-	switch status {
-	case "Up":
+	switch stats.HTTPStatusLevel(status) {
+	case stats.LevelOK:
 		return "[green]"
-	case "Down", "Error":
+	case stats.LevelCrit:
 		return "[red::b]"
 	default:
 		return "[darkgray]"
@@ -98,7 +98,7 @@ func httpSinceStr(t time.Time) string {
 // renderHTTPMonitorTable builds the HTTP Monitor pane string.
 // It also detects status changes and appends log messages when errorLogs/errorView
 // are non-nil.
-func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastStatuses map[string]string, errorLogs *[]string, errorView *tview.TextView) string {
+func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, th stats.Thresholds, availW int, lastStatuses map[string]string, errorLogs *[]string, errorView *tview.TextView) string {
 	// Compact: drop Min/Avg/Max/Since when screen is narrow.
 	compact := availW < minHTTPURLW+httpFixedW(false)+httpBorderW
 
@@ -119,7 +119,7 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 	// Compact: URL | Status | Code | Last | Up | Down
 	// Full:    URL | Status | Code | Last | Min | Avg | Max | Up | Down | Since
 	rtt := func(get func(stats.HTTPCheckView) time.Duration) func(stats.HTTPCheckView) boxCell {
-		return rttCell(get, formatHTTPRTT)
+		return rttCell(get, formatHTTPRTT, th.RTT)
 	}
 	all := []monitorColumn[stats.HTTPCheckView]{
 		{boxColumn{header: "URL", width: urlW}, plainCell(func(v stats.HTTPCheckView) string { return tview.Escape(v.URL) }), false},

@@ -51,8 +51,7 @@ func rawConnOf(c net.PacketConn) (syscall.RawConn, bool) {
 // c), the interface can't be resolved, or the setsockopt call itself fails
 // (e.g. missing CAP_NET_RAW), mping silently falls back to the source-IP bind
 // Pinger.Start already performs via p.Source - the same non-fatal treatment
-// as the pre-existing ipv4.FlagTTL / ipv6.FlagHopLimit control-message setup
-// in Start().
+// as the ipv4.FlagTTL / ipv6.FlagHopLimit control-message setup in Start().
 func bindToInterface(c net.PacketConn, ifaceName string, isIPv6 bool) {
 	rawConn, ok := rawConnOf(c)
 	if !ok {

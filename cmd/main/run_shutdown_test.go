@@ -38,28 +38,28 @@ func TestRunStopRestart(t *testing.T) {
 	}
 }
 
-// TestRunStop_JoinsTracerouteBeforeStoppingPinger verifies that OnStop
-// (stopAll -> tearDownAll) actually waits for the background runTraceroutes
+// TestRunStop_JoinsRouteEngineBeforeStoppingPinger verifies that OnStop
+// (stopAll -> tearDownAll) actually waits for the route engine's per-target
 // goroutine to exit rather than just cancelling its context, and only then
 // stops the pinger. The onStop hook makes the ordering check deterministic
-// (not timing-based): tearDownAll() waits on <-s.traceDone before calling
+// (not timing-based): tearDownAll() joins the engine before calling
 // s.p.Stop(), so a violation can only be observed if a future refactor calls
-// Stop() without first joining the traceroute goroutine.
-func TestRunStop_JoinsTracerouteBeforeStoppingPinger(t *testing.T) {
+// Stop() without first joining the route engine.
+func TestRunStop_JoinsRouteEngineBeforeStoppingPinger(t *testing.T) {
 	started, returned := make(chan struct{}), make(chan struct{})
-	fp := &fakePinger{blockTraceUntilCtxDone: true, traceRouteStarted: started, traceRouteReturned: returned}
+	fp := &fakePinger{routeStarted: started, routeReturned: returned}
 	stoppedBeforeJoin := false
 	fp.onStop = func() { stoppedBeforeJoin = stoppedBeforeJoin || !closed(returned) }
 	stubRunSeams(t, func(opts ui.RunOptions) error {
 		select {
 		case <-started:
 		case <-time.After(time.Second):
-			t.Error("traceroute did not start")
+			t.Error("route engine did not start")
 			return nil
 		}
 		opts.OnStop()
 		if !closed(returned) {
-			t.Error("OnStop() returned before the in-flight traceroute goroutine exited")
+			t.Error("OnStop() returned before the in-flight route probe exited")
 		}
 		return nil
 	})
@@ -74,15 +74,15 @@ func TestRunStop_JoinsTracerouteBeforeStoppingPinger(t *testing.T) {
 		t.Error("expected the pinger to be stopped and closed")
 	}
 	if stoppedBeforeJoin {
-		t.Error("pinger.Stop() was called before the traceroute goroutine had joined (shutdown order violation)")
+		t.Error("pinger.Stop() was called before the route engine had joined (shutdown order violation)")
 	}
 }
 
-// TestRunStop_ClosesPingerAfterWait verifies the F1 fix end-to-end: OnStop
-// (-> stopAll -> tearDownAll) must call Close() on the pinger, and only after
-// Wait() has already returned (Stop -> Wait -> Close). Before the fix, the
-// stop path never called Close() at all. The onClose hook makes the ordering
-// check deterministic: it fires before Close() is recorded.
+// TestRunStop_ClosesPingerAfterWait verifies end-to-end that OnStop
+// (-> stopAll -> tearDownAll) calls Close() on the pinger, and only after
+// Wait() has already returned (Stop -> Wait -> Close), so the raw socket is
+// released on stop. The onClose hook makes the ordering check deterministic:
+// it fires before Close() is recorded.
 func TestRunStop_ClosesPingerAfterWait(t *testing.T) {
 	tracker := &fakePinger{}
 	closeBeforeWait := false
@@ -100,7 +100,7 @@ func TestRunStop_ClosesPingerAfterWait(t *testing.T) {
 	}
 
 	if !tracker.isReleased() {
-		t.Error("expected Stop() and Close() to be called — Close() is the F1 fix")
+		t.Error("expected Stop() and Close() to be called")
 	}
 	if !tracker.Waited() {
 		t.Error("expected Wait() to be called")

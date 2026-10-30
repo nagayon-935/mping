@@ -15,7 +15,7 @@ func TestTargetEventsAreBoundedAndIndependentOfView(t *testing.T) {
 		t.Fatalf("events=%d dropped=%d", len(events), dropped)
 	}
 	for _, event := range events {
-		if event.TargetID != target.ID {
+		if event.TargetID != target.id {
 			t.Fatal("identity missing")
 		}
 	}
