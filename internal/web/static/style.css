@@ -136,7 +136,8 @@ body {
 .workspace.has-inspect.has-route { grid-template-areas: "monitor" "inspect" "route" "graphs"; }
 #pane-monitor { grid-area: monitor; max-height: clamp(260px, 60dvh, 640px); }
 #pane-inspect { grid-area: inspect; height: clamp(320px, 60dvh, 640px); }
-#pane-mtr, #pane-traceroute { grid-area: route; height: 420px; }
+#pane-mtr { grid-area: route; height: 420px; }
+#pane-traceroute { grid-area: route; max-height: 420px; }
 #pane-graphs { grid-area: graphs; height: clamp(360px, 65dvh, 800px); }
 .pane { display: flex; flex-direction: column; min-height: 0; }
 .pane-scroll { flex: 1; min-height: 0; overflow: auto; }
@@ -319,16 +320,16 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
 .summary-columns { display: grid; gap: 0 32px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
 .trace-summary { margin: 12px 0 4px; color: var(--muted); font-size: 12px; }
 .trace-path { list-style: none; margin: 0; padding: 0; }
-.trace-hop { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 12px 0; }
-.trace-hop:not(:last-child)::after { content: ""; position: absolute; left: 14px; top: 42px; bottom: -12px; border-left: 1px solid var(--grid); }
-.trace-number { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 50%; background: var(--surface-2); font: 12px var(--mono); color: var(--ink-2); }
-.trace-identity { display: grid; gap: 3px; padding-top: 5px; min-width: 0; }
+.trace-hop { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 5px 0; }
+.trace-hop:not(:last-child)::after { content: ""; position: absolute; left: 14px; top: 29px; bottom: -5px; border-left: 1px solid var(--grid); }
+.trace-number { display: grid; place-items: center; width: 24px; height: 24px; margin-left: 3px; border: 1px solid var(--border); border-radius: 50%; background: var(--surface-2); font: 12px var(--mono); color: var(--ink-2); }
+.trace-identity { display: grid; gap: 3px; padding-top: 2px; min-width: 0; }
 .trace-address { font: 13px/1.5 var(--mono); overflow-wrap: anywhere; }
 .trace-annotation { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .trace-hop.is-unanswered .trace-number { border-style: dashed; background: transparent; }
 .trace-hop.is-unanswered .trace-address { color: var(--muted); font-family: var(--font); }
 .trace-hop.is-destination .trace-number { border-color: var(--series); color: var(--series); }
-.trace-tag { margin-top: 5px; padding: 2px 6px; border-radius: 4px; background: var(--surface-2); color: var(--ink-2); font-size: 11px; }
+.trace-tag { margin-top: 3px; padding: 2px 6px; border-radius: 4px; background: var(--surface-2); color: var(--ink-2); font-size: 11px; }
 .trace-message { padding: 20px 0; font-size: 13px; color: var(--ink-2); }
 .trace-message p { margin: 8px 0 0; overflow-wrap: anywhere; }
 .grid.log td { height: 36px; }
@@ -342,7 +343,10 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
     grid-template-rows: minmax(0, 3fr) minmax(0, 2fr);
     grid-template-areas: "monitor monitor" "graphs graphs"; }
   .workspace.has-inspect { grid-template-areas: "monitor inspect" "graphs graphs"; }
-  .workspace.has-route { grid-template-areas: "monitor monitor" "route graphs"; }
+  /* A route pane shares the lower row with graphs, so the top row shrinks to
+     its content (up to 3/5) instead of leaving a few host rows in empty space. */
+  .workspace.has-route { grid-template-rows: fit-content(60%) minmax(0, 1fr);
+    grid-template-areas: "monitor monitor" "route graphs"; }
   .workspace.has-inspect.has-route { grid-template-areas: "monitor inspect" "route graphs"; }
   #workspace > .pane { height: auto; max-height: none; }
   .page-view { display: flex; flex: 1; min-height: 0; }
