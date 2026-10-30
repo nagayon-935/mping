@@ -2,9 +2,9 @@ package web
 
 import (
 	"net"
-	"os"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
