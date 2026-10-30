@@ -254,7 +254,7 @@ body {
 .host-cell .host { min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .host-arrow { flex: none; color: var(--series); font-size: 20px; line-height: 1; }
 .target-row:hover .host { color: var(--series-ink); text-decoration: underline; }
-.host-cell .sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
+.host-cell .sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; line-height: 16px; }
 /* One line keeps every row the same height; the full reason is in the title
    and in Summary. */
 .status-reason {
@@ -275,6 +275,10 @@ td.lvl-crit { background: var(--crit-tint); font-weight: 600; }
 
 /* Status: shape + label, never colour alone */
 .status { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+/* Block layout and fixed line heights keep every host row at 52px (53px with
+   its border) whatever the status reason or PTR line; the route layout
+   reserves height from it. */
+#targets .col-status .status { display: flex; line-height: 18px; }
 .status-icon { font-size: 11px; width: 12px; text-align: center; }
 .status.lvl-ok .status-icon { color: var(--good); }
 .status.lvl-warn .status-icon { color: var(--warning); }
@@ -348,14 +352,16 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
   /* A route pane shares the lower row with graphs, so the top row shrinks to
      fit every host (up to 3/5) instead of leaving a few rows in empty space.
      workspace_view.js counts every host and group heading the unfiltered
-     table draws and measures the rendered header, row and scrollbar heights,
-     so filtering never resizes the lower row. 136px fits the empty-state
-     message and its button. */
+     table draws and measures the header and scrollbar, so filtering never
+     resizes the lower row. Host rows are 52px plus a 1px border (the first
+     and last rows give back half a pixel each), group rows 36px. 136px fits
+     the empty-state message and its button. */
   .workspace.has-route { grid-template-rows: fit-content(60%) minmax(0, 1fr);
     grid-template-areas: "monitor monitor" "route graphs"; }
+  .workspace.has-route #pane-monitor { --monitor-row: 53px; --monitor-group: 36px; }
   .workspace.has-route #pane-monitor .pane-scroll { flex: 1 1 auto;
     height: calc(var(--monitor-head, 32px) + var(--monitor-hscroll, 0px) + max(136px,
-      var(--monitor-rows, 0) * var(--monitor-row, 52px) + var(--monitor-groups, 0) * var(--monitor-group, 36px))); }
+      var(--monitor-rows, 0) * var(--monitor-row) + var(--monitor-groups, 0) * var(--monitor-group))); }
   .workspace.has-inspect.has-route { grid-template-areas: "monitor inspect" "route graphs"; }
   #workspace > .pane { height: auto; max-height: none; }
   .page-view { display: flex; flex: 1; min-height: 0; }

@@ -380,17 +380,36 @@ try {
     size=await fit(grouped);
     assert.ok(fits(size),`flat sorted table fits: ${JSON.stringify(size)}`);
     await grouped.close();
-    // Mixed hosts (status reasons, PTR lines, health tints) draw rows of
-    // slightly different heights; filtering to any one host must not move
-    // the lower panes. The viewport keeps the monitor under its 3/5 cap.
+    // Mixed hosts (status reasons, PTR lines, health tints) must all draw
+    // rows of one height, so filtering to any one host, before or after a
+    // reload that restores the filter, never moves the lower panes. The
+    // viewport keeps the monitor under its 3/5 cap.
     const mixed=await open({viewport:{width:1400,height:1100}},browser,base,body(response.snapshot.targets,[]));
+    // Rows between the first and last share their borders on both sides and
+    // must match the height style.css reserves per host.
+    const pitch=await mixed.$eval("#targets",t=>{
+      const rows=[...t.querySelectorAll("tr.target-row")].slice(1,-1);
+      return {heights:[...new Set(rows.map(r=>r.getBoundingClientRect().height))],
+        reserved:parseFloat(getComputedStyle(document.getElementById("pane-monitor")).getPropertyValue("--monitor-row"))};
+    });
+    assert.deepEqual(pitch.heights,[pitch.reserved],`host rows match the reserved height: ${JSON.stringify(pitch)}`);
     const lower=()=>mixed.$eval("#pane-traceroute",n=>n.getBoundingClientRect().top);
+    // Wait until the redraw shows only rows for this host (the filter
+    // re-renders on the next frame).
+    const filtered=(host)=>mixed.waitForFunction((h)=>{
+      const rows=[...document.querySelectorAll("#targets tr.target-row")];
+      return rows.length>0&&rows.every(r=>r.getAttribute("aria-label").includes(h));
+    },host);
     const before=await lower();
     for (const target of response.snapshot.targets) {
       await mixed.fill("#filter",target.host);
-      await mixed.waitForFunction(()=>document.querySelectorAll("#targets tr.target-row").length>=1);
+      await filtered(target.host);
       assert.equal(await lower(),before,`filtering to ${target.host} keeps the route pane in place`);
     }
+    await mixed.reload();
+    await filtered(response.snapshot.targets.at(-1).host);
+    await mixed.waitForTimeout(500);
+    assert.equal(await lower(),before,"a filter restored on reload keeps the route pane in place");
     await mixed.close();
     const single=await open({viewport:{width:1400,height:900}},browser,base,body([a],[]));
     await single.fill("#filter","no-match");
