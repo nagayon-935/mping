@@ -622,10 +622,10 @@ try {
     await ctl.click("#open-report");
     await ctl.waitForSelector("#report-dialog[open]");
     await ctl.fill("#report-name","東京-回線チェック.json");
-    await ctl.selectOption("#report-format","text");
-    assert.equal(await ctl.inputValue("#report-name"),"東京-回線チェック.txt");
+    await ctl.selectOption("#report-format","csv");
+    assert.equal(await ctl.inputValue("#report-name"),"東京-回線チェック.csv");
     await ctl.waitForTimeout(1500);
-    assert.equal(await ctl.inputValue("#report-name"),"東京-回線チェック.txt","live snapshots preserve input");
+    assert.equal(await ctl.inputValue("#report-name"),"東京-回線チェック.csv","live snapshots preserve input");
     assert.deepEqual(await geometry(),before);
     await ctl.fill("#report-name","");
     await ctl.click("#download-report");
@@ -637,10 +637,10 @@ try {
     const promise=ctl.waitForEvent("download");
     await ctl.click("#download-report");
     const download=await promise;
-    assert.equal(download.suggestedFilename(),"東京-回線チェック.txt");
+    assert.equal(download.suggestedFilename(),"東京-回線チェック.csv");
     const stream=await download.createReadStream();let text="";
     for await(const chunk of stream)text+=chunk;
-    assert.match(text,/mping/i);
+    assert.match(text,/^\ufeffcaptured_at,target_id,host,/);
     await ctl.waitForSelector("#report-dialog",{state:"hidden"});
     await ctl.click("#open-report");
     await ctl.waitForSelector("#report-dialog[open]");

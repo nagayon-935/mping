@@ -27,7 +27,7 @@
 * **PMTU discovery** — probe maximum payload size using DF-bit ICMP packets.
 * **Auto source IP detection** — automatically detects and displays the local IP used for each destination.
 * **RTT graph** — auto-scaling Y-axis (expands immediately on spike, shrinks after a hold period) × 30 seconds (X-axis) per target. Supports both ICMP and TCP/UDP port series.
-* **Statistics snapshots** — save every statistic collected so far, at any moment, from the TUI (`w`) or the Web UI's **Report** button.
+* **Statistics snapshots** — save every statistic collected so far, at any moment, as JSON or CSV from the TUI (`w`) or the Web UI's **Report** button.
 
 ## Supported platforms
 
@@ -357,9 +357,11 @@ Stop, restart and reset operations execute in keypress order. A running reset di
 
 ### Saving investigation results
 
-Press **w**, enter a new file path ending in **.txt** or **.json**, and press **Enter** or activate **Save**. The format is inferred from the extension and displayed below the input; no format selector is needed. A missing extension defaults to `.txt`; other extensions are rejected. **Tab** moves between fields and buttons; **Esc** cancels. Saving from the overview includes all active targets, retained final results of removed targets, and independent HTTP checks. Saving from host details includes only that target. Measurements continue during capture and writing; completion or errors appear in the footer and Log.
+Press **w**, enter a new file path ending in **.json** or **.csv**, and press **Enter** or activate **Save**. The format is inferred from the extension and displayed below the input; no format selector is needed. A missing extension defaults to `.json`; other extensions are rejected. **Tab** moves between fields and buttons; **Esc** cancels. Saving from the overview includes all active targets, retained final results of removed targets, and independent HTTP checks. Saving from host details includes only that target. Measurements continue during capture and writing; completion or errors appear in the footer and Log.
 
-Reports include the session and collection start times, capture interval, stable target IDs, ping statistics window, effective settings, DNS IP changes, Ping, traceroute, MTR, port results, and retained target events. JSON reports use `schema_version: 1`; fields ending in `_ms` are milliseconds. `statistics` reuses the existing JSON target summary, including its `loss_rate_pct` denominator (sent probes) and separate cancelled probes.
+JSON reports include the session and collection start times, capture interval, stable target IDs, ping statistics window, effective settings, DNS IP changes, Ping, traceroute, MTR, port results, and retained target events. They use `schema_version: 1`; fields ending in `_ms` are milliseconds. `statistics` reuses the existing JSON target summary, including its `loss_rate_pct` denominator (sent probes) and separate cancelled probes.
+
+CSV reports are a table with one row per target — active targets first, then removed ones with `removed_at` set — for spreadsheets. Columns: `captured_at`, `target_id`, `host`, `ip`, `group`, `removed_at`, `measurement_state`, `health_status`, `health_reason`, `sent`, `received`, `lost`, `loss_pct`, `recent_loss_pct`, `duplicates`, `late_replies`, `last_rtt_ms`, `min_rtt_ms`, `avg_rtt_ms`, `max_rtt_ms`, `jitter_ms`, `last_ttl`, `last_error`, `last_loss_at`, `last_reply_at`, `started_at`, `statistics_since`, `asn`, `org`, `ptr` and `route_changes`. RTT and TTL columns stay empty until a target has replied. Ports, HTTP checks, hops and events are only in JSON. The file is UTF-8 with a byte order mark so spreadsheet applications read non-ASCII names; text cells starting with `=`, `+`, `-` or `@` get a leading `'` so they are not evaluated as formulas.
 
 The most recent 128 removed targets, 128 events per target, and 64 destination IP history entries are retained; reports include omitted-entry counts. A reload that rebuilds probe/network settings starts a new collection and clears earlier targets and removal history; live metadata/membership reloads retain them. Manual reset starts a new ping statistics window; when stopped, port/HTTP results retain their previous counters. Measurements and auxiliary checks are captured sequentially within the recorded capture interval. Reports contain aggregate results and retained events, not individual ping records.
 
@@ -544,7 +546,7 @@ mping --web google.com 1.1.1.1      # then open http://127.0.0.1:8080/
 | `DELETE /api/v1/targets/{id}` | Delete a target; needs `X-Mping-Token` |
 | `POST /api/v1/reset` | Reset statistics; needs `X-Mping-Token` |
 | `POST /api/v1/stop`, `POST /api/v1/restart` | Stop/restart through the supervisor, retaining counters; needs `X-Mping-Token` |
-| `GET /api/v1/report?format=json` (or `text`) | Download a session report without writing a server-side file; needs `X-Mping-Token` |
+| `GET /api/v1/report?format=json` (or `csv`) | Download a session report without writing a server-side file; needs `X-Mping-Token` |
 
 ## License
 

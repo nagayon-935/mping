@@ -11,8 +11,8 @@ import (
 
 // File mode bits and Stat_t ownership are POSIX concepts; Windows has neither.
 func TestReportFileIsPrivateAndOwnedByInvoker(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "report.txt")
-	if err := Write(path, "text", Report{SchemaVersion: 1}); err != nil {
+	path := filepath.Join(t.TempDir(), "report.csv")
+	if err := Write(path, "csv", Report{SchemaVersion: 1}); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)

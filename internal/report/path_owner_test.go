@@ -8,11 +8,11 @@ func TestPathFormat(t *testing.T) {
 		valid               bool
 	}{
 		{"result.json", "result.json", "json", true},
-		{"result.TXT", "result.TXT", "text", true},
+		{"result.CSV", "result.CSV", "csv", true},
 		{" result.JSON ", "result.JSON", "json", true},
-		{"result", "result.txt", "text", true},
-		{"/tmp/folder.json/result", "/tmp/folder.json/result.txt", "text", true},
-		{"result.csv", "", "", false},
+		{"result", "result.json", "json", true},
+		{"/tmp/folder.csv/result", "/tmp/folder.csv/result.json", "json", true},
+		{"result.txt", "", "", false},
 		{" ", "", "", false},
 		{"/tmp/", "", "", false},
 		{"..", "", "", false},

@@ -14,8 +14,8 @@ func Write(path, format string, r Report) error {
 	var data []byte
 	var err error
 	switch format {
-	case "text":
-		data = []byte(r.Text())
+	case "csv":
+		data, err = r.CSV()
 	case "json":
 		data, err = json.MarshalIndent(r, "", "  ")
 	default:

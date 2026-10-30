@@ -1,9 +1,12 @@
 package report
 
 import (
+	"bytes"
+	"encoding/csv"
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -40,45 +43,64 @@ func fullReport() Report {
 	}
 }
 
-func TestTextIncludesAllOptionalSections(t *testing.T) {
-	out := fullReport().Text()
-	for _, want := range []string{
-		"Active targets:", "Removed targets (final measurements):", "5 older removed targets omitted.",
-		"Independent HTTP checks:", "https://example.com", "Removed: ", "Destination IP changed 2 times",
-		"1 older IP history entries omitted.", "Route changes 3", "Route: 10.0.0.1 gw.example -> *",
-		"Route discovery failed: socket: permission denied",
-		"Port 443/tcp Open", "4 older target events omitted.", "k: m", "All *_ms fields are milliseconds.",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("Text() missing %q", want)
-		}
-	}
-}
-
-func TestTextListsMTRHopsInPerHopMode(t *testing.T) {
+func TestCSVHasOneRowPerTargetIncludingRemovedOnes(t *testing.T) {
 	r := fullReport()
-	r.Settings.MTR = true
-	out := r.Text()
-	if !strings.Contains(out, "MTR hop 1 10.0.0.1") || !strings.Contains(out, "MTR hop 2 ") {
-		t.Errorf("Text() missing MTR hop lines:\n%s", out)
+	r.Targets[0].Statistics.Sent, r.Targets[0].Statistics.Recv = 10, 9
+	r.Targets[0].Statistics.LastRTTMs, r.Targets[0].Statistics.AvgRTTMs = 12.3456, 10
+	data, err := r.CSV()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(out, "Route: ") {
-		t.Errorf("Text() has a path-only route line in per-hop mode:\n%s", out)
+	if !bytes.HasPrefix(data, []byte("\ufeff")) {
+		t.Fatal("CSV lacks the UTF-8 byte order mark")
+	}
+	rows, err := csv.NewReader(bytes.NewReader(bytes.TrimPrefix(data, []byte("\ufeff")))).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 || !slices.Equal(rows[0], csvHeader) {
+		t.Fatalf("rows = %q, want the header, one active and one removed target", rows)
+	}
+	col := func(row []string, name string) string { return row[slices.Index(csvHeader, name)] }
+	active, removed := rows[1], rows[2]
+	for name, want := range map[string]string{
+		"captured_at": "2026-01-02T03:04:05Z", "target_id": "1", "host": "example.com", "group": "g",
+		"removed_at": "", "sent": "10", "received": "9", "last_rtt_ms": "12.346", "avg_rtt_ms": "10.000",
+		"route_changes": "3", "statistics_since": "2026-01-02T03:04:05Z",
+	} {
+		if got := col(active, name); got != want {
+			t.Errorf("active %s = %q, want %q", name, got, want)
+		}
+	}
+	if got := col(removed, "removed_at"); got != "2026-01-02T03:05:05Z" {
+		t.Errorf("removed_at = %q", got)
+	}
+	// No reply yet: RTT and TTL are blank rather than zero.
+	if got := col(removed, "avg_rtt_ms") + col(removed, "last_ttl"); got != "" {
+		t.Errorf("RTT/TTL without replies = %q, want blank", got)
 	}
 }
 
-func TestTextOmitsEmptyOptionalSections(t *testing.T) {
-	out := Report{}.Text()
-	for _, unwanted := range []string{"Removed targets", "Independent HTTP checks", "older removed targets"} {
-		if strings.Contains(out, unwanted) {
-			t.Errorf("Text() unexpectedly contains %q", unwanted)
+func TestCSVKeepsTextCellsFromBecomingFormulas(t *testing.T) {
+	r := Report{Targets: []Target{{Statistics: stats.TargetSummary{Host: "=HYPERLINK(\"x\")", Org: "+evil", PTR: "-1", LastError: "@x"}}}}
+	data, err := r.CSV()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := csv.NewReader(bytes.NewReader(bytes.TrimPrefix(data, []byte("\ufeff")))).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"host", "org", "ptr", "last_error"} {
+		if got := rows[1][slices.Index(csvHeader, name)]; !strings.HasPrefix(got, "'") {
+			t.Errorf("%s = %q, want a leading quote", name, got)
 		}
 	}
 }
 
-func TestWriteSupportsTextAndJSON(t *testing.T) {
+func TestWriteSupportsJSONAndCSV(t *testing.T) {
 	dir := t.TempDir()
-	for format, marker := range map[string]string{"text": "mping investigation report", "json": `"schema_version"`} {
+	for format, marker := range map[string]string{"csv": "captured_at,target_id", "json": `"schema_version"`} {
 		path := filepath.Join(dir, "r."+format)
 		if err := Write(path, format, fullReport()); err != nil {
 			t.Fatalf("Write(%s): %v", format, err)
@@ -95,14 +117,14 @@ func TestWriteRejectsInvalidInputs(t *testing.T) {
 	if err := Write(filepath.Join(dir, "x"), "xml", Report{}); err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("unsupported format error = %v", err)
 	}
-	if err := Write(filepath.Join(dir, "missing", "x"), "text", Report{}); err == nil || !strings.Contains(err.Error(), "create report") {
+	if err := Write(filepath.Join(dir, "missing", "x"), "csv", Report{}); err == nil || !strings.Contains(err.Error(), "create report") {
 		t.Fatalf("missing dir error = %v", err)
 	}
 	existing := filepath.Join(dir, "exists")
 	if err := os.WriteFile(existing, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := Write(existing, "text", Report{}); err == nil || !strings.Contains(err.Error(), "choose a new path") {
+	if err := Write(existing, "csv", Report{}); err == nil || !strings.Contains(err.Error(), "choose a new path") {
 		t.Fatalf("existing path error = %v", err)
 	}
 	if data, _ := os.ReadFile(existing); string(data) != "keep" {
@@ -121,7 +143,7 @@ func TestWriteFailsWhenOwnerCannotBeDetermined(t *testing.T) {
 	t.Cleanup(func() { callerOwner = orig })
 	callerOwner = func() (fileOwner, error) { return fileOwner{}, errors.New("invalid SUDO_UID") }
 	path := filepath.Join(t.TempDir(), "x")
-	if err := Write(path, "text", Report{}); err == nil || !strings.Contains(err.Error(), "SUDO_UID") {
+	if err := Write(path, "csv", Report{}); err == nil || !strings.Contains(err.Error(), "SUDO_UID") {
 		t.Fatalf("expected owner error, got %v", err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -180,7 +202,7 @@ func TestWriteRemovesTempFileWhenOwnerChownFails(t *testing.T) {
 	callerOwner = func() (fileOwner, error) { return fileOwner{uid: 0, gid: 0}, nil }
 	dir := t.TempDir()
 	path := filepath.Join(dir, "x")
-	if err := Write(path, "text", Report{}); err == nil || !strings.Contains(err.Error(), "set report owner") {
+	if err := Write(path, "csv", Report{}); err == nil || !strings.Contains(err.Error(), "set report owner") {
 		t.Fatalf("expected chown error, got %v", err)
 	}
 	entries, _ := os.ReadDir(dir)

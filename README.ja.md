@@ -25,7 +25,7 @@
 * **PMTU 探索**: DF 付きのパケットサイズ探索を実行できます。
 * **自動ソースIP検出**: 指定がない場合でも、実際に通信に使用されているローカルIPを自動的に表示します。
 * **RTT グラフ**: 縦軸は自動スケール（スパイク時に即拡大、一定期間後に縮小）、横軸 30 秒。ICMP と TCP/UDP ポートの両系列を表示できます。
-* **統計のスナップショット**: その時点までに集めた全統計を、TUI (`w`) か Web UI の **Report** ボタンからいつでも保存できます。
+* **統計のスナップショット**: その時点までに集めた全統計を、TUI (`w`) か Web UI の **Report** ボタンからいつでも JSON または CSV で保存できます。
 
 ## 対応プラットフォーム
 
@@ -350,9 +350,11 @@ HTTP チェックは 2xx / 3xx の応答を Up、それ以外を Down と判定�
 
 ### 調査結果の保存
 
-`w` で保存画面を開き、ファイル名を入力して Enter または「Save」で保存します。末尾が `.txt` ならテキスト、`.json` なら JSON と判定し、入力欄の下に形式を表示します。拡張子がなければ `.txt` を補います。それ以外の拡張子では保存せず、修正を案内します。Tab で入力欄とボタンを切り替え、Esc で戻れます。
+`w` で保存画面を開き、ファイル名を入力して Enter または「Save」で保存します。末尾が `.json` なら JSON、`.csv` なら CSV と判定し、入力欄の下に形式を表示します。拡張子がなければ `.json` を補います。それ以外の拡張子では保存せず、修正を案内します。Tab で入力欄とボタンを切り替え、Esc で戻れます。
 
 一覧からは全体と保持している削除対象・HTTP 結果、詳細からは選択対象だけを保存します。保存中も測定は継続し、既存ファイルは上書きしません。
+
+CSV は表計算ソフト向けの、1 ターゲット 1 行の表です。稼働中のターゲットのあとに、削除済みのターゲットが `removed_at` 付きで続きます。列は `captured_at`・`target_id`・`host`・`ip`・`group`・`removed_at`・`measurement_state`・`health_status`・`health_reason`・`sent`・`received`・`lost`・`loss_pct`・`recent_loss_pct`・`duplicates`・`late_replies`・`last_rtt_ms`・`min_rtt_ms`・`avg_rtt_ms`・`max_rtt_ms`・`jitter_ms`・`last_ttl`・`last_error`・`last_loss_at`・`last_reply_at`・`started_at`・`statistics_since`・`asn`・`org`・`ptr`・`route_changes` です。応答がまだないターゲットの RTT と TTL は空欄です。ポート・HTTP・ホップ・イベントは JSON にだけ含まれます。日本語の名前が文字化けしないよう BOM 付きの UTF-8 で書き出し、`=`・`+`・`-`・`@` で始まる文字列には数式として扱われないよう先頭に `'` を付けます。
 
 レポートの権限は所有者だけが読み書きできる `0600` です。sudo 起動でも、保存完了前に sudo を起動したユーザーの所有者・グループへ変更します。setuid 起動では起動したユーザーとしてレポートを作成します。所有者の設定に失敗した場合、保存先の完成ファイルは作りません。
 
@@ -533,7 +535,7 @@ mping --web google.com 1.1.1.1      # http://127.0.0.1:8080/ を開く
 | `DELETE /api/v1/targets/{id}` | ターゲット削除。`X-Mping-Token` が必要 |
 | `POST /api/v1/reset` | 統計リセット。`X-Mping-Token` が必要 |
 | `POST /api/v1/stop`, `POST /api/v1/restart` | 統計を保持して一時停止・再開。`X-Mping-Token` が必要 |
-| `GET /api/v1/report?format=json` (`text` も可) | サーバーにファイルを作らずレポートをダウンロード。`X-Mping-Token` が必要 |
+| `GET /api/v1/report?format=json` (`csv` も可) | サーバーにファイルを作らずレポートをダウンロード。`X-Mping-Token` が必要 |
 
 ## ライセンス
 

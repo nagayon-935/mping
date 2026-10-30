@@ -81,7 +81,7 @@ func TestReportSimulationSavesSessionAndSelectedDuplicate(t *testing.T) {
 	wait(fmt.Sprintf("Save target #%d report", b.ID()))
 	h.key(tcell.KeyTab)
 	h.key(tcell.KeyEnter)
-	if r := recvWithin(t, requests, "the target save callback"); r.format != "text" || r.id != b.ID() {
+	if r := recvWithin(t, requests, "the target save callback"); r.format != "json" || r.id != b.ID() {
 		t.Fatalf("incorrect target save: %+v", r)
 	}
 	// The background save is deliberately blocked: navigation must still work.

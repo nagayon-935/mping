@@ -56,8 +56,8 @@ func handleReport(w http.ResponseWriter, r *http.Request, c Controller) {
 	if format == "" {
 		format = "json"
 	}
-	if format != "json" && format != "text" {
-		writeError(w, http.StatusBadRequest, "format must be json or text")
+	if format != "json" && format != "csv" {
+		writeError(w, http.StatusBadRequest, "format must be json or csv")
 		return
 	}
 	p, ok := c.(ReportController)
@@ -71,10 +71,15 @@ func handleReport(w http.ResponseWriter, r *http.Request, c Controller) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	if format == "text" {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Content-Disposition", `attachment; filename="mping-report.txt"`)
-		_, _ = io.WriteString(w, snapshot.Text())
+	if format == "csv" {
+		data, err := snapshot.CSV()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="mping-report.csv"`)
+		_, _ = w.Write(data)
 	} else {
 		w.Header().Set("Content-Disposition", `attachment; filename="mping-report.json"`)
 		writeJSON(w, snapshot)

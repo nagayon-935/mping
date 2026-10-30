@@ -1,12 +1,12 @@
 /** A download name, never a filesystem path. Keep the selected format's suffix. */
 export function reportFilename(raw, format) {
-  if (!["json", "text"].includes(format)) return { error: "Choose JSON or Text." };
+  if (!["json", "csv"].includes(format)) return { error: "Choose JSON or CSV." };
   const name = String(raw ?? "").trim();
   if (!name) return { error: "Enter a file name." };
   if (/[/\\\x00-\x1f\x7f]/.test(name)) return { error: "Use a file name without folders or control characters." };
-  const base = name.replace(/\.(json|txt)$/i, "");
+  const base = name.replace(/\.(json|csv)$/i, "");
   if (!base || /^\.+$/.test(base)) return { error: "Enter a file name." };
-  return { filename: `${base}.${format === "text" ? "txt" : "json"}` };
+  return { filename: `${base}.${format}` };
 }
 
 /** The dialog survives snapshots, so typing and format choices stay stable. */

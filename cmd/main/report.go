@@ -92,7 +92,7 @@ func (s *supervisor) captureReport(selectedID uint64) (report.Report, error) {
 }
 
 func (s *supervisor) saveReport(path, format string, selectedID uint64) error {
-	if format != "text" && format != "json" {
+	if format != "csv" && format != "json" {
 		return fmt.Errorf("unsupported report format %q", format)
 	}
 	var snapshot report.Report
