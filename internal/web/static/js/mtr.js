@@ -59,7 +59,7 @@ export function renderMTR(table, targets, meta, selectedId = null) {
           el("span", { className: "mtr-target-count", text: hops.length ? `${hops.length} hops` : "Waiting" }),
           address && el("span", { className: "mtr-target-address cell-text", text: address })))));
     if (!hops.length) body.append(el("tr", {}, el("td", { className: "mtr-waiting",
-      text: target.mtr_error ? `Route discovery failed: ${target.mtr_error}` : "Waiting for hop replies. No MTR route data has been received yet.",
+      text: target.mtr_error ? `Route discovery failed: ${target.mtr_error}` : "Waiting for hop replies…",
       attrs: { colspan: String(columns.length) } })));
     for (const hop of hops) {
       body.append(el("tr", {}, ...columns.map((c) => {

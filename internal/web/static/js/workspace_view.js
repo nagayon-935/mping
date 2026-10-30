@@ -22,7 +22,7 @@ export function createWorkspaceView({ graphs, inspect, canControl, selectTarget,
     });
   }
 
-  function render(view, { targets, total, orderUpToDate }) {
+  function render(view, { targets, total, groupHeaders, orderUpToDate }) {
     const { features } = view.meta;
     const showMTR = !!features.mtr;
     const showTrace = !!features.traceroute && !showMTR;
@@ -32,10 +32,15 @@ export function createWorkspaceView({ graphs, inspect, canControl, selectTarget,
     $("pane-mtr").hidden = !showMTR;
     $("pane-traceroute").hidden = !showTrace;
     $("workspace").classList.toggle("has-route", showMTR || showTrace);
+    // Size the monitor for every host, not the filtered ones, so filtering
+    // never moves the route and graph panes.
+    setMonitorSize("--monitor-rows", String(total));
+    setMonitorSize("--monitor-groups", String(groupHeaders));
 
     if (showMTR) renderMTRPane(view, targets, total);
     if (showTrace) renderTraceroutePane(view, targets);
     renderTargetsPane(view, targets, total);
+    measureMonitor();
     renderMonitorChrome(view, targets, total, showMTR || showTrace, orderUpToDate);
     graphs.render({
       targets,
@@ -47,6 +52,22 @@ export function createWorkspaceView({ graphs, inspect, canControl, selectTarget,
       now: view.historyNow,
     });
     renderUnlessSelecting($("inspect-body"), () => { if (view.inspectOpen) inspect.render(view); });
+  }
+
+  /** Host and group rows have fixed heights in style.css; the column header
+   * and a horizontal scrollbar (non-overlay scrollbars) are measured. */
+  function measureMonitor() {
+    const table = $("targets");
+    const head = table.tHead.getBoundingClientRect().height;
+    if (!head) return; // not laid out (hidden): keep the last measurement
+    setMonitorSize("--monitor-head", `${Math.ceil(head * 4) / 4}px`);
+    const scroll = table.closest(".pane-scroll");
+    setMonitorSize("--monitor-hscroll", `${scroll.offsetHeight - scroll.clientHeight}px`);
+  }
+
+  function setMonitorSize(name, value) {
+    const pane = $("pane-monitor");
+    if (pane.style.getPropertyValue(name) !== value) pane.style.setProperty(name, value);
   }
 
   const hostCount = (n) => `${n} ${n === 1 ? "host" : "hosts"} · ICMP`;

@@ -72,5 +72,19 @@ test("workspace membership changes retain frozen rows and configured order resto
   assert.deepEqual(ids(order.derive(view).targets), [1, 3, 4]);
   assert.equal(order.derive(view).orderUpToDate, true);
   view.snapshot.targets = [];
-  assert.deepEqual(order.derive(view), {targets: [], total: 0, orderUpToDate: true});
+  assert.deepEqual(order.derive(view), {targets: [], total: 0, groupHeaders: 0, orderUpToDate: true});
+});
+
+test("group headings count what the unfiltered table draws", () => {
+  const order = createTargetOrder();
+  const view = {snapshot: {targets: [target(1), target(2), target(3)]},
+    meta: {...meta, groups: [{name: "core", target_ids: [1]}, {name: "gone", target_ids: [9]}]},
+    sort: {key: "config", direction: "asc"}, filter: "host-3", status: "all"};
+  // core and Ungrouped; the empty group draws no heading and the filter is ignored.
+  assert.equal(order.derive(view).groupHeaders, 2);
+  view.sort = {key: "host", direction: "asc"};
+  assert.equal(order.derive(view).groupHeaders, 0, "a column sort flattens the table");
+  view.sort = {key: "config", direction: "asc"};
+  view.meta = {...meta, groups: []};
+  assert.equal(order.derive(view).groupHeaders, 0, "no groups, no headings");
 });

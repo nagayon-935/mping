@@ -357,6 +357,77 @@ try {
     await many.close();
   });
 
+  await check("With a route pane the monitor fits its rows exactly: groups, Ungrouped, column sort and empty filter", async () => {
+    const response=await (await fetch(`${base}api/v1/snapshot`)).json();
+    const [a,b,c]=response.snapshot.targets;
+    const body=(targets,groups)=>({...response,
+      meta:{...response.meta,groups,features:{...response.meta.features,traceroute:true,mtr:false}},
+      snapshot:{...response.snapshot,targets}});
+    // fit: rows fill the scroll area with no blank band and no inner scroll.
+    // Rows can differ by a fraction of a pixel and the tallest one is used.
+    // Sub-pixel rects. Shared table borders leave the reserve up to half a
+    // pixel per row edge and a pixel per group heading spare, never short.
+    const fit=(p)=>p.$eval("#pane-monitor .pane-scroll",n=>({
+      blank:Math.round((n.getBoundingClientRect().height-(n.offsetHeight-n.clientHeight)-n.firstElementChild.getBoundingClientRect().height)*100)/100,
+      overflow:n.scrollHeight-n.clientHeight,
+      rows:[n.querySelector("thead").offsetHeight,...[...n.querySelectorAll("tbody tr")].map(r=>r.getBoundingClientRect().height)].join(" ")}));
+    const fits=(size,groups=0)=>size.blank>=-0.6&&size.blank<=groups+1&&size.overflow<=0;
+    // One named group, one empty group (not drawn) and an ungrouped host.
+    const grouped=await open({viewport:{width:1400,height:900}},browser,base,body([a,b,c],
+      [{name:"core",target_ids:[a.id,b.id]},{name:"gone",target_ids:[9999]}]));
+    assert.equal(await grouped.locator("#targets tr.group-row").count(),2,"core and Ungrouped headings");
+    let size=await fit(grouped);
+    assert.ok(fits(size,2),`grouped table fits: ${JSON.stringify(size)}`);
+    await grouped.click('#targets [data-sort="host"]');
+    await grouped.waitForFunction(()=>!document.querySelector("#targets tr.group-row"));
+    size=await fit(grouped);
+    assert.ok(fits(size),`flat sorted table fits: ${JSON.stringify(size)}`);
+    // Summary scrolls inside the monitor's height rather than growing it.
+    await grouped.click("#targets tr.target-row >> nth=0");
+    await grouped.waitForSelector("#pane-inspect:not([hidden])");
+    size=await fit(grouped);
+    assert.ok(fits(size,2),`table fits with Summary open: ${JSON.stringify(size)}`);
+    await grouped.close();
+    // Mixed hosts (status reasons, PTR lines, health tints) must all draw
+    // rows of one height, so filtering to any one host, before or after a
+    // reload that restores the filter, never moves the lower panes. The
+    // viewport keeps the monitor under its 3/5 cap.
+    const mixed=await open({viewport:{width:1400,height:1100}},browser,base,body(response.snapshot.targets,[]));
+    // Whatever their content, host rows never exceed the height style.css
+    // reserves per host (shared borders can take up to a pixel off).
+    const pitch=await mixed.$eval("#targets",t=>{
+      const rows=[...t.querySelectorAll("tr.target-row")].slice(1,-1);
+      return {heights:[...new Set(rows.map(r=>r.getBoundingClientRect().height))],
+        reserved:parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-target"))};
+    });
+    assert.ok(pitch.heights.length>0&&pitch.heights.every(h=>h<=pitch.reserved&&h>=pitch.reserved-1),
+      `host rows stay within the reserved height: ${JSON.stringify(pitch)}`);
+    const lower=()=>mixed.$eval("#pane-traceroute",n=>n.getBoundingClientRect().top);
+    // Wait until the redraw shows only rows for this host (the filter
+    // re-renders on the next frame).
+    const filtered=(host)=>mixed.waitForFunction((h)=>{
+      const rows=[...document.querySelectorAll("#targets tr.target-row")];
+      return rows.length>0&&rows.every(r=>r.getAttribute("aria-label").includes(h));
+    },host);
+    const before=await lower();
+    for (const target of response.snapshot.targets) {
+      await mixed.fill("#filter",target.host);
+      await filtered(target.host);
+      assert.equal(await lower(),before,`filtering to ${target.host} keeps the route pane in place`);
+    }
+    await mixed.reload();
+    await filtered(response.snapshot.targets.at(-1).host);
+    await mixed.waitForTimeout(500);
+    assert.equal(await lower(),before,"a filter restored on reload keeps the route pane in place");
+    await mixed.close();
+    const single=await open({viewport:{width:1400,height:900}},browser,base,body([a],[]));
+    await single.fill("#filter","no-match");
+    await single.waitForSelector("#targets-empty:not([hidden])");
+    size=await fit(single);
+    assert.ok(size.overflow<=1,`empty-state message fits without scrolling: ${JSON.stringify(size)}`);
+    await single.close();
+  });
+
   await check("Traceroute separates annotations and represents probe states without inventing hops", async () => {
     const result=await page.evaluate(async ()=>{
       const {tracePath}=await import("/js/traceroute.js");
@@ -380,6 +451,19 @@ try {
     assert.ok(result.states.every(s=>s.hops===0&&s.scripts===0));
     assert.match(result.states[0].text,/Discovering/);
     assert.match(result.states[1].text,/Route discovery failed/);
+  });
+
+  await check("Traceroute folds three or more consecutive unanswered hops into one row", async () => {
+    const result=await page.evaluate(async ()=>{
+      const {tracePath}=await import("/js/traceroute.js");
+      const hops=[{ttl:1,ip:"192.0.2.1"},...[2,3,4,5].map(ttl=>({ttl,ip:""})),{ttl:6,ip:"192.0.2.6"},{ttl:7,ip:""},{ttl:8,ip:""},{ttl:9,ip:"192.0.2.9"}];
+      const path=tracePath({host:"gap.example",ip:"192.0.2.9",mtr_hops:hops},{});
+      return {addresses:[...path.querySelectorAll(".trace-address")].map(n=>n.textContent),
+        run:path.querySelector(".is-run")?.textContent,summary:path.querySelector(".trace-summary").textContent};
+    });
+    assert.deepEqual(result.addresses,["192.0.2.1","No reply × 4","192.0.2.6","No reply","No reply","192.0.2.9"]);
+    assert.match(result.run,/Hops 2–5/);
+    assert.equal(result.summary,"9 hops · 6 no reply");
   });
 
   await check("Traceroute stays readable at the narrowest width and disabled MTR stays hidden with cached hops", async () => {
