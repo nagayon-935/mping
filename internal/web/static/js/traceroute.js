@@ -13,7 +13,15 @@ export function tracePath(target, features) {
   const noReply = hops.filter((hop) => !hop.ip).length;
   const summary = `${hops.length} ${hops.length === 1 ? "hop" : "hops"} · ${noReply} no reply`;
   const list = el("ol", { className: "trace-path", attrs: { "aria-label": "Traceroute hops" } });
-  for (const hop of hops) {
+  for (const hop of collapseSilentRuns(hops)) {
+    if (hop.silent) {
+      list.append(el("li", { className: "trace-hop is-unanswered is-run" },
+        el("span", { className: "trace-number", text: "⋯", attrs: { "aria-label": `Hops ${hop.first} to ${hop.last}` } }),
+        el("div", { className: "trace-identity" },
+          el("span", { className: "trace-address", text: `No reply × ${hop.count}` }),
+          el("span", { className: "trace-annotation", text: `Hops ${hop.first}–${hop.last}` }))));
+      continue;
+    }
     const destination = !!hop.ip && [target.ip, target.host].some((ip) => ip && hop.ip.toLowerCase() === ip.toLowerCase());
     const identity = el("div", { className: "trace-identity" },
       el("span", { className: "trace-address", text: hop.ip || "No reply" }));
@@ -25,6 +33,24 @@ export function tracePath(target, features) {
       destination && el("span", { className: "trace-tag", text: "Destination" })));
   }
   return el("div", { className: "trace-result" }, el("p", { className: "trace-summary", text: summary }), list);
+}
+
+/** Runs of SILENT_RUN or more consecutive unanswered hops become one
+ * {silent, first, last, count} entry; shorter runs stay as individual hops. */
+const SILENT_RUN = 3;
+function collapseSilentRuns(hops) {
+  const out = [];
+  let run = [];
+  const flush = () => {
+    if (run.length >= SILENT_RUN) out.push({ silent: true, first: run[0].ttl, last: run.at(-1).ttl, count: run.length });
+    else out.push(...run);
+    run = [];
+  };
+  for (const hop of hops) {
+    if (hop.ip) { flush(); out.push(hop); } else run.push(hop);
+  }
+  flush();
+  return out;
 }
 
 /** All hosts are visible independently of the selected Summary target. */

@@ -10,6 +10,7 @@
   --axis: #c3c2b7;
   --border: rgba(11, 11, 11, 0.10);
   --series: #2a78d6;
+  --series-ink: #2069bd; /* series as small text: 4.5:1 on surface-2 */
   --good: #087a2c;
   --warning: #936000;
   --critical: #d03b3b;
@@ -33,6 +34,7 @@
     --axis: #383835;
     --border: rgba(255, 255, 255, 0.10);
     --series: #3987e5;
+    --series-ink: #4a93ea;
     --good: #40ba65;
     --warning: #fab219;
     --warn-tint: rgba(250, 178, 25, 0.16);
@@ -175,7 +177,7 @@ body {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: baseline; gap: 2px 10px;
 }
-.mtr-target-kind { color: var(--series); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+.mtr-target-kind { color: var(--series-ink); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
 .mtr-target-count { color: var(--muted); font-size: 11px; font-weight: 400; }
 .mtr-target-address { grid-column: 2 / -1; color: var(--ink-2); font: 500 12px/1.4 var(--mono); }
 #mtr .mtr-waiting { color: var(--muted); font-size: 12px; }
@@ -251,7 +253,7 @@ body {
 }
 .host-cell .host { min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .host-arrow { flex: none; color: var(--series); font-size: 20px; line-height: 1; }
-.target-row:hover .host { color: var(--series); text-decoration: underline; }
+.target-row:hover .host { color: var(--series-ink); text-decoration: underline; }
 .host-cell .sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
 /* One line keeps every row the same height; the full reason is in the title
    and in Summary. */
@@ -328,7 +330,7 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
 .trace-annotation { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .trace-hop.is-unanswered .trace-number { border-style: dashed; background: transparent; }
 .trace-hop.is-unanswered .trace-address { color: var(--muted); font-family: var(--font); }
-.trace-hop.is-destination .trace-number { border-color: var(--series); color: var(--series); }
+.trace-hop.is-destination .trace-number { border-color: var(--series); color: var(--series-ink); }
 .trace-tag { margin-top: 3px; padding: 2px 6px; border-radius: 4px; background: var(--surface-2); color: var(--ink-2); font-size: 11px; }
 .trace-message { padding: 20px 0; font-size: 13px; color: var(--ink-2); }
 .trace-message p { margin: 8px 0 0; overflow-wrap: anywhere; }
@@ -344,9 +346,13 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
     grid-template-areas: "monitor monitor" "graphs graphs"; }
   .workspace.has-inspect { grid-template-areas: "monitor inspect" "graphs graphs"; }
   /* A route pane shares the lower row with graphs, so the top row shrinks to
-     its content (up to 3/5) instead of leaving a few host rows in empty space. */
+     fit every host (up to 3/5) instead of leaving a few rows in empty space.
+     The table height counts all hosts (header 33px, host 52px, group 36px),
+     not the filtered ones, so filtering never resizes the lower row. */
   .workspace.has-route { grid-template-rows: fit-content(60%) minmax(0, 1fr);
     grid-template-areas: "monitor monitor" "route graphs"; }
+  .workspace.has-route #pane-monitor .pane-scroll { flex: 1 1 auto;
+    height: calc(33px + var(--monitor-rows, 0) * 52px + var(--monitor-groups, 0) * 36px); }
   .workspace.has-inspect.has-route { grid-template-areas: "monitor inspect" "route graphs"; }
   #workspace > .pane { height: auto; max-height: none; }
   .page-view { display: flex; flex: 1; min-height: 0; }
@@ -391,7 +397,7 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
 .target-row.health-warn .status { color: var(--ink); }
 .target-row.health-crit:not([aria-current=true]) td:first-child { box-shadow: inset 3px 0 var(--critical); }
 #mtr .mtr-target-row.is-selected th, .trace-target.is-selected .trace-target-head { box-shadow: inset 4px 0 var(--series), inset 0 1px var(--series), inset 0 -1px var(--series); background: var(--page); }
-.trace-target.is-selected .trace-target-head strong::before { content: "SELECTED · "; color: var(--series); font-size: 11px; }
+.trace-target.is-selected .trace-target-head strong::before { content: "SELECTED · "; color: var(--series-ink); font-size: 11px; }
 .locate-selected { min-width: 112px; }
 .selection-note { flex: none; padding: 4px 16px; margin: 0; background: var(--surface-2); }
 #monitor-hint, #graphs-cursor { height: 18px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -414,7 +420,7 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
 .target-row:focus-within { outline: 2px dashed var(--focus); outline-offset: -2px; }
 .target-row:focus-within td { outline: none; }
 #targets .host-open:focus-visible { outline: none; }
-#mtr .mtr-target-row.is-selected .mtr-target-count::before { content: "Selected · "; color: var(--series); }
+#mtr .mtr-target-row.is-selected .mtr-target-count::before { content: "Selected · "; color: var(--series-ink); }
 #pane-graphs .pane-head { display: grid; grid-template-columns: minmax(0,1fr); gap: 8px; }
 #pane-graphs .pane-tools { min-height: 32px; flex-wrap: nowrap; }
 #pane-graphs .pane-head > div:first-child { flex: 1; min-width: 0; }

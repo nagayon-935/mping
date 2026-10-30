@@ -32,6 +32,10 @@ export function createWorkspaceView({ graphs, inspect, canControl, selectTarget,
     $("pane-mtr").hidden = !showMTR;
     $("pane-traceroute").hidden = !showTrace;
     $("workspace").classList.toggle("has-route", showMTR || showTrace);
+    // Size the monitor for every host, not the filtered ones, so filtering
+    // never moves the route and graph panes.
+    $("pane-monitor").style.setProperty("--monitor-rows", String(total));
+    $("pane-monitor").style.setProperty("--monitor-groups", String(view.meta.groups?.length ?? 0));
 
     if (showMTR) renderMTRPane(view, targets, total);
     if (showTrace) renderTraceroutePane(view, targets);

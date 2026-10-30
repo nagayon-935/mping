@@ -382,6 +382,19 @@ try {
     assert.match(result.states[1].text,/Route discovery failed/);
   });
 
+  await check("Traceroute folds three or more consecutive unanswered hops into one row", async () => {
+    const result=await page.evaluate(async ()=>{
+      const {tracePath}=await import("/js/traceroute.js");
+      const hops=[{ttl:1,ip:"192.0.2.1"},...[2,3,4,5].map(ttl=>({ttl,ip:""})),{ttl:6,ip:"192.0.2.6"},{ttl:7,ip:""},{ttl:8,ip:""},{ttl:9,ip:"192.0.2.9"}];
+      const path=tracePath({host:"gap.example",ip:"192.0.2.9",mtr_hops:hops},{});
+      return {addresses:[...path.querySelectorAll(".trace-address")].map(n=>n.textContent),
+        run:path.querySelector(".is-run")?.textContent,summary:path.querySelector(".trace-summary").textContent};
+    });
+    assert.deepEqual(result.addresses,["192.0.2.1","No reply × 4","192.0.2.6","No reply","No reply","192.0.2.9"]);
+    assert.match(result.run,/Hops 2–5/);
+    assert.equal(result.summary,"9 hops · 6 no reply");
+  });
+
   await check("Traceroute stays readable at the narrowest width and disabled MTR stays hidden with cached hops", async () => {
     const body=await (await fetch(`${base}api/v1/snapshot`)).json();
     const target={...body.snapshot.targets[2],host:"route.example",ip:"2001:db8::10",
