@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
@@ -67,15 +68,24 @@ type BulkEventsResponse struct {
 	Events []TargetEvent `json:"events"`
 }
 
+// handleSnapshot serves the cached snapshot. Its ETag is the cache key, so
+// the frontend's stream can ask for it conditionally and tell a new state
+// from one it already sent even when the bytes are the same.
 func handleSnapshot(cache *snapshotCache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		body, _, err := cache.get()
+		body, key, err := cache.get()
 		switch {
 		case errors.Is(err, errNoProvider):
 			writeError(w, http.StatusServiceUnavailable, err.Error())
 		case err != nil:
 			writeError(w, http.StatusInternalServerError, "failed to encode snapshot")
 		default:
+			tag := fmt.Sprintf(`"%d.%d"`, key.gen, key.version)
+			w.Header().Set("ETag", tag)
+			if r.Header.Get("If-None-Match") == tag {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
 			writeBody(w, body)
 		}
 	}

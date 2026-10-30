@@ -1,6 +1,11 @@
 // Package web serves a loopback-only browser view of mping's live
-// statistics: a JSON API plus a server-sent-events stream that pushes a fresh
-// snapshot whenever stats.Generation() moves.
+// statistics in two halves. The backend (ServeBackend) is the JSON API over
+// the measurement state, including the token-protected controls. The
+// frontend (StartFrontend) is what the browser talks to: it checks Host and
+// Origin, serves the dashboard, pushes a fresh snapshot over server-sent
+// events whenever the backend's changes, and relays every other API request
+// to the backend. mping runs the frontend in its own unprivileged process;
+// Start runs both halves in one process.
 package web
 
 import (

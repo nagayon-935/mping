@@ -16,8 +16,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/nagayon-935/mping/internal/stats"
 )
 
 //go:embed static
@@ -79,18 +77,48 @@ func Start(opts Options) (*Server, error) {
 // start is Start with a caller-chosen token (TestDevServer pins one so
 // browser checks can authenticate).
 func start(opts Options, token string) (*Server, error) {
-	if opts.Port < 0 || opts.Port > 65535 {
-		return nil, fmt.Errorf("web: port %d out of range 0-65535", opts.Port)
-	}
 	if opts.Source == nil {
 		return nil, errors.New("web: nil Source")
 	}
-	ln4, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(opts.Port)))
+	return serve(opts.Port, token, func(ctx context.Context, cfg handlerConfig) http.Handler {
+		return newHandler(ctx, opts.Source, cfg)
+	})
+}
+
+// FrontendOptions configures StartFrontend.
+type FrontendOptions struct {
+	// Port is the TCP port on 127.0.0.1; 0 lets the kernel pick one.
+	Port int
+	// Backend is the UNIX socket a ServeBackend in another process serves.
+	Backend string
+}
+
+// StartFrontend serves the browser-facing half of the web UI on loopback,
+// relaying the API to the backend on opts.Backend. It knows no control
+// token: the backend checks it, and the caller that chose it builds the
+// control URL.
+func StartFrontend(opts FrontendOptions) (*Server, error) {
+	if opts.Backend == "" {
+		return nil, errors.New("web: no backend socket")
+	}
+	backend := unixTransport(opts.Backend)
+	return serve(opts.Port, "", func(ctx context.Context, cfg handlerConfig) http.Handler {
+		return newFrontendHandler(ctx, cfg, backend)
+	})
+}
+
+// serve listens on loopback and serves the handler built for the server's
+// lifetime context.
+func serve(port int, token string, handler func(context.Context, handlerConfig) http.Handler) (*Server, error) {
+	if port < 0 || port > 65535 {
+		return nil, fmt.Errorf("web: port %d out of range 0-65535", port)
+	}
+	ln4, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
-		return nil, fmt.Errorf("web: listen on 127.0.0.1:%d: %w", opts.Port, err)
+		return nil, fmt.Errorf("web: listen on 127.0.0.1:%d: %w", port, err)
 	}
 	listeners := []net.Listener{ln4}
-	port := ln4.Addr().(*net.TCPAddr).Port
+	port = ln4.Addr().(*net.TCPAddr).Port
 	// Best effort by design: IPv6 may be disabled, and the advertised URL is
 	// the 127.0.0.1 one, so a missing [::1] listener loses nothing.
 	if ln6, err := net.Listen("tcp6", net.JoinHostPort("::1", strconv.Itoa(port))); err == nil {
@@ -100,7 +128,7 @@ func start(opts Options, token string) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{
 		srv: &http.Server{
-			Handler: newHandler(ctx, opts.Source, handlerConfig{
+			Handler: handler(ctx, handlerConfig{
 				streamInterval:    defaultStreamInterval,
 				heartbeatInterval: defaultHeartbeatInterval,
 				token:             token,
@@ -159,35 +187,12 @@ func (s *Server) Close() error {
 	return s.closeErr
 }
 
-// newHandler builds the full route table; ctx bounds open streams.
+// newHandler is the whole web UI in one process: the frontend reaches the
+// backend through an in-process transport instead of a socket. Start and
+// the tests use it; mping itself runs the two halves in separate processes
+// (StartFrontend, ServeBackend). ctx bounds open streams.
 func newHandler(ctx context.Context, src *Source, cfg handlerConfig) http.Handler {
-	if cfg.generation == nil {
-		cfg.generation = stats.Generation
-	}
-	cache := newSnapshotCache(src, cfg.generation)
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/snapshot", handleSnapshot(cache))
-	mux.HandleFunc("GET /api/v1/stream", handleStream(ctx, cache, cfg))
-	mux.HandleFunc("GET /api/v1/history", handleBulkHistory(src))
-	mux.HandleFunc("GET /api/v1/events", handleBulkEvents(src))
-	mux.HandleFunc("GET /api/v1/targets/{id}/history", handleHistory(src))
-	mux.HandleFunc("GET /api/v1/targets/{id}/events", handleEvents(src))
-	mux.HandleFunc("GET /api/v1/session", handleSession(src, cfg.token))
-	mux.HandleFunc("POST /api/v1/targets", controlled(src, cfg.token, handleAddHost))
-	mux.HandleFunc("DELETE /api/v1/targets/{id}", controlled(src, cfg.token, handleDeleteTarget))
-	mux.HandleFunc("POST /api/v1/reset", controlled(src, cfg.token, handleReset))
-	mux.HandleFunc("POST /api/v1/stop", controlled(src, cfg.token, handleMeasurement(false)))
-	mux.HandleFunc("POST /api/v1/restart", controlled(src, cfg.token, handleMeasurement(true)))
-	mux.HandleFunc("GET /api/v1/report", controlled(src, cfg.token, handleReport))
-	mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, http.StatusNotFound, "no such endpoint")
-	})
-	static, err := fs.Sub(staticFiles, "static")
-	if err != nil {
-		panic(fmt.Sprintf("web: embedded static dir missing: %v", err))
-	}
-	mux.Handle("GET /", staticHandler(static))
-	return guard(mux)
+	return newFrontendHandler(ctx, cfg, handlerTransport{newBackendHandler(src, cfg.token, cfg.generation)})
 }
 
 // staticHandler serves files from fsys, answering 404 for any directory
