@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -129,7 +130,7 @@ func webProcessIdentity() identity {
 func listenWebSocket(id identity) (dir, socket string, ln net.Listener, err error) {
 	base := os.TempDir()
 	// A socket path longer than sun_path (104 bytes on macOS) cannot bind.
-	if len(base) > 60 {
+	if len(base) > 60 && runtime.GOOS != "windows" {
 		base = "/tmp"
 	}
 	if dir, err = os.MkdirTemp(base, "mping-web-"); err != nil {
