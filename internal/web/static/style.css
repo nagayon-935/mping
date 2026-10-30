@@ -347,12 +347,15 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
   .workspace.has-inspect { grid-template-areas: "monitor inspect" "graphs graphs"; }
   /* A route pane shares the lower row with graphs, so the top row shrinks to
      fit every host (up to 3/5) instead of leaving a few rows in empty space.
-     The table height counts all hosts (header 33px, host 52px, group 36px),
-     not the filtered ones, so filtering never resizes the lower row. */
+     workspace_view.js counts every host and group heading the unfiltered
+     table draws and measures the rendered header, row and scrollbar heights,
+     so filtering never resizes the lower row. 136px fits the empty-state
+     message and its button. */
   .workspace.has-route { grid-template-rows: fit-content(60%) minmax(0, 1fr);
     grid-template-areas: "monitor monitor" "route graphs"; }
   .workspace.has-route #pane-monitor .pane-scroll { flex: 1 1 auto;
-    height: calc(33px + var(--monitor-rows, 0) * 52px + var(--monitor-groups, 0) * 36px); }
+    height: calc(var(--monitor-head, 32px) + var(--monitor-hscroll, 0px) + max(136px,
+      var(--monitor-rows, 0) * var(--monitor-row, 52px) + var(--monitor-groups, 0) * var(--monitor-group, 36px))); }
   .workspace.has-inspect.has-route { grid-template-areas: "monitor inspect" "route graphs"; }
   #workspace > .pane { height: auto; max-height: none; }
   .page-view { display: flex; flex: 1; min-height: 0; }

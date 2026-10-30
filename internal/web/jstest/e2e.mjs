@@ -357,6 +357,37 @@ try {
     await many.close();
   });
 
+  await check("With a route pane the monitor fits its rows exactly: groups, Ungrouped, column sort and empty filter", async () => {
+    const response=await (await fetch(`${base}api/v1/snapshot`)).json();
+    const [a,b,c]=response.snapshot.targets;
+    const body=(targets,groups)=>({...response,
+      meta:{...response.meta,groups,features:{...response.meta.features,traceroute:true,mtr:false}},
+      snapshot:{...response.snapshot,targets}});
+    // fit: rows fill the scroll area with no blank band and no inner scroll.
+    // Rows can differ by a fraction of a pixel and the tallest one is used.
+    const fit=(p)=>p.$eval("#pane-monitor .pane-scroll",n=>({blank:n.clientHeight-n.firstElementChild.offsetHeight,
+      overflow:n.scrollHeight-n.clientHeight,
+      rows:[n.querySelector("thead").offsetHeight,...[...n.querySelectorAll("tbody tr")].map(r=>r.getBoundingClientRect().height)].join(" ")}));
+    const fits=(size)=>size.blank>=-1&&size.blank<=3&&size.overflow<=1;
+    // One named group, one empty group (not drawn) and an ungrouped host.
+    const grouped=await open({viewport:{width:1400,height:900}},browser,base,body([a,b,c],
+      [{name:"core",target_ids:[a.id,b.id]},{name:"gone",target_ids:[9999]}]));
+    assert.equal(await grouped.locator("#targets tr.group-row").count(),2,"core and Ungrouped headings");
+    let size=await fit(grouped);
+    assert.ok(fits(size),`grouped table fits: ${JSON.stringify(size)}`);
+    await grouped.click('#targets [data-sort="host"]');
+    await grouped.waitForFunction(()=>!document.querySelector("#targets tr.group-row"));
+    size=await fit(grouped);
+    assert.ok(fits(size),`flat sorted table fits: ${JSON.stringify(size)}`);
+    await grouped.close();
+    const single=await open({viewport:{width:1400,height:900}},browser,base,body([a],[]));
+    await single.fill("#filter","no-match");
+    await single.waitForSelector("#targets-empty:not([hidden])");
+    size=await fit(single);
+    assert.ok(size.overflow<=1,`empty-state message fits without scrolling: ${JSON.stringify(size)}`);
+    await single.close();
+  });
+
   await check("Traceroute separates annotations and represents probe states without inventing hops", async () => {
     const result=await page.evaluate(async ()=>{
       const {tracePath}=await import("/js/traceroute.js");

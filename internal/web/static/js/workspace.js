@@ -70,6 +70,9 @@ export function createTargetOrder() {
       return {
         targets: filterTargets(ordered, view.filter, view.status, view.meta),
         total: base.length,
+        // Group headings the unfiltered table draws; a column sort flattens it.
+        groupHeaders: view.sort.key && view.sort.key !== "config" ? 0
+          : buildSections(base, view.meta.groups).filter((section) => section.name != null).length,
         orderUpToDate: view.sort.key === "config" || ranked.every((id, index) => id === ordered[index]?.id),
       };
     },

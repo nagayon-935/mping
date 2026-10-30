@@ -22,7 +22,7 @@ export function createWorkspaceView({ graphs, inspect, canControl, selectTarget,
     });
   }
 
-  function render(view, { targets, total, orderUpToDate }) {
+  function render(view, { targets, total, groupHeaders, orderUpToDate }) {
     const { features } = view.meta;
     const showMTR = !!features.mtr;
     const showTrace = !!features.traceroute && !showMTR;
@@ -34,12 +34,13 @@ export function createWorkspaceView({ graphs, inspect, canControl, selectTarget,
     $("workspace").classList.toggle("has-route", showMTR || showTrace);
     // Size the monitor for every host, not the filtered ones, so filtering
     // never moves the route and graph panes.
-    $("pane-monitor").style.setProperty("--monitor-rows", String(total));
-    $("pane-monitor").style.setProperty("--monitor-groups", String(view.meta.groups?.length ?? 0));
+    setMonitorSize("--monitor-rows", String(total));
+    setMonitorSize("--monitor-groups", String(groupHeaders));
 
     if (showMTR) renderMTRPane(view, targets, total);
     if (showTrace) renderTraceroutePane(view, targets);
     renderTargetsPane(view, targets, total);
+    measureMonitor();
     renderMonitorChrome(view, targets, total, showMTR || showTrace, orderUpToDate);
     graphs.render({
       targets,
@@ -51,6 +52,27 @@ export function createWorkspaceView({ graphs, inspect, canControl, selectTarget,
       now: view.historyNow,
     });
     renderUnlessSelecting($("inspect-body"), () => { if (view.inspectOpen) inspect.render(view); });
+  }
+
+  /** Row heights depend on content (a status reason, a PTR line), so measure
+   * the drawn rows. While a filter hides every row of a kind, the last
+   * measurement (or the CSS default) stands. A horizontal scrollbar with
+   * non-overlay scrollbars also takes height from the rows. */
+  function measureMonitor() {
+    const table = $("targets");
+    const tallest = (selector) => Math.max(0, ...[...table.querySelectorAll(selector)].map((row) => row.getBoundingClientRect().height));
+    const px = (n) => `${Math.ceil(n * 4) / 4}px`;
+    const row = tallest("tr.target-row"), group = tallest("tr.group-row");
+    if (row) setMonitorSize("--monitor-row", px(row));
+    if (group) setMonitorSize("--monitor-group", px(group));
+    setMonitorSize("--monitor-head", px(table.tHead.getBoundingClientRect().height));
+    const scroll = table.closest(".pane-scroll");
+    setMonitorSize("--monitor-hscroll", `${scroll.offsetHeight - scroll.clientHeight}px`);
+  }
+
+  function setMonitorSize(name, value) {
+    const pane = $("pane-monitor");
+    if (pane.style.getPropertyValue(name) !== value) pane.style.setProperty(name, value);
   }
 
   const hostCount = (n) => `${n} ${n === 1 ? "host" : "hosts"} · ICMP`;
