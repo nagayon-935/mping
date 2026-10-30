@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -232,7 +231,6 @@ func (f *fakePinger) SetSource(ip string)                       {}
 func (f *fakePinger) SetSize(size int)                          {}
 func (f *fakePinger) SetCount(count int)                        {}
 func (f *fakePinger) SetResolveInterval(interval time.Duration) {}
-func (f *fakePinger) SetLogWriter(w io.Writer)                  {}
 func (f *fakePinger) SetInterface(name string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
