@@ -40,7 +40,7 @@ export function createWorkspaceView({ graphs, inspect, canControl, selectTarget,
     if (showMTR) renderMTRPane(view, targets, total);
     if (showTrace) renderTraceroutePane(view, targets);
     renderTargetsPane(view, targets, total);
-    measureMonitor();
+    measureMonitor(`${total}:${groupHeaders}`);
     renderMonitorChrome(view, targets, total, showMTR || showTrace, orderUpToDate);
     graphs.render({
       targets,
@@ -55,16 +55,19 @@ export function createWorkspaceView({ graphs, inspect, canControl, selectTarget,
   }
 
   /** Row heights depend on content (a status reason, a PTR line), so measure
-   * the drawn rows. While a filter hides every row of a kind, the last
-   * measurement (or the CSS default) stands. A horizontal scrollbar with
-   * non-overlay scrollbars also takes height from the rows. */
-  function measureMonitor() {
+   * the drawn rows. Keep the tallest seen until the host list changes: a
+   * filter that hides the taller rows must not shrink the reserve. A
+   * horizontal scrollbar with non-overlay scrollbars also takes height from
+   * the rows. */
+  let measured = { key: "", row: 0, group: 0 };
+  function measureMonitor(key) {
     const table = $("targets");
     const tallest = (selector) => Math.max(0, ...[...table.querySelectorAll(selector)].map((row) => row.getBoundingClientRect().height));
     const px = (n) => `${Math.ceil(n * 4) / 4}px`;
-    const row = tallest("tr.target-row"), group = tallest("tr.group-row");
-    if (row) setMonitorSize("--monitor-row", px(row));
-    if (group) setMonitorSize("--monitor-group", px(group));
+    const kept = measured.key === key ? measured : { row: 0, group: 0 };
+    measured = { key, row: Math.max(kept.row, tallest("tr.target-row")), group: Math.max(kept.group, tallest("tr.group-row")) };
+    if (measured.row) setMonitorSize("--monitor-row", px(measured.row));
+    if (measured.group) setMonitorSize("--monitor-group", px(measured.group));
     setMonitorSize("--monitor-head", px(table.tHead.getBoundingClientRect().height));
     const scroll = table.closest(".pane-scroll");
     setMonitorSize("--monitor-hscroll", `${scroll.offsetHeight - scroll.clientHeight}px`);

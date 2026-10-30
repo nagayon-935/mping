@@ -380,6 +380,18 @@ try {
     size=await fit(grouped);
     assert.ok(fits(size),`flat sorted table fits: ${JSON.stringify(size)}`);
     await grouped.close();
+    // Mixed hosts (status reasons, PTR lines, health tints) draw rows of
+    // slightly different heights; filtering to any one host must not move
+    // the lower panes. The viewport keeps the monitor under its 3/5 cap.
+    const mixed=await open({viewport:{width:1400,height:1100}},browser,base,body(response.snapshot.targets,[]));
+    const lower=()=>mixed.$eval("#pane-traceroute",n=>n.getBoundingClientRect().top);
+    const before=await lower();
+    for (const target of response.snapshot.targets) {
+      await mixed.fill("#filter",target.host);
+      await mixed.waitForFunction(()=>document.querySelectorAll("#targets tr.target-row").length>=1);
+      assert.equal(await lower(),before,`filtering to ${target.host} keeps the route pane in place`);
+    }
+    await mixed.close();
     const single=await open({viewport:{width:1400,height:900}},browser,base,body([a],[]));
     await single.fill("#filter","no-match");
     await single.waitForSelector("#targets-empty:not([hidden])");
