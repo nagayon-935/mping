@@ -1,0 +1,12 @@
+# Targets for the README screenshots (see assets/demo/README.md).
+# Ping endpoints in several regions, public anycast DNS, and one address
+# that never answers, so the green, orange and red states all show up.
+hosts:
+  - hnd-jp-ping.vultr.com
+  - lax-ca-us-ping.vultr.com
+  - syd-au-ping.vultr.com
+  - fra-de-ping.vultr.com
+  - 1.1.1.1
+  - 8.8.8.8
+  - 9.9.9.9
+  - 192.0.2.1 # TEST-NET-1 (RFC 5737): never answers

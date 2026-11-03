@@ -12,6 +12,8 @@
 
 [日本語](./README.ja.md)
 
+![mping monitoring eight hosts: live statistics, RTT graphs and alert log](./assets/mping-tui.gif)
+
 ## Features
 
 * **Multi-target ping** — monitor multiple hosts concurrently in a single view.
@@ -515,6 +517,11 @@ Regenerate saved scripts after upgrading mping to include new flags. To monitor 
 ```bash
 mping --web google.com 1.1.1.1      # then open http://127.0.0.1:8080/
 ```
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/mping-web-dark.png">
+  <img src="./assets/mping-web-light.png" alt="mping Web UI: ping monitor with health filters, the selected host's summary and RTT graphs">
+</picture>
 
 - It listens on loopback only (`127.0.0.1`, plus `[::1]` when available) and is not reachable from other machines. Requests whose `Host` or `Origin` header is not this server are rejected (DNS-rebinding / cross-site protection).
 - What the browser talks to runs as a separate process, started and stopped with mping. Before it serves anything it gives up every privilege for good: it runs as the invoking user (the calling user under `sudo`, `nobody` when root started mping itself), and on Linux it cannot gain the `CAP_NET_RAW` or setuid root mping was installed with. It reaches mping's measurements through a UNIX socket in a private directory that only that user can open, and mping itself checks the control token. Because the process is unprivileged, `--web-port` must be 1024 or above.
