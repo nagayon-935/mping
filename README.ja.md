@@ -10,6 +10,8 @@
 
 [English](./README.md)
 
+![8 ホストを監視している mping: リアルタイム統計・RTT グラフ・アラートログ](./assets/mping-tui.gif)
+
 ## 特徴
 
 * **複数ターゲットへの Ping**: 複数のホストを並行して監視できます。
@@ -504,6 +506,11 @@ mping completion fish > ~/.config/fish/completions/mping.fish
 ```bash
 mping --web google.com 1.1.1.1      # http://127.0.0.1:8080/ を開く
 ```
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/mping-web-dark.png">
+  <img src="./assets/mping-web-light.png" alt="mping の Web UI: ヘルス別フィルタ付きの Ping monitor、選択ホストの Summary、RTT グラフ">
+</picture>
 
 - 待ち受けは loopback のみ (`127.0.0.1`、利用可能なら `[::1]` も) で、他のマシンからは接続できません。`Host` / `Origin` ヘッダがこのサーバー以外のリクエストは拒否します (DNS rebinding・クロスサイト対策)。
 - ブラウザとやり取りする部分は別プロセスで動き、mping と一緒に起動・終了します。このプロセスは何かを配信する前に権限をすべて恒久的に捨てます。起動したユーザー（`sudo` の場合は呼び出したユーザー、root が直接起動した場合は `nobody`）として動き、Linux ではインストール時に付けた `CAP_NET_RAW` や setuid root も得られません。計測データには、そのユーザーだけが開ける専用ディレクトリ内の UNIX ソケット経由でアクセスし、操作用 token の確認は mping 本体が行います。権限を持たないため、`--web-port` は 1024 以上にしてください。
