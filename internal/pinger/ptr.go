@@ -1,6 +1,7 @@
 package pinger
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -36,6 +37,11 @@ func (p *Pinger) lookupPTR(t *stats.TargetStats, ipStr string) {
 // getASNInfo's NA handling): a transient resolver hiccup shouldn't
 // permanently block a later retry.
 func (p *Pinger) getPTR(ipStr string) string {
+	return p.getPTRContext(context.Background(), ipStr)
+}
+
+// getPTRContext is getPTR that gives up when ctx is cancelled.
+func (p *Pinger) getPTRContext(ctx context.Context, ipStr string) string {
 	p.ptrMu.RLock()
 	name, found := p.ptrCache[ipStr]
 	p.ptrMu.RUnlock()
@@ -48,10 +54,12 @@ func (p *Pinger) getPTR(ipStr string) string {
 		case <-time.After(j):
 		case <-p.done:
 			return ""
+		case <-ctx.Done():
+			return ""
 		}
 	}
 
-	names, err := p.lookupAddrBounded(ipStr)
+	names, err := lookupBoundedContext(ctx, p, ptrLookupTimeout, "ptr", ipStr, p.lookupAddrContext, p.lookupAddr)
 	if err != nil || len(names) == 0 {
 		return ""
 	}

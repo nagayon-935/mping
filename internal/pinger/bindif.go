@@ -3,8 +3,6 @@ package pinger
 import (
 	"net"
 	"syscall"
-
-	"github.com/nagayon-935/mping/internal/privilege"
 )
 
 // bindRawConnToInterfaceFn is a seam over the platform-specific
@@ -15,11 +13,18 @@ import (
 // connection. It mirrors bindToInterfaceFn, the equivalent seam for the ICMP
 // net.PacketConn path.
 var bindRawConnToInterfaceFn = func(c syscall.RawConn, ifaceName string, isIPv6 bool) {
-	_ = privilege.Privileged(func() error {
+	_ = runPrivileged(func() error {
 		bindRawConnToInterface(c, ifaceName, isIPv6)
 		return nil
 	})
 }
+
+// bindRawConnToInterfaceHeldFn binds without entering privilege.Privileged.
+// Use it from code already running inside a privileged section, such as a
+// net.Dialer.Control hook of a dial wrapped in privilege.Privileged: the
+// privilege RWMutex is not reentrant, and a nested read lock deadlocks once
+// an AsRealUser section is waiting for the write lock in between.
+var bindRawConnToInterfaceHeldFn = bindRawConnToInterface
 
 // rawConnOf extracts the syscall.RawConn behind a net.PacketConn, reporting
 // ok=false for conns that don't expose one (notably the fakes used in this

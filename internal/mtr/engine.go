@@ -36,9 +36,10 @@ type HopProber interface {
 	OpenHopSocket(ctx context.Context, dest string) (HopSocket, error)
 	ProbeHop(ctx context.Context, sock HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error)
 	NextTraceID() int
-	ASNInfoFor(ip string) pinger.ASNInfo
+	// ASNInfoFor and PTRFor give up when ctx is cancelled (target stopped).
+	ASNInfoFor(ctx context.Context, ip string) pinger.ASNInfo
 	// PTRFor returns ip's reverse DNS name, or "" when unknown or disabled.
-	PTRFor(ip string) string
+	PTRFor(ctx context.Context, ip string) string
 }
 
 // Config holds tunable parameters for the MTR engine.
@@ -59,6 +60,9 @@ type Config struct {
 	// host is the target's display name (TargetStats.DisplayName); desc
 	// summarises what changed.
 	OnFlap func(host, desc string)
+	// AnnotationRetry is how long an incomplete ASN/PTR result is kept before
+	// it is looked up again. Defaults to defaultAnnotationRetry when <= 0.
+	AnnotationRetry time.Duration
 }
 
 func (c *Config) withDefaults() Config {
@@ -77,6 +81,9 @@ func (c *Config) withDefaults() Config {
 	}
 	if out.MaxConcurrentProbes <= 0 {
 		out.MaxConcurrentProbes = defaultMaxConcurrentProbes
+	}
+	if out.AnnotationRetry <= 0 {
+		out.AnnotationRetry = defaultAnnotationRetry
 	}
 	return out
 }
@@ -138,6 +145,8 @@ func (e *Engine) Stop() {
 // and retried at the next rediscovery.
 func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg Config, sem chan struct{}) {
 	mtr := ts.MTR()
+	ann := newHopAnnotator(ctx, prober, mtr, cfg.AnnotationRetry)
+	defer ann.close()
 	var sock HopSocket
 	var dest string
 	defer func() {
@@ -164,7 +173,7 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 			sock, dest = next, current
 		}
 		prevIPs := mtr.RouteSnapshot()
-		newHopCount := discover(ctx, prober, sock, mtr, dest, cfg, sem)
+		newHopCount := discover(ctx, prober, sock, mtr, dest, cfg, sem, ann)
 		if newHopCount == 0 || ctx.Err() != nil {
 			// Round was cancelled mid-flight (e.g. Stop() racing this
 			// tick); discover() registered nothing this round, so
@@ -200,7 +209,7 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 			rediscover()
 		case <-probeC:
 			if hopCount > 0 {
-				probe(ctx, prober, sock, mtr, dest, hopCount, cfg, sem)
+				probe(ctx, prober, sock, mtr, dest, hopCount, cfg, sem, ann)
 			}
 		}
 	}
@@ -209,8 +218,8 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 // fanOut sends one TTL-limited probe per TTL in 1..n concurrently and waits
 // for all of them. For each probe that completes without error (and without
 // ctx being cancelled), record is called from the probing goroutine while its
-// sem slot is still held, so any slow work in record (e.g. an ASN lookup that
-// may block on DNS) stays bounded by sem. record may be called concurrently
+// sem slot is still held, so any slow work in record stays bounded by sem (ASN/PTR
+// lookups do not run here; see hopAnnotator). record may be called concurrently
 // and must do its own locking. sem bounds concurrent ProbeHop calls across the
 // whole Engine; a nil sem (only in tests bypassing NewEngine) disables the
 // bound.
@@ -238,7 +247,7 @@ func fanOut(ctx context.Context, prober HopProber, sock HopSocket, dest string, 
 // It updates mtr hop IPs and returns the final hop count (TTL at which dest was reached,
 // or maxHops if not reached). sem bounds concurrent ProbeHop calls across the
 // whole Engine; see fanOut.
-func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTRStats, dest string, cfg Config, sem chan struct{}) int {
+func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTRStats, dest string, cfg Config, sem chan struct{}, ann *hopAnnotator) int {
 	var mu sync.Mutex
 	firstReachedTTL := cfg.MaxHops + 1
 
@@ -283,11 +292,10 @@ func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.
 	for _, res := range results {
 		if res.ttl <= hopCount {
 			if ip := res.reply.SrcIP; res.reply.Responded && ip != "" {
-				info := prober.ASNInfoFor(ip)
-				mtr.SetIP(res.ttl, ip, info.Number, info.Country, info.Org)
-				if name := prober.PTRFor(ip); name != "" {
-					mtr.SetPTR(res.ttl, ip, name)
-				}
+				// Register the IP now, with whatever is already known about
+				// it; missing ASN/PTR follow from the annotator.
+				mtr.SetIPAnnotated(res.ttl, ip, ann.cached(ip))
+				ann.note(ip)
 			}
 		}
 	}
@@ -299,11 +307,11 @@ func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.
 // results, including for TTLs that did not respond during discovery. A missed
 // initial response must not hide a hop until the next rediscovery. sem bounds
 // concurrent ProbeHop calls across the whole Engine; see fanOut.
-func probe(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTRStats, dest string, hopCount int, cfg Config, sem chan struct{}) {
+func probe(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTRStats, dest string, hopCount int, cfg Config, sem chan struct{}, ann *hopAnnotator) {
 	fanOut(ctx, prober, sock, dest, cfg.HopTimeout, sem, hopCount, func(ttl int, reply pinger.HopReply) {
 		if reply.Responded {
-			info := prober.ASNInfoFor(reply.SrcIP)
-			mtr.RecordReply(ttl, reply.SrcIP, info.Number, info.Country, info.Org, reply.RTT)
+			mtr.RecordReplyAnnotated(ttl, reply.SrcIP, ann.cached(reply.SrcIP), reply.RTT)
+			ann.note(reply.SrcIP)
 		} else {
 			mtr.RecordLoss(ttl)
 		}

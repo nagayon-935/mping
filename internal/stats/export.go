@@ -43,6 +43,9 @@ type TargetSummary struct {
 	LastLossTime     *time.Time    `json:"last_loss_time,omitempty"`
 	PortResults      []PortSummary `json:"port_results,omitempty"`
 	PMTU             int           `json:"pmtu,omitempty"`
+	PathMTU          int           `json:"path_mtu,omitempty"`
+	PMTUSource       string        `json:"pmtu_source,omitempty"`
+	PMTUStatus       string        `json:"pmtu_status,omitempty"`
 	PMTUBottleneckIP string        `json:"pmtu_bottleneck_ip,omitempty"`
 	MTRHops          []HopSummary  `json:"mtr_hops,omitempty"`
 	MTRError         string        `json:"mtr_error,omitempty"`
@@ -191,6 +194,9 @@ func BuildSnapshotFromViews(targets []TargetView, httpResults []HTTPCheckView) E
 			LastLossTime:     lastLossTime,
 			PortResults:      portResults,
 			PMTU:             v.PMTU,
+			PathMTU:          v.PathMTU,
+			PMTUSource:       v.PMTUSource,
+			PMTUStatus:       v.PMTUStatus,
 			PMTUBottleneckIP: v.PMTUBottleneckIP,
 			MTRHops:          mtrHops,
 			MTRError:         v.MTRError,

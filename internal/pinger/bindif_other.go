@@ -4,12 +4,9 @@ package pinger
 
 import "syscall"
 
-// bindRawConnToInterface is a no-op on platforms without a native "bind socket
-// to physical interface" facility exposed through golang.org/x/sys/unix (e.g.
-// Windows, the BSDs other than Darwin). mping falls back to the source-IP
-// bind performed by Pinger.Start via p.Source. This covers both the
-// ICMP path (via bindToInterface in bindif.go) and the net.Dialer.Control path
-// used by the port and HTTP checkers (see dialbind.go): -I therefore has no
-// effect on TCP/UDP checks either, which keep whatever egress the routing
-// table selects, narrowed only by the -S source bind, which is portable.
+// Tests may override this to exercise the source-address fallback.
+var interfaceBindingSupported = false
+
+// Native interface binding is unavailable; sockets instead bind the matching
+// SourceV4/SourceV6 address when no explicit Source was given.
 func bindRawConnToInterface(_ syscall.RawConn, _ string, _ bool) {}

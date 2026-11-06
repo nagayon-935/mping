@@ -219,44 +219,26 @@ func TestGetPreferredOutboundIP_Localhost(t *testing.T) {
 	}
 }
 
-func TestHasIPv6Connectivity(t *testing.T) {
-	tests := []struct {
-		name  string
-		probe string
-		want  bool
-	}{
-		{"no route", "", false},
-		{"global address", "2001:db8::1", true},
-		{"link-local address is not connectivity", "fe80::1", false},
-		{"loopback is not connectivity", "::1", false},
-		{"unparsable address", "invalid", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			stubOutboundIP(t, func(string, string) string { return tt.probe })
-
-			if got := hasIPv6Connectivity(); got != tt.want {
-				t.Fatalf("hasIPv6Connectivity() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestResolveNetwork(t *testing.T) {
 	tests := []struct {
-		name  string
-		cfg   config
-		probe string
-		want  string
+		name string
+		cfg  config
+		want string
 	}{
-		{"-4 forces ip4", config{ipv4Only: true}, "2001:db8::1", "ip4"},
-		{"-6 forces ip6", config{ipv6Only: true}, "", "ip6"},
-		{"dual stack when IPv6 is reachable", config{}, "2001:db8::1", "ip"},
-		{"falls back to ip4 without IPv6", config{}, "", "ip4"},
+		{"-4 forces ip4", config{ipv4Only: true}, "ip4"},
+		{"-6 forces ip6", config{ipv6Only: true}, "ip6"},
+		{"automatic is selected per destination", config{}, "ip"},
+		{"IPv4 source restricts DNS family", config{sourceAddr: "192.0.2.1"}, "ip4"},
+		{"IPv6 source restricts DNS family", config{sourceAddr: "2001:db8::1"}, "ip6"},
+		{"scoped IPv6 source restricts DNS family", config{sourceAddr: "fe80::1%en0"}, "ip6"},
+		{"interface alone allows both families", config{ifaceName: "en0"}, "ip"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			stubOutboundIP(t, func(string, string) string { return tt.probe })
+			stubOutboundIP(t, func(string, string) string {
+				t.Fatal("family selection must not probe an unrelated external host")
+				return ""
+			})
 
 			if got := resolveNetwork(tt.cfg); got != tt.want {
 				t.Fatalf("resolveNetwork() = %q, want %q", got, tt.want)

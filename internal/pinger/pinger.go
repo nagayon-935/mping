@@ -126,7 +126,9 @@ type traceMsg struct {
 type Pinger struct {
 	Targets []*stats.TargetStats
 
-	Source string // Source IP address to bind to
+	Source   string // Explicit source IP address to bind to
+	SourceV4 string // Interface IPv4 source when Source is empty
+	SourceV6 string // Interface IPv6 source when Source is empty
 
 	// Interface is the network interface name requested via -I. When set,
 	// Start() and OpenHopSocketContext() additionally bind each socket to this
@@ -135,9 +137,8 @@ type Pinger struct {
 	// on top of the source-IP bind Source already performs. This enforces
 	// the egress interface even when the routing table would otherwise
 	// choose a different one, or when the same address is assigned to more
-	// than one interface. It has no effect on platforms without a
-	// supported binding facility (bindif_other.go), where source-IP bind
-	// via Source remains the only interface-selection mechanism.
+	// than one interface. On platforms without native binding,
+	// SourceV4/SourceV6 select the interface address for each family.
 	Interface string
 
 	Size  int // Payload size in bytes
@@ -209,12 +210,18 @@ type resolveIPAddrFunc func(network, address string) (*net.IPAddr, error)
 
 type listenPacketFunc func(network, address string) (net.PacketConn, error)
 
+// runPrivileged is the single entry point this package uses for
+// privilege.Privileged. It is a seam so tests can observe every privileged
+// section, in particular reentry: privilege's RWMutex is not reentrant, and a
+// nested section deadlocks once an AsRealUser section waits in between.
+var runPrivileged = privilege.Privileged
+
 // privilegedListenPacket is the default listenPacketFunc: raw ICMP sockets
 // need root (or CAP_NET_RAW), so they are opened inside privilege.Privileged,
 // never while a setuid-root run has dropped to the invoking user for file I/O.
 func privilegedListenPacket(network, address string) (net.PacketConn, error) {
 	var c net.PacketConn
-	err := privilege.Privileged(func() error {
+	err := runPrivileged(func() error {
 		var err error
 		c, err = net.ListenPacket(network, address)
 		return err
@@ -230,7 +237,7 @@ func privilegedListenPacket(network, address string) (net.PacketConn, error) {
 var bindToInterfaceFn = func(c net.PacketConn, ifaceName string, isIPv6 bool) {
 	// SO_BINDTODEVICE needs CAP_NET_RAW on Linux, which a setuid-root run
 	// only has while not inside privilege.AsRealUser.
-	_ = privilege.Privileged(func() error {
+	_ = runPrivileged(func() error {
 		bindToInterface(c, ifaceName, isIPv6)
 		return nil
 	})
@@ -264,11 +271,6 @@ type Options struct {
 func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 	resolve := opts.ResolveIPAddr
 	resolveContext := opts.ResolveIPAddrContext
-	if resolveContext == nil && resolve == nil {
-		resolveContext = func(ctx context.Context, network, address string) (*net.IPAddr, error) {
-			return ResolveIPAddrContext(ctx, opts.Resolver, network, address)
-		}
-	}
 
 	now := opts.Now
 	if now == nil {
@@ -292,7 +294,7 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Pinger{
+	p := &Pinger{
 		Targets:            targets,
 		ids:                opts.IDs,
 		workerStates:       make(map[*stats.TargetStats]*targetWorker),
@@ -322,6 +324,12 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		asnJitter:          func() time.Duration { return time.Duration(rand.Int63n(int64(asnJitterMax))) },
 		ptrJitter:          func() time.Duration { return time.Duration(rand.Int63n(int64(ptrJitterMax))) },
 	}
+	if resolveContext == nil && resolve == nil {
+		p.resolveWithContext = func(ctx context.Context, network, address string) (*net.IPAddr, error) {
+			return ResolveUsableIPAddrContext(ctx, resolver, network, address, BindConfig{Source: p.Source, Interface: p.Interface, SourceV4: p.SourceV4, SourceV6: p.SourceV6})
+		}
+	}
+	return p
 }
 
 // applyLastErrSource substitutes the bound source IP into raw-socket write
@@ -355,14 +363,34 @@ func (p *Pinger) Stop() {
 // configured Source address, or to the wildcard address when none is set.
 // Interface binding is left to the caller via bindToInterfaceFn.
 func (p *Pinger) listenICMP(v6 bool) (net.PacketConn, error) {
+	source := p.Source
+	if source == "" && p.Interface != "" && !interfaceBindingSupported {
+		var err error
+		source, err = p.interfaceSource(v6)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return p.listenICMPSource(v6, source)
+}
+
+func (p *Pinger) listenICMPSource(v6 bool, source string) (net.PacketConn, error) {
 	network, bindAddr := "ip4:icmp", "0.0.0.0"
 	if v6 {
 		network, bindAddr = "ip6:ipv6-icmp", "::"
 	}
-	if p.Source != "" {
-		bindAddr = p.Source
+	if source != "" {
+		bindAddr = source
 	}
-	return p.listenPacket(network, bindAddr)
+	c, err := p.listenPacket(network, bindAddr)
+	if err != nil {
+		return nil, err
+	}
+	if err := configureICMPBuffers(c); err != nil {
+		c.Close()
+		return nil, err
+	}
+	return c, nil
 }
 
 func (p *Pinger) Start(interval, timeout time.Duration) error {

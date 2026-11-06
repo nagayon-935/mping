@@ -18,6 +18,7 @@ var csvHeader = []string{
 	"last_rtt_ms", "min_rtt_ms", "avg_rtt_ms", "max_rtt_ms", "jitter_ms", "last_ttl",
 	"last_error", "last_loss_at", "last_reply_at", "started_at", "statistics_since",
 	"asn", "org", "ptr", "route_changes",
+	"path_mtu", "pmtu_payload", "pmtu_status", "pmtu_source",
 }
 
 // CSV renders the report as one row per target. It starts with a UTF-8 byte
@@ -47,6 +48,12 @@ func csvRow(captured time.Time, t Target) []string {
 	if v.Recv > 0 {
 		ttl = strconv.Itoa(v.LastTTL)
 	}
+	optionalSize := func(n int) string {
+		if n <= 0 {
+			return ""
+		}
+		return strconv.Itoa(n)
+	}
 	var removed, lastLoss time.Time
 	if t.RemovedAt != nil {
 		removed = *t.RemovedAt
@@ -63,6 +70,7 @@ func csvRow(captured time.Time, t Target) []string {
 		rtt(v.LastRTTMs), rtt(v.MinRTTMs), rtt(v.AvgRTTMs), rtt(v.MaxRTTMs), rtt(v.JitterMs), ttl,
 		spreadsheetText(v.LastError), csvTime(lastLoss), csvTime(v.Health.LastReplyAt), csvTime(v.StartedAt), csvTime(t.WindowStartedAt),
 		spreadsheetText(v.ASN), spreadsheetText(v.Org), spreadsheetText(v.PTR), strconv.Itoa(t.MTRFlapCount),
+		optionalSize(v.PathMTU), optionalSize(v.PMTU), spreadsheetText(v.PMTUStatus), spreadsheetText(v.PMTUSource),
 	}
 }
 

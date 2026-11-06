@@ -1,6 +1,7 @@
 package pinger
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -38,6 +39,12 @@ func (p *Pinger) lookupASN(t *stats.TargetStats, ipStr string) {
 }
 
 func (p *Pinger) getASNInfo(ipStr string) ASNInfo {
+	return p.getASNInfoContext(context.Background(), ipStr)
+}
+
+// getASNInfoContext is getASNInfo that gives up when ctx is cancelled,
+// without caching anything for ipStr.
+func (p *Pinger) getASNInfoContext(ctx context.Context, ipStr string) ASNInfo {
 	p.asnMu.RLock()
 	info, found := p.asnCache[ipStr]
 	p.asnMu.RUnlock()
@@ -55,6 +62,8 @@ func (p *Pinger) getASNInfo(ipStr string) ASNInfo {
 		case <-time.After(j):
 		case <-p.done:
 			return ASNInfo{}
+		case <-ctx.Done():
+			return ASNInfo{}
 		}
 	}
 
@@ -70,7 +79,7 @@ func (p *Pinger) getASNInfo(ipStr string) ASNInfo {
 		originQuery = sb.String()
 	}
 
-	txts, err := p.lookupTXTBounded(originQuery)
+	txts, err := p.lookupTXTBoundedContext(ctx, originQuery)
 	if err != nil || len(txts) == 0 {
 		return ASNInfo{}
 	}
@@ -93,8 +102,8 @@ func (p *Pinger) getASNInfo(ipStr string) ASNInfo {
 
 	// Second lookup: <asn-number>.asn.cymru.com for org name
 	// Response: "15169 | GOOGLE - Google LLC, US | 1992-12-01"
-	org, err := p.lookupOrg(strings.TrimPrefix(asnRaw, "AS"))
-	if errors.Is(err, errPingerStopped) {
+	org, err := p.lookupOrgContext(ctx, strings.TrimPrefix(asnRaw, "AS"))
+	if errors.Is(err, errPingerStopped) || ctx.Err() != nil {
 		// Stop() fired mid-lookup: don't cache a partial record (real ASN/
 		// country with a bogus empty Org that's indistinguishable from a
 		// genuine "no org found" result).
@@ -111,17 +120,21 @@ func (p *Pinger) getASNInfo(ipStr string) ASNInfo {
 // lookupTXTBounded runs cancellable DNS on the calling goroutine. Only
 // explicitly injected context-free hooks use the legacy bounded adapter.
 func (p *Pinger) lookupTXTBounded(name string) ([]string, error) {
-	return lookupBounded(p, asnLookupTimeout, "asn", name, p.lookupTXTContext, p.lookupTXT)
+	return p.lookupTXTBoundedContext(context.Background(), name)
 }
 
-// lookupOrg resolves the org name for asnNumber. The returned error is
+func (p *Pinger) lookupTXTBoundedContext(ctx context.Context, name string) ([]string, error) {
+	return lookupBoundedContext(ctx, p, asnLookupTimeout, "asn", name, p.lookupTXTContext, p.lookupTXT)
+}
+
+// lookupOrgContext resolves the org name for asnNumber. The returned error is
 // non-nil only when the lookup aborted because Stop() closed p.done
 // (errPingerStopped); a genuine DNS failure or empty/malformed response is
 // reported as ("", nil) so callers keep treating it as "no org found", not
 // as a reason to discard an otherwise-successful ASN/country result.
-func (p *Pinger) lookupOrg(asnNumber string) (string, error) {
-	txts, err := p.lookupTXTBounded(asnNumber + ".asn.cymru.com")
-	if errors.Is(err, errPingerStopped) {
+func (p *Pinger) lookupOrgContext(ctx context.Context, asnNumber string) (string, error) {
+	txts, err := p.lookupTXTBoundedContext(ctx, asnNumber+".asn.cymru.com")
+	if errors.Is(err, errPingerStopped) || ctx.Err() != nil {
 		return "", err
 	}
 	if err != nil || len(txts) == 0 {

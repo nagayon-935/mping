@@ -18,7 +18,7 @@ func stubCanSendPayload(t *testing.T, fn func(payloadLen int) (bool, string, err
 	t.Helper()
 	orig := canSendPayloadFn
 	t.Cleanup(func() { canSendPayloadFn = orig })
-	canSendPayloadFn = func(_ context.Context, _ *Pinger, _ *net.IPAddr, payloadLen int) (bool, string, error) {
+	canSendPayloadFn = func(_ context.Context, _ *Pinger, _ *net.IPAddr, payloadLen, id int) (bool, string, error) {
 		return fn(payloadLen)
 	}
 }
@@ -182,7 +182,7 @@ func TestCanSendPayload_FailsBeforeSending(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			p := NewPingerWithOptions(nil, Options{ListenPacket: tt.listen})
 
-			ok, bottleneck, err := p.canSendPayload(context.Background(), &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, tt.payloadLen)
+			ok, bottleneck, err := p.canSendPayload(context.Background(), &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, tt.payloadLen, 123)
 
 			if err == nil {
 				t.Fatal("expected error")
@@ -260,7 +260,7 @@ func TestCanSendPayload_ClassifiesTheProbe(t *testing.T) {
 			newRawConnFn = func(net.PacketConn) (pmtuRawConn, error) { return tt.conn, nil }
 			dst := &net.IPAddr{IP: net.IPv4(198, 51, 100, 7)}
 
-			ok, bottleneck, err := p.canSendPayload(context.Background(), dst, 100)
+			ok, bottleneck, err := p.canSendPayload(context.Background(), dst, 100, id)
 
 			if (err != nil) != tt.wantErr || ok != tt.wantOK || bottleneck != tt.wantBottleneck {
 				t.Fatalf("canSendPayload = (%v, %q, %v), want (%v, %q, error=%v)", ok, bottleneck, err, tt.wantOK, tt.wantBottleneck, tt.wantErr)
@@ -278,5 +278,69 @@ func TestCanSendPayload_ClassifiesTheProbe(t *testing.T) {
 				t.Fatalf("written probe = %+v, want an echo with ID %d and 100 data bytes", msg.Body, id)
 			}
 		})
+	}
+}
+
+func TestDiscoverMaxPayload_NoBaselineReplyRejectsResult(t *testing.T) {
+	for _, hop := range []string{"", "192.0.2.254"} {
+		t.Run("bottleneck="+hop, func(t *testing.T) {
+			stubCanSendPayload(t, func(int) (bool, string, error) { return false, hop, nil })
+			p := NewPingerWithOptions(nil, Options{ResolveIPAddr: resolveTo("192.0.2.1")})
+
+			_, _, err := p.DiscoverMaxPayload(context.Background(), "host", 1472, 56, nil)
+
+			if !errors.Is(err, ErrPMTUNoReply) {
+				t.Fatalf("baseline error = %v, want ErrPMTUNoReply", err)
+			}
+			if hop != "" && !strings.Contains(err.Error(), hop) {
+				t.Fatalf("error %v omits bottleneck %s", err, hop)
+			}
+		})
+	}
+}
+
+// One search reserves one echo ID for its entire baseline/binary search.
+func TestDiscoverMaxPayload_SearchesUseDistinctConsistentIDs(t *testing.T) {
+	orig := canSendPayloadFn
+	t.Cleanup(func() { canSendPayloadFn = orig })
+	var ids []int
+	canSendPayloadFn = func(_ context.Context, _ *Pinger, _ *net.IPAddr, size, id int) (bool, string, error) {
+		ids = append(ids, id)
+		return true, "", nil
+	}
+	p := NewPingerWithOptions(nil, Options{ResolveIPAddr: resolveTo("192.0.2.1"), IDs: &IDAllocator{}})
+	firstID := -1
+	for search := range 2 {
+		ids = nil
+
+		_, _, err := p.DiscoverMaxPayload(context.Background(), "host", 1472, 56, nil)
+
+		if err != nil || len(ids) < 2 {
+			t.Fatalf("search %d: ids=%v err=%v", search, ids, err)
+		}
+		for _, id := range ids {
+			if id != ids[0] || id < 0 {
+				t.Fatalf("inconsistent search IDs: %v", ids)
+			}
+		}
+		if search == 1 && ids[0] == firstID {
+			t.Fatalf("two searches reused echo ID %d", firstID)
+		}
+		firstID = ids[0]
+	}
+}
+
+func TestCanSendPayload_ExplicitSourceStillBindsInterface(t *testing.T) {
+	p := NewPingerWithOptions(nil, Options{ListenPacket: listenWith(&fakeNetPacketConn{})})
+	p.Interface, p.Source = "test0", "192.0.2.10"
+	calls := spyBindToInterface(t)
+	orig := newRawConnFn
+	t.Cleanup(func() { newRawConnFn = orig })
+	newRawConnFn = func(net.PacketConn) (pmtuRawConn, error) { return &fakeRawConn{}, nil }
+
+	_, _, _ = p.canSendPayload(context.Background(), &net.IPAddr{IP: net.ParseIP("198.51.100.1")}, 56, 1234)
+
+	if len(*calls) != 1 || (*calls)[0].ifaceName != "test0" {
+		t.Fatalf("PMTU interface bindings=%+v, want test0", *calls)
 	}
 }

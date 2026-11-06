@@ -47,6 +47,8 @@ func TestCSVHasOneRowPerTargetIncludingRemovedOnes(t *testing.T) {
 	r := fullReport()
 	r.Targets[0].Statistics.Sent, r.Targets[0].Statistics.Recv = 10, 9
 	r.Targets[0].Statistics.LastRTTMs, r.Targets[0].Statistics.AvgRTTMs = 12.3456, 10
+	r.Targets[0].Statistics.PathMTU, r.Targets[0].Statistics.PMTU = 1450, 1402
+	r.Targets[0].Statistics.PMTUStatus, r.Targets[0].Statistics.PMTUSource = "estimated", "os"
 	data, err := r.CSV()
 	if err != nil {
 		t.Fatal(err)
@@ -67,6 +69,7 @@ func TestCSVHasOneRowPerTargetIncludingRemovedOnes(t *testing.T) {
 		"captured_at": "2026-01-02T03:04:05Z", "target_id": "1", "host": "example.com", "group": "g",
 		"removed_at": "", "sent": "10", "received": "9", "last_rtt_ms": "12.346", "avg_rtt_ms": "10.000",
 		"route_changes": "3", "statistics_since": "2026-01-02T03:04:05Z",
+		"path_mtu": "1450", "pmtu_payload": "1402", "pmtu_status": "estimated", "pmtu_source": "os",
 	} {
 		if got := col(active, name); got != want {
 			t.Errorf("active %s = %q, want %q", name, got, want)

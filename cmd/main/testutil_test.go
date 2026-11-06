@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,6 +117,9 @@ type fakePinger struct {
 	discoverBottleneckIP string
 	discoverErr          error
 	discoverLogs         []string
+	resolveTarget        func(context.Context, string) (*net.IPAddr, error)
+	discoverPathContext  func(context.Context, string) (pinger.PathMTUResult, error)
+	discoverPath         func(string) (pinger.PathMTUResult, error)
 
 	// routeStarted and routeReturned, when set, make the route prober's
 	// OpenHopSocket block on ctx.Done() (a slow, in-flight lookup) instead
@@ -133,7 +137,7 @@ type fakePinger struct {
 	// onStop / onClose / onWait run at the start of the matching call, before
 	// the call is recorded. Tests use them to check ordering against other
 	// events without a wrapper type per method.
-	onStop, onClose, onWait func()
+	onStart, onStop, onClose, onWait func()
 
 	// waited is written by Wait(), which — like the real *pinger.Pinger.Wait()
 	// it stands in for (a thin sync.WaitGroup.Wait() wrapper, safe for
@@ -157,6 +161,9 @@ func (f *fakePinger) Start(interval, timeout time.Duration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.started = true
+	if f.onStart != nil {
+		f.onStart()
+	}
 	return nil
 }
 
@@ -227,6 +234,19 @@ func (f *fakePinger) DiscoverMaxPayload(ctx context.Context, dest string, start 
 	return f.discoverMTU, f.discoverBottleneckIP, nil
 }
 
+func (f *fakePinger) DiscoverPathMTU(ctx context.Context, dest string, start int, min int, logf func(string)) (pinger.PathMTUResult, error) {
+	if f.discoverPathContext != nil {
+		return f.discoverPathContext(ctx, dest)
+	}
+	if f.discoverPath != nil {
+		return f.discoverPath(dest)
+	}
+	payload, hop, err := f.DiscoverMaxPayload(ctx, dest, start, min, logf)
+	return pinger.PathMTUResult{IP: "192.0.2.1", MTU: payload + 28, Payload: payload, Source: "probe", Status: "probed", BottleneckIP: hop}, err
+}
+
+func (f *fakePinger) SetInterfaceSources(v4, v6 string) {}
+
 func (f *fakePinger) SetSource(ip string)                       {}
 func (f *fakePinger) SetSize(size int)                          {}
 func (f *fakePinger) SetCount(count int)                        {}
@@ -279,8 +299,8 @@ func (noopHopProber) ProbeHop(ctx context.Context, sock mtr.HopSocket, dest stri
 
 func (noopHopProber) NextTraceID() int { return 0 }
 
-func (noopHopProber) ASNInfoFor(ip string) pinger.ASNInfo { return pinger.ASNInfo{} }
-func (noopHopProber) PTRFor(string) string                { return "" }
+func (noopHopProber) ASNInfoFor(context.Context, string) pinger.ASNInfo { return pinger.ASNInfo{} }
+func (noopHopProber) PTRFor(context.Context, string) string             { return "" }
 
 // liveFakePinger is a fakePinger that also implements dynamicPinger, so the
 // supervisor takes its live-edit and event-driven completion paths.
@@ -351,4 +371,18 @@ func plainLogLine(line string) string {
 // of a separate web process.
 func inProcessFrontend(socket string, port int, _ identity) (webFrontend, error) {
 	return web.StartFrontend(web.FrontendOptions{Port: port, Backend: socket})
+}
+
+func (f *fakePinger) ResolveTarget(ctx context.Context, dest string) (*net.IPAddr, error) {
+	if f.resolveTarget != nil {
+		return f.resolveTarget(ctx, dest)
+	}
+	if ip := net.ParseIP(strings.Split(dest, "%")[0]); ip != nil {
+		zone := ""
+		if _, after, ok := strings.Cut(dest, "%"); ok {
+			zone = after
+		}
+		return &net.IPAddr{IP: ip, Zone: zone}, nil
+	}
+	return &net.IPAddr{IP: net.ParseIP("192.0.2.1")}, nil
 }

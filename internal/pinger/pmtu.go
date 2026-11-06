@@ -13,9 +13,12 @@ import (
 	"golang.org/x/net/ipv4"
 )
 
+// ErrPMTUNoReply means the baseline echo did not confirm a reachable path.
+var ErrPMTUNoReply = errors.New("PMTU baseline received no echo reply")
+
 // canSendPayloadFn is a variable holding canSendPayload to allow overriding in tests.
-var canSendPayloadFn = func(ctx context.Context, p *Pinger, dst *net.IPAddr, payloadLen int) (bool, string, error) {
-	return p.canSendPayload(ctx, dst, payloadLen)
+var canSendPayloadFn = func(ctx context.Context, p *Pinger, dst *net.IPAddr, payloadLen, id int) (bool, string, error) {
+	return p.canSendPayload(ctx, dst, payloadLen, id)
 }
 
 // pmtuRawConn is the subset of *ipv4.RawConn that canSendPayload uses.
@@ -60,10 +63,41 @@ func (p *Pinger) DiscoverMaxPayload(ctx context.Context, dest string, start int,
 	if dstAddr.IP.To4() == nil {
 		return p.Size, "", fmt.Errorf("PMTU discovery not supported for IPv6")
 	}
+	return p.discoverIPv4MaxPayload(ctx, dstAddr, start, min, logf)
+}
 
-	low := min
+// Use the already selected destination throughout the IPv4 search. In
+// particular, never perform a second DNS lookup after deciding the family.
+func (p *Pinger) discoverIPv4MaxPayload(ctx context.Context, dstAddr *net.IPAddr, start, min int, logf func(string)) (int, string, error) {
+	if start <= 0 {
+		return 0, "", fmt.Errorf("start MTU must be > 0")
+	}
+	low := max(min, 0)
 	if low > start {
 		low = start
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, "", err
+	}
+	id := p.NextTraceID()
+	if id < 0 {
+		return 0, "", fmt.Errorf("PMTU probe IDs exhausted")
+	}
+	if p.ids != nil {
+		defer p.ids.releaseTrace(id)
+	}
+	ok, hop, err := canSendPayloadFn(ctx, p, dstAddr, low, id)
+	if err != nil {
+		return 0, hop, err
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, hop, err
+	}
+	if !ok {
+		if hop != "" {
+			return 0, hop, fmt.Errorf("PMTU %s (bottleneck %s): %w", dstAddr, hop, ErrPMTUNoReply)
+		}
+		return 0, "", fmt.Errorf("PMTU %s: %w", dstAddr, ErrPMTUNoReply)
 	}
 	high := start
 	var bottleneckIP string
@@ -74,7 +108,7 @@ func (p *Pinger) DiscoverMaxPayload(ctx context.Context, dest string, start int,
 		default:
 		}
 		mid := (low + high + 1) / 2
-		ok, hopIP, err := canSendPayloadFn(ctx, p, dstAddr, mid)
+		ok, hopIP, err := canSendPayloadFn(ctx, p, dstAddr, mid, id)
 		if err != nil {
 			return 0, "", err
 		}
@@ -108,7 +142,7 @@ func (p *Pinger) DiscoverMaxPayload(ctx context.Context, dest string, start int,
 // is too large (EMSGSIZE or ICMP Fragmentation Needed), the bottleneck router
 // IP if an ICMP Fragmentation Needed response was received, and an error for
 // unexpected failures.
-func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloadLen int) (bool, string, error) {
+func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloadLen, id int) (bool, string, error) {
 	if payloadLen < 0 {
 		payloadLen = 0
 	}
@@ -118,7 +152,7 @@ func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloa
 		Type: ipv4.ICMPTypeEcho,
 		Code: 0,
 		Body: &icmp.Echo{
-			ID:   p.baseID & 0xffff,
+			ID:   id,
 			Seq:  0,
 			Data: payload,
 		},
@@ -128,13 +162,21 @@ func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloa
 		return false, "", err
 	}
 
-	// Unlike the pinger and MTR sockets, this one deliberately does not bind
-	// to the interface.
-	c, err := p.listenICMP(false)
+	// Header-included IPv4 probes bind both the requested interface and its
+	// IPv4 source on every OS, measuring the same path as regular ping.
+	source := p.Source
+	if source == "" && p.Interface != "" {
+		source, err = p.interfaceSource(false)
+		if err != nil {
+			return false, "", err
+		}
+	}
+	c, err := p.listenICMPSource(false, source)
 	if err != nil {
 		return false, "", err
 	}
 	defer c.Close()
+	bindToInterfaceFn(c, p.Interface, false)
 
 	defer closeOnCancel(ctx, func() { _ = c.Close() })()
 
@@ -157,8 +199,8 @@ func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloa
 		Dst:      dstAddr.IP,
 		Flags:    ipv4.DontFragment,
 	}
-	if p.Source != "" {
-		h.Src = net.ParseIP(p.Source)
+	if source != "" {
+		h.Src = net.ParseIP(source)
 	}
 
 	if err := rc.WriteTo(h, b, nil); err != nil {
@@ -189,14 +231,14 @@ func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloa
 		switch parsed.Type {
 		case ipv4.ICMPTypeEchoReply:
 			if echo, ok := parsed.Body.(*icmp.Echo); ok {
-				if echo.ID == (p.baseID&0xffff) && echo.Seq == 0 {
+				if echo.ID == id && echo.Seq == 0 {
 					return true, "", nil
 				}
 			}
 		case ipv4.ICMPTypeDestinationUnreachable:
 			if parsed.Code == 4 { // Fragmentation Needed
-				id, seq, ok := extractEchoIDSeq(parsed)
-				if ok && id == (p.baseID&0xffff) && seq == 0 {
+				replyID, seq, ok := extractEchoIDSeq(parsed)
+				if ok && replyID == id && seq == 0 {
 					var srcIP string
 					if hdr != nil && hdr.Src != nil {
 						srcIP = hdr.Src.String()

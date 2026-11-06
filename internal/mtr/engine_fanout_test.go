@@ -129,7 +129,7 @@ func TestDiscover_CancelledRoundStillDiscardsResults(t *testing.T) {
 	cfg := Config{MaxHops: 5, HopTimeout: 200 * time.Millisecond}
 	cfg = cfg.withDefaults()
 
-	hopCount := discover(ctx, prober, &fakeHopSocket{}, mtrStats, "1.1.1.1", cfg, sem)
+	hopCount := discover(ctx, prober, &fakeHopSocket{}, mtrStats, "1.1.1.1", cfg, sem, nil)
 	if hopCount != 0 {
 		t.Errorf("expected hopCount 0 for a pre-cancelled round, got %d", hopCount)
 	}

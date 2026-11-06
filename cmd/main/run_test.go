@@ -67,16 +67,21 @@ func TestRunStartError(t *testing.T) {
 	}
 }
 
-func TestRunWithMTUIPv6Warning(t *testing.T) {
+func TestRunWithMTUIPv6WithoutFamilyFlag(t *testing.T) {
 	stubRunSeams(t, func(ui.RunOptions) error { return nil })
+	newPinger = func([]*stats.TargetStats, pinger.Options) pingerController {
+		return &fakePinger{discoverPath: func(string) (pinger.PathMTUResult, error) {
+			return pinger.PathMTUResult{IP: "::1", MTU: 1500, Payload: 1452, Source: "os", Status: "confirmed"}, nil
+		}}
+	}
 
 	var out, errOut bytes.Buffer
-	code := run([]string{"-6", "-m", "-S", "::1", "example.com"}, &out, &errOut)
+	code := run([]string{"-m", "example.com"}, &out, &errOut)
 	if code != 0 {
 		t.Fatalf("expected 0, got %d (err: %s)", code, errOut.String())
 	}
-	if !strings.Contains(errOut.String(), "PMTU discovery disabled") {
-		t.Errorf("expected PMTU warning, got: %q", errOut.String())
+	if strings.Contains(errOut.String(), "PMTU") {
+		t.Errorf("unexpected PMTU warning: %q", errOut.String())
 	}
 }
 

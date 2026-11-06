@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/mtr"
@@ -22,7 +23,10 @@ type pingerController interface {
 	WaitWorkers()
 	Close()
 	DiscoverMaxPayload(ctx context.Context, dest string, start int, min int, logf func(string)) (int, string, error)
+	DiscoverPathMTU(ctx context.Context, dest string, start int, min int, logf func(string)) (pinger.PathMTUResult, error)
+	ResolveTarget(ctx context.Context, dest string) (*net.IPAddr, error)
 	SetSource(ip string)
+	SetInterfaceSources(v4, v6 string)
 	SetInterface(name string)
 	SetSize(size int)
 	SetCount(count int)
@@ -39,6 +43,11 @@ type pingerAdapter struct {
 
 func (p *pingerAdapter) SetSource(ip string) {
 	p.Source = ip
+}
+
+// SetInterfaceSources supplies the interface fallback for each address family.
+func (p *pingerAdapter) SetInterfaceSources(v4, v6 string) {
+	p.SourceV4, p.SourceV6 = v4, v6
 }
 
 // SetInterface arms true interface binding (see internal/pinger/bindif_*.go)
@@ -83,10 +92,12 @@ func (a *pingerMTRAdapter) ProbeHop(ctx context.Context, sock mtr.HopSocket, des
 }
 
 func (a *pingerMTRAdapter) NextTraceID() int { return a.p.NextTraceID() }
-func (a *pingerMTRAdapter) ASNInfoFor(ip string) pinger.ASNInfo {
-	return a.p.GetASNInfoFor(ip)
+func (a *pingerMTRAdapter) ASNInfoFor(ctx context.Context, ip string) pinger.ASNInfo {
+	return a.p.GetASNInfoForContext(ctx, ip)
 }
-func (a *pingerMTRAdapter) PTRFor(ip string) string { return a.p.GetPTRFor(ip) }
+func (a *pingerMTRAdapter) PTRFor(ctx context.Context, ip string) string {
+	return a.p.GetPTRForContext(ctx, ip)
+}
 
 var newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 	return &pingerAdapter{Pinger: pinger.NewPingerWithOptions(targets, opts)}

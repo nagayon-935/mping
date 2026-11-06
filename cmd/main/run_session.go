@@ -57,7 +57,9 @@ type iteration struct {
 	packetSize        int
 	preLogs           []string
 	// logCh carries route flap and watcher log messages to the TUI Log pane.
-	logCh chan string
+	logCh      chan string
+	pmtuCancel context.CancelFunc
+	pmtuDone   chan struct{}
 }
 
 // runIteration measures until the UI returns, then decides whether the loop
@@ -120,7 +122,7 @@ func (s *session) startIteration(first bool) (*iteration, bool) {
 	pingerFactory := func(targets []*stats.TargetStats, specs []targetSpec) func(size int) pingerController {
 		opts := buildPingerOptions(cfg, env.resNetwork, customResolver, specs)
 		opts.IDs = s.ids
-		return makePingerFactory(targets, opts, cfg, env.bindIP)
+		return makePingerFactory(targets, opts, cfg, bind)
 	}
 
 	ifaceMTU, mtuErr := getInterfaceMTU(cfg.ifaceName, env.bindIP, hosts[0].resolveAddr())
@@ -131,7 +133,8 @@ func (s *session) startIteration(first bool) (*iteration, bool) {
 	}
 
 	makePinger := pingerFactory(s.targets, hosts)
-	it.packetSize, it.preLogs = setupPMTU(makePinger, cfg, ifaceMTU, s.targets, hosts[0].display(), s.errOut)
+	var deferred deferredPMTU
+	it.packetSize, it.preLogs, deferred = setupPMTU(makePinger, cfg, ifaceMTU, s.targets, s.errOut)
 	it.preLogs = append(it.preLogs, s.pendingWarnings...)
 	s.pendingWarnings = nil
 
@@ -158,8 +161,18 @@ func (s *session) startIteration(first bool) (*iteration, bool) {
 	if err := it.sup.startPinger(); err != nil {
 		fmt.Fprintf(s.errOut, "Error starting pinger: %v\n", err)
 		fmt.Fprintln(s.errOut, "This program requires root privileges (sudo) for raw ICMP sockets.")
+		it.stopPMTU()
 		it.sup.Shutdown()
 		return nil, false
+	}
+
+	if deferred != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		it.pmtuCancel, it.pmtuDone = cancel, make(chan struct{})
+		go func() {
+			defer close(it.pmtuDone)
+			deferred(ctx, func(line string) { postLog(it.logCh, line) })
+		}()
 	}
 
 	s.webSrc.Set(newWebProvider(it.sup, cfg, hosts, len(env.portSpecs), it.logCh))
@@ -218,6 +231,7 @@ func (s *session) runUIUntilDone(it *iteration) bool {
 		s.webSrc.MarkStopped()
 		fmt.Fprintf(s.errOut, "Error running application: %v\n", uiErr)
 	}
+	it.stopPMTU()
 	finishIteration(sup, watchCancel, watchDone)
 	return uiErr == nil
 }
@@ -234,4 +248,12 @@ func (s *session) prepareReload() bool {
 	s.pendingWarnings = reloadWarnings(s.startup, s.cfg, s.activePortSpecsRaw, expandWarning)
 	s.activePortSpecsRaw = append([]string(nil), s.cfg.portSpecs...)
 	return true
+}
+
+// stopPMTU joins all discoveries before the iteration's targets are torn down.
+func (it *iteration) stopPMTU() {
+	if it.pmtuCancel != nil {
+		it.pmtuCancel()
+		<-it.pmtuDone
+	}
 }

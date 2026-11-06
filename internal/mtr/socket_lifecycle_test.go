@@ -32,9 +32,9 @@ func (p *replacingProber) ProbeHop(context.Context, HopSocket, string, int, int,
 	p.target.SetIP("127.0.0.2")
 	return pinger.HopReply{Responded: true, ReachedDest: true, SrcIP: "127.0.0.1"}, nil
 }
-func (p *replacingProber) NextTraceID() int                 { return 10 }
-func (p *replacingProber) ASNInfoFor(string) pinger.ASNInfo { return pinger.ASNInfo{} }
-func (p *replacingProber) PTRFor(string) string             { return "" }
+func (p *replacingProber) NextTraceID() int                                  { return 10 }
+func (p *replacingProber) ASNInfoFor(context.Context, string) pinger.ASNInfo { return pinger.ASNInfo{} }
+func (p *replacingProber) PTRFor(context.Context, string) string             { return "" }
 
 // TestReplacedMTRSocketClosedOnStop verifies that when the target's address
 // changes and a rediscovery swaps in a new hop socket, both the replaced

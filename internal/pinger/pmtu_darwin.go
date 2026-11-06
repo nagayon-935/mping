@@ -4,9 +4,37 @@ package pinger
 
 import (
 	"net"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
+
+func setIPv6PMTUDiscovery(fd int) error {
+	if err := unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_USE_MIN_MTU, 0); err != nil {
+		return err
+	}
+	return unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_DONTFRAG, 1)
+}
+
+func ipv6SocketPathMTU(c syscall.Conn) (int, error) {
+	raw, err := c.SyscallConn()
+	if err != nil {
+		return 0, err
+	}
+	var mtu int
+	var queryErr error
+	err = raw.Control(func(fd uintptr) {
+		info, err := unix.GetsockoptIPv6MTUInfo(int(fd), unix.IPPROTO_IPV6, unix.IPV6_PATHMTU)
+		queryErr = err
+		if err == nil {
+			mtu = int(info.Mtu)
+		}
+	})
+	if err != nil {
+		return 0, err
+	}
+	return mtu, queryErr
+}
 
 // setSocketDontFragment sets IP_DONTFRAG (0x43 / 67) on the underlying socket
 // so that the macOS kernel returns EMSGSIZE instead of silently fragmenting

@@ -19,6 +19,17 @@ type IPChange struct {
 	IP string    `json:"ip"`
 }
 
+// PathMTUInfo keeps the kernel estimate's confidence and destination together.
+// MTU counts the entire IP packet; Payload counts ICMP data bytes only.
+type PathMTUInfo struct {
+	IP           string
+	MTU          int
+	Payload      int
+	Source       string
+	Status       string
+	BottleneckIP string
+}
+
 // TargetStats holds the statistics for a single ping target.
 //
 // Every field is unexported and guarded by mu: writers go through the
@@ -35,20 +46,19 @@ type TargetStats struct {
 	ipChanges       int
 	cancelled       int
 
-	ip               string
-	asn              string
-	country          string
-	org              string
-	ptr              string // reverse DNS (PTR) hostname for IP, when --ptr is enabled
-	dnsServer        string
-	ifaceMTU         int
-	pmtu             int
-	pmtuBottleneckIP string
-	portResults      []*PortCheckResult
-	mtrStats         *MTRStats
-	sent             int
-	recv             int
-	loss             int
+	ip          string
+	asn         string
+	country     string
+	org         string
+	ptr         string // reverse DNS (PTR) hostname for IP, when --ptr is enabled
+	dnsServer   string
+	ifaceMTU    int
+	pathMTU     PathMTUInfo
+	portResults []*PortCheckResult
+	mtrStats    *MTRStats
+	sent        int
+	recv        int
+	loss        int
 	// duplicates counts replies that repeat a seq already resolved (either
 	// by a successful reply or an ICMP error) -- a network-level dup
 	// (routing loop, L2 duplication, NAT/load-balancer anomaly), not a
@@ -118,6 +128,9 @@ func (t *TargetStats) SetIP(ip string) {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.pathMTU.IP != "" && t.pathMTU.IP != ip {
+		t.pathMTU = PathMTUInfo{}
+	}
 	if t.ip != ip {
 		t.recordEventLocked("dns", "IP: "+t.ip+" → "+ip)
 		if t.ip != "" {
@@ -166,14 +179,21 @@ func (t *TargetStats) SetPMTU(pmtu int) {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.pmtu = pmtu
+	t.pathMTU.Payload = pmtu
+}
+
+func (t *TargetStats) SetPathMTU(info PathMTUInfo) {
+	defer bumpGeneration()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.pathMTU = info
 }
 
 func (t *TargetStats) SetPMTUBottleneckIP(ip string) {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.pmtuBottleneckIP = ip
+	t.pathMTU.BottleneckIP = ip
 }
 
 // SetPortResults replaces the port check results slice atomically.

@@ -40,12 +40,25 @@ func lookupBounded[T any](
 	ctxFn func(context.Context, string) (T, error),
 	legacyFn func(string) (T, error),
 ) (T, error) {
+	return lookupBoundedContext(context.Background(), p, timeout, kind, query, ctxFn, legacyFn)
+}
+
+// lookupBoundedContext is lookupBounded that also aborts when parent is
+// cancelled, so a caller such as the MTR hop annotator can stop waiting.
+func lookupBoundedContext[T any](
+	parent context.Context,
+	p *Pinger,
+	timeout time.Duration,
+	kind, query string,
+	ctxFn func(context.Context, string) (T, error),
+	legacyFn func(string) (T, error),
+) (T, error) {
 	var zero T
 	if p.stopped() {
 		return zero, errPingerStopped
 	}
 	if ctxFn != nil {
-		ctx, cancel := p.lookupContext(context.Background(), timeout)
+		ctx, cancel := p.lookupContext(parent, timeout)
 		defer cancel()
 		val, err := ctxFn(ctx, query)
 		if p.stopped() {
@@ -67,6 +80,8 @@ func lookupBounded[T any](
 		return r.val, r.err
 	case <-p.done:
 		return zero, errPingerStopped
+	case <-parent.Done():
+		return zero, parent.Err()
 	case <-time.After(timeout):
 		return zero, fmt.Errorf("%s lookup for %q timed out after %s", kind, query, timeout)
 	}

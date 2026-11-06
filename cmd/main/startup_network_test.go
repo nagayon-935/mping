@@ -33,6 +33,11 @@ func TestDetermineSourceIPs(t *testing.T) {
 			wantBind: "2001:db8::1", wantV6: "2001:db8::1",
 		},
 		{
+			name:     "-S scoped IPv6 address binds and reports as v6",
+			cfg:      config{sourceAddr: "fe80::1%en0"},
+			wantBind: "fe80::1%en0", wantV6: "fe80::1%en0",
+		},
+		{
 			name:    "-I naming an unusable interface is an error",
 			cfg:     config{ifaceName: "eth0"},
 			iface:   func(string) (*net.Interface, error) { return nil, ifaceErr },
@@ -91,6 +96,26 @@ func TestNewCustomResolver(t *testing.T) {
 			t.Errorf("newCustomResolver(\"\", ...): got %p, want net.DefaultResolver (%p)", r, net.DefaultResolver)
 		}
 	})
+}
+
+func TestDetermineSourceIPsAutomaticInterfaceDoesNotPinFamily(t *testing.T) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, iface := range interfaces {
+		v4, err4 := getInterfaceIP(iface.Name, false)
+		v6, err6 := getInterfaceIP(iface.Name, true)
+		if err4 != nil && err6 != nil {
+			continue
+		}
+		bind, got4, got6, err := determineSourceIPs(config{ifaceName: iface.Name}, nil)
+		if err != nil || bind != "" || got4 != v4 || got6 != v6 {
+			t.Fatalf("auto interface: bind=%q v4=%q v6=%q err=%v", bind, got4, got6, err)
+		}
+		return
+	}
+	t.Skip("no addressed non-loopback interface")
 }
 
 // TestNewCustomResolver_DialHonoursBindConfig is the behavioral proof that
