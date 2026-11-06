@@ -1,6 +1,7 @@
 package pinger
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -111,10 +112,10 @@ func TestLookupPTR_ReturnsEarlyAfterStop(t *testing.T) {
 	}
 }
 
-// TestLookupAddrBoundedUnblocksOnStop verifies an in-flight PTR lookup stops
+// TestLookupBoundedContextPTRUnblocksOnStop verifies an in-flight PTR lookup stops
 // blocking as soon as Stop() closes p.done, instead of holding Wait() for
 // the full ptrLookupTimeout — mirrors TestLookupTXTBoundedUnblocksOnStop.
-func TestLookupAddrBoundedUnblocksOnStop(t *testing.T) {
+func TestLookupBoundedContextPTRUnblocksOnStop(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 	entered := make(chan struct{})
@@ -129,7 +130,7 @@ func TestLookupAddrBoundedUnblocksOnStop(t *testing.T) {
 
 	returned := make(chan error, 1)
 	go func() {
-		_, err := p.lookupAddrBounded("8.8.8.8")
+		_, err := lookupBoundedContext(context.Background(), p, ptrLookupTimeout, "ptr", "8.8.8.8", p.lookupAddrContext, p.lookupAddr)
 		returned <- err
 	}()
 
@@ -142,13 +143,13 @@ func TestLookupAddrBoundedUnblocksOnStop(t *testing.T) {
 			t.Fatalf("expected errPingerStopped, got %v", err)
 		}
 	case <-time.After(1 * time.Second):
-		t.Fatal("lookupAddrBounded did not return within 1s of Stop()")
+		t.Fatal("lookupBoundedContext PTR did not return within 1s of Stop()")
 	}
 }
 
-// TestLookupAddrBounded_TimesOut verifies a PTR query that never returns
+// TestLookupBoundedContextPTR_TimesOut verifies a PTR query that never returns
 // doesn't hang getPTR forever (mirrors TestLookupTXTBounded_TimesOut).
-func TestLookupAddrBounded_TimesOut(t *testing.T) {
+func TestLookupBoundedContextPTR_TimesOut(t *testing.T) {
 	orig := ptrLookupTimeout
 	ptrLookupTimeout = 20 * time.Millisecond
 	defer func() { ptrLookupTimeout = orig }()
@@ -162,7 +163,7 @@ func TestLookupAddrBounded_TimesOut(t *testing.T) {
 		},
 	})
 
-	names, err := p.lookupAddrBounded("8.8.8.8")
+	names, err := lookupBoundedContext(context.Background(), p, ptrLookupTimeout, "ptr", "8.8.8.8", p.lookupAddrContext, p.lookupAddr)
 	if err == nil {
 		t.Fatal("expected a timeout error, got nil")
 	}

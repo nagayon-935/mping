@@ -55,7 +55,7 @@ type inputHandlerDeps struct {
 	session *uiSession
 }
 
-// These states describe UI operation progress. The supervisor owns the
+// monitorState describes UI operation progress. The supervisor owns the
 // actual measurement state: stopping/restarting last until its callback
 // completes. S during stopping is queued after stop; repeated S while
 // restarting is ignored. R leaves the running/stopped state unchanged.
@@ -126,6 +126,9 @@ func (h *inputHandler) handle(event *tcell.EventKey) *tcell.EventKey {
 			h.deleteSelected()
 			return nil
 		}
+		// Compatibility path for standalone handlers without deleteSelected.
+		// Run always wires deleteSelected, so production never reaches this
+		// path even though cmd/main also supplies OnDeleteHost.
 		if h.onDeleteHost != nil {
 			h.pages.SwitchToPage("deleteHost")
 			h.app.SetFocus(h.deleteHostInput)
@@ -145,19 +148,20 @@ func (h *inputHandler) handle(event *tcell.EventKey) *tcell.EventKey {
 }
 
 // scrollTable moves the table's row offset when no selection-based
-// navigation is wired (standalone callers).
+// navigation is wired (standalone callers). Run always wires navigate,
+// so this fallback is unused in production.
 func (h *inputHandler) scrollTable(key tcell.Key) {
 	rowOffset, colOffset := h.table.GetOffset()
-	maxOffset := max(*h.rowCount-(tableMaxRows+1), 0)
+	maxOffset := max(*h.rowCount-(tableMinVisibleRows+1), 0)
 	switch key {
 	case tcell.KeyUp:
 		rowOffset--
 	case tcell.KeyDown:
 		rowOffset++
 	case tcell.KeyPgUp:
-		rowOffset -= tableMaxRows
+		rowOffset -= tableMinVisibleRows
 	case tcell.KeyPgDn:
-		rowOffset += tableMaxRows
+		rowOffset += tableMinVisibleRows
 	}
 	h.table.SetOffset(min(max(rowOffset, 0), maxOffset), colOffset)
 	if h.forceUpdate != nil {
@@ -196,7 +200,7 @@ func (h *inputHandler) stop() {
 		return
 	}
 	h.state = monitorStopping
-	h.vs.appendLog(fmt.Sprintf("[yellow][%s] Stop requested by user[-]", time.Now().Format("15:04:05")))
+	h.vs.appendLog(fmt.Sprintf("[yellow][%s] Stop requested by user[-]", time.Now().Format(logTimeLayout)))
 	if !h.submit(func() {
 		if h.onStop != nil {
 			h.onStop()
@@ -222,14 +226,14 @@ func (h *inputHandler) restart() {
 	}
 	previous := h.state
 	h.state = monitorRestarting
-	h.vs.appendLog(fmt.Sprintf("[yellow][%s] Restart requested by user[-]", time.Now().Format("15:04:05")))
+	h.vs.appendLog(fmt.Sprintf("[yellow][%s] Restart requested by user[-]", time.Now().Format(logTimeLayout)))
 	if !h.submit(func() {
 		err := h.onRestart()
 		h.session.Post(func() {
 			if err != nil {
 				h.state = monitorStopped
 				h.showState()
-				h.vs.appendLog(fmt.Sprintf("[red][%s] Restart failed: %v[-]", time.Now().Format("15:04:05"), err))
+				h.vs.appendLog(fmt.Sprintf("[red][%s] Restart failed: %v[-]", time.Now().Format(logTimeLayout), err))
 				return
 			}
 			h.state = monitorRunning
@@ -248,8 +252,10 @@ func (h *inputHandler) reset() {
 		h.submit(h.onReset)
 		return
 	}
-	// Compatibility path for standalone callers. Keep even the counter
-	// reset on the same FIFO worker as stop and restart.
+	// Compatibility path for standalone callers. cmd/main always supplies
+	// OnReset, so production returns above even though the individual reset
+	// callbacks are also supplied when their monitors are enabled. Keep even
+	// the counter reset on the same FIFO worker as stop and restart.
 	running := h.state == monitorRunning || h.state == monitorRestarting
 	h.submit(func() {
 		for _, t := range h.targets {

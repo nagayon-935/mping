@@ -51,7 +51,7 @@ type HopSocket struct {
 	// HopLimit per packet via an ipv6.ControlMessage), IPv4's TTL can only be
 	// set as connection-wide socket state (ipv4.ControlMessage.TTL is
 	// receiving-only in golang.org/x/net/ipv4) — so when one HopSocket is
-	// shared across concurrent probes (mtr.discover/probe fire one goroutine
+	// shared across concurrent probes (mtr.fanOut fires one goroutine
 	// per hop), an unsynchronized SetTTL(ttl) followed by WriteTo can race
 	// against another goroutine's SetTTL, sending the packet with the wrong
 	// TTL. Without this lock, MTR hop discovery observes the same near-hop
@@ -69,8 +69,8 @@ func (s *HopSocket) Close() {
 	}
 }
 
-// RegisterTraceChan adds a trace channel keyed by traceID to the pinger's map and returns it.
-func (p *Pinger) RegisterTraceChan(traceID int) chan traceMsg {
+// registerTraceChan adds a trace channel keyed by traceID to the pinger's map and returns it.
+func (p *Pinger) registerTraceChan(traceID int) chan traceMsg {
 	ch := make(chan traceMsg, traceChanBuffer)
 	p.traceChansMu.Lock()
 	if p.traceChans == nil {
@@ -81,32 +81,41 @@ func (p *Pinger) RegisterTraceChan(traceID int) chan traceMsg {
 	return ch
 }
 
-// UnregisterTraceChan removes the trace channel for the given traceID from the pinger's map.
+// unregisterTraceChan removes the trace channel for the given traceID from the pinger's map.
 // The channel is deliberately left open: broadcastTrace sends to it after
 // releasing traceChansMu, so closing it here could panic a concurrent send.
-func (p *Pinger) UnregisterTraceChan(traceID int) {
+func (p *Pinger) unregisterTraceChan(traceID int) {
 	p.traceChansMu.Lock()
 	delete(p.traceChans, traceID)
 	p.traceChansMu.Unlock()
 }
 
-// NextTraceID returns a unique trace ID for an MTR probe round.
+// NextTraceID reserves an ID for one probe, or returns -1 on exhaustion.
+// Pass it to ProbeHop, which releases it before returning.
 func (p *Pinger) NextTraceID() int {
+	id, _ := p.acquireTraceID()
+	return id
+}
+
+// acquireTraceID reserves a probe ID and returns its release function. A
+// negative ID signals exhaustion; releasing it is a no-op.
+func (p *Pinger) acquireTraceID() (int, func()) {
+	var id int
 	if p.ids != nil {
-		return p.ids.traceID()
+		id = p.ids.traceID()
+	} else {
+		id = (p.baseID + 0x1234 + int(p.traceCounter.Add(1))) & 0xffff
 	}
-	return (p.baseID + 0x1234 + int(p.traceCounter.Add(1))) & 0xffff
+	return id, func() { p.releaseTraceID(id) }
 }
 
-// GetASNInfoFor returns the full ASNInfo for ip when ASN lookup is enabled.
-func (p *Pinger) GetASNInfoFor(ip string) ASNInfo {
-	if !p.AsnEnabled {
-		return ASNInfo{}
+func (p *Pinger) releaseTraceID(id int) {
+	if id >= 0 && p.ids != nil {
+		p.ids.releaseTrace(id)
 	}
-	return p.getASNInfo(ip)
 }
 
-// GetASNInfoForContext is GetASNInfoFor that gives up when ctx is cancelled.
+// GetASNInfoForContext returns ASN metadata when enabled, honoring ctx cancellation.
 func (p *Pinger) GetASNInfoForContext(ctx context.Context, ip string) ASNInfo {
 	if !p.AsnEnabled {
 		return ASNInfo{}
@@ -114,20 +123,12 @@ func (p *Pinger) GetASNInfoForContext(ctx context.Context, ip string) ASNInfo {
 	return p.getASNInfoContext(ctx, ip)
 }
 
-// GetPTRForContext is GetPTRFor that gives up when ctx is cancelled.
+// GetPTRForContext returns the reverse DNS name when enabled, honoring ctx cancellation.
 func (p *Pinger) GetPTRForContext(ctx context.Context, ip string) string {
 	if !p.PtrEnabled {
 		return ""
 	}
 	return p.getPTRContext(ctx, ip)
-}
-
-// GetPTRFor returns ip's reverse DNS name when PTR lookup is enabled.
-func (p *Pinger) GetPTRFor(ip string) string {
-	if !p.PtrEnabled {
-		return ""
-	}
-	return p.getPTR(ip)
 }
 
 // OpenHopSocketContext opens a send socket for TTL-limited probes to dest,
@@ -182,15 +183,14 @@ func (p *Pinger) openHopSocketAddr(dstAddr *net.IPAddr) (*HopSocket, error) {
 // ProbeHop sends a single TTL-limited ICMP echo probe to dest at the given ttl
 // using a previously opened HopSocket, and waits for a reply.
 //
-// traceID must be unique per probe round (use p.NextTraceID()).
+// traceID must be unique per probe (use p.NextTraceID()). ProbeHop takes
+// ownership of the reservation and releases it on every return path.
 // Returns HopReply with Responded=false on timeout.
 func (p *Pinger) ProbeHop(ctx context.Context, sock *HopSocket, dest string, ttl, traceID int, timeout time.Duration) (HopReply, error) {
 	if traceID < 0 {
 		return HopReply{}, fmt.Errorf("route-probe IDs exhausted")
 	}
-	if p.ids != nil {
-		defer p.ids.releaseTrace(traceID)
-	}
+	defer p.releaseTraceID(traceID)
 	dstAddr, err := p.resolveIPAddrContext(ctx, "ip", dest)
 	if err != nil {
 		return HopReply{}, fmt.Errorf("resolve %s: %w", dest, err)
@@ -214,7 +214,7 @@ func (p *Pinger) probeHopAddr(ctx context.Context, sock *HopSocket, dstAddr *net
 		Type: echoType, Code: 0,
 		Body: &icmp.Echo{ID: traceID, Seq: ttl, Data: payload},
 	}
-	b, err := probeMsg.Marshal(nil)
+	b, err := marshalProbe(&probeMsg)
 	if err != nil {
 		return HopReply{}, fmt.Errorf("marshal probe: %w", err)
 	}
@@ -223,8 +223,8 @@ func (p *Pinger) probeHopAddr(ctx context.Context, sock *HopSocket, dstAddr *net
 	// Register first so fast responses are buffered rather than discarded.
 	var traceCh chan traceMsg
 	if (sock.isV4 && p.connV4 != nil) || (!sock.isV4 && p.connV6 != nil) {
-		traceCh = p.RegisterTraceChan(traceID)
-		defer p.UnregisterTraceChan(traceID)
+		traceCh = p.registerTraceChan(traceID)
+		defer p.unregisterTraceChan(traceID)
 	}
 
 	var sent time.Time
@@ -302,7 +302,7 @@ func receiveViaTraceChan(ctx context.Context, traceCh chan traceMsg, accept func
 		case <-ctx.Done():
 			return HopReply{}, ctx.Err()
 		case tm, ok := <-traceCh:
-			if !ok { // see UnregisterTraceChan: never closed today
+			if !ok { // see unregisterTraceChan: never closed today
 				return HopReply{Responded: false}, nil
 			}
 			if r, matched := accept(tm.parsed, tm.src); matched {
@@ -318,9 +318,9 @@ func receiveViaTraceChan(ctx context.Context, traceCh chan traceMsg, accept func
 func receiveViaSocket(ctx context.Context, sock *HopSocket, accept func(*icmp.Message, net.Addr) (HopReply, bool), sent time.Time, timeout time.Duration) (HopReply, error) {
 	deadline := time.Now().Add(timeout)
 	buf := make([]byte, probeBufferSize)
-	proto := 58
+	proto := protoICMPv6
 	if sock.isV4 {
-		proto = 1
+		proto = protoICMP
 		if err := sock.sendV4.SetReadDeadline(deadline); err != nil {
 			return HopReply{}, fmt.Errorf("set read deadline: %w", err)
 		}

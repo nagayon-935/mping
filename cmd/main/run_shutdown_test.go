@@ -8,6 +8,7 @@ package main
 
 import (
 	"bytes"
+	"reflect"
 	"runtime"
 	"testing"
 	"time"
@@ -16,6 +17,66 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/nagayon-935/mping/internal/ui"
 )
+
+func TestFinishIterationTerminatesBeforeJoiningWatcher(t *testing.T) {
+	for _, state := range []string{"running", "stopped", "finished"} {
+		t.Run(state, func(t *testing.T) {
+			var order []string
+			fp := &fakePinger{
+				onStop:  func() { order = append(order, "stop") },
+				onWait:  func() { order = append(order, "wait") },
+				onClose: func() { order = append(order, "close") },
+			}
+			target := stats.NewTargetStats("router")
+			sup := newSupervisor(supervisorConfig{
+				targets:    []*stats.TargetStats{target},
+				makePinger: func(int) pingerController { return fp },
+			})
+			sup.Start()
+			t.Cleanup(sup.Shutdown)
+			if err := sup.startPinger(); err != nil {
+				t.Fatal(err)
+			}
+			if state == "stopped" {
+				sup.stopAll()
+			} else if state == "finished" {
+				if err := sup.editTargets(func(*supervisor) error {
+					target.SetMeasurementState("finished")
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cancelled, watchDone := make(chan struct{}), make(chan struct{})
+			go func() {
+				<-cancelled
+				order = append(order, "watcher joined")
+				close(watchDone)
+			}()
+			finishIteration(sup, func() {
+				if !closed(sup.loopDone) || !fp.isReleased() {
+					t.Error("watcher cancelled before supervisor shutdown completed")
+				}
+				order = append(order, "watcher cancelled")
+				close(cancelled)
+			}, watchDone)
+			want := []string{"stop", "wait", "close", "watcher cancelled", "watcher joined"}
+			if !reflect.DeepEqual(order, want) {
+				t.Fatalf("cleanup order = %v, want %v", order, want)
+			}
+			wantState := "stopped"
+			if state == "finished" {
+				wantState = "finished"
+			}
+			if sup.stateSnapshot() != stateTerminated || target.MeasurementState() != wantState {
+				t.Fatalf("supervisor = %v, target = %q", sup.stateSnapshot(), target.MeasurementState())
+			}
+			if err := sup.startPinger(); err != errSupervisorShutDown {
+				t.Fatalf("start after cleanup = %v, want %v", err, errSupervisorShutDown)
+			}
+		})
+	}
+}
 
 func TestRunStopRestart(t *testing.T) {
 	fp := &fakePinger{}

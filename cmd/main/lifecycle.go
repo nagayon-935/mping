@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -84,8 +83,8 @@ func parseAndLoadHosts(args []string, out, errOut io.Writer) (p startupParams, e
 	return startupParams{cfg: cfg, hosts: hosts, fs: fs, cliCfg: cliCfg, cliHosts: cliHosts, groups: groups}, 0, true
 }
 
-// runEnv holds the one-time (non-reloadable) environment run() needs for the
-// lifetime of the process: network family, source IP and parsed port specs.
+// runEnv holds the network family, source and display addresses, and parsed
+// port specs for an iteration. reresolveNetwork re-derives it on full reloads.
 type runEnv struct {
 	resNetwork string
 	bindIP     string
@@ -94,25 +93,21 @@ type runEnv struct {
 	portSpecs  []pinger.PortSpec
 }
 
-// prepareRunEnv resolves the network family and source IP, opens the CSV log
-// file, and parses port specs — all one-time setup that reloads reuse as-is.
+// prepareRunEnv derives the initial network settings, announces interface
+// binding, and parses port specs.
 // On failure it writes to errOut itself and returns ok=false with the exit
-// code run() should return immediately. The caller owns closing env.logFile.
+// code run() should return immediately.
 func prepareRunEnv(cfg config, hosts []targetSpec, out, errOut io.Writer) (env runEnv, exitCode int, ok bool) {
-	env.resNetwork = resolveNetwork(cfg)
-
-	bindIP, dispV4, dispV6, err := determineSourceIPs(cfg, hosts)
-	if err != nil {
+	if err := deriveRunEnv(&env, cfg, hosts); err != nil {
 		fmt.Fprintf(errOut, "Error resolving interface %s: %v\n", cfg.ifaceName, err)
 		return runEnv{}, 1, false
 	}
-	env.bindIP, env.dispV4, env.dispV6 = bindIP, dispV4, dispV6
 	if cfg.ifaceName != "" {
-		if bindIP != "" {
-			fmt.Fprintf(out, "Binding to interface %s (%s)\n", cfg.ifaceName, bindIP)
+		if env.bindIP != "" {
+			fmt.Fprintf(out, "Binding to interface %s (%s)\n", cfg.ifaceName, env.bindIP)
 		} else {
 			var addresses []string
-			for _, ip := range []string{dispV4, dispV6} {
+			for _, ip := range []string{env.dispV4, env.dispV6} {
 				if ip != "" {
 					addresses = append(addresses, ip)
 				}
@@ -131,6 +126,20 @@ func prepareRunEnv(cfg config, hosts []targetSpec, out, errOut io.Writer) (env r
 	}
 
 	return env, 0, true
+}
+
+// deriveRunEnv updates the address family and source addresses shared by
+// startup and full reloads. Callers parse ports separately: startup reports
+// invalid specs after the binding notice, while reload specs are validated
+// before the running iteration is stopped.
+func deriveRunEnv(env *runEnv, cfg config, hosts []targetSpec) error {
+	env.resNetwork = resolveNetwork(cfg)
+	bindIP, dispV4, dispV6, err := determineSourceIPs(cfg, hosts)
+	if err != nil {
+		return err
+	}
+	env.bindIP, env.dispV4, env.dispV6 = bindIP, dispV4, dispV6
+	return nil
 }
 
 // checkerBindConfig uses the same source and interface as the ICMP pinger.
@@ -173,6 +182,8 @@ func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetSta
 	targets := initTargets(specs)
 	for i, t := range targets {
 		t.SetResolveAddress(specs[i].resolveAddr())
+		// Health is available during startup PMTU work, before the supervisor
+		// reapplies the policy and attaches the event sink.
 		t.ConfigureHealth(healthPolicy(cfg))
 		hostName := specs[i].Host
 		if net.ParseIP(hostName) == nil {
@@ -207,6 +218,7 @@ func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resol
 			address = ip
 		}
 		resolver := net.DefaultResolver
+		// Preserve default resolution for unset DNS settings and nil test resolvers.
 		if customResolver != nil && cfg.dnsServer != "" {
 			resolver = customResolver
 		}
@@ -221,17 +233,6 @@ func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resol
 		AsnEnabled:           cfg.asnEnabled,
 		PtrEnabled:           cfg.ptrEnabled,
 	}
-}
-
-// checkPortReloadDrift explains that port checks were rebuilt from the new
-// configuration. reloadWarnings emits it after a successful reload whose port
-// specs differ from the ones the running checkers were built from.
-func checkPortReloadDrift(activeRaw, reloadedRaw []string) string {
-	if slices.Equal(activeRaw, reloadedRaw) {
-		return ""
-	}
-	return fmt.Sprintf("[yellow][%s] port: change detected in the reloaded config — port checks restarted with updated configuration[-]",
-		clock())
 }
 
 // startWatcher launches the YAML file watcher goroutine when hostsFile is
@@ -351,7 +352,7 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 		ExternalLogCh:    p.logCh,
 		OnStop:           p.sup.stopAll,
 		OnRestart: func() error {
-			return p.sup.do(cmdRestart)
+			return p.sup.sendCmd(command{kind: cmdRestart})
 		},
 		OnReset:        p.sup.resetStats,
 		OnAddHost:      p.sup.addHost,
@@ -375,7 +376,7 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 // finishIteration performs the standard post-uiRun cleanup: join all
 // measurement producers, stop the command loop, and join the file watcher.
 func finishIteration(sup *supervisor, watchCancel func(), watchDone chan struct{}) {
-	_ = sup.do(cmdTerminate)
+	_ = sup.sendCmd(command{kind: cmdTerminate})
 	sup.Shutdown()
 	watchCancel()
 	<-watchDone

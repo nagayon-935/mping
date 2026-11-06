@@ -56,7 +56,7 @@ type iteration struct {
 	interval, timeout time.Duration
 	packetSize        int
 	preLogs           []string
-	// logCh carries route flap and watcher log messages to the TUI Log pane.
+	// logCh carries route, health, PMTU, reload and web notices to the TUI Log.
 	logCh      chan string
 	pmtuCancel context.CancelFunc
 	pmtuDone   chan struct{}
@@ -90,12 +90,9 @@ func (s *session) runIteration(first bool) iterationOutcome {
 // reresolveNetwork re-derives the address family, source addresses and port
 // specs from the reloaded configuration.
 func (s *session) reresolveNetwork() error {
-	s.env.resNetwork = resolveNetwork(s.cfg)
-	bindIP, dispV4, dispV6, err := determineSourceIPs(s.cfg, s.hosts)
-	if err != nil {
+	if err := deriveRunEnv(&s.env, s.cfg, s.hosts); err != nil {
 		return err
 	}
-	s.env.bindIP, s.env.dispV4, s.env.dispV6 = bindIP, dispV4, dispV6
 	s.env.portSpecs = nil
 	for _, raw := range s.cfg.portSpecs {
 		spec, _ := pinger.ParsePortSpec(raw)

@@ -371,7 +371,7 @@ func TestPortChecker_CheckWithIP(t *testing.T) {
 	result := stats.NewPortCheckResult(port, "tcp")
 
 	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Second, time.Second, BindConfig{})
-	pc.check(tgt, spec, result)
+	pc.check(pc.ctx, tgt, spec, result)
 
 	status := result.GetView().Status
 	if status != "Open" {
@@ -386,7 +386,7 @@ func TestPortChecker_CheckSkipsEmptyIP(t *testing.T) {
 	result := stats.NewPortCheckResult(80, "tcp")
 
 	pc := NewPortChecker([]*stats.TargetStats{tgt}, []PortSpec{spec}, time.Second, time.Second, BindConfig{})
-	pc.check(tgt, spec, result)
+	pc.check(pc.ctx, tgt, spec, result)
 
 	// Status should remain unchanged since IP was empty
 	status := result.GetView().Status
@@ -507,7 +507,7 @@ func TestPortChecker_StopDuringCheckKeepsLastResult(t *testing.T) {
 		}
 	}()
 	done := make(chan struct{})
-	go func() { pc.check(tgt, spec, r); close(done) }()
+	go func() { pc.check(pc.ctx, tgt, spec, r); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):

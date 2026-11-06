@@ -79,14 +79,14 @@ func (a *rttAccumulator) stddev() time.Duration {
 }
 
 // appendHistory pushes rtt (which may be 0, e.g. to mark a failed probe)
-// into the ring buffer, lazily allocating it at size cap on first use.
-func (a *rttAccumulator) appendHistory(rtt time.Duration, cap int) {
+// into the ring buffer, lazily allocating it at size capacity on first use.
+func (a *rttAccumulator) appendHistory(rtt time.Duration, capacity int) {
 	if a.history == nil {
-		a.history = make([]time.Duration, cap)
+		a.history = make([]time.Duration, capacity)
 	}
-	a.history[a.historyIdx%cap] = rtt
+	a.history[a.historyIdx%capacity] = rtt
 	a.historyIdx++
-	if a.historyLen < cap {
+	if a.historyLen < capacity {
 		a.historyLen++
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
+// maxHostWidth returns the widest target display name or header, plus padding.
 func maxHostWidth(header string, targets []*stats.TargetStats) int {
 	w := runewidth.StringWidth(header)
 	for _, t := range targets {
@@ -31,7 +32,7 @@ func statusChangeMessage(subject, prevStatus, newStatus, healthyStatus string) s
 		color = "[green]"
 	}
 	return fmt.Sprintf("[darkgray]%s[-] %s %s → %s%s[-]",
-		time.Now().Format("15:04:05"), subject, prevStatus, color, newStatus)
+		time.Now().Format(logTimeLayout), subject, prevStatus, color, newStatus)
 }
 
 // logStatusChangeIfNeeded checks lastStatuses[key] against newStatus and, if
@@ -40,12 +41,12 @@ func statusChangeMessage(subject, prevStatus, newStatus, healthyStatus string) s
 // "Checking..." placeholder status). Shared by the port and HTTP monitor
 // panes.
 func logStatusChangeIfNeeded(lastStatuses map[string]string, key, newStatus, healthyStatus, subject string,
-	errorLogs *[]string, errorView *tview.TextView) {
+	log func(string)) {
 	if newStatus == "" || newStatus == "Checking..." {
 		return
 	}
-	if prev, seen := lastStatuses[key]; seen && prev != newStatus && errorView != nil {
-		appendErrorLog(errorLogs, errorView, statusChangeMessage(subject, prev, newStatus, healthyStatus))
+	if prev, seen := lastStatuses[key]; seen && prev != newStatus && log != nil {
+		log(statusChangeMessage(subject, prev, newStatus, healthyStatus))
 	}
 	lastStatuses[key] = newStatus
 }
@@ -60,13 +61,13 @@ func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
 	fullRouteContentW := availW - hostColW - hopsColW - initTTLColW - 5
 	compact := fullRouteContentW < minRouteContentWidth
 
-	cols := []boxColumn{{header: "Host", width: hostColW, leftAlign: true}}
+	cols := []boxColumn{{header: "Host", width: hostColW, rightAlign: true}}
 	if compact {
 		cols = append(cols, boxColumn{header: "Route", width: max(availW-hostColW-3, minRouteContentWidth)})
 	} else {
 		cols = append(cols,
-			boxColumn{header: "Hops", width: hopsColW, leftAlign: true},
-			boxColumn{header: "Init TTL", width: initTTLColW, leftAlign: true},
+			boxColumn{header: "Hops", width: hopsColW, rightAlign: true},
+			boxColumn{header: "Init TTL", width: initTTLColW, rightAlign: true},
 			boxColumn{header: "Route", width: fullRouteContentW})
 	}
 	routeContentW := cols[len(cols)-1].width - 1
@@ -90,7 +91,7 @@ func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
 			routeLines[j] = tview.Escape(routeLines[j])
 		}
 		if view.MTRFlapCount > 0 {
-			routeLines = append(routeLines, fmt.Sprintf("[FLAP ×%d %s]", view.MTRFlapCount, view.MTRLastFlapAt.Format("15:04:05")))
+			routeLines = append(routeLines, fmt.Sprintf("[FLAP ×%d %s]", view.MTRFlapCount, view.MTRLastFlapAt.Format(logTimeLayout)))
 		}
 		// Host, hop count and initial TTL go on the first line only.
 		first := []string{tview.Escape(view.Host)}
@@ -113,6 +114,7 @@ func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
 	return sb.String()
 }
 
+// maxPortColumnWidth returns the widest extracted port value or header, plus padding.
 func maxPortColumnWidth(header string, views []stats.TargetView, extractor func(stats.PortCheckView) string) int {
 	w := runewidth.StringWidth(header)
 	for _, view := range views {
@@ -138,7 +140,7 @@ func portLabel(pr stats.PortCheckView) string { return fmt.Sprintf("%d/%s", pr.P
 // renderPortMonitorTable builds the port monitor table string. Narrow panes
 // show only Target, Port, Status and Last. It also detects status changes
 // and appends log messages.
-func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortStatuses map[string]string, errorLogs *[]string, errorView *tview.TextView) string {
+func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortStatuses map[string]string, log func(string)) string {
 	// Targets that have results; detect status changes.
 	var views []stats.TargetView
 	for _, t := range targets {
@@ -150,7 +152,7 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 		for _, pr := range view.PortResults {
 			key := fmt.Sprintf("%s|%d/%s", targetViewKey(view), pr.Port, pr.Protocol)
 			subject := fmt.Sprintf("[white]%s[-] [white]%d/%s:[white]", tview.Escape(view.Host), pr.Port, pr.Protocol)
-			logStatusChangeIfNeeded(lastPortStatuses, key, pr.Status, "Open", subject, errorLogs, errorView)
+			logStatusChangeIfNeeded(lastPortStatuses, key, pr.Status, "Open", subject, log)
 		}
 	}
 

@@ -221,19 +221,6 @@ func (f *fakePinger) isReleased() bool {
 	return f.stopped && f.closed
 }
 
-func (f *fakePinger) DiscoverMaxPayload(ctx context.Context, dest string, start int, min int, logf func(string)) (int, string, error) {
-	if f.discoverErr != nil {
-		return 0, "", f.discoverErr
-	}
-	for _, line := range f.discoverLogs {
-		logf(line)
-	}
-	if f.discoverMTU == 0 {
-		return start, "", nil
-	}
-	return f.discoverMTU, f.discoverBottleneckIP, nil
-}
-
 func (f *fakePinger) DiscoverPathMTU(ctx context.Context, dest string, start int, min int, logf func(string)) (pinger.PathMTUResult, error) {
 	if f.discoverPathContext != nil {
 		return f.discoverPathContext(ctx, dest)
@@ -241,7 +228,19 @@ func (f *fakePinger) DiscoverPathMTU(ctx context.Context, dest string, start int
 	if f.discoverPath != nil {
 		return f.discoverPath(dest)
 	}
-	payload, hop, err := f.DiscoverMaxPayload(ctx, dest, start, min, logf)
+	var payload int
+	var hop string
+	err := f.discoverErr
+	if err == nil {
+		for _, line := range f.discoverLogs {
+			logf(line)
+		}
+		if f.discoverMTU == 0 {
+			payload = start
+		} else {
+			payload, hop = f.discoverMTU, f.discoverBottleneckIP
+		}
+	}
 	return pinger.PathMTUResult{IP: "192.0.2.1", MTU: payload + 28, Payload: payload, Source: "probe", Status: "probed", BottleneckIP: hop}, err
 }
 
@@ -328,8 +327,8 @@ func (p *liveFakePinger) WorkersFinished() bool           { return false }
 func (p *liveFakePinger) Done() <-chan struct{}           { return p.done }
 
 // stateSnapshot returns the state as of the last processed command. Test-only:
-// production code never reads state off the loop. Because do() waits for its
-// reply, a stateSnapshot() call after a do() always observes that command.
+// production code never reads state off the loop. Because sendCmd() waits for its
+// reply, a stateSnapshot() call after a sendCmd() always observes that command.
 func (s *supervisor) stateSnapshot() supervisorState {
 	return supervisorState(s.stateSnap.Load())
 }
@@ -337,7 +336,7 @@ func (s *supervisor) stateSnapshot() supervisorState {
 // newStateTestSupervisor builds a supervisor whose pinger factory records
 // every pinger it hands out, so a test can assert lifecycle effects without
 // opening a real raw socket. The factory only runs on the supervisor's command
-// goroutine, so created is safe to read once a do()/handle() call has returned.
+// goroutine, so created is safe to read once a sendCmd()/handle() call has returned.
 func newStateTestSupervisor(t *testing.T) (*supervisor, *[]*fakePinger) {
 	t.Helper()
 	var created []*fakePinger

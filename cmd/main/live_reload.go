@@ -9,8 +9,8 @@ import (
 	"github.com/nagayon-935/mping/internal/ui"
 )
 
-// These settings do not change a probe's identity or transport. Everything
-// else deliberately takes the existing full-rebuild path. Switching between
+// probeConfig excludes settings that do not change probe identity or
+// transport. Everything else takes the full-rebuild path. Switching between
 // traceroute and mtr only restarts the route engine (reloadLive); turning
 // route monitoring on or off still rebuilds, since it adds or removes a pane.
 func probeConfig(cfg config) config {
@@ -68,20 +68,19 @@ func (s *supervisor) reloadLive(cfg config, specs []targetSpec, groups []ui.Targ
 		var dynamic dynamicPinger
 		if s.state == stateRunning && (len(added) > 0 || len(reused) != len(s.cfg.targets)) {
 			var ok bool
-			dynamic, ok = s.p.(dynamicPinger)
+			dynamic, ok = s.livePinger()
 			if !ok {
 				reason = "pinger does not support live membership changes"
 				return nil
 			}
-			var registered []*stats.TargetStats
+			var addedTargets []*stats.TargetStats
+			var addedSpecs []targetSpec
 			for _, i := range added {
-				if err := s.registerDynamicTarget(dynamic, targets[i], specs[i]); err != nil {
-					for _, t := range registered {
-						dynamic.RemoveTarget(t)
-					}
-					return err
-				}
-				registered = append(registered, targets[i])
+				addedTargets = append(addedTargets, targets[i])
+				addedSpecs = append(addedSpecs, specs[i])
+			}
+			if err := registerTargets(dynamic, addedTargets, addedSpecs); err != nil {
+				return err
 			}
 		}
 		for _, t := range s.cfg.targets {
@@ -128,8 +127,8 @@ func (s *supervisor) reloadLive(cfg config, specs []targetSpec, groups []ui.Targ
 	return applied, reason, err
 }
 
-// reflect.Value.Interface cannot read unexported config fields. This helper
-// compares primitive values and the exported fields/slices they contain.
+// reflectValue reads primitive values and the exported fields/slices they
+// contain. reflect.Value.Interface cannot read unexported config fields.
 func reflectValue(v reflect.Value) any {
 	switch v.Kind() {
 	case reflect.String:
@@ -168,9 +167,27 @@ func reloadNotice(logCh chan<- string, message string) {
 	postLog(logCh, fmt.Sprintf("[%s] %s", clock(), message))
 }
 
+var settingNames = map[string]string{
+	"intervalMs":          "interval",
+	"timeoutMs":           "timeout",
+	"packetSize":          "size",
+	"ifaceName":           "interface",
+	"sourceAddr":          "source",
+	"mtuEnabled":          "discovery-mtu",
+	"trace":               "traceroute/mtr",
+	"asnEnabled":          "asn",
+	"ptrEnabled":          "ptr",
+	"ipv4Only":            "ipv4",
+	"ipv6Only":            "ipv6",
+	"portSpecs":           "port",
+	"httpURLs":            "http",
+	"dnsServer":           "dns-server",
+	"resolveAll":          "resolve-all",
+	"httpFollowRedirects": "http-follow-redirects",
+}
+
 func settingName(field string) string {
-	names := map[string]string{"intervalMs": "interval", "timeoutMs": "timeout", "packetSize": "size", "ifaceName": "interface", "sourceAddr": "source", "mtuEnabled": "discovery-mtu", "trace": "traceroute/mtr", "asnEnabled": "asn", "ptrEnabled": "ptr", "ipv4Only": "ipv4", "ipv6Only": "ipv6", "portSpecs": "port", "httpURLs": "http", "jsonOutputFile": "json-output", "dnsServer": "dns-server", "resolveAll": "resolve-all", "httpFollowRedirects": "http-follow-redirects"}
-	if name, ok := names[field]; ok {
+	if name, ok := settingNames[field]; ok {
 		return name
 	}
 	return field

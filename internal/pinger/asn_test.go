@@ -1,6 +1,7 @@
 package pinger
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -250,12 +251,12 @@ func TestLookupASN_ReturnsEarlyAfterStop(t *testing.T) {
 	}
 }
 
-// TestLookupTXTBoundedUnblocksOnStop verifies an in-flight Cymru lookup
+// TestLookupTXTBoundedContextUnblocksOnStop verifies an in-flight Cymru lookup
 // stops blocking as soon as Stop() closes p.done, instead of holding
 // Wait() for the full asnLookupTimeout. resolveTarget registers ASN lookup
 // goroutines on p.wg, so without this the shutdown path (supervisor's
 // cur.Wait()) stalls for up to two lookup timeouts.
-func TestLookupTXTBoundedUnblocksOnStop(t *testing.T) {
+func TestLookupTXTBoundedContextUnblocksOnStop(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 	entered := make(chan struct{})
@@ -270,7 +271,7 @@ func TestLookupTXTBoundedUnblocksOnStop(t *testing.T) {
 
 	returned := make(chan error, 1)
 	go func() {
-		_, err := p.lookupTXTBounded("1.0.0.10.origin.asn.cymru.com")
+		_, err := p.lookupTXTBoundedContext(context.Background(), "1.0.0.10.origin.asn.cymru.com")
 		returned <- err
 	}()
 
@@ -283,7 +284,7 @@ func TestLookupTXTBoundedUnblocksOnStop(t *testing.T) {
 			t.Fatalf("expected errPingerStopped, got %v", err)
 		}
 	case <-time.After(1 * time.Second):
-		t.Fatal("lookupTXTBounded did not return within 1s of Stop()")
+		t.Fatal("lookupTXTBoundedContext did not return within 1s of Stop()")
 	}
 }
 
@@ -336,10 +337,10 @@ func TestGetASNInfo_StopDuringOrgLookupDoesNotCache(t *testing.T) {
 	}
 }
 
-// TestLookupTXTBounded_TimesOut verifies that a Cymru DNS query that never
+// TestLookupTXTBoundedContext_TimesOut verifies that a Cymru DNS query that never
 // returns doesn't hang getASNInfo forever (the default net/Resolver-based
 // lookupTXT has no timeout of its own).
-func TestLookupTXTBounded_TimesOut(t *testing.T) {
+func TestLookupTXTBoundedContext_TimesOut(t *testing.T) {
 	orig := asnLookupTimeout
 	asnLookupTimeout = 20 * time.Millisecond
 	defer func() { asnLookupTimeout = orig }()
@@ -353,7 +354,7 @@ func TestLookupTXTBounded_TimesOut(t *testing.T) {
 		},
 	})
 
-	txts, err := p.lookupTXTBounded("8.8.8.8.origin.asn.cymru.com")
+	txts, err := p.lookupTXTBoundedContext(context.Background(), "8.8.8.8.origin.asn.cymru.com")
 	if err == nil {
 		t.Fatal("expected a timeout error, got nil")
 	}
@@ -383,11 +384,11 @@ func TestGetASNInfo_JitterZero_ReturnsImmediately(t *testing.T) {
 	}
 }
 
-func TestGetASNInfoFor(t *testing.T) {
+func TestGetASNInfoForContext(t *testing.T) {
 	t.Run("disabled returns the zero value", func(t *testing.T) {
 		p := NewPingerWithOptions(nil, Options{AsnEnabled: false})
-		if got := p.GetASNInfoFor("8.8.8.8"); got != (ASNInfo{}) {
-			t.Errorf("GetASNInfoFor with ASN disabled = %+v, want zero value", got)
+		if got := p.GetASNInfoForContext(context.Background(), "8.8.8.8"); got != (ASNInfo{}) {
+			t.Errorf("GetASNInfoForContext with ASN disabled = %+v, want zero value", got)
 		}
 	})
 
@@ -404,10 +405,10 @@ func TestGetASNInfoFor(t *testing.T) {
 		p := NewPingerWithOptions(nil, Options{AsnEnabled: true, LookupTXT: lookup})
 		p.asnJitter = func() time.Duration { return 0 }
 
-		info := p.GetASNInfoFor("8.8.8.8")
+		info := p.GetASNInfoForContext(context.Background(), "8.8.8.8")
 
 		if info.Number != "AS15169" || info.Country != "US" {
-			t.Errorf("GetASNInfoFor = %+v, want AS15169 / US", info)
+			t.Errorf("GetASNInfoForContext = %+v, want AS15169 / US", info)
 		}
 	})
 }

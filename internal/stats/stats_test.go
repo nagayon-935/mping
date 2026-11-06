@@ -224,11 +224,14 @@ func TestTargetStats_ScalarSetters(t *testing.T) {
 	}{
 		{"SetIP", func(s *TargetStats) { s.SetIP("1.2.3.4") }, func(v TargetView) any { return v.IP }, "1.2.3.4"},
 		{"SetIfaceMTU", func(s *TargetStats) { s.SetIfaceMTU(1500) }, func(v TargetView) any { return v.IfaceMTU }, 1500},
-		{"SetPMTU", func(s *TargetStats) { s.SetPMTU(1400) }, func(v TargetView) any { return v.PMTU }, 1400},
-		{"SetPMTUBottleneckIP", func(s *TargetStats) { s.SetPMTUBottleneckIP("10.0.0.1") }, func(v TargetView) any { return v.PMTUBottleneckIP }, "10.0.0.1"},
+		{"SetPathMTU payload", func(s *TargetStats) { s.SetPathMTU(PathMTUInfo{Payload: 1400}) }, func(v TargetView) any { return v.PMTU }, 1400},
+		{"SetPathMTU bottleneck", func(s *TargetStats) { s.SetPathMTU(PathMTUInfo{BottleneckIP: "10.0.0.1"}) }, func(v TargetView) any { return v.PMTUBottleneckIP }, "10.0.0.1"},
 		{
-			"SetPMTUBottleneckIP cleared by an empty string",
-			func(s *TargetStats) { s.SetPMTUBottleneckIP("10.0.0.1"); s.SetPMTUBottleneckIP("") },
+			"SetPathMTU bottleneck cleared by an empty string",
+			func(s *TargetStats) {
+				s.SetPathMTU(PathMTUInfo{BottleneckIP: "10.0.0.1"})
+				s.SetPathMTU(PathMTUInfo{BottleneckIP: ""})
+			},
 			func(v TargetView) any { return v.PMTUBottleneckIP }, "",
 		},
 		{"SetASNInfo", func(s *TargetStats) { s.SetASNInfo("AS12345", "", "") }, func(v TargetView) any { return v.ASN }, "AS12345"},
@@ -481,9 +484,9 @@ func TestLightweightReadAccessors(t *testing.T) {
 	if got := tgt.CurrentIP(); got != "93.184.216.34" {
 		t.Fatalf("CurrentIP() after SetIP = %q, want %q", got, "93.184.216.34")
 	}
-	host, ip := tgt.HostAndIP()
+	host, ip := tgt.DisplayName(), tgt.CurrentIP()
 	if host != "Web(example.com)" || ip != "93.184.216.34" {
-		t.Fatalf("HostAndIP() = (%q, %q), want (\"Web(example.com)\", \"93.184.216.34\")", host, ip)
+		t.Fatalf("DisplayName(), CurrentIP() = (%q, %q), want (\"Web(example.com)\", \"93.184.216.34\")", host, ip)
 	}
 	if got := tgt.EffectiveAddress(); got != "93.184.216.34" {
 		t.Fatalf("EffectiveAddress() after SetIP = %q, want %q", got, "93.184.216.34")

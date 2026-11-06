@@ -7,6 +7,7 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
+// Settings records the measurement configuration used for a report.
 type Settings struct {
 	IntervalMS          int64              `json:"interval_ms"`
 	TimeoutMS           int64              `json:"timeout_ms"`
@@ -47,6 +48,7 @@ type Port struct {
 	LastChange  time.Time `json:"last_change"`
 }
 
+// Target combines statistics, history and events captured for one target.
 type Target struct {
 	Statistics       stats.TargetSummary `json:"statistics"`
 	WindowStartedAt  time.Time           `json:"window_started_at"`
@@ -68,19 +70,45 @@ type Target struct {
 // NewTarget reads the target once; all output formats use this same data.
 func NewTarget(t *stats.TargetStats) Target {
 	v, events, dropped := t.ReportData()
-	summary := stats.BuildSnapshotFromViews([]stats.TargetView{v}, nil).Targets[0]
+	summary := stats.TargetSummaryFromView(v)
 	ports := make([]Port, 0, len(v.PortResults))
 	ms := func(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
 	for _, p := range v.PortResults {
-		ports = append(ports, Port{Port: p.Port, Protocol: p.Protocol, Status: p.Status, LastRTTMS: ms(p.RTT), MinRTTMS: ms(p.MinRTT), AvgRTTMS: ms(p.AvgRTT), MaxRTTMS: ms(p.MaxRTT), OpenCount: p.OpenCount, ClosedCount: p.ClosedCount, LastChange: p.LastChange})
+		ports = append(ports, Port{
+			Port:        p.Port,
+			Protocol:    p.Protocol,
+			Status:      p.Status,
+			LastRTTMS:   ms(p.RTT),
+			MinRTTMS:    ms(p.MinRTT),
+			AvgRTTMS:    ms(p.AvgRTT),
+			MaxRTTMS:    ms(p.MaxRTT),
+			OpenCount:   p.OpenCount,
+			ClosedCount: p.ClosedCount,
+			LastChange:  p.LastChange,
+		})
 	}
 	ipDropped := 0
 	if len(v.IPHistory) > 0 {
 		ipDropped = max(0, v.IPChanges+1-len(v.IPHistory))
 	}
-	return Target{InterfaceMTU: v.IfaceMTU, DNSServer: v.DNSServer, MTRFlapCount: v.MTRFlapCount, MTRLastFlapAt: v.MTRLastFlapAt, MTRLastFlapDesc: v.MTRLastFlapDesc, IPHistoryDropped: ipDropped, Statistics: summary, WindowStartedAt: v.WindowStartedAt, IPChanges: v.IPChanges, IPHistory: v.IPHistory, Events: events, EventsDropped: dropped, PortDetails: ports}
+	return Target{
+		InterfaceMTU:     v.IfaceMTU,
+		DNSServer:        v.DNSServer,
+		MTRFlapCount:     v.MTRFlapCount,
+		MTRLastFlapAt:    v.MTRLastFlapAt,
+		MTRLastFlapDesc:  v.MTRLastFlapDesc,
+		IPHistoryDropped: ipDropped,
+		Statistics:       summary,
+		WindowStartedAt:  v.WindowStartedAt,
+		IPChanges:        v.IPChanges,
+		IPHistory:        v.IPHistory,
+		Events:           events,
+		EventsDropped:    dropped,
+		PortDetails:      ports,
+	}
 }
 
+// Report is an immutable investigation snapshot shared by all output formats.
 type Report struct {
 	SchemaVersion         int                      `json:"schema_version"`
 	CollectionStartedAt   time.Time                `json:"collection_started_at"`

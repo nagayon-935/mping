@@ -11,10 +11,10 @@ import (
 )
 
 const (
-	mtrHopColW  = 5 // " Hop " — "  1. " fits exactly
+	mtrHopColW  = 5 // " Hop " — "   1." fits exactly
 	mtrLossColW = 8 // " 100.0% "
-	mtrSntColW  = 6 // "  Snt  "
-	mtrRecvColW = 6 // " Recv  "
+	mtrSntColW  = 6 // " Snt  "
+	mtrRecvColW = 6 // " Recv "
 	mtrLatColW  = 9 // " 12.1ms  "
 	minMTRHostW = 16
 )
@@ -45,14 +45,15 @@ func rttColorTag(l stats.Level) string {
 	}
 }
 
-// mtrFixedW is the width taken by every MTR column but Host, separators
-// included, in the compact or full layout.
+// mtrFixedW sums every MTR column but Host and adds 6 separators in compact
+// mode or 10 in full mode. The rendered table has 7 or 11 separators including
+// its outer borders, so this calculation undercounts the width by one.
 func mtrFixedW(compact bool) int {
 	if compact {
-		// Hop + Loss% + Snt + Last + Avg + 6 separators
+		// Hop + Loss% + Snt + Last + Avg + 6 of the 7 rendered separators
 		return mtrHopColW + mtrLossColW + mtrSntColW + mtrLatColW*2 + 6
 	}
-	// Hop + Loss% + Snt + Recv + Last + Avg + Min + Max + Jitter + 10 separators
+	// Hop + Loss% + Snt + Recv + Last + Avg + Min + Max + Jitter + 10 of the 11 rendered separators
 	return mtrHopColW + mtrLossColW + mtrSntColW + mtrRecvColW + mtrLatColW*5 + 10
 }
 
@@ -98,7 +99,7 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, 
 		label = fmt.Sprintf("%s (%s -> %s)", view.Host, srcIP, dstIP)
 	}
 	if view.MTRFlapCount > 0 {
-		label += fmt.Sprintf("  [FLAP ×%d %s]", view.MTRFlapCount, view.MTRLastFlapAt.Format("15:04:05"))
+		label += fmt.Sprintf("  [FLAP ×%d %s]", view.MTRFlapCount, view.MTRLastFlapAt.Format(logTimeLayout))
 	}
 
 	// Compact: Hop | Host | Loss% | Snt | Last | Avg

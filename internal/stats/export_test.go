@@ -167,8 +167,7 @@ func TestBuildSnapshot_CopiesPathFields(t *testing.T) {
 	ts.MTR().SetIP(1, "1.1.1.1", "AS13335", "", "Cloudflare")
 	ts.MTR().SetPTR(1, "1.1.1.1", "one.one.one.one")
 	ts.MTR().SetError("resolve host.local: timeout")
-	ts.SetPMTU(1400)
-	ts.SetPMTUBottleneckIP("10.0.0.1")
+	ts.SetPathMTU(PathMTUInfo{Payload: 1400, BottleneckIP: "10.0.0.1"})
 
 	snap := BuildSnapshot([]*TargetStats{ts}, nil)
 

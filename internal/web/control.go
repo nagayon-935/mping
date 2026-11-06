@@ -24,31 +24,45 @@ type Controller interface {
 	ResetStats()
 }
 
+// MeasurementController optionally lets a controller stop and restart measurements.
 type MeasurementController interface {
 	StopMeasurements() error
 	RestartMeasurements() error
 }
+
+// ReportController optionally lets a controller capture an investigation report.
 type ReportController interface{ CaptureReport() (report.Report, error) }
 
-func handleMeasurement(restart bool) func(http.ResponseWriter, *http.Request, Controller) {
-	return func(w http.ResponseWriter, r *http.Request, c Controller) {
-		m, ok := c.(MeasurementController)
-		if !ok {
-			writeError(w, http.StatusNotImplemented, "measurement controls unavailable")
-			return
-		}
-		var err error
-		if restart {
-			err = m.RestartMeasurements()
-		} else {
-			err = m.StopMeasurements()
-		}
-		if err != nil {
-			writeError(w, http.StatusConflict, err.Error())
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
+func handleStop(w http.ResponseWriter, r *http.Request, c Controller) {
+	m, ok := measurementController(w, c)
+	if !ok {
+		return
 	}
+	writeMeasurementResult(w, m.StopMeasurements())
+}
+
+func handleRestart(w http.ResponseWriter, r *http.Request, c Controller) {
+	m, ok := measurementController(w, c)
+	if !ok {
+		return
+	}
+	writeMeasurementResult(w, m.RestartMeasurements())
+}
+
+func measurementController(w http.ResponseWriter, c Controller) (MeasurementController, bool) {
+	m, ok := c.(MeasurementController)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "measurement controls unavailable")
+	}
+	return m, ok
+}
+
+func writeMeasurementResult(w http.ResponseWriter, err error) {
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleReport(w http.ResponseWriter, r *http.Request, c Controller) {
@@ -107,6 +121,7 @@ const minTokenLen = 16
 
 // CheckToken accepts tokens that are long enough and URL-fragment safe
 // (unreserved characters only). Errors never repeat the token.
+// Keep token rules in sync with controlToken in static/js/control.js.
 func CheckToken(token string) error {
 	if len(token) < minTokenLen {
 		return fmt.Errorf("control token must be at least %d characters", minTokenLen)

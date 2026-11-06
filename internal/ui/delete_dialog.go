@@ -13,7 +13,6 @@ import (
 type deleteDialog struct {
 	app     *tview.Application
 	root    *tview.Pages
-	modal   *tview.Modal
 	open    bool
 	last    bool
 	quit    func()
@@ -44,7 +43,7 @@ func (d *deleteDialog) show(target *stats.TargetStats, last bool) {
 		buttons = []string{"戻る"}
 	}
 	d.open = true
-	d.modal = newStyledModal(" ホスト削除 ", message, buttons, func(index int, label string) {
+	modal := newStyledModal(" ホスト削除 ", message, buttons, func(index int, label string) {
 		if !d.open {
 			return
 		}
@@ -56,8 +55,8 @@ func (d *deleteDialog) show(target *stats.TargetStats, last bool) {
 		}
 	})
 	// Keep the underlying page visible and refreshing while the dialog is open.
-	d.root.AddPage("deleteConfirm", d.modal, true, true)
-	d.app.SetFocus(d.modal)
+	d.root.AddPage("deleteConfirm", modal, true, true)
+	d.app.SetFocus(modal)
 }
 
 func (d *deleteDialog) handle(event *tcell.EventKey) *tcell.EventKey {

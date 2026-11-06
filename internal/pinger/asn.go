@@ -23,7 +23,7 @@ type ASNInfo struct {
 	Org     string // "Google LLC"
 }
 
-// lookupASN runs on a pinger-owned metadata goroutine (or a trace caller).
+// lookupASN runs on a pinger-owned metadata goroutine.
 // Its DNS calls share the pinger lifetime, so Stop cancels them and Wait
 // joins the metadata goroutine before its statistics can be reused.
 func (p *Pinger) lookupASN(t *stats.TargetStats, ipStr string) {
@@ -117,19 +117,15 @@ func (p *Pinger) getASNInfoContext(ctx context.Context, ipStr string) ASNInfo {
 	return info
 }
 
-// lookupTXTBounded runs cancellable DNS on the calling goroutine. Only
-// explicitly injected context-free hooks use the legacy bounded adapter.
-func (p *Pinger) lookupTXTBounded(name string) ([]string, error) {
-	return p.lookupTXTBoundedContext(context.Background(), name)
-}
-
+// lookupTXTBoundedContext runs cancellable DNS on the calling goroutine.
+// Only explicitly injected context-free hooks use the legacy bounded adapter.
 func (p *Pinger) lookupTXTBoundedContext(ctx context.Context, name string) ([]string, error) {
 	return lookupBoundedContext(ctx, p, asnLookupTimeout, "asn", name, p.lookupTXTContext, p.lookupTXT)
 }
 
 // lookupOrgContext resolves the org name for asnNumber. The returned error is
-// non-nil only when the lookup aborted because Stop() closed p.done
-// (errPingerStopped); a genuine DNS failure or empty/malformed response is
+// propagated when Stop() closes p.done (errPingerStopped) or ctx is
+// cancelled; a genuine DNS failure or empty/malformed response is
 // reported as ("", nil) so callers keep treating it as "no org found", not
 // as a reason to discard an otherwise-successful ASN/country result.
 func (p *Pinger) lookupOrgContext(ctx context.Context, asnNumber string) (string, error) {

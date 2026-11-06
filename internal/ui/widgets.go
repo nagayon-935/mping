@@ -92,14 +92,14 @@ func newSidePanes(opts RunOptions, currentTargets func() []*stats.TargetStats, r
 	})
 	routePane.titleFn = func() string { return routePaneTitle(route()) }
 	port := newMonitorPane(opts.PortEnabled, " Port Monitor ", func(availW int) string {
-		return renderPortMonitorTable(currentTargets(), availW, vs.lastPortStatuses, &vs.errorLogs, vs.errorView)
+		return renderPortMonitorTable(currentTargets(), availW, vs.lastPortStatuses, vs.appendLog)
 	})
 	http := newMonitorPane(opts.HTTPEnabled, " HTTP Monitor ", func(availW int) string {
 		var results []*stats.HTTPCheckResult
 		if opts.HTTPResults != nil {
 			results = opts.HTTPResults()
 		}
-		return renderHTTPMonitorTable(results, vs.thresholds, availW, vs.lastHTTPStatuses, &vs.errorLogs, vs.errorView)
+		return renderHTTPMonitorTable(results, vs.thresholds, availW, vs.lastHTTPStatuses, vs.appendLog)
 	})
 	return []*monitorPane{routePane, port, http}
 }

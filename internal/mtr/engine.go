@@ -30,11 +30,13 @@ type HopSocket interface {
 	Close()
 }
 
-// HopProber is the interface satisfied by *pinger.Pinger (via cmd/main adapter).
+// HopProber is implemented by cmd/main's pingerMTRAdapter.
 // It provides all primitives the engine needs to send probes and receive replies.
 type HopProber interface {
 	OpenHopSocket(ctx context.Context, dest string) (HopSocket, error)
 	ProbeHop(ctx context.Context, sock HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error)
+	// NextTraceID reserves an ID for one probe; ProbeHop takes ownership and
+	// releases it on return. A negative ID signals exhaustion.
 	NextTraceID() int
 	// ASNInfoFor and PTRFor give up when ctx is cancelled (target stopped).
 	ASNInfoFor(ctx context.Context, ip string) pinger.ASNInfo
@@ -351,6 +353,8 @@ type targetRun struct {
 	done   chan struct{}
 }
 
+// AddTarget starts monitoring t unless it is already registered.
+// It panics if called before Start initializes the engine context.
 func (e *Engine) AddTarget(t *stats.TargetStats) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -362,6 +366,9 @@ func (e *Engine) AddTarget(t *stats.TargetStats) {
 	e.targetRuns[t] = r
 	e.wg.Go(func() { defer close(r.done); runTarget(ctx, e.prober, t, e.cfg, e.sem) })
 }
+
+// RemoveTarget cancels and joins t's monitor; an unregistered target is a no-op,
+// including when called before Start.
 func (e *Engine) RemoveTarget(t *stats.TargetStats) {
 	e.mu.Lock()
 	r := e.targetRuns[t]

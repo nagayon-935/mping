@@ -143,11 +143,11 @@ func TestRunKeyboardScroll(t *testing.T) {
 		if requireAll(last)(frame) {
 			t.Fatalf("last host visible before scrolling:\n%s", frame)
 		}
-		for range numTargets/tableMaxRows + 2 {
+		for range numTargets/tableMinVisibleRows + 2 {
 			h.key(tcell.KeyPgDn)
 		}
 		h.wait(last)
-		for range numTargets/tableMaxRows + 2 {
+		for range numTargets/tableMinVisibleRows + 2 {
 			h.key(tcell.KeyPgUp)
 		}
 		h.waitWithout(first, last)

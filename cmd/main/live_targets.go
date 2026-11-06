@@ -9,6 +9,8 @@ import (
 	ui "github.com/nagayon-935/mping/internal/ui"
 )
 
+// dynamicPinger supports changing membership and observing worker completion
+// without rebuilding the running pinger.
 type dynamicPinger interface {
 	AddTarget(*stats.TargetStats, string) error
 	RemoveTarget(*stats.TargetStats)
@@ -21,6 +23,8 @@ type dynamicPinger interface {
 // drift would silently disable live edits instead of failing the build.
 var _ dynamicPinger = (*pinger.Pinger)(nil)
 
+// targetSnapshot publishes a consistent membership, configuration and state
+// for readers outside the supervisor command loop. Its slices are immutable.
 type targetSnapshot struct {
 	targets          []*stats.TargetStats
 	specs            []targetSpec
@@ -34,11 +38,17 @@ func (s *supervisor) publishTargets() {
 	for i, g := range s.cfg.groups {
 		groups[i] = ui.TargetGroup{Name: g.Name, Indices: append([]int(nil), g.Indices...)}
 	}
-	s.targetSnap.Store(&targetSnapshot{targets: append([]*stats.TargetStats(nil), s.cfg.targets...), specs: append([]targetSpec(nil), s.cfg.specs...), groups: groups, config: s.cfg.config, measurementState: s.currentMeasurementState()})
+	s.targetSnap.Store(&targetSnapshot{
+		targets:          append([]*stats.TargetStats(nil), s.cfg.targets...),
+		specs:            append([]targetSpec(nil), s.cfg.specs...),
+		groups:           groups,
+		config:           s.cfg.config,
+		measurementState: s.currentMeasurementState(),
+	})
 }
 
-// This runs on the command loop. A completed target does not make a newly
-// added target's active worker disappear from the session state.
+// currentMeasurementState runs on the command loop. A completed target does
+// not hide a newly added target's active worker from the session state.
 func (s *supervisor) currentMeasurementState() string {
 	if s.state == stateTerminated || s.state == stateStopped {
 		return "stopped"
@@ -71,8 +81,25 @@ func (s *supervisor) editTargets(edit func(*supervisor) error) error {
 	return s.sendCmd(command{kind: cmdEditTargets, edit: edit})
 }
 
-func (s *supervisor) registerDynamicTarget(p dynamicPinger, t *stats.TargetStats, spec targetSpec) error {
-	return p.AddTarget(t, spec.resolveAddr())
+// livePinger reports whether the current pinger supports live membership edits.
+// Callers decide whether an unsupported edit is an error or needs a full reload.
+func (s *supervisor) livePinger() (dynamicPinger, bool) {
+	p, ok := s.p.(dynamicPinger)
+	return p, ok
+}
+
+// registerTargets adds targets in order and rolls back earlier additions on
+// failure. specs is parallel to targets and supplies each resolution address.
+func registerTargets(p dynamicPinger, targets []*stats.TargetStats, specs []targetSpec) error {
+	for i, t := range targets {
+		if err := p.AddTarget(t, specs[i].resolveAddr()); err != nil {
+			for _, previous := range targets[:i] {
+				p.RemoveTarget(previous)
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *supervisor) attachTargetMonitors(t *stats.TargetStats) {
@@ -133,17 +160,12 @@ func (s *supervisor) addHost(host string) error {
 		}
 		added := s.newLiveTargets(s.cfg.config, specs)
 		if s.state == stateRunning {
-			p, ok := s.p.(dynamicPinger)
+			p, ok := s.livePinger()
 			if !ok {
 				return fmt.Errorf("pinger does not support live target changes")
 			}
-			for i, t := range added {
-				if err := s.registerDynamicTarget(p, t, specs[i]); err != nil {
-					for _, previous := range added[:i] {
-						p.RemoveTarget(previous)
-					}
-					return err
-				}
+			if err := registerTargets(p, added, specs); err != nil {
+				return err
 			}
 		}
 		for _, t := range added {
@@ -183,7 +205,7 @@ func (s *supervisor) removeTarget(i int) error {
 	var dynamic dynamicPinger
 	if s.state == stateRunning {
 		var ok bool
-		dynamic, ok = s.p.(dynamicPinger)
+		dynamic, ok = s.livePinger()
 		if !ok {
 			return fmt.Errorf("pinger does not support live target changes")
 		}

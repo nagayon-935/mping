@@ -20,6 +20,10 @@ import (
 )
 
 const (
+	protoICMP              = 1  // IPv4 ICMP protocol number.
+	protoICMPv6            = 58 // IPv6 ICMP next-header number.
+	defaultResolveInterval = 60 * time.Second
+
 	receiverBufferSize  = 65535                  // max IPv4 packet size; large enough for any ICMP message
 	probeBufferSize     = 1500                   // typical Ethernet MTU; sufficient for PMTU probe responses
 	replyChanBuffer     = 100                    // allow burst of replies without blocking the receiver
@@ -123,6 +127,8 @@ type traceMsg struct {
 	src    net.Addr
 }
 
+// Pinger sends concurrent ICMP probes and dispatches replies to target workers.
+// Create it with NewPingerWithOptions, then Start once; Stop and Wait before Close.
 type Pinger struct {
 	Targets []*stats.TargetStats
 
@@ -154,7 +160,7 @@ type Pinger struct {
 	mapMu            sync.RWMutex
 	baseID           int
 	ids              *IDAllocator
-	dynamicMu        sync.Mutex // Serializes AddTarget/RemoveTarget with Start.
+	dynamicMu        sync.Mutex // Serializes AddTarget and RemoveTarget.
 	workerStates     map[*stats.TargetStats]*targetWorker
 	workerEvents     chan struct{}
 	activeWorkers    int
@@ -231,9 +237,9 @@ func privilegedListenPacket(network, address string) (net.PacketConn, error) {
 
 // bindToInterfaceFn is a seam over the platform-specific bindToInterface
 // implementation (bindif_linux.go / bindif_darwin.go / bindif_other.go),
-// letting tests verify that Start() and openHopSocketAddr() dispatch to it with
-// the correct interface name and address family without requiring root
-// privileges, real sockets, or real network interfaces.
+// letting tests verify that Start(), openHopSocketAddr(), and canSendPayload()
+// dispatch to it with the correct interface name and address family without
+// requiring root privileges, real sockets, or real network interfaces.
 var bindToInterfaceFn = func(c net.PacketConn, ifaceName string, isIPv6 bool) {
 	// SO_BINDTODEVICE needs CAP_NET_RAW on Linux, which a setuid-root run
 	// only has while not inside privilege.AsRealUser.
@@ -243,6 +249,7 @@ var bindToInterfaceFn = func(c net.PacketConn, ifaceName string, isIPv6 bool) {
 	})
 }
 
+// Options configures pinger dependencies and optional metadata lookups.
 type Options struct {
 	IDs *IDAllocator // Shared for the session, including explicit restarts.
 	// Context-aware hooks must honor cancellation. Default DNS uses these
@@ -252,7 +259,7 @@ type Options struct {
 	ResolveIPAddr        resolveIPAddrFunc
 	ResolveIPAddrContext func(context.Context, string, string) (*net.IPAddr, error)
 	Resolver             *net.Resolver
-	Now                  func() time.Time
+	Now                  func() time.Time // Receiver clock only; sends and worker timers use time.Now.
 	ListenPacket         listenPacketFunc
 	LookupTXT            func(string) ([]string, error)
 	LookupAddr           func(string) ([]string, error)
@@ -305,7 +312,7 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		ptrCache:           make(map[string]string),
 		baseID:             os.Getpid() & 0xffff,
 		Size:               56, // Default payload size (like standard ping)
-		ResolveInterval:    60 * time.Second,
+		ResolveInterval:    defaultResolveInterval,
 		AsnEnabled:         opts.AsnEnabled,
 		PtrEnabled:         opts.PtrEnabled,
 		traceChans:         make(map[int]chan traceMsg),
@@ -393,6 +400,8 @@ func (p *Pinger) listenICMPSource(v6 bool, source string) (net.PacketConn, error
 	return c, nil
 }
 
+// Start opens ICMP sockets and launches target workers and receivers. Call once.
+// interval paces probes; timeout bounds the wait for each reply.
 func (p *Pinger) Start(interval, timeout time.Duration) error {
 	p.probeTimeout = timeout
 	p.interval = interval
@@ -464,6 +473,7 @@ func isIPv4(s string) bool {
 	return ip != nil && ip.To4() != nil
 }
 
+// Wait joins all workers, metadata lookups, and receivers. Call Stop first.
 func (p *Pinger) Wait() {
 	p.wg.Wait()
 }
@@ -475,6 +485,8 @@ func (p *Pinger) WaitWorkers() {
 	p.workers.Wait()
 }
 
+// Close stops the pinger and closes its sockets without waiting for goroutines.
+// Call after Wait, or when Start was never called.
 func (p *Pinger) Close() {
 	p.Stop() // reuse the idempotent done-channel guard
 	if p.connV4 != nil {

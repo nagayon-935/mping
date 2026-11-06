@@ -43,12 +43,12 @@ func runNextUpdate(t *testing.T, s *uiSession) {
 
 func TestScrollKeysWithoutNavigationClampTheTableOffset(t *testing.T) {
 	d, build := newTestInputHandler(t)
-	rows := 3 * tableMaxRows
+	rows := 3 * tableMinVisibleRows
 	d.rowCount = &rows
 	redraws := 0
 	d.forceUpdate = func() { redraws++ }
 	h := build()
-	maxOffset := rows - (tableMaxRows + 1)
+	maxOffset := rows - (tableMinVisibleRows + 1)
 
 	press(h, tcell.KeyUp, 0)
 	if row, _ := h.table.GetOffset(); row != 0 {
@@ -65,8 +65,8 @@ func TestScrollKeysWithoutNavigationClampTheTableOffset(t *testing.T) {
 		t.Fatalf("PgDn offset = %d, want clamped to %d", row, maxOffset)
 	}
 	press(h, tcell.KeyPgUp, 0)
-	if row, _ := h.table.GetOffset(); row != maxOffset-tableMaxRows {
-		t.Fatalf("PgUp offset = %d, want %d", row, maxOffset-tableMaxRows)
+	if row, _ := h.table.GetOffset(); row != maxOffset-tableMinVisibleRows {
+		t.Fatalf("PgUp offset = %d, want %d", row, maxOffset-tableMinVisibleRows)
 	}
 	if redraws != 8 {
 		t.Fatalf("table redrawn %d times, want once per scroll key (8)", redraws)

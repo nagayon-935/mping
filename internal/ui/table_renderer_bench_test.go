@@ -68,7 +68,7 @@ func BenchmarkCalcColumnWidths(b *testing.B) {
 // target regardless of scroll position, since an off-screen host's
 // loss/alert state must still be tracked. Windowing caps Pass 2's
 // cell-rendering work: regardless of how far numTargets exceeds
-// tableMaxRows, only the visible-plus-margin window's rows are ever
+// tableMinVisibleRows, only the visible-plus-margin window's rows are ever
 // SetCell'd here (~16-21 rows), rather than all 500. It also confirms
 // Pass 2 doesn't misbehave at a large scrolled offset.
 func BenchmarkTableRendererUpdate_500Targets_Scrolled(b *testing.B) {

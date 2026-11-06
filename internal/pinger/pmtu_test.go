@@ -23,7 +23,35 @@ func stubCanSendPayload(t *testing.T, fn func(payloadLen int) (bool, string, err
 	}
 }
 
-func TestDiscoverMaxPayload_RejectsInvalidInput(t *testing.T) {
+// discoverMaxPayloadForTest retains the removed IPv4-only API's input
+// validation for legacy assertions, delegating searches to the production core.
+// start is the upper bound to probe; minPayload is the lower bound (usually the
+// configured packet size). IPv6 destinations are not supported.
+// Returns the max payload size, the bottleneck router IP (if detected), and any error.
+func (p *Pinger) discoverMaxPayloadForTest(ctx context.Context, dest string, start int, minPayload int, logf func(string)) (int, string, error) {
+	if dest == "" {
+		return 0, "", fmt.Errorf("destination is empty")
+	}
+	if start <= 0 {
+		return 0, "", fmt.Errorf("start MTU must be > 0")
+	}
+	if minPayload < 0 {
+		minPayload = 0
+	}
+
+	dstAddr, err := p.resolveIPAddrContext(ctx, "ip", dest)
+	if err != nil {
+		return 0, "", fmt.Errorf("resolve %s: %w", dest, err)
+	}
+
+	// PMTU currently only supported for IPv4
+	if dstAddr.IP.To4() == nil {
+		return p.Size, "", fmt.Errorf("PMTU discovery not supported for IPv6")
+	}
+	return p.discoverIPv4MaxPayload(ctx, dstAddr, start, minPayload, logf)
+}
+
+func TestLegacyIPv4PMTUInputValidation(t *testing.T) {
 	tests := []struct {
 		name    string
 		resolve func(network, address string) (*net.IPAddr, error)
@@ -37,16 +65,16 @@ func TestDiscoverMaxPayload_RejectsInvalidInput(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := NewPingerWithOptions(nil, Options{ResolveIPAddr: tt.resolve})
-			if _, _, err := p.DiscoverMaxPayload(context.Background(), tt.dest, tt.start, 0, nil); err == nil {
+			if _, _, err := p.discoverMaxPayloadForTest(context.Background(), tt.dest, tt.start, 0, nil); err == nil {
 				t.Fatal("expected error")
 			}
 		})
 	}
 }
 
-func TestDiscoverMaxPayload_IPv6NotSupported(t *testing.T) {
+func TestLegacyIPv4PMTURejectsIPv6(t *testing.T) {
 	p := NewPingerWithOptions(nil, Options{ResolveIPAddr: resolveTo("2001:db8::1")})
-	size, _, err := p.DiscoverMaxPayload(context.Background(), "example.com", 100, 0, nil)
+	size, _, err := p.discoverMaxPayloadForTest(context.Background(), "example.com", 100, 0, nil)
 	if err == nil {
 		t.Fatal("expected error for ipv6")
 	}
@@ -55,7 +83,7 @@ func TestDiscoverMaxPayload_IPv6NotSupported(t *testing.T) {
 	}
 }
 
-func TestDiscoverMaxPayload_BinarySearch(t *testing.T) {
+func TestDiscoverIPv4MaxPayload_BinarySearch(t *testing.T) {
 	tests := []struct {
 		name       string
 		limit      int // largest payload the stubbed path accepts
@@ -75,7 +103,7 @@ func TestDiscoverMaxPayload_BinarySearch(t *testing.T) {
 			stubCanSendPayload(t, func(n int) (bool, string, error) { return n <= tt.limit, "", nil })
 			p := NewPingerWithOptions(nil, Options{ResolveIPAddr: resolveTo("1.1.1.1")})
 
-			got, _, err := p.DiscoverMaxPayload(context.Background(), "example.com", tt.start, tt.min, nil)
+			got, _, err := p.discoverIPv4MaxPayload(context.Background(), &net.IPAddr{IP: net.ParseIP("1.1.1.1")}, tt.start, tt.min, nil)
 
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -87,15 +115,15 @@ func TestDiscoverMaxPayload_BinarySearch(t *testing.T) {
 	}
 }
 
-func TestDiscoverMaxPayload_ProbeErrorAborts(t *testing.T) {
+func TestDiscoverIPv4MaxPayload_ProbeErrorAborts(t *testing.T) {
 	stubCanSendPayload(t, func(int) (bool, string, error) { return false, "", errors.New("send failed") })
 	p := NewPingerWithOptions(nil, Options{ResolveIPAddr: resolveTo("1.1.1.1")})
-	if _, _, err := p.DiscoverMaxPayload(context.Background(), "example.com", 100, 0, nil); err == nil {
+	if _, _, err := p.discoverIPv4MaxPayload(context.Background(), &net.IPAddr{IP: net.ParseIP("1.1.1.1")}, 100, 0, nil); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
-func TestDiscoverMaxPayload_ContextCancelledStopsSearch(t *testing.T) {
+func TestDiscoverIPv4MaxPayload_ContextCancelledStopsSearch(t *testing.T) {
 	stubCanSendPayload(t, func(int) (bool, string, error) {
 		t.Error("probe sent after the context was cancelled")
 		return true, "", nil
@@ -104,15 +132,15 @@ func TestDiscoverMaxPayload_ContextCancelledStopsSearch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, _, err := p.DiscoverMaxPayload(ctx, "example.com", 100, 0, nil); !errors.Is(err, context.Canceled) {
+	if _, _, err := p.discoverIPv4MaxPayload(ctx, &net.IPAddr{IP: net.ParseIP("1.1.1.1")}, 100, 0, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }
 
-// TestDiscoverMaxPayload_BottleneckAndLogging checks that a bottleneck router
+// TestDiscoverIPv4MaxPayload_BottleneckAndLogging checks that a bottleneck router
 // reported on failure is returned and logged, and that plain failures log
 // without a bottleneck.
-func TestDiscoverMaxPayload_BottleneckAndLogging(t *testing.T) {
+func TestDiscoverIPv4MaxPayload_BottleneckAndLogging(t *testing.T) {
 	tests := []struct {
 		name           string
 		bottleneck     string
@@ -141,7 +169,7 @@ func TestDiscoverMaxPayload_BottleneckAndLogging(t *testing.T) {
 			p := NewPingerWithOptions(nil, Options{ResolveIPAddr: resolveTo("1.1.1.1")})
 			var logs []string
 
-			got, bottleneck, err := p.DiscoverMaxPayload(context.Background(), "example.com", 200, 0, func(l string) { logs = append(logs, l) })
+			got, bottleneck, err := p.discoverIPv4MaxPayload(context.Background(), &net.IPAddr{IP: net.ParseIP("1.1.1.1")}, 200, 0, func(l string) { logs = append(logs, l) })
 
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -281,13 +309,13 @@ func TestCanSendPayload_ClassifiesTheProbe(t *testing.T) {
 	}
 }
 
-func TestDiscoverMaxPayload_NoBaselineReplyRejectsResult(t *testing.T) {
+func TestDiscoverIPv4MaxPayload_NoBaselineReplyRejectsResult(t *testing.T) {
 	for _, hop := range []string{"", "192.0.2.254"} {
 		t.Run("bottleneck="+hop, func(t *testing.T) {
 			stubCanSendPayload(t, func(int) (bool, string, error) { return false, hop, nil })
 			p := NewPingerWithOptions(nil, Options{ResolveIPAddr: resolveTo("192.0.2.1")})
 
-			_, _, err := p.DiscoverMaxPayload(context.Background(), "host", 1472, 56, nil)
+			_, _, err := p.discoverIPv4MaxPayload(context.Background(), &net.IPAddr{IP: net.ParseIP("192.0.2.1")}, 1472, 56, nil)
 
 			if !errors.Is(err, ErrPMTUNoReply) {
 				t.Fatalf("baseline error = %v, want ErrPMTUNoReply", err)
@@ -300,7 +328,7 @@ func TestDiscoverMaxPayload_NoBaselineReplyRejectsResult(t *testing.T) {
 }
 
 // One search reserves one echo ID for its entire baseline/binary search.
-func TestDiscoverMaxPayload_SearchesUseDistinctConsistentIDs(t *testing.T) {
+func TestDiscoverIPv4MaxPayload_SearchesUseDistinctConsistentIDs(t *testing.T) {
 	orig := canSendPayloadFn
 	t.Cleanup(func() { canSendPayloadFn = orig })
 	var ids []int
@@ -313,7 +341,7 @@ func TestDiscoverMaxPayload_SearchesUseDistinctConsistentIDs(t *testing.T) {
 	for search := range 2 {
 		ids = nil
 
-		_, _, err := p.DiscoverMaxPayload(context.Background(), "host", 1472, 56, nil)
+		_, _, err := p.discoverIPv4MaxPayload(context.Background(), &net.IPAddr{IP: net.ParseIP("192.0.2.1")}, 1472, 56, nil)
 
 		if err != nil || len(ids) < 2 {
 			t.Fatalf("search %d: ids=%v err=%v", search, ids, err)
@@ -342,5 +370,15 @@ func TestCanSendPayload_ExplicitSourceStillBindsInterface(t *testing.T) {
 
 	if len(*calls) != 1 || (*calls)[0].ifaceName != "test0" {
 		t.Fatalf("PMTU interface bindings=%+v, want test0", *calls)
+	}
+}
+
+func TestDiscoverIPv4MaxPayload_RejectsInvalidStart(t *testing.T) {
+	p := NewPinger(nil)
+	for _, start := range []int{0, -1} {
+		_, _, err := p.discoverIPv4MaxPayload(context.Background(), &net.IPAddr{IP: net.ParseIP("192.0.2.1")}, start, 0, nil)
+		if err == nil || err.Error() != "start MTU must be > 0" {
+			t.Fatalf("start=%d: error=%v, want start MTU must be > 0", start, err)
+		}
 	}
 }

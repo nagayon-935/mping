@@ -88,18 +88,6 @@ func closeWebUI(srv webServer, errOut io.Writer) {
 	}
 }
 
-// checkWebReloadDrift warns when a reload changes web:/web-port:. The web
-// server is started once from the startup config (active) and never moved,
-// so like checkPortReloadDrift this is a "restart required" nudge.
-func checkWebReloadDrift(active, reloaded config) string {
-	if active.webEnabled == reloaded.webEnabled &&
-		(!active.webEnabled || active.webPort == reloaded.webPort) {
-		return ""
-	}
-	return fmt.Sprintf("[yellow][%s] web: change detected in the reloaded config — the web UI requires a full restart of mping to take effect[-]",
-		clock())
-}
-
 // webProvider adapts one run-loop iteration's supervisor to web.Provider
 // and, through webController, to web.Controller.
 type webProvider struct {
@@ -154,7 +142,7 @@ func (c webController) ResetStats() {
 }
 
 func (c webController) StopMeasurements() error {
-	if err := c.sup.do(cmdStop); err != nil {
+	if err := c.sup.sendCmd(command{kind: cmdStop}); err != nil {
 		return err
 	}
 	c.logf("stopped measurements")
@@ -162,16 +150,15 @@ func (c webController) StopMeasurements() error {
 }
 
 func (c webController) RestartMeasurements() error {
-	if err := c.sup.do(cmdRestart); err != nil {
+	if err := c.sup.sendCmd(command{kind: cmdRestart}); err != nil {
 		return err
 	}
 	c.logf("restarted measurements")
 	return nil
 }
 
-func (c webController) CaptureReport() (snapshot report.Report, err error) {
-	err = c.sup.editTargets(func(s *supervisor) error { var e error; snapshot, e = s.captureReport(0); return e })
-	return
+func (c webController) CaptureReport() (report.Report, error) {
+	return c.sup.snapshotReport(0)
 }
 
 // logf posts to the TUI Log pane without ever blocking a web request on a

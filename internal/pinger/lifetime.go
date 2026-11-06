@@ -30,21 +30,9 @@ func (p *Pinger) stopped() bool {
 	}
 }
 
-// lookupBounded runs a cancellable DNS lookup on the calling goroutine when a
-// context-aware hook is set, falling back to a bounded goroutine wrapper for
-// explicitly injected context-free hooks.
-func lookupBounded[T any](
-	p *Pinger,
-	timeout time.Duration,
-	kind, query string,
-	ctxFn func(context.Context, string) (T, error),
-	legacyFn func(string) (T, error),
-) (T, error) {
-	return lookupBoundedContext(context.Background(), p, timeout, kind, query, ctxFn, legacyFn)
-}
-
-// lookupBoundedContext is lookupBounded that also aborts when parent is
-// cancelled, so a caller such as the MTR hop annotator can stop waiting.
+// lookupBoundedContext runs context-aware DNS on the caller, or bounds the
+// wait for an explicitly injected context-free hook. It honors the operation
+// deadline, parent cancellation, and the pinger lifetime.
 func lookupBoundedContext[T any](
 	parent context.Context,
 	p *Pinger,

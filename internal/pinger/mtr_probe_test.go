@@ -48,14 +48,14 @@ func newHopPinger(ip string) *Pinger {
 	return NewPingerWithOptions(nil, Options{ResolveIPAddr: resolveTo(ip)})
 }
 
-func TestRegisterUnregisterTraceChan(t *testing.T) {
+func TestTraceChannelRegistration(t *testing.T) {
 	// A zero-value Pinger has no map yet; Register must create it.
 	p := &Pinger{}
-	p.RegisterTraceChan(123)
+	p.registerTraceChan(123)
 	if len(p.traceChans) != 1 {
 		t.Fatalf("want 1 traceChan, got %d", len(p.traceChans))
 	}
-	p.UnregisterTraceChan(123)
+	p.unregisterTraceChan(123)
 	if len(p.traceChans) != 0 {
 		t.Fatalf("want 0 traceChans after unregister, got %d", len(p.traceChans))
 	}
@@ -466,7 +466,7 @@ func TestHopOperationsCancelDNS(t *testing.T) {
 					case "probe":
 						_, err = p.ProbeHop(ctx, nil, "example.invalid", 1, 1, time.Second)
 					case "pmtu":
-						_, _, err = p.DiscoverMaxPayload(ctx, "example.invalid", 1500, 56, nil)
+						_, err = p.DiscoverPathMTU(ctx, "example.invalid", 1500, 56, nil)
 					}
 					done <- err
 				}()
@@ -525,7 +525,7 @@ func TestHopSocket_Close(t *testing.T) {
 }
 
 // TestReceiveViaTraceChan_ClosedChannelIsATimeout pins the guard for a closed
-// trace channel: nothing closes one today (see UnregisterTraceChan), but if
+// trace channel: nothing closes one today (see unregisterTraceChan), but if
 // something did, the probe must report no response instead of handing a zero
 // traceMsg to accept or spinning on the closed channel.
 func TestReceiveViaTraceChan_ClosedChannelIsATimeout(t *testing.T) {

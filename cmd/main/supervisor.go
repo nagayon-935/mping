@@ -17,7 +17,7 @@ import (
 
 // supervisorConfig holds the values a supervisor needs for the lifetime of
 // one run() loop iteration. A fresh supervisor is created each time the main
-// loop re-enters (on YAML reload), mirroring the closures it replaces.
+// loop re-enters on a full YAML reload.
 type supervisorConfig struct {
 	makePinger          func(size int) pingerController
 	makeTargetPinger    func(int, []*stats.TargetStats, []targetSpec) pingerController
@@ -157,7 +157,7 @@ type supervisor struct {
 	removed        []report.Target
 	removedDropped int
 
-	// Command plumbing. cmds is never closed — see do()'s comment.
+	// Command plumbing. cmds is never closed — see sendCmd()'s comment.
 	cmds         chan command
 	done         chan struct{}
 	loopDone     chan struct{}
@@ -265,7 +265,7 @@ func (s *supervisor) handle(c command) error {
 // markProbesFinished notifies count completion once every worker of the
 // current pinger has sent its last probe.
 func (s *supervisor) markProbesFinished() {
-	if dynamic, ok := s.p.(dynamicPinger); ok && !dynamic.WorkersFinished() {
+	if dynamic, ok := s.livePinger(); ok && !dynamic.WorkersFinished() {
 		return
 	}
 	select {
@@ -417,8 +417,9 @@ func (s *supervisor) setupHTTPChecker() *pinger.HTTPChecker {
 	}
 	opts, err := httpOptions(s.cfg.config)
 	if err != nil {
+		// Validation precedes supervisor construction.
 		return nil
-	} // validation precedes supervisor construction
+	}
 	hc := pinger.NewHTTPCheckerWithOptions(s.cfg.httpURLs, s.cfg.interval, s.cfg.timeout, s.cfg.bind, opts)
 	hc.Start()
 	return hc
@@ -500,12 +501,12 @@ func (s *supervisor) restartHTTPChecker() {
 	s.httpChecker = s.setupHTTPChecker()
 }
 
-func (s *supervisor) startPinger() error { return s.do(cmdStart) }
-func (s *supervisor) stopAll()           { _ = s.do(cmdStop) }
-func (s *supervisor) resetRoute()        { _ = s.do(cmdResetRoute) }
-func (s *supervisor) resetHTTP()         { _ = s.do(cmdResetHTTP) }
-func (s *supervisor) resetPort()         { _ = s.do(cmdResetPort) }
-func (s *supervisor) resetStats()        { _ = s.do(cmdResetStats) }
+func (s *supervisor) startPinger() error { return s.sendCmd(command{kind: cmdStart}) }
+func (s *supervisor) stopAll()           { _ = s.sendCmd(command{kind: cmdStop}) }
+func (s *supervisor) resetRoute()        { _ = s.sendCmd(command{kind: cmdResetRoute}) }
+func (s *supervisor) resetHTTP()         { _ = s.sendCmd(command{kind: cmdResetHTTP}) }
+func (s *supervisor) resetPort()         { _ = s.sendCmd(command{kind: cmdResetPort}) }
+func (s *supervisor) resetStats()        { _ = s.sendCmd(command{kind: cmdResetStats}) }
 
 // httpResults returns the current HTTP checker's results, or nil when no
 // HTTP checker is active. Reads a snapshot rather than the live field: the

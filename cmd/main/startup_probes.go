@@ -29,7 +29,11 @@ func makePingerFactory(targets []*stats.TargetStats, opts pinger.Options, cfg co
 	}
 }
 
-const pmtuWorkers = 8
+const (
+	pmtuWorkers      = 8
+	pmtuProbeTimeout = 8 * time.Second
+	ipv6MinMTU       = 1280
+)
 
 type deferredPMTU func(context.Context, func(string))
 
@@ -74,32 +78,7 @@ func setupPMTU(makePinger func(size int) pingerController, cfg config, ifaceMTU 
 	if ifaceMTU > pmtuHeaderBytes {
 		startPayload = ifaceMTU - pmtuHeaderBytes
 	}
-	type outcome struct {
-		addr *net.IPAddr
-		info pinger.PathMTUResult
-		err  error
-		logs []string
-	}
-	results := make([]outcome, len(targets))
-	runPMTUWorkers(context.Background(), len(targets), func(i int) {
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-		defer cancel()
-		r := &results[i]
-		r.addr, r.err = probe.ResolveTarget(ctx, targets[i].ResolveAddress())
-		if r.err != nil {
-			return
-		}
-		if r.addr == nil || r.addr.IP == nil {
-			r.err = fmt.Errorf("resolver returned no IP address")
-			return
-		}
-		if r.addr.IP.To4() == nil {
-			return
-		}
-		r.info, r.err = probe.DiscoverPathMTU(ctx, r.addr.String(), startPayload, cfg.packetSize, func(line string) {
-			r.logs = append(r.logs, pmtuLog(line))
-		})
-	})
+	results := probeInitialPMTU(probe, targets, startPayload, cfg.packetSize)
 	allIPv4, minPayload := true, 0
 	var ipv6Targets []int
 	for i, t := range targets {
@@ -125,11 +104,51 @@ func setupPMTU(makePinger func(size int) pingerController, cfg config, ifaceMTU 
 	if len(ipv6Targets) == 0 {
 		return
 	}
-	deferred = func(ctx context.Context, logf func(string)) {
+	deferred = deferredIPv6PMTU(makePinger, targets, results, ipv6Targets, startPayload, cfg.packetSize)
+	return
+}
+
+type pmtuOutcome struct {
+	addr *net.IPAddr
+	info pinger.PathMTUResult
+	err  error
+	logs []string
+}
+
+// probeInitialPMTU resolves every target and probes IPv4 paths concurrently.
+// Results retain target order so the caller emits diagnostics in that order.
+func probeInitialPMTU(probe pingerController, targets []*stats.TargetStats, startPayload, packetSize int) []pmtuOutcome {
+	results := make([]pmtuOutcome, len(targets))
+	runPMTUWorkers(context.Background(), len(targets), func(i int) {
+		ctx, cancel := context.WithTimeout(context.Background(), pmtuProbeTimeout)
+		defer cancel()
+		r := &results[i]
+		r.addr, r.err = probe.ResolveTarget(ctx, targets[i].ResolveAddress())
+		if r.err != nil {
+			return
+		}
+		if r.addr == nil || r.addr.IP == nil {
+			r.err = fmt.Errorf("resolver returned no IP address")
+			return
+		}
+		if r.addr.IP.To4() == nil {
+			return
+		}
+		r.info, r.err = probe.DiscoverPathMTU(ctx, r.addr.String(), startPayload, packetSize, func(line string) {
+			r.logs = append(r.logs, pmtuLog(line))
+		})
+	})
+	return results
+}
+
+// deferredIPv6PMTU returns background discovery to run after regular ping starts.
+// Its independent probe is stopped and closed before the work returns.
+func deferredIPv6PMTU(makePinger func(int) pingerController, targets []*stats.TargetStats, results []pmtuOutcome, ipv6Targets []int, startPayload, packetSize int) deferredPMTU {
+	return func(ctx context.Context, logf func(string)) {
 		if ctx.Err() != nil {
 			return
 		}
-		backgroundProbe := makePinger(cfg.packetSize)
+		backgroundProbe := makePinger(packetSize)
 		defer backgroundProbe.Close()
 		defer backgroundProbe.Stop()
 		var logMu sync.Mutex
@@ -142,15 +161,15 @@ func setupPMTU(makePinger func(size int) pingerController, cfg config, ifaceMTU 
 		}
 		runPMTUWorkers(ctx, len(ipv6Targets), func(j int) {
 			i := ipv6Targets[j]
-			probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+			probeCtx, cancel := context.WithTimeout(ctx, pmtuProbeTimeout)
 			defer cancel()
-			info, err := backgroundProbe.DiscoverPathMTU(probeCtx, results[i].addr.String(), startPayload, cfg.packetSize, log)
+			info, err := backgroundProbe.DiscoverPathMTU(probeCtx, results[i].addr.String(), startPayload, packetSize, log)
 			if ctx.Err() != nil {
 				return
 			}
 			if err != nil {
 				log(fmt.Sprintf("PMTU discovery failed for %s: %v", targets[i].Host(), err))
-				if info.Source != "os" || info.MTU < 1280 {
+				if info.Source != "os" || info.MTU < ipv6MinMTU {
 					return
 				}
 				info.Status = "estimated"
@@ -158,13 +177,11 @@ func setupPMTU(makePinger func(size int) pingerController, cfg config, ifaceMTU 
 			targets[i].SetPathMTU(info)
 		})
 	}
-	return
 }
 
-// setupPortChecker parses port specs and starts a PortChecker if any specs are
-// provided. Returns nil if no specs are given. bind is the -S/-I pair the ICMP
-// pinger is already bound to (see makePingerFactory), so port checks probe over
-// the same egress path.
+// setupPortChecker starts a PortChecker for the parsed specs, or returns nil
+// when there are none. bind is the source/interface pair used by ICMP probes,
+// so port checks use the same egress path.
 func setupPortChecker(targets []*stats.TargetStats, portSpecs []pinger.PortSpec, interval, timeout time.Duration, bind pinger.BindConfig) *pinger.PortChecker {
 	if len(portSpecs) == 0 {
 		return nil

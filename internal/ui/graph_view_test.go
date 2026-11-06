@@ -141,8 +141,7 @@ func TestGridStepsForHeight(t *testing.T) {
 		{1, [4]int{1, 1, 1, 1}}, // totalSteps is clamped to 1
 	}
 	for _, tt := range tests {
-		gy25, gy50, gy75, gy100 := gridStepsForHeight(tt.height)
-		if got := [4]int{gy25, gy50, gy75, gy100}; got != tt.want {
+		if got := gridStepsForHeight(tt.height); got != tt.want {
 			t.Errorf("gridStepsForHeight(%d) = %v, want %v", tt.height, got, tt.want)
 		}
 	}

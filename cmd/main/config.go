@@ -39,14 +39,12 @@ type config struct {
 	webEnabled bool
 	webPort    int
 
-	// CLI only and read once at startup.
-
 	// thresholds holds the colour-coding / alert boundaries (warn = orange,
 	// crit = red), already converted from the raw ms/pct flag values.
 	thresholds                       stats.Thresholds
 	healthFailures, healthRecoveries int
 	healthWindow                     time.Duration
-	checkConfig                      bool
+	checkConfig                      bool // CLI only and read once at startup.
 	httpFollowRedirects              bool
 }
 
@@ -110,8 +108,8 @@ func syncSlice(fs *pflag.FlagSet, flag string, docVal []string, cfgField *[]stri
 }
 
 // parseNonNegativeDuration parses raw as a Go duration string (e.g. "30s",
-// "5m") and rejects negative values. Shared by --duration's CLI/YAML
-// validation so both surfaces reject the same malformed input the same way.
+// "5m") and rejects negative values. YAML merging uses it for duration and
+// health-window; document validation also uses it for duration.
 func parseNonNegativeDuration(raw string) (time.Duration, error) {
 	d, err := time.ParseDuration(raw)
 	if err != nil {
@@ -123,9 +121,9 @@ func parseNonNegativeDuration(raw string) (time.Duration, error) {
 	return d, nil
 }
 
-// syncDuration is syncField's counterpart for cfg.duration: the YAML doc
-// stores the raw duration string (so the file stays human-readable, e.g.
-// "duration: 5m"), which must be parsed before it can overwrite cfgField.
+// syncDuration applies a non-nil YAML duration string to cfgField unless
+// flag was explicitly set on the CLI. It is shared by duration and
+// health-window settings.
 func syncDuration(fs *pflag.FlagSet, flag string, docVal *string, cfgField *time.Duration) error {
 	if fs.Changed(flag) || docVal == nil {
 		return nil

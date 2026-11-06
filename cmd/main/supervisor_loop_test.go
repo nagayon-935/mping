@@ -20,16 +20,16 @@ func TestLoop_ExecutesCommandsInOrder(t *testing.T) {
 	sup.Start()
 	defer sup.Shutdown()
 
-	if err := sup.do(cmdStart); err != nil {
+	if err := sup.sendCmd(command{kind: cmdStart}); err != nil {
 		t.Fatalf("cmdStart: %v", err)
 	}
-	if err := sup.do(cmdStop); err != nil {
+	if err := sup.sendCmd(command{kind: cmdStop}); err != nil {
 		t.Fatalf("cmdStop: %v", err)
 	}
 	if got := sup.stateSnapshot(); got != stateStopped {
 		t.Fatalf("after stop: state = %v, want stopped", got)
 	}
-	if err := sup.do(cmdRestart); err != nil {
+	if err := sup.sendCmd(command{kind: cmdRestart}); err != nil {
 		t.Fatalf("cmdRestart: %v", err)
 	}
 	if got := sup.stateSnapshot(); got != stateRunning {
@@ -37,22 +37,22 @@ func TestLoop_ExecutesCommandsInOrder(t *testing.T) {
 	}
 }
 
-// TestDo_AfterShutdownReturnsSentinel covers the send-side race: a UI
+// TestSendCmd_AfterShutdownReturnsSentinel covers the send-side race: a UI
 // goroutine still in flight when run() shuts the loop down must get a clean
 // error instead of blocking forever or panicking on a closed channel.
-func TestDo_AfterShutdownReturnsSentinel(t *testing.T) {
+func TestSendCmd_AfterShutdownReturnsSentinel(t *testing.T) {
 	sup := newLoopTestSupervisor(t)
 	sup.Start()
 	sup.Shutdown()
 
-	if err := sup.do(cmdRestart); !errors.Is(err, errSupervisorShutDown) {
+	if err := sup.sendCmd(command{kind: cmdRestart}); !errors.Is(err, errSupervisorShutDown) {
 		t.Fatalf("err = %v, want errSupervisorShutDown", err)
 	}
 }
 
-// TestDo_ConcurrentSendersDuringShutdown is the stress form: many senders
+// TestSendCmd_ConcurrentSendersDuringShutdown is the stress form: many senders
 // racing a Shutdown must all return and none may panic or hang.
-func TestDo_ConcurrentSendersDuringShutdown(t *testing.T) {
+func TestSendCmd_ConcurrentSendersDuringShutdown(t *testing.T) {
 	for i := range 50 {
 		sup := newLoopTestSupervisor(t)
 		sup.Start()
@@ -62,7 +62,7 @@ func TestDo_ConcurrentSendersDuringShutdown(t *testing.T) {
 		for range 8 {
 			wg.Go(func() {
 				<-start
-				_ = sup.do(cmdResetPort)
+				_ = sup.sendCmd(command{kind: cmdResetPort})
 			})
 		}
 		close(start)

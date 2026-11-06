@@ -71,36 +71,12 @@ func WatchPaths(ctx context.Context, paths func() []string, onChange func()) err
 	//   • direct writes      → Write event on the file
 	//   • atomic rename-over → Create event on the file path
 	//   • delete + recreate  → Create event on the file path
-	addedDirs := make(map[string]bool)
-	var watched map[string]bool
-	refresh := func(strict bool) error {
-		next := make(map[string]bool)
-		for _, path := range paths() {
-			// Resolve to absolute paths so we can compare event paths
-			// regardless of how the caller expressed them.
-			absPath, err := filepath.Abs(path)
-			if err != nil {
-				if strict {
-					return fmt.Errorf("resolve path %q: %w", path, err)
-				}
-				continue
-			}
-			dir := filepath.Dir(absPath)
-			if !addedDirs[dir] {
-				if err := w.add(dir); err != nil {
-					if strict {
-						return fmt.Errorf("watch directory %q: %w", dir, err)
-					}
-					continue
-				}
-				addedDirs[dir] = true
-			}
-			next[absPath] = true
-		}
-		watched = next
-		return nil
+	watches := pathWatches{
+		source:    w,
+		paths:     paths,
+		addedDirs: make(map[string]bool),
 	}
-	if err := refresh(true); err != nil {
+	if err := watches.refresh(true); err != nil {
 		return err
 	}
 	if watchingHook != nil {
@@ -129,7 +105,7 @@ func WatchPaths(ctx context.Context, paths func() []string, onChange func()) err
 				return nil
 			}
 			// Ignore events for other files in the same directories.
-			if !watched[filepath.Clean(event.Name)] {
+			if !watches.watched[filepath.Clean(event.Name)] {
 				continue
 			}
 			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
@@ -154,10 +130,47 @@ func WatchPaths(ctx context.Context, paths func() []string, onChange func()) err
 		case <-timerChan:
 			timer = nil
 			onChange()
-			_ = refresh(false) // non-strict: never returns an error
+			_ = watches.refresh(false) // non-strict: never returns an error
 			if refreshedHook != nil {
 				refreshedHook()
 			}
 		}
 	}
+}
+
+// pathWatches tracks files and the parent directories already registered with
+// one event source. Refreshes add directories without removing existing watches.
+type pathWatches struct {
+	source    *eventSource
+	paths     func() []string
+	addedDirs map[string]bool
+	watched   map[string]bool
+}
+
+func (p *pathWatches) refresh(strict bool) error {
+	next := make(map[string]bool)
+	for _, path := range p.paths() {
+		// Resolve to absolute paths so we can compare event paths
+		// regardless of how the caller expressed them.
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			if strict {
+				return fmt.Errorf("resolve path %q: %w", path, err)
+			}
+			continue
+		}
+		dir := filepath.Dir(absPath)
+		if !p.addedDirs[dir] {
+			if err := p.source.add(dir); err != nil {
+				if strict {
+					return fmt.Errorf("watch directory %q: %w", dir, err)
+				}
+				continue
+			}
+			p.addedDirs[dir] = true
+		}
+		next[absPath] = true
+	}
+	p.watched = next
+	return nil
 }

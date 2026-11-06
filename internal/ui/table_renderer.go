@@ -109,10 +109,10 @@ func newTableRenderer(
 
 	// The Error column's max grows to fit the widest known error string
 	// rather than staying at its static base.
-	errorIdx := columnsByName(cols, "Error")
+	errorIdx := columnIndex(cols, "Error")
 	tr.baseWidths[errorIdx] = calcInitialTableErrorWidth(targets, tr.fullHeaders[errorIdx], tr.baseWidths[errorIdx])
 	tr.maxWidths[errorIdx] = tr.baseWidths[errorIdx]
-	tr.lastLossBase = cols[columnsByName(cols, "Last Loss")].base
+	tr.lastLossBase = cols[columnIndex(cols, "Last Loss")].base
 
 	tr.widths = tr.calcColumnWidths(fetchViews(targets))
 	tr.activeHeaders = append([]string(nil), tr.fullHeaders...)
@@ -127,7 +127,7 @@ func newTableRenderer(
 }
 
 // calcColumnWidths recalculates dynamic column widths based on current
-// output text (Src/Dst IP, DNS, ASN). views must be the same length as
+// output text (Src/Dst IP, DNS, ASN, PTR). views must be the same length as
 // tr.targets, in the same order (one GetView() snapshot per target, taken
 // once per tick by the caller rather than re-fetched here).
 //
@@ -172,10 +172,10 @@ func (tr *tableRenderer) tableInnerHeight() int {
 }
 
 // visibleDataRows returns the number of data rows that fit in the table's
-// current inner height, floored at tableMaxRows when the widget has not been
+// current inner height, floored at tableMinVisibleRows when the widget has not been
 // sized past the default minimum yet.
 func (tr *tableRenderer) visibleDataRows() int {
-	return max(tableMaxRows, (tr.tableInnerHeight()-2)/2)
+	return max(tableMinVisibleRows, (tr.tableInnerHeight()-2)/2)
 }
 
 // visibleRowWindow returns the [start, end) range of data-row indices

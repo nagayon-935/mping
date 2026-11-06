@@ -3,6 +3,7 @@ package pinger
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"syscall"
 	"testing"
@@ -15,6 +16,7 @@ import (
 type fakeIPv6PMTU struct {
 	mtu                   int
 	queryErr, deadlineErr error
+	readErr               error
 	onWrite               func(*fakeIPv6PMTU, []byte) error
 	packets               [][]byte
 	writes                [][]byte
@@ -25,6 +27,9 @@ func (f *fakeIPv6PMTU) PathMTU() (int, error)       { return f.mtu, f.queryErr }
 func (f *fakeIPv6PMTU) SetDeadline(time.Time) error { return f.deadlineErr }
 func (f *fakeIPv6PMTU) Close() error                { f.closed = true; return nil }
 func (f *fakeIPv6PMTU) Read(b []byte) (int, error) {
+	if f.readErr != nil {
+		return 0, f.readErr
+	}
 	if len(f.packets) == 0 {
 		return 0, timeoutOpError()
 	}
@@ -227,5 +232,40 @@ func TestDiscoverPathMTUIPv6ClosesSocketAndKeepsZone(t *testing.T) {
 	result, err := p.DiscoverPathMTU(context.Background(), "fe80::1%en0", 1472, 56, nil)
 	if err != nil || !f.closed || result.IP != "fe80::1%en0" || result.Status != "confirmed" {
 		t.Fatalf("result=%+v closed=%v err=%v", result, f.closed, err)
+	}
+}
+
+// Preserve the direct net.Error assertion in the PMTU read loop: adding
+// wrapped-timeout support is deliberately outside this refactor.
+func TestIPv6PMTUReadErrorClassification(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		readErr error
+		wantErr bool
+	}{
+		{"socket timeout leaves estimate", timeoutOpError(), false},
+		{"wrapped timeout is returned", fmt.Errorf("read: %w", timeoutOpError()), true},
+		{"EMSGSIZE leaves estimate", syscall.EMSGSIZE, false},
+		{"other read errors are returned", syscall.ENETUNREACH, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := NewPingerWithOptions(nil, Options{IDs: &IDAllocator{}})
+			defer p.Stop()
+			f := &fakeIPv6PMTU{mtu: 1500, readErr: tt.readErr}
+			result, err := p.discoverIPv6PathMTU(context.Background(), f, &net.IPAddr{IP: net.ParseIP("2001:db8::1")}, nil)
+			if tt.wantErr {
+				if err != tt.readErr {
+					t.Fatalf("error = %v, want original %v", err, tt.readErr)
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.MTU != 1500 || result.Payload != 1452 || result.Status != "estimated" || len(f.writes) != 1 {
+				t.Fatalf("result=%+v writes=%d, want unchanged estimate and one probe", result, len(f.writes))
+			}
+			if len(p.ids.traces) != 0 {
+				t.Fatalf("probe ID reservation leaked: %v", p.ids.traces)
+			}
+		})
 	}
 }

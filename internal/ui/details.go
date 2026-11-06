@@ -79,7 +79,7 @@ func renderHostDetails(t *stats.TargetStats, opts RunOptions) string {
 		fmt.Fprintf(&b, "[yellow]Destination IP changed %d times during this measurement.[-]\n", v.IPChanges)
 	}
 	for _, change := range v.IPHistory {
-		fmt.Fprintf(&b, "  %s  IP %s\n", change.At.Local().Format("15:04:05"), tview.Escape(change.IP))
+		fmt.Fprintf(&b, "  %s  IP %s\n", change.At.Local().Format(logTimeLayout), tview.Escape(change.IP))
 	}
 	switch {
 	case opts.Route != RouteOff && len(v.MTRHops) == 0:
@@ -116,7 +116,7 @@ func renderHostDetails(t *stats.TargetStats, opts RunOptions) string {
 		fmt.Fprintln(&b, "No events recorded.")
 	}
 	for _, event := range events {
-		fmt.Fprintf(&b, "%s  %s: %s\n", event.At.Local().Format("15:04:05"), tview.Escape(event.Kind), tview.Escape(event.Message))
+		fmt.Fprintf(&b, "%s  %s: %s\n", event.At.Local().Format(logTimeLayout), tview.Escape(event.Kind), tview.Escape(event.Message))
 	}
 	return b.String()
 }

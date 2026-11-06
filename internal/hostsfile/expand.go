@@ -134,6 +134,7 @@ func expandCIDR(s string) ([]string, error) {
 	if prefix.Addr().Is4() && prefix.Bits() <= 30 {
 		addr, n = addr.Next(), n-2
 	}
+	// Defensive: the hostBits limit above already bounds n.
 	if n > maxPatternExpansion {
 		return nil, errExpansionTooLarge
 	}

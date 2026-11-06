@@ -2,6 +2,7 @@ package pinger
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -346,5 +347,36 @@ func TestBroadcastTrace_FullChannelDropsNewMessage(t *testing.T) {
 
 	if len(ch) != 1 || <-ch != queued {
 		t.Fatal("expected the original message to remain and the new one to be dropped")
+	}
+}
+
+// The receiver retries timeouts only when they contain a net.OpError. Keep
+// that gate while sharing timeout detection with the port checker.
+func TestRunReceiverTimeoutClassification(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		readErr   error
+		wantReads int
+	}{
+		{"socket timeout is retried", timeoutOpError(), 2},
+		{"wrapped socket timeout is retried", fmt.Errorf("read: %w", timeoutOpError()), 2},
+		{"bare timeout exits", &net.DNSError{IsTimeout: true}, 1},
+		{"wrapped bare timeout exits", fmt.Errorf("read: %w", &net.DNSError{IsTimeout: true}), 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := NewPinger(nil)
+			defer p.Stop()
+			reads := 0
+			p.runReceiver(receiverV4Config, func([]byte) (int, int, net.Addr, error) {
+				reads++
+				if reads == 1 {
+					return 0, 0, nil, tt.readErr
+				}
+				return 0, 0, nil, errors.New("socket closed")
+			}, func(time.Time) error { return nil })
+			if reads != tt.wantReads {
+				t.Fatalf("reads=%d, want %d", reads, tt.wantReads)
+			}
+		})
 	}
 }

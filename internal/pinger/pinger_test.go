@@ -129,7 +129,7 @@ func TestNewPingerWithOptions_ResolverIsUsedForLookups(t *testing.T) {
 	if _, err := p.resolveIPAddrBounded("ip4", "nonexistent.invalid."); err == nil {
 		t.Error("resolution through the failing resolver should fail")
 	}
-	if _, err := p.lookupTXTBounded("nonexistent.invalid."); err == nil {
+	if _, err := p.lookupTXTBoundedContext(context.Background(), "nonexistent.invalid."); err == nil {
 		t.Error("TXT lookup through the failing resolver should fail")
 	}
 	if dials.Load() < 2 {

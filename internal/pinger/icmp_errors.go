@@ -137,7 +137,8 @@ func icmpErrorBodyData(msg *icmp.Message) ([]byte, bool) {
 }
 
 // extractEchoIDSeq extracts the ICMP echo ID and sequence number from an ICMP
-// error message (Time Exceeded, Destination Unreachable, Parameter Problem).
+// error message (Time Exceeded, Destination Unreachable, Parameter Problem,
+// or Packet Too Big).
 // It first tries parsing the embedded original IP+ICMP headers, then falls back
 // to scanning for the traceSignature pattern in the payload.
 func extractEchoIDSeq(msg *icmp.Message) (int, int, bool) {
@@ -179,26 +180,24 @@ func parseInnerEchoIDSeq(data []byte) (int, int, bool) {
 		if ihl < 20 || len(data) < ihl {
 			return 0, 0, false
 		}
-		icmpProto, headerLen, nextHeader = 1, ihl, int(data[9])
+		icmpProto, headerLen, nextHeader = protoICMP, ihl, int(data[9])
 	case 6:
 		// IPv6 header is 40 bytes.
-		const ipv6HeaderLen = 40
-		if len(data) < ipv6HeaderLen {
+		if len(data) < ipv6.HeaderLen {
 			return 0, 0, false
 		}
-		icmpProto, headerLen, nextHeader = 58, ipv6HeaderLen, int(data[6]) // Next Header
+		icmpProto, headerLen, nextHeader = protoICMPv6, ipv6.HeaderLen, int(data[6]) // Next Header
 	default:
 		return 0, 0, false
 	}
 
-	// The inner packet could be ICMP or UDP (protocol 17) if we sent it via a
-	// udp socket.
+	// Defensive parsing also accepts an ICMP payload behind a UDP header
+	// (protocol 17), although mping sends probes through raw ICMP sockets.
 	innerData := data[headerLen:]
 	switch nextHeader {
 	case icmpProto:
 	case 17: // UDP
-		// If we sent ICMP over a UDP socket (non-privileged), the original
-		// packet will have a UDP header (8 bytes). Skip it and try to parse the
+		// Defensive parsing: skip the UDP header (8 bytes) and try the
 		// payload as ICMP.
 		if len(innerData) < 8 {
 			return 0, 0, false

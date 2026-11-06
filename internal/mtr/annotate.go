@@ -22,8 +22,7 @@ const defaultAnnotationRetry = 30 * time.Second
 // any annotation already known for that IP, and hand the IP to note; lookups
 // (Team Cymru TXT and reverse DNS, which can each take seconds) run in the
 // background, once per IP, and are applied only to hops that still answer
-// from that IP. Before this, discovery waited for every hop's lookups in
-// turn, so with -a/-r hops appeared seconds apart.
+// from that IP.
 //
 // Incomplete results are retried after retry, mirroring pinger, which
 // deliberately does not cache failures. close cancels running lookups and
@@ -98,12 +97,10 @@ func (a *hopAnnotator) note(ip string) {
 		return
 	}
 	a.inflight[ip] = true
-	a.wg.Add(1)
-	go a.lookup(ip)
+	a.wg.Go(func() { a.lookup(ip) })
 }
 
 func (a *hopAnnotator) lookup(ip string) {
-	defer a.wg.Done()
 	defer func() {
 		a.mu.Lock()
 		delete(a.inflight, ip)
@@ -130,14 +127,8 @@ func (a *hopAnnotator) lookup(ip string) {
 	a.mtr.AnnotateIP(ip, merged.ASN, merged.Country, merged.Org, merged.PTR)
 }
 
-// remember records a lookup result for ip, keeping earlier values the new
-// result lacks (e.g. an ASN found before a PTR retry that failed).
-func (a *hopAnnotator) remember(ip string, asn pinger.ASNInfo, ptr string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.rememberLocked(ip, asn, ptr)
-}
-
+// rememberLocked merges lookup results, retaining earlier values a retry lacks.
+// The caller must hold a.mu.
 func (a *hopAnnotator) rememberLocked(ip string, asn pinger.ASNInfo, ptr string) stats.HopAnnotation {
 	merged := a.known[ip].ann
 	if asn.Number != "" {

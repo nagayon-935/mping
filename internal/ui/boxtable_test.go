@@ -34,7 +34,7 @@ func TestBoxHeaderRow(t *testing.T) {
 }
 
 func TestBoxRowColoursOnlyTaggedCells(t *testing.T) {
-	cols := []boxColumn{{width: 4, leftAlign: true}, {width: 6}}
+	cols := []boxColumn{{width: 4, rightAlign: true}, {width: 6}}
 	got := boxRow(cols, []boxCell{{text: "a"}, {text: "Open", tag: "[green]"}})
 	want := "[white]│[white]" + rightPaddedCell("a", 4) + "[white]│[green]" + paddedCell("Open", 6) + "[-][white]│[-]"
 	if got != want {
