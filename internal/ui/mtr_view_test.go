@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rivo/tview"
+
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
@@ -142,6 +144,50 @@ func TestRenderMTRTable_CompactVsFull(t *testing.T) {
 	// Compact mode must not have Min/Max/Jitter columns
 	if strings.Contains(compactOut, "Jitter") {
 		t.Error("compact mode should not show Jitter column")
+	}
+}
+
+func TestRenderMTRTable_FitsAvailableWidth(t *testing.T) {
+	// Compact needs 60 cells (6 columns, including a 16-cell Host, plus
+	// 7 separators); full needs 97 (10 columns plus 11 separators).
+	tests := []struct {
+		name    string
+		availW  int
+		wantW   int
+		compact bool
+	}{
+		{"below compact minimum", 59, 60, true},
+		{"compact minimum", 60, 60, true},
+		{"compact wider", 80, 80, true},
+		{"just below full minimum", 96, 96, true},
+		{"full minimum", 97, 97, false},
+		{"full wider", 120, 120, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, populated := range []bool{false, true} {
+				name := "discovering"
+				var hops []stats.HopView
+				if populated {
+					name = "with hops"
+					hops = []stats.HopView{{TTL: 1, IP: "2001:db8::1", Sent: 5, Recv: 5, AvgRTT: time.Millisecond}}
+				}
+				t.Run(name, func(t *testing.T) {
+					target := buildMTRTarget("example.com", "2001:db8::2", hops)
+					out := renderMTRTable([]*stats.TargetStats{target}, tt.availW, "", "2001:db8::3")
+					for i, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
+						if got := tview.TaggedStringWidth(line); got != tt.wantW {
+							t.Errorf("line %d width = %d, want %d (available %d): %s", i+1, got, tt.wantW, tt.availW, line)
+						}
+					}
+					for _, header := range []string{"Recv", "Min", "Max", "Jitter"} {
+						if got := strings.Contains(out, header); got != !tt.compact {
+							t.Errorf("header %q present = %t, want %t", header, got, !tt.compact)
+						}
+					}
+				})
+			}
+		})
 	}
 }
 

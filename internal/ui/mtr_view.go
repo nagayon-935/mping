@@ -45,22 +45,24 @@ func rttColorTag(l stats.Level) string {
 	}
 }
 
-// mtrFixedW sums every MTR column but Host and adds 6 separators in compact
-// mode or 10 in full mode. The rendered table has 7 or 11 separators including
-// its outer borders, so this calculation undercounts the width by one.
+// mtrFixedW is the width taken by every MTR column but Host, in the compact
+// or full layout, including the separators between columns.
 func mtrFixedW(compact bool) int {
 	if compact {
-		// Hop + Loss% + Snt + Last + Avg + 6 of the 7 rendered separators
-		return mtrHopColW + mtrLossColW + mtrSntColW + mtrLatColW*2 + 6
+		// Hop + Loss% + Snt + Last + Avg + 5 inner separators
+		return mtrHopColW + mtrLossColW + mtrSntColW + mtrLatColW*2 + 5
 	}
-	// Hop + Loss% + Snt + Recv + Last + Avg + Min + Max + Jitter + 10 of the 11 rendered separators
-	return mtrHopColW + mtrLossColW + mtrSntColW + mtrRecvColW + mtrLatColW*5 + 10
+	// Hop + Loss% + Snt + Recv + Last + Avg + Min + Max + Jitter + 9 inner separators
+	return mtrHopColW + mtrLossColW + mtrSntColW + mtrRecvColW + mtrLatColW*5 + 9
 }
+
+// mtrBorderW is the width of the outer left/right border chars (┌─┐ / └─┘).
+const mtrBorderW = 2
 
 // mtrHostColW computes the Host column width for the MTR table given the
 // total available width and whether compact mode is active.
 func mtrHostColW(availW int, compact bool) int {
-	return max(availW-mtrFixedW(compact), minMTRHostW)
+	return max(availW-mtrFixedW(compact)-mtrBorderW, minMTRHostW)
 }
 
 // renderMTRTable builds the MTR monitor pane string.
@@ -69,7 +71,7 @@ func mtrHostColW(availW int, compact bool) int {
 func renderMTRTable(targets []*stats.TargetStats, availW int, srcIPv4, srcIPv6 string) string {
 	// Compact mode: drop Recv/Min/Max/Jitter columns when screen is narrow.
 	// Threshold: minimum width to fit all columns with minMTRHostW host column.
-	compact := availW < mtrFixedW(false)+minMTRHostW
+	compact := availW < mtrFixedW(false)+minMTRHostW+mtrBorderW
 
 	hostW := mtrHostColW(availW, compact)
 
