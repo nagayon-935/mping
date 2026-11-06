@@ -2,14 +2,11 @@ package ui
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
-
-	"github.com/nagayon-935/mping/internal/stats"
 )
 
 // newTestInputHandler builds a handler whose focus starts on the table.
@@ -21,11 +18,10 @@ func newTestInputHandler(t *testing.T) (*inputHandlerDeps, func() *inputHandler)
 	app := tview.NewApplication()
 	table := tview.NewTable()
 	app.SetFocus(table)
-	rows := 1
 	d := &inputHandlerDeps{
-		app: app, table: table, addHostInput: tview.NewInputField(), deleteHostInput: tview.NewInputField(),
+		app: app, table: table, addHostInput: tview.NewInputField(),
 		footer: tview.NewTextView(), pages: tview.NewPages(),
-		vs: newViewState(tview.NewTextView()), rowCount: &rows, session: s,
+		vs: newViewState(tview.NewTextView()), session: s,
 	}
 	return d, func() *inputHandler { return &inputHandler{inputHandlerDeps: *d, state: monitorRunning} }
 }
@@ -39,57 +35,6 @@ func press(h *inputHandler, key tcell.Key, r rune) *tcell.EventKey {
 func runNextUpdate(t *testing.T, s *uiSession) {
 	t.Helper()
 	recvWithin(t, s.updates, "a UI update to be posted")()
-}
-
-func TestScrollKeysWithoutNavigationClampTheTableOffset(t *testing.T) {
-	d, build := newTestInputHandler(t)
-	rows := 3 * tableMinVisibleRows
-	d.rowCount = &rows
-	redraws := 0
-	d.forceUpdate = func() { redraws++ }
-	h := build()
-	maxOffset := rows - (tableMinVisibleRows + 1)
-
-	press(h, tcell.KeyUp, 0)
-	if row, _ := h.table.GetOffset(); row != 0 {
-		t.Fatalf("Up at the top moved the offset to %d", row)
-	}
-	press(h, tcell.KeyDown, 0)
-	if row, _ := h.table.GetOffset(); row != 1 {
-		t.Fatalf("Down offset = %d, want 1", row)
-	}
-	for range 5 {
-		press(h, tcell.KeyPgDn, 0)
-	}
-	if row, _ := h.table.GetOffset(); row != maxOffset {
-		t.Fatalf("PgDn offset = %d, want clamped to %d", row, maxOffset)
-	}
-	press(h, tcell.KeyPgUp, 0)
-	if row, _ := h.table.GetOffset(); row != maxOffset-tableMinVisibleRows {
-		t.Fatalf("PgUp offset = %d, want %d", row, maxOffset-tableMinVisibleRows)
-	}
-	if redraws != 8 {
-		t.Fatalf("table redrawn %d times, want once per scroll key (8)", redraws)
-	}
-}
-
-func TestDeleteKeyOpensTheHostPromptWithoutASelectionAction(t *testing.T) {
-	d, build := newTestInputHandler(t)
-	d.pages.AddPage("main", tview.NewBox(), true, true)
-	d.pages.AddPage("deleteHost", d.deleteHostInput, true, false)
-	d.onDeleteHost = func(string) error { return nil }
-	h := build()
-
-	if press(h, tcell.KeyRune, 'd') != nil {
-		t.Fatal("d was not consumed")
-	}
-
-	if front, _ := h.pages.GetFrontPage(); front != "deleteHost" {
-		t.Fatalf("front page = %q, want deleteHost", front)
-	}
-	if h.app.GetFocus() != h.deleteHostInput {
-		t.Fatal("focus did not move to the host prompt")
-	}
 }
 
 func TestStopWithAFullQueueStaysRunningAndTellsTheUser(t *testing.T) {
@@ -141,33 +86,6 @@ func TestRestartSuccessShowsTheRunningKeyHints(t *testing.T) {
 	}
 	if !strings.HasPrefix(h.footer.GetText(false), "Enter Detail") {
 		t.Fatalf("footer = %q, want the running key hints", h.footer.GetText(false))
-	}
-}
-
-func TestResetWithoutCallbackClearsStatsAndRestartsEnabledMonitors(t *testing.T) {
-	d, build := newTestInputHandler(t)
-	target := stats.NewTargetStats("example.com")
-	target.IncSent()
-	setRouteHops(target, "192.0.2.1")
-	d.targets = []*stats.TargetStats{target}
-	d.routeEnabled, d.portEnabled, d.httpEnabled = true, true, true
-	calls := make(chan string, 3)
-	d.onResetRoute = func() { calls <- "route" }
-	d.onResetPort = func() { calls <- "port" }
-	d.onResetHTTP = func() { calls <- "http" }
-	h := build()
-
-	press(h, tcell.KeyRune, 'R')
-
-	var got []string
-	for range 3 {
-		got = append(got, recvWithin(t, calls, fmt.Sprintf("a monitor reset (got %v, want route, port and http)", got)))
-	}
-	if strings.Join(got, ",") != "route,port,http" {
-		t.Fatalf("monitor resets = %v, want route,port,http", got)
-	}
-	if v := target.GetView(); v.Sent != 0 || len(v.MTRHops) != 0 {
-		t.Fatalf("target after reset: sent=%d hops=%v, want 0 and no hops", v.Sent, v.MTRHops)
 	}
 }
 

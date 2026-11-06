@@ -172,10 +172,11 @@ func (tr *tableRenderer) tableInnerHeight() int {
 }
 
 // visibleDataRows returns the number of data rows that fit in the table's
-// current inner height, floored at tableMinVisibleRows when the widget has not been
-// sized past the default minimum yet.
+// current inner height, with a minimum of one for tiny or unsized widgets.
+// The fixed header takes two lines; each bordered data row takes two more.
+// Rendering and paging apply their own tableMinVisibleRows floor.
 func (tr *tableRenderer) visibleDataRows() int {
-	return max(tableMinVisibleRows, (tr.tableInnerHeight()-2)/2)
+	return max(1, (tr.tableInnerHeight()-2)/2)
 }
 
 // visibleRowWindow returns the [start, end) range of data-row indices
@@ -189,7 +190,7 @@ func (tr *tableRenderer) visibleDataRows() int {
 // correct regardless of how few rows are actually rendered.
 func (tr *tableRenderer) visibleRowWindow(offsetRow, totalDataRows int) (start, end int) {
 	start = max(offsetRow-rowRenderMargin, 0)
-	end = min(offsetRow+tr.visibleDataRows()+1+rowRenderMargin, totalDataRows)
+	end = min(offsetRow+max(tableMinVisibleRows, tr.visibleDataRows())+1+rowRenderMargin, totalDataRows)
 	return start, end
 }
 

@@ -148,7 +148,9 @@ func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloa
 	// On macOS, setting the DF bit in the IP header via IP_HDRINCL is not
 	// sufficient — the kernel silently fragments the packet anyway. We must
 	// also set the IP_DONTFRAG socket option to prevent this.
-	setSocketDontFragment(c)
+	if err := setSocketDontFragment(c); err != nil {
+		return false, "", fmt.Errorf("set IP_DONTFRAG: %w", err)
+	}
 
 	h := &ipv4.Header{
 		Version:  4,

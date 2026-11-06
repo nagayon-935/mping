@@ -96,7 +96,10 @@ func (s *supervisor) reloadLive(cfg config, specs []targetSpec, groups []ui.Targ
 		s.cfg.config.duration = previous.duration
 		for i, t := range targets {
 			t.SetDisplayName(specs[i].display())
-			s.configureTarget(t)
+			// New targets already received this policy during construction.
+			if reused[t] {
+				s.configureTarget(t)
+			}
 		}
 		s.cfg.targets, s.cfg.specs, s.cfg.groups = targets, append([]targetSpec(nil), specs...), groups
 		for _, i := range added {
@@ -108,7 +111,7 @@ func (s *supervisor) reloadLive(cfg config, specs []targetSpec, groups []ui.Targ
 		// the surviving and added targets.
 		if cfg.mtr != previous.mtr {
 			if s.state == stateRunning {
-				s.restartRoute(false)
+				s.restartRoute()
 			}
 			reason += routeModeNotice(cfg)
 		}

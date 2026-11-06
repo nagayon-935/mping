@@ -67,14 +67,8 @@ func TestRunKeyboardRestart(t *testing.T) {
 	h.quit()
 }
 
-// TestRunKeyboardReset presses R with every monitor enabled. The reset
-// callbacks run after the statistics have been cleared on the same worker,
-// so once the last one fires nothing needs polling.
-//
-// The MTR assertion pins an invariant that rests entirely on this key
-// handler: restartMTR on the supervisor side does not reset anything, so
-// the only thing clearing per-hop counters on R is the Reset loop here —
-// without it, MTR stats would stay uncleared with the whole suite green.
+// TestRunKeyboardReset presses R and delegates the statistics and monitor
+// reset to OnReset, on the same FIFO worker as stop and restart.
 func TestRunKeyboardReset(t *testing.T) {
 	target := stats.NewTargetStats("example.com")
 	target.SetIP("127.0.0.1")
@@ -89,11 +83,14 @@ func TestRunKeyboardReset(t *testing.T) {
 
 	resets := make(chan string, 2)
 	h := startTUI(t, RunOptions{
-		Targets:      []*stats.TargetStats{target},
-		Route:        RouteMonitor,
-		PortEnabled:  true,
-		OnResetRoute: func() { resets <- "route" },
-		OnResetPort:  func() { resets <- "port" },
+		Targets:     []*stats.TargetStats{target},
+		Route:       RouteMonitor,
+		PortEnabled: true,
+		OnReset: func() {
+			target.Reset()
+			resets <- "route"
+			resets <- "port"
+		},
 	}, 200, 50)
 	h.wait("Ping Monitor")
 	h.press('R')

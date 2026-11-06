@@ -161,7 +161,8 @@ func extractEchoIDSeq(msg *icmp.Message) (int, int, bool) {
 }
 
 // parseInnerEchoIDSeq parses the embedded original packet data from an ICMP
-// error body and returns the ICMP echo ID and sequence number.
+// error body and returns the ICMP echo ID and sequence number. Only directly
+// embedded ICMP is accepted, matching mping's raw ICMP probes.
 func parseInnerEchoIDSeq(data []byte) (int, int, bool) {
 	if len(data) < 1 {
 		return 0, 0, false
@@ -191,23 +192,11 @@ func parseInnerEchoIDSeq(data []byte) (int, int, bool) {
 		return 0, 0, false
 	}
 
-	// Defensive parsing also accepts an ICMP payload behind a UDP header
-	// (protocol 17), although mping sends probes through raw ICMP sockets.
-	innerData := data[headerLen:]
-	switch nextHeader {
-	case icmpProto:
-	case 17: // UDP
-		// Defensive parsing: skip the UDP header (8 bytes) and try the
-		// payload as ICMP.
-		if len(innerData) < 8 {
-			return 0, 0, false
-		}
-		innerData = innerData[8:]
-	default:
+	if nextHeader != icmpProto {
 		return 0, 0, false
 	}
 
-	inner, err := icmp.ParseMessage(icmpProto, innerData)
+	inner, err := icmp.ParseMessage(icmpProto, data[headerLen:])
 	if err != nil {
 		return 0, 0, false
 	}

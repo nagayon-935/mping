@@ -71,6 +71,8 @@ type targetHealth struct {
 // ConfigureHealth changes judgment rules without discarding measurements.
 // It is also the opt-in for common backend health events and failure folding.
 func (t *TargetStats) ConfigureHealth(p HealthPolicy) {
+	// Publish the mutation after unlocking, even if a health event sink panics.
+	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if err := p.Validate(); err != nil {
@@ -82,7 +84,6 @@ func (t *TargetStats) ConfigureHealth(p HealthPolicy) {
 	t.health.policy = p
 	t.health.configured = true
 	t.evaluateHealthLocked(time.Now())
-	bumpGeneration()
 }
 
 func (t *TargetStats) healthPolicyLocked() HealthPolicy {

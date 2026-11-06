@@ -70,7 +70,7 @@ func newFooter() *tview.TextView {
 	return footer
 }
 
-// newHostInput is the add/delete host prompt shown in the footer row.
+// newHostInput is the add-host prompt shown in the footer row.
 func newHostInput(label string, labelColor tcell.Color) *tview.InputField {
 	return tview.NewInputField().
 		SetLabel(label).

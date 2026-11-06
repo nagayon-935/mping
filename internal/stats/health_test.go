@@ -151,6 +151,42 @@ func TestConfigureHealthFallsBackToDefaultsForAnInvalidPolicy(t *testing.T) {
 	}
 }
 
+func TestConfigureHealthAdvancesGenerationWhenEventSinkPanics(t *testing.T) {
+	target := NewTargetStats("example.com")
+	target.ConfigureHealth(DefaultHealthPolicy())
+	target.OnSuccess(100*time.Millisecond, 64)
+	if got := target.GetView().Health.Status; got != "warn" {
+		t.Fatalf("initial health status = %q, want warn", got)
+	}
+
+	policy := DefaultHealthPolicy()
+	policy.RTTWarn = 150 * time.Millisecond
+	const sinkPanic = "health event sink failed"
+	target.SetEventSink(func(Event) { panic(sinkPanic) })
+	before := Generation()
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		target.ConfigureHealth(policy)
+	}()
+	if recovered != sinkPanic {
+		t.Fatalf("panic = %v, want %q", recovered, sinkPanic)
+	}
+	if !target.mu.TryLock() {
+		t.Fatal("ConfigureHealth left the target locked after the panic")
+	}
+	target.mu.Unlock()
+	if got := target.health.policy; got != policy {
+		t.Fatalf("policy = %+v, want %+v", got, policy)
+	}
+	if got := target.GetView().Health.Status; got != "ok" {
+		t.Fatalf("health status = %q, want ok after the policy change", got)
+	}
+	if got := Generation() - before; got != 1 {
+		t.Fatalf("ConfigureHealth advanced Generation() by %d, want 1 despite the event sink panic", got)
+	}
+}
+
 func TestMeasurementStateReturnsTheLastSetState(t *testing.T) {
 	target := NewTargetStats("example.com")
 

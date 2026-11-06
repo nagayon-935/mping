@@ -135,7 +135,7 @@ func (s *supervisor) detachTargetMonitors(p dynamicPinger, t *stats.TargetStats,
 func (s *supervisor) newLiveTargets(cfg config, specs []targetSpec) []*stats.TargetStats {
 	added := buildTargetsForIteration(specs, cfg)
 	for _, t := range added {
-		s.configureTarget(t)
+		s.attachTargetEventSink(t)
 		if len(s.cfg.targets) > 0 {
 			t.SetIfaceMTU(s.cfg.targets[0].GetViewWindow(0).IfaceMTU)
 		}
@@ -176,24 +176,6 @@ func (s *supervisor) addHost(host string) error {
 		s.cfg.specs = append(append([]targetSpec(nil), s.cfg.specs...), specs...)
 		s.clearFinished()
 		return nil
-	})
-}
-
-func (s *supervisor) deleteHost(host string) error {
-	return s.editTargets(func(s *supervisor) error {
-		var matches []int
-		for i, spec := range s.cfg.specs {
-			if spec.display() == host {
-				matches = append(matches, i)
-			}
-		}
-		if len(matches) == 0 {
-			return fmt.Errorf("host %q not found", host)
-		}
-		if len(matches) > 1 {
-			return fmt.Errorf("host %q identifies multiple targets; use a unique target", host)
-		}
-		return s.removeTarget(matches[0])
 	})
 }
 

@@ -256,9 +256,9 @@ func (f *fakePinger) SetInterface(name string) {
 	f.interfaceSet = name
 }
 
-// MTRProber returns a stub prober rather than nil: cmdResetRoute starts an
-// mtr.Engine unconditionally whenever it is invoked, without checking
-// cfg.routeEnabled itself (that gating lives at the call site), so the
+// MTRProber returns a stub prober rather than nil: restartRoute starts an
+// mtr.Engine without checking cfg.routeEnabled itself (that gating lives
+// at the call site), so the
 // engine's per-target goroutine really does call prober.OpenHopSocket. A nil
 // mtr.HopProber is a nil interface value and calling a method on it panics;
 // noopHopProber gives it a safe implementation that declines to open a socket.

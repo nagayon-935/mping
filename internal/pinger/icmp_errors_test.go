@@ -213,8 +213,8 @@ func TestParseInnerEchoIDSeq(t *testing.T) {
 	}{
 		{"IPv4 ICMP", cat(ipHeader(false, 1), echoBytes(t, false, 42, 7)), true, 42, 7},
 		{"IPv6 ICMPv6", cat(ipHeader(true, 58), echoBytes(t, true, 55, 9)), true, 55, 9},
-		{"IPv4 UDP-wrapped ICMP", cat(ipHeader(false, 17), udpHdr, echoBytes(t, false, 99, 77)), true, 99, 77},
-		{"IPv6 UDP-wrapped ICMPv6", cat(ipHeader(true, 17), udpHdr, echoBytes(t, true, 33, 44)), true, 33, 44},
+		{"IPv4 UDP-wrapped ICMP rejected", cat(ipHeader(false, 17), udpHdr, echoBytes(t, false, 99, 77)), false, 0, 0},
+		{"IPv6 UDP-wrapped ICMPv6 rejected", cat(ipHeader(true, 17), udpHdr, echoBytes(t, true, 33, 44)), false, 0, 0},
 
 		{"empty", []byte{}, false, 0, 0},
 		{"single byte", []byte{0x40}, false, 0, 0},
@@ -270,6 +270,11 @@ func TestExtractEchoIDSeq(t *testing.T) {
 		{"v6 packet too big", ipv6.ICMPTypePacketTooBig, &icmp.PacketTooBig{MTU: 1400, Data: v6Echo}, true, 12, 34},
 		{"v4 time exceeded", ipv4.ICMPTypeTimeExceeded, &icmp.TimeExceeded{Data: v4Echo}, true, 12, 34},
 		{"v4 parameter problem", ipv4.ICMPTypeParameterProblem, &icmp.ParamProb{Data: v4Echo}, true, 12, 34},
+		// Probes use raw ICMP, so a UDP payload containing an echo is not a match.
+		{"v4 UDP-wrapped echo rejected", ipv4.ICMPTypeDestinationUnreachable,
+			&icmp.DstUnreach{Data: append(append(ipHeader(false, 17), make([]byte, 8)...), echoBytes(t, false, 12, 34)...)}, false, 0, 0},
+		{"v6 UDP-wrapped echo rejected", ipv6.ICMPTypeDestinationUnreachable,
+			&icmp.DstUnreach{Data: append(append(ipHeader(true, 17), make([]byte, 8)...), echoBytes(t, true, 12, 34)...)}, false, 0, 0},
 
 		// Payload that does not parse as an IP header falls back to the signature scan.
 		{"TRC signature", ipv4.ICMPTypeDestinationUnreachable, &icmp.DstUnreach{Data: []byte("TRC-\x00\xab\x00\xcd")}, true, 0xAB, 0xCD},

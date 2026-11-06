@@ -195,10 +195,47 @@ func TestDurationMs(t *testing.T) {
 		{time.Millisecond, 1.0},
 		{10 * time.Millisecond, 10.0},
 		{500 * time.Microsecond, 0.5},
+		{time.Nanosecond, 0.000001},
+		{1234567 * time.Nanosecond, 1.234567},
+		{-time.Nanosecond, -0.000001},
+		{-1234567 * time.Nanosecond, -1.234567},
 	}
 	for _, tt := range tests {
-		if got := durationMs(tt.d); got != tt.want {
-			t.Errorf("durationMs(%v) = %f, want %f", tt.d, got, tt.want)
+		if got := DurationMs(tt.d); got != tt.want {
+			t.Errorf("DurationMs(%v) = %f, want %f", tt.d, got, tt.want)
+		}
+	}
+}
+
+func TestBuildSnapshotFromViews_PreservesSubMicrosecondPrecision(t *testing.T) {
+	const d = 1234567 * time.Nanosecond
+	view := TargetView{
+		MinRTT: d, AvgRTT: d, MaxRTT: d, LastRTT: d, Jitter: d,
+		PortResults: []PortCheckView{{RTT: d}},
+		MTRHops:     []HopView{{MinRTT: d, AvgRTT: d, MaxRTT: d, LastRTT: d, Jitter: d}},
+	}
+	snap := BuildSnapshotFromViews([]TargetView{view}, []HTTPCheckView{{RTT: d, MinRTT: d, AvgRTT: d, MaxRTT: d}})
+	data, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded ExportSnapshot
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	target := decoded.Targets[0]
+	hop := target.MTRHops[0]
+	http := decoded.HTTPChecks[0]
+	for name, got := range map[string]float64{
+		"ping min": target.MinRTTMs, "ping avg": target.AvgRTTMs, "ping max": target.MaxRTTMs,
+		"ping last": target.LastRTTMs, "ping jitter": target.JitterMs,
+		"port":    target.PortResults[0].RTTMs,
+		"hop min": hop.MinRTTMs, "hop avg": hop.AvgRTTMs, "hop max": hop.MaxRTTMs,
+		"hop last": hop.LastRTTMs, "hop jitter": hop.JitterMs,
+		"http min": http.MinRTTMs, "http avg": http.AvgRTTMs, "http max": http.MaxRTTMs, "http last": http.LastRTTMs,
+	} {
+		if got != 1.234567 {
+			t.Errorf("%s = %v ms, want 1.234567", name, got)
 		}
 	}
 }

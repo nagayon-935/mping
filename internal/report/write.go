@@ -7,6 +7,12 @@ import (
 	"path/filepath"
 )
 
+// File finalization calls are swappable in tests to exercise I/O failures.
+var (
+	syncReportFile  = (*os.File).Sync
+	closeReportFile = (*os.File).Close
+)
+
 // Write publishes a complete new file without overwriting an existing path.
 // Linking a closed temporary file provides atomic visibility and exclusive
 // creation, including concurrent saves and symlink destinations.
@@ -41,12 +47,12 @@ func Write(path, format string, r Report) error {
 		tmp.Close()
 		return err
 	}
-	if err = tmp.Sync(); err != nil {
+	if err = syncReportFile(tmp); err != nil {
 		tmp.Close()
-		return err
+		return fmt.Errorf("sync report: %w", err)
 	}
-	if err = tmp.Close(); err != nil {
-		return err
+	if err = closeReportFile(tmp); err != nil {
+		return fmt.Errorf("close report: %w", err)
 	}
 	if err = os.Link(tmp.Name(), path); err != nil {
 		return fmt.Errorf("save report (choose a new path if it exists): %w", err)

@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,77 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/nagayon-935/mping/internal/ui"
 )
+
+func TestFinishIterationSingleTerminationWithInFlightWatcher(t *testing.T) {
+	path := writeHostsYAML(t, "hosts: [192.0.2.1]\n")
+	cfg, hosts, fs, _, err := parseArgs([]string{"-f", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := newReloadCoordinator(fs, cfg, hosts)
+	sup := newSupervisor(supervisorConfig{})
+	sup.cmds = make(chan command, cmdChanBuffer)
+	sup.done = make(chan struct{})
+	sup.loopDone = make(chan struct{})
+
+	// Acknowledge termination commands explicitly so their count is observable.
+	// The watcher below waits for loopDone, so no other command needs handling.
+	terminations := make(chan int, 1)
+	go func() {
+		count := 0
+		defer close(sup.loopDone)
+		for {
+			select {
+			case c := <-sup.cmds:
+				if c.kind != cmdTerminate {
+					t.Errorf("cleanup command = %v, want terminate", c.kind)
+				}
+				count++
+				c.reply <- nil
+			case <-sup.done:
+				terminations <- count
+				return
+			}
+		}
+	}()
+
+	// Keep a parsed watcher request in flight until shutdown joins the loop.
+	// Requests processed before done closes may still return terminated instead.
+	inFlight := make(chan struct{})
+	rc.tryLive = func(cfg config, specs []targetSpec, groups []ui.TargetGroup) (bool, string, error) {
+		close(inFlight)
+		<-sup.loopDone
+		return sup.reloadLive(cfg, specs, groups)
+	}
+	sig := newReloadSignal()
+	logs := make(chan string, 1)
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		rc.requestFileReload(sig, path, logs)
+	}()
+	<-inFlight
+	finishIteration(sup, func() {
+		if !closed(sup.loopDone) {
+			t.Error("watcher cancelled before command loop was joined")
+		}
+	}, watchDone)
+
+	if got := <-terminations; got != 1 {
+		t.Errorf("termination commands = %d, want 1", got)
+	}
+	select {
+	case got := <-logs:
+		if !strings.HasSuffix(got, " Reload error: supervisor shut down[-]") {
+			t.Errorf("in-flight watcher log = %q, want supervisor shut down", got)
+		}
+	default:
+		t.Error("in-flight watcher shutdown error was not logged")
+	}
+	if closed(sig.ch) || rc.pending != nil {
+		t.Error("in-flight watcher queued a reload after shutdown")
+	}
+}
 
 func TestFinishIterationTerminatesBeforeJoiningWatcher(t *testing.T) {
 	for _, state := range []string{"running", "stopped", "finished"} {

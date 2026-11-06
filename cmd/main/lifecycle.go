@@ -177,13 +177,12 @@ func resolverBindConfig(cfg config, specs []targetSpec) pinger.BindConfig {
 }
 
 // buildTargetsForIteration creates TargetStats for hosts and tags each with
-// its display DNS server (used by the UI's DNS column).
+// its display DNS server (used by the UI's DNS column). It configures health
+// once, before startup PMTU work and supervisor event-sink attachment.
 func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetStats {
 	targets := initTargets(specs)
 	for i, t := range targets {
 		t.SetResolveAddress(specs[i].resolveAddr())
-		// Health is available during startup PMTU work, before the supervisor
-		// reapplies the policy and attaches the event sink.
 		t.ConfigureHealth(healthPolicy(cfg))
 		hostName := specs[i].Host
 		if net.ParseIP(hostName) == nil {
@@ -204,6 +203,8 @@ func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetSta
 // by targetSpec.display(), the same string as stats.TargetStats.Host())
 // so --resolve-all entries resolve straight to their pinned IP and named
 // entries resolve to their configured host rather than their name.
+// A non-nil customResolver is used regardless of cfg.dnsServer; nil falls
+// back to net.DefaultResolver.
 func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resolver, specs []targetSpec) pinger.Options {
 	pinned := make(map[string]string, len(specs))
 	for _, s := range specs {
@@ -218,8 +219,7 @@ func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resol
 			address = ip
 		}
 		resolver := net.DefaultResolver
-		// Preserve default resolution for unset DNS settings and nil test resolvers.
-		if customResolver != nil && cfg.dnsServer != "" {
+		if customResolver != nil {
 			resolver = customResolver
 		}
 		return pinger.ResolveUsableIPAddrContext(ctx, resolver, resNetwork, address, bind)
@@ -327,7 +327,7 @@ func uiRouteMode(cfg config) ui.RouteMode {
 
 // buildRunOptions assembles the ui.RunOptions for one loop iteration. Every
 // operation goes to the iteration's supervisor; host edits apply live,
-// without a reload. Reset callbacks exist only for the monitors running.
+// without a reload. OnReset resets statistics and all running monitors.
 func buildRunOptions(p runOptionsParams) ui.RunOptions {
 	opts := ui.RunOptions{
 		Targets:          p.targets,
@@ -356,27 +356,17 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 		},
 		OnReset:        p.sup.resetStats,
 		OnAddHost:      p.sup.addHost,
-		OnDeleteHost:   p.sup.deleteHost,
 		OnDeleteTarget: p.sup.deleteTargetID,
 		OnSaveReport:   p.sup.saveReport,
 		Groups:         p.currentGroups,
-	}
-	if p.cfg.routeEnabled() {
-		opts.OnResetRoute = p.sup.resetRoute
-	}
-	if len(p.cfg.httpURLs) > 0 {
-		opts.OnResetHTTP = p.sup.resetHTTP
-	}
-	if len(p.cfg.portSpecs) > 0 {
-		opts.OnResetPort = p.sup.resetPort
 	}
 	return opts
 }
 
 // finishIteration performs the standard post-uiRun cleanup: join all
-// measurement producers, stop the command loop, and join the file watcher.
+// measurement producers and stop the command loop via Shutdown, then join the
+// file watcher.
 func finishIteration(sup *supervisor, watchCancel func(), watchDone chan struct{}) {
-	_ = sup.sendCmd(command{kind: cmdTerminate})
 	sup.Shutdown()
 	watchCancel()
 	<-watchDone

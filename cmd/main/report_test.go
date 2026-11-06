@@ -146,7 +146,7 @@ func TestReportsSerializeWithLiveEditsAndReset(t *testing.T) {
 				errors <- err
 				return
 			}
-			if err := s.deleteHost("192.0.2.5"); err != nil {
+			if err := s.deleteTargetID(s.liveTargets().Targets[1].ID()); err != nil {
 				errors <- err
 				return
 			}

@@ -183,8 +183,8 @@ func (p *Pinger) discoverIPv6PathMTU(ctx context.Context, c ipv6PMTUSocket, dst 
 }
 
 // waitIPv6PMTUReply waits for an echo matching the complete probe payload.
-// A timeout, EMSGSIZE, or matching Packet Too Big leaves the OS estimate to
-// be queried again by the caller.
+// A timeout (including a wrapped one), EMSGSIZE, or matching Packet Too Big
+// leaves the OS estimate to be queried again by the caller.
 func waitIPv6PMTUReply(ctx context.Context, c ipv6PMTUSocket, buf []byte, id, seq int, payload []byte) (bool, error) {
 	for {
 		if err := ctx.Err(); err != nil {
@@ -195,7 +195,7 @@ func waitIPv6PMTUReply(ctx context.Context, c ipv6PMTUSocket, buf []byte, id, se
 			if ctx.Err() != nil {
 				return false, ctx.Err()
 			}
-			if e, ok := readErr.(net.Error); !ok || !e.Timeout() {
+			if !isTimeout(readErr) {
 				if !isMTUTooLarge(readErr) {
 					return false, readErr
 				}

@@ -16,4 +16,4 @@ func ipv6SocketPathMTU(c syscall.Conn) (int, error) {
 }
 
 // setSocketDontFragment is a no-op on unsupported platforms.
-func setSocketDontFragment(_ net.PacketConn) {}
+func setSocketDontFragment(_ net.PacketConn) error { return nil }

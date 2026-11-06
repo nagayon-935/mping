@@ -182,10 +182,12 @@ func (p *Pinger) openHopSocketAddr(dstAddr *net.IPAddr) (*HopSocket, error) {
 
 // ProbeHop sends a single TTL-limited ICMP echo probe to dest at the given ttl
 // using a previously opened HopSocket, and waits for a reply.
+// If setting the IPv4 TTL fails, it returns the error without sending a probe.
 //
 // traceID must be unique per probe (use p.NextTraceID()). ProbeHop takes
 // ownership of the reservation and releases it on every return path.
 // Returns HopReply with Responded=false on timeout.
+// Other socket read failures are returned as errors.
 func (p *Pinger) ProbeHop(ctx context.Context, sock *HopSocket, dest string, ttl, traceID int, timeout time.Duration) (HopReply, error) {
 	if traceID < 0 {
 		return HopReply{}, fmt.Errorf("route-probe IDs exhausted")
@@ -233,7 +235,10 @@ func (p *Pinger) probeHopAddr(ctx context.Context, sock *HopSocket, dstAddr *net
 		// probe's RTT reflects time-on-wire, not time spent waiting for
 		// concurrent siblings sharing this HopSocket to finish their send.
 		sock.sendMu.Lock()
-		_ = sock.sendV4.SetTTL(ttl)
+		if err := sock.sendV4.SetTTL(ttl); err != nil {
+			sock.sendMu.Unlock()
+			return HopReply{}, fmt.Errorf("set probe ttl=%d: %w", ttl, err)
+		}
 		sent = time.Now()
 		_, err := sock.sendV4.WriteTo(b, nil, dstAddr)
 		sock.sendMu.Unlock()
@@ -344,7 +349,10 @@ func receiveViaSocket(ctx context.Context, sock *HopSocket, accept func(*icmp.Me
 			n, _, src, err = sock.sendV6.ReadFrom(buf)
 		}
 		if err != nil {
-			return HopReply{Responded: false}, nil
+			if isTimeout(err) {
+				return HopReply{Responded: false}, nil
+			}
+			return HopReply{}, fmt.Errorf("read probe reply: %w", err)
 		}
 		parsed, err := icmp.ParseMessage(proto, buf[:n])
 		if err != nil {

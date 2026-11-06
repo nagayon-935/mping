@@ -43,16 +43,21 @@ func ipv6SocketPathMTU(c syscall.Conn) (int, error) {
 // On macOS, setting the DF bit in the IP header via IP_HDRINCL is not
 // sufficient — the kernel ignores it and fragments transparently. The
 // IP_DONTFRAG socket option is the only reliable way to enforce DF on Darwin.
-func setSocketDontFragment(c net.PacketConn) {
-	ipConn, ok := c.(*net.IPConn)
+// SyscallConn, Control, and socket-option failures are returned to the caller.
+func setSocketDontFragment(c net.PacketConn) error {
+	ipConn, ok := c.(syscall.Conn)
 	if !ok {
-		return
+		return nil // Socket test doubles need not expose a raw socket.
 	}
 	rawConn, err := ipConn.SyscallConn()
 	if err != nil {
-		return
+		return err
 	}
-	_ = rawConn.Control(func(fd uintptr) {
-		_ = unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_DONTFRAG, 1)
-	})
+	var optionErr error
+	if err := rawConn.Control(func(fd uintptr) {
+		optionErr = unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_DONTFRAG, 1)
+	}); err != nil {
+		return err
+	}
+	return optionErr
 }

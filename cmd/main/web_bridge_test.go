@@ -160,6 +160,26 @@ func TestWebMetaLeavesOptionalFeaturesOffByDefault(t *testing.T) {
 	}
 }
 
+func TestWebAndReportThresholdsPreserveSubMicrosecondPrecision(t *testing.T) {
+	th := stats.Thresholds{
+		RTTWarn: time.Nanosecond, RTTCrit: 1234567 * time.Nanosecond,
+		JitterWarn: 999 * time.Nanosecond, JitterCrit: 2345678 * time.Nanosecond,
+	}
+	got := webMeta(config{thresholds: th}, nil, 0).Thresholds
+	want := web.Thresholds{RTTWarnMs: 0.000001, RTTCritMs: 1.234567, JitterWarnMs: 0.000999, JitterCritMs: 2.345678}
+	if got != want {
+		t.Errorf("web thresholds = %+v, want %+v", got, want)
+	}
+	for key, want := range map[string]float64{
+		"rtt_warn_ms": want.RTTWarnMs, "rtt_crit_ms": want.RTTCritMs,
+		"jitter_warn_ms": want.JitterWarnMs, "jitter_crit_ms": want.JitterCritMs,
+	} {
+		if got := thresholdsMap(th)[key]; got != want {
+			t.Errorf("report threshold %s = %v, want %v", key, got, want)
+		}
+	}
+}
+
 func TestWebGroupsMapsIndicesToTargetIDs(t *testing.T) {
 	a, b, c := stats.NewTargetStats("a"), stats.NewTargetStats("b"), stats.NewTargetStats("c")
 	set := ui.TargetSet{

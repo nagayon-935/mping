@@ -63,7 +63,7 @@ func newReloadCoordinator(fs *pflag.FlagSet, cliCfg config, cliHosts []string) *
 func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile string, logCh chan<- string) {
 	doc, err := hostsfile.Parse(hostsFile)
 	if err != nil {
-		postLog(logCh, fmt.Sprintf("[red][%s] Reload error: %v[-]", clock(), err))
+		reloadError(logCh, "Reload error", err)
 		return
 	}
 	docHosts, docGroups, cfg, err := applyDocToCfg(rc.cliCfg, rc.fs, doc)
@@ -71,19 +71,19 @@ func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile stri
 		err = validateMergedHosts(cfg, docHosts, docGroups, rc.cliHosts)
 	}
 	if err != nil {
-		postLog(logCh, fmt.Sprintf("[red][%s] Reload validation error: %v[-]", clock(), err))
+		reloadError(logCh, "Reload validation error", err)
 		return
 	}
 	specs, groups := buildHostsAndGroups(docHosts, docGroups, rc.cliHosts)
 	if rc.tryLive != nil {
 		expanded, expandedGroups, expandErr := expandTargets(specs, groups, cfg)
 		if expandErr != nil {
-			reloadNotice(logCh, "Reload expansion error: "+expandErr.Error())
+			reloadError(logCh, "Reload expansion error", expandErr)
 			return
 		}
 		applied, reason, err := rc.tryLive(cfg, expanded, expandedGroups)
 		if err != nil {
-			reloadNotice(logCh, "Reload error: "+err.Error())
+			reloadError(logCh, "Reload error", err)
 			return
 		}
 		if applied {
@@ -96,6 +96,12 @@ func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile stri
 	rc.pending = &pendingReload{cfg: cfg, specs: specs, groups: groups}
 	rc.mu.Unlock()
 	sig.fire()
+}
+
+// reloadError uses the same colour and spacing for every reload failure,
+// leaving the error's own text intact.
+func reloadError(logCh chan<- string, message string, err error) {
+	postLog(logCh, fmt.Sprintf("[red][%s] %s: %v[-]", clock(), message, err))
 }
 
 // apply consumes any pending reload request and returns the updated hosts,

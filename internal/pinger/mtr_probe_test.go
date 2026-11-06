@@ -3,6 +3,7 @@ package pinger
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"reflect"
 	"sort"
@@ -205,6 +206,49 @@ func TestProbeHop_NoMatchingReplyTimesOut(t *testing.T) {
 	})
 }
 
+func TestProbeHop_SetTTLFailure(t *testing.T) {
+	for _, shared := range []bool{false, true} {
+		name := "standalone"
+		if shared {
+			name = "shared receiver"
+		}
+		t.Run(name, func(t *testing.T) {
+			ids := &IDAllocator{}
+			p := NewPingerWithOptions(nil, Options{IDs: ids, ResolveIPAddr: resolveTo("8.8.8.8")})
+			if shared {
+				p.connV4 = &fakePacketConn{}
+			}
+			ttlErr := errors.New("set TTL failed")
+			conn := &fakeHopConn{ttl: 64, ttlErr: ttlErr}
+			sock := &HopSocket{isV4: true, sendV4: conn}
+
+			reply, err := p.ProbeHop(context.Background(), sock, "8.8.8.8", 3, p.NextTraceID(), 10*time.Millisecond)
+			if !errors.Is(err, ttlErr) {
+				t.Errorf("ProbeHop error = %v, want wrapped SetTTL error", err)
+			} else if !strings.Contains(err.Error(), "ttl=3") {
+				t.Errorf("ProbeHop error = %v, want requested TTL", err)
+			}
+			if reply != (HopReply{}) {
+				t.Errorf("reply = %+v, want empty reply", reply)
+			}
+			if len(conn.sentTTLs) != 0 {
+				t.Errorf("sent TTLs = %v, want no send after SetTTL failure", conn.sentTTLs)
+			}
+			if !sock.sendMu.TryLock() {
+				t.Error("send lock held after SetTTL failure")
+			} else {
+				sock.sendMu.Unlock()
+			}
+			if len(p.traceChans) != 0 {
+				t.Error("trace channel leaked after SetTTL failure")
+			}
+			if len(ids.traces) != 0 {
+				t.Errorf("trace ID still held after SetTTL failure: %v", ids.traces)
+			}
+		})
+	}
+}
+
 func TestProbeHop_Errors(t *testing.T) {
 	t.Run("resolve failure", func(t *testing.T) {
 		p := NewPingerWithOptions(nil, Options{
@@ -335,6 +379,44 @@ func TestProbeHop_OwnSocketFailures(t *testing.T) {
 			t.Fatalf("err = %v, want context.Canceled", err)
 		}
 	})
+}
+
+func TestProbeHop_OwnSocketReadErrors(t *testing.T) {
+	readErr := errors.New("socket read failed")
+	for _, v6 := range []bool{false, true} {
+		for _, tt := range []struct {
+			name    string
+			readErr error
+			wantErr error
+		}{
+			{"timeout", timeoutOpError(), nil},
+			{"wrapped timeout", fmt.Errorf("read: %w", timeoutOpError()), nil},
+			{"read failure", readErr, readErr},
+			{"wrapped read failure", fmt.Errorf("read: %w", readErr), readErr},
+			{"closed socket", net.ErrClosed, net.ErrClosed},
+		} {
+			t.Run(fmt.Sprintf("v6=%v/%s", v6, tt.name), func(t *testing.T) {
+				dst := "192.0.2.1"
+				sock := &HopSocket{isV4: !v6}
+				if v6 {
+					dst = "2001:db8::1"
+					sock.sendV6 = &fakeHopConnV6{readQueue: []readResultV6{{err: tt.readErr}}}
+				} else {
+					sock.sendV4 = &fakeHopConn{readQueue: []readResult{{err: tt.readErr}}}
+				}
+				p := newHopPinger(dst)
+
+				reply, err := p.ProbeHop(context.Background(), sock, dst, 1, p.NextTraceID(), time.Second)
+
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("error = %v, want %v", err, tt.wantErr)
+				}
+				if reply != (HopReply{}) {
+					t.Fatalf("reply = %+v, want an empty reply on read error", reply)
+				}
+			})
+		}
+	}
 }
 
 // TestProbeHopAddr_ConcurrentIPv4SendsDoNotRaceOnTTL reproduces the MTR

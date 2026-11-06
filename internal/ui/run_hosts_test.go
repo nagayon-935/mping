@@ -9,9 +9,8 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
-// TestRunHostPrompts drives the add-host (a) and delete-host (d) prompts.
-// Both return an error from their callback so the TUI does not reload, and
-// the error must reach the Log pane.
+// TestRunHostPrompts drives the add-host (a) prompt. The callback returns
+// an error so the TUI does not reload, and the error must reach the Log pane.
 //
 // The abandon cases open a second prompt and submit a sentinel host. Callbacks
 // run FIFO on one worker, so if the abandoned prompt had submitted anything
@@ -24,7 +23,6 @@ func TestRunHostPrompts(t *testing.T) {
 		wire   func(opts *RunOptions, callback func(host string) error)
 	}{
 		{"add", 'a', "Add host:", func(o *RunOptions, f func(string) error) { o.OnAddHost = f }},
-		{"delete", 'd', "Delete host:", func(o *RunOptions, f func(string) error) { o.OnDeleteHost = f }},
 	}
 	abandons := []struct {
 		name    string
