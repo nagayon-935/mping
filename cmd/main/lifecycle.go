@@ -364,9 +364,9 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 }
 
 // finishIteration performs the standard post-uiRun cleanup: join all
-// measurement producers, stop the command loop, and join the file watcher.
+// measurement producers and stop the command loop via Shutdown, then join the
+// file watcher.
 func finishIteration(sup *supervisor, watchCancel func(), watchDone chan struct{}) {
-	_ = sup.sendCmd(command{kind: cmdTerminate})
 	sup.Shutdown()
 	watchCancel()
 	<-watchDone
