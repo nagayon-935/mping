@@ -108,7 +108,7 @@ func (s *supervisor) reloadLive(cfg config, specs []targetSpec, groups []ui.Targ
 		// the surviving and added targets.
 		if cfg.mtr != previous.mtr {
 			if s.state == stateRunning {
-				s.restartRoute(false)
+				s.restartRoute()
 			}
 			reason += routeModeNotice(cfg)
 		}

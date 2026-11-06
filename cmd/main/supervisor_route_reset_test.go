@@ -14,13 +14,9 @@ func recordOnePing(t *testing.T, s *supervisor) {
 	tgt.OnSuccess(5*time.Millisecond, 64)
 }
 
-// TestResetRoute_PreservesPingStats is the decoupling guard: replacing the
-// route engine must not call Reset() on every target, which would clear the
-// ping counters (and, via TargetStats.Reset, the hop stats) as a side
-// effect. Clearing ping stats is the 'R' key's job — input_handler.go
-// already resets every target there — so the engine swap must not do it a
-// second time from inside the supervisor.
-func TestResetRoute_PreservesPingStats(t *testing.T) {
+// TestRestartRoute_PreservesPingStats verifies that replacing the route
+// engine preserves ping counters. resetAll owns clearing statistics.
+func TestRestartRoute_PreservesPingStats(t *testing.T) {
 	sup, _ := newStateTestSupervisor(t)
 	sup.cfg.config.mtr = true
 	if err := doCmd(t, sup, cmdStart); err != nil {
@@ -29,13 +25,11 @@ func TestResetRoute_PreservesPingStats(t *testing.T) {
 	defer func() { _ = doCmd(t, sup, cmdTerminate) }()
 	recordOnePing(t, sup)
 
-	if err := doCmd(t, sup, cmdResetRoute); err != nil {
-		t.Fatalf("cmdResetRoute: %v", err)
-	}
+	sup.restartRoute()
 
 	v := sup.cfg.targets[0].GetView()
 	if v.Sent != 1 || v.Recv != 1 {
-		t.Errorf("after cmdResetRoute: Sent=%d Recv=%d, want 1/1 — the route engine swap wiped the ping counters", v.Sent, v.Recv)
+		t.Errorf("after restartRoute: Sent=%d Recv=%d, want 1/1 — the route engine swap wiped the ping counters", v.Sent, v.Recv)
 	}
 }
 

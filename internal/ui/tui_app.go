@@ -18,22 +18,21 @@ type tui struct {
 	// each table update.
 	targets []*stats.TargetStats
 
-	app             *tview.Application
-	table           *tview.Table
-	tablePane       *tview.Flex
-	graphView       *GraphView
-	header          *tview.TextView
-	footer          *tview.TextView
-	addHostInput    *tview.InputField
-	deleteHostInput *tview.InputField
-	pages           *tview.Pages // footer and host input bar
-	root            *tview.Pages // main layout and full-screen pages
-	vs              *viewState
-	sidePanes       []*monitorPane
-	tr              *tableRenderer
-	controls        *paneControls
-	details         *hostDetails
-	session         *uiSession
+	app          *tview.Application
+	table        *tview.Table
+	tablePane    *tview.Flex
+	graphView    *GraphView
+	header       *tview.TextView
+	footer       *tview.TextView
+	addHostInput *tview.InputField
+	pages        *tview.Pages // footer and host input bar
+	root         *tview.Pages // main layout and full-screen pages
+	vs           *viewState
+	sidePanes    []*monitorPane
+	tr           *tableRenderer
+	controls     *paneControls
+	details      *hostDetails
+	session      *uiSession
 
 	reportDialog       *saveDialog
 	deleteConfirmation *deleteDialog
@@ -55,11 +54,9 @@ func newTUI(opts RunOptions) *tui {
 	}
 	t.footer = newFooter()
 	t.addHostInput = newHostInput(" Add host: ", tcell.ColorYellow)
-	t.deleteHostInput = newHostInput(" Delete host: ", tcell.ColorRed)
 	t.pages = tview.NewPages().
 		AddPage("footer", t.footer, true, true).
-		AddPage("addHost", t.addHostInput, true, false).
-		AddPage("deleteHost", t.deleteHostInput, true, false)
+		AddPage("addHost", t.addHostInput, true, false)
 
 	// Render state shared between tableRenderer, the key handler, and the
 	// monitor pane render closures.
@@ -239,38 +236,20 @@ func (t *tui) deleteSelected() {
 func (t *tui) inputDeps() inputHandlerDeps {
 	opts := t.opts
 	return inputHandlerDeps{
-		app:             t.app,
-		table:           t.table,
-		addHostInput:    t.addHostInput,
-		deleteHostInput: t.deleteHostInput,
-		footer:          t.footer,
-		pages:           t.pages,
-		targets:         t.targets,
-		rowCount:        &t.tr.rowCount,
-		vs:              t.vs,
-		forceUpdate:     t.tr.update,
-		navigate:        t.tr.moveSelection,
-		openDetails:     t.openDetails,
-		deleteSelected: func() {
-			if opts.OnDeleteTarget != nil {
-				t.deleteSelected()
-			} else {
-				t.pages.SwitchToPage("deleteHost")
-				t.app.SetFocus(t.deleteHostInput)
-			}
-		},
-		routeEnabled:     opts.Route != RouteOff,
-		portEnabled:      opts.PortEnabled,
-		httpEnabled:      opts.HTTPEnabled,
+		app:              t.app,
+		table:            t.table,
+		addHostInput:     t.addHostInput,
+		footer:           t.footer,
+		pages:            t.pages,
+		vs:               t.vs,
+		navigate:         t.tr.moveSelection,
+		openDetails:      t.openDetails,
+		deleteSelected:   t.deleteSelected,
 		onStop:           opts.OnStop,
 		measurementState: opts.MeasurementState,
 		onRestart:        opts.OnRestart,
 		onReset:          opts.OnReset,
-		onResetRoute:     opts.OnResetRoute,
-		onResetPort:      opts.OnResetPort,
-		onResetHTTP:      opts.OnResetHTTP,
 		onAddHost:        opts.OnAddHost,
-		onDeleteHost:     opts.OnDeleteHost,
 		session:          t.session,
 	}
 }
@@ -286,7 +265,7 @@ func (t *tui) handleKey(event *tcell.EventKey, input func(*tcell.EventKey) *tcel
 	case t.webAccess.open:
 		return t.webAccess.handle(event)
 	}
-	typing := t.app.GetFocus() == t.addHostInput || t.app.GetFocus() == t.deleteHostInput
+	typing := t.app.GetFocus() == t.addHostInput
 	if event.Rune() == 'b' && !typing && t.opts.WebControlURL != "" {
 		t.webAccess.show()
 		return nil

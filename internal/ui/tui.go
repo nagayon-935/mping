@@ -62,7 +62,7 @@ type RunOptions struct {
 	PTREnabled    bool
 	// HTTPResults returns live HTTP health-check results for the HTTP Monitor
 	// pane. Called on every render tick (rather than once at startup) so it
-	// reflects a checker swapped in by OnResetHTTP after Run has started.
+	// reflects a checker swapped in by OnReset after Run has started.
 	// Nil when HTTPEnabled is false.
 	HTTPResults func() []*stats.HTTPCheckResult
 	// Thresholds colour the HTTP checks, which belong to no target; targets
@@ -84,17 +84,13 @@ type RunOptions struct {
 	// FIFO on the session worker; Run joins the worker before returning.
 	OnRestart func() error
 	// OnReset owns resetting statistics and monitors as one operation. When
-	// nil, Run resets statistics itself and uses the individual reset callbacks.
-	OnReset      func()
-	OnResetRoute func()
-	OnResetPort  func()
-	OnResetHTTP  func()
+	// nil, R only clears the UI log and status caches.
+	OnReset func()
 	// OnAddHost is called when the user adds a host via the 'a' key dialog.
 	// A non-nil error is displayed in the Log pane; nil updates the live target list.
 	OnAddHost func(host string) error
-	// OnDeleteHost is called when the user deletes a host via the 'd' key dialog.
+	// OnDeleteTarget deletes the selected target by ID after confirmation.
 	// A non-nil error is displayed in the Log pane; nil updates the live target list.
-	OnDeleteHost   func(host string) error
 	OnDeleteTarget func(id uint64) error
 	OnSaveReport   func(path, format string, selectedID uint64) error
 	// Groups defines named groups of targets for grouped display.
@@ -107,7 +103,7 @@ func Run(opts RunOptions) error {
 	t := newTUI(opts)
 	t.session = newUISession()
 	defer func() { t.session.Stop(); t.session.Wait() }()
-	wireHostInputs(t.app, t.table, t.pages, t.addHostInput, t.deleteHostInput, t.vs, t.session, opts.OnAddHost, opts.OnDeleteHost)
+	wireHostInput(t.app, t.table, t.pages, t.addHostInput, t.vs, t.session, opts.OnAddHost)
 	t.buildLayout()
 	t.buildDialogs()
 	input := newInputHandler(t.inputDeps())

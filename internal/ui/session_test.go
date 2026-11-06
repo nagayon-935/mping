@@ -63,10 +63,9 @@ func TestInputOperationsKeepStopRestartResetOrder(t *testing.T) {
 	vs := newViewState(tview.NewTextView())
 	entered, reset := make(chan struct{}), make(chan struct{})
 	var operations []string // only read after reset closes
-	rows := 1
 	handler := newInputHandler(inputHandlerDeps{
-		app: app, table: table, addHostInput: tview.NewInputField(), deleteHostInput: tview.NewInputField(),
-		vs: vs, rowCount: &rows, targets: []*stats.TargetStats{target}, session: s,
+		app: app, table: table, addHostInput: tview.NewInputField(),
+		vs: vs, session: s,
 		onStop:    func() { close(entered); <-release; operations = append(operations, "stop") },
 		onRestart: func() error { operations = append(operations, "restart"); return nil },
 		onReset:   func() { operations = append(operations, "reset"); target.Reset(); close(reset) },
@@ -129,13 +128,19 @@ func TestRunJoinsHostCallbackErrorAfterAppStop(t *testing.T) {
 			entered, release := make(chan struct{}), make(chan struct{})
 			callback := func(string) error { close(entered); <-release; return errors.New("late error") }
 			h := startTUI(t, RunOptions{
-				Targets:      []*stats.TargetStats{stats.NewTargetStats("example.com")},
-				Interval:     time.Second,
-				OnAddHost:    callback,
-				OnDeleteHost: callback,
+				Targets:        []*stats.TargetStats{stats.NewTargetStats("example.com"), stats.NewTargetStats("other.example")},
+				Interval:       time.Second,
+				OnAddHost:      callback,
+				OnDeleteTarget: func(uint64) error { return callback("example.com") },
 			}, 120, 40)
+			h.wait("Ping Monitor")
 			h.press(key)
-			h.typeText("1.2.3.4")
+			if key == 'a' {
+				h.typeText("1.2.3.4")
+			} else {
+				h.wait("このホストを削除しますか？")
+				h.key(tcell.KeyRight)
+			}
 			h.key(tcell.KeyEnter)
 			awaitSessionSignal(t, entered)
 			h.app.Stop()

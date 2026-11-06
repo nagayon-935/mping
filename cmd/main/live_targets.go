@@ -179,24 +179,6 @@ func (s *supervisor) addHost(host string) error {
 	})
 }
 
-func (s *supervisor) deleteHost(host string) error {
-	return s.editTargets(func(s *supervisor) error {
-		var matches []int
-		for i, spec := range s.cfg.specs {
-			if spec.display() == host {
-				matches = append(matches, i)
-			}
-		}
-		if len(matches) == 0 {
-			return fmt.Errorf("host %q not found", host)
-		}
-		if len(matches) > 1 {
-			return fmt.Errorf("host %q identifies multiple targets; use a unique target", host)
-		}
-		return s.removeTarget(matches[0])
-	})
-}
-
 func (s *supervisor) removeTarget(i int) error {
 	if len(s.cfg.targets) <= 1 {
 		return fmt.Errorf("cannot delete the last host")

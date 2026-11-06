@@ -90,9 +90,6 @@ const (
 	cmdStart cmdKind = iota
 	cmdStop
 	cmdRestart
-	cmdResetRoute
-	cmdResetPort
-	cmdResetHTTP
 	cmdTerminate
 	cmdProbesFinished
 	cmdResetStats
@@ -107,12 +104,6 @@ func (k cmdKind) String() string {
 		return "stop"
 	case cmdRestart:
 		return "restart"
-	case cmdResetRoute:
-		return "resetRoute"
-	case cmdResetPort:
-		return "resetPort"
-	case cmdResetHTTP:
-		return "resetHTTP"
 	case cmdTerminate:
 		return "terminate"
 	case cmdProbesFinished:
@@ -238,21 +229,6 @@ func (s *supervisor) handle(c command) error {
 			s.resetAll()
 		}
 		return nil
-	case cmdResetRoute:
-		if s.state == stateRunning {
-			s.restartRoute(true)
-		}
-		return nil
-	case cmdResetPort:
-		if s.state == stateRunning {
-			s.restartPortChecker()
-		}
-		return nil
-	case cmdResetHTTP:
-		if s.state == stateRunning {
-			s.restartHTTPChecker()
-		}
-		return nil
 	case cmdTerminate:
 		if s.state != stateTerminated {
 			s.terminate()
@@ -301,7 +277,7 @@ func (s *supervisor) resetAll() {
 		return
 	}
 	if s.cfg.config.routeEnabled() {
-		s.restartRoute(false)
+		s.restartRoute()
 	}
 	s.restartPortChecker()
 	s.restartHTTPChecker()
@@ -347,7 +323,7 @@ func (s *supervisor) startAll() error {
 	}
 	s.p = next
 	if s.cfg.config.routeEnabled() {
-		s.restartRoute(false)
+		s.restartRoute()
 	}
 	s.portChecker = setupPortChecker(s.cfg.targets, s.cfg.portSpecs, s.cfg.interval, s.cfg.timeout, s.cfg.bind)
 	s.httpChecker = s.setupHTTPChecker()
@@ -457,20 +433,10 @@ func (s *supervisor) stopRoute() {
 	}
 }
 
-// restartRoute joins the outgoing engine before replacing it. resetStats
-// clears per-hop counters only; cmdResetStats owns resetting ping counters.
-// A plain start/restart preserves both sets of counters.
-func (s *supervisor) restartRoute(resetStats bool) {
+// restartRoute joins the outgoing engine before replacing it, preserving
+// ping and per-hop counters. resetAll owns clearing statistics.
+func (s *supervisor) restartRoute() {
 	s.stopRoute()
-	// Cleared here rather than by the 'R' key handler: Stop above has joined
-	// the outgoing engine's goroutines and the replacement has not started,
-	// so this is the only window in which a probe reply cannot land in the
-	// counters just after they are zeroed.
-	if resetStats {
-		for _, t := range s.cfg.targets {
-			t.MTR().Reset()
-		}
-	}
 	if s.p == nil {
 		return
 	}
@@ -503,9 +469,6 @@ func (s *supervisor) restartHTTPChecker() {
 
 func (s *supervisor) startPinger() error { return s.sendCmd(command{kind: cmdStart}) }
 func (s *supervisor) stopAll()           { _ = s.sendCmd(command{kind: cmdStop}) }
-func (s *supervisor) resetRoute()        { _ = s.sendCmd(command{kind: cmdResetRoute}) }
-func (s *supervisor) resetHTTP()         { _ = s.sendCmd(command{kind: cmdResetHTTP}) }
-func (s *supervisor) resetPort()         { _ = s.sendCmd(command{kind: cmdResetPort}) }
 func (s *supervisor) resetStats()        { _ = s.sendCmd(command{kind: cmdResetStats}) }
 
 // httpResults returns the current HTTP checker's results, or nil when no

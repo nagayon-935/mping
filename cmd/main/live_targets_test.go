@@ -90,7 +90,7 @@ func TestLiveEditsKeepStatisticsAndStoppedState(t *testing.T) {
 	if s.stateSnapshot() != stateStopped || set.Targets[2].GetView().Sent != 0 {
 		t.Fatal("edit resumed stopped session")
 	}
-	if err := s.deleteHost("b"); err != nil {
+	if err := s.deleteTargetID(b.ID()); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.liveTargets().Groups[0].Indices; !reflect.DeepEqual(got, []int{0}) {
@@ -107,7 +107,7 @@ func TestLiveEditsKeepStatisticsAndStoppedState(t *testing.T) {
 	}
 }
 
-func TestLiveEditFailureAndAmbiguousDeletionPreserveTargets(t *testing.T) {
+func TestLiveEditFailureAndStaleDeletionPreserveTargets(t *testing.T) {
 	a, b := stats.NewTargetStats("same"), stats.NewTargetStats("same")
 	p := newLiveFakePinger()
 	p.failAdd = true
@@ -120,8 +120,8 @@ func TestLiveEditFailureAndAmbiguousDeletionPreserveTargets(t *testing.T) {
 	if err := s.addHost("new"); err == nil {
 		t.Fatal("expected failure")
 	}
-	if err := s.deleteHost("same"); err == nil {
-		t.Fatal("ambiguous target deleted")
+	if err := s.deleteTargetID(0); err == nil {
+		t.Fatal("inactive target deleted")
 	}
 	if got := s.liveTargets().Targets; len(got) != 2 || got[0] != a || got[1] != b {
 		t.Fatal("failed edit changed active targets")

@@ -9,7 +9,7 @@ import (
 	"github.com/nagayon-935/mping/internal/ui"
 )
 
-// TestRun_LiveHostEdits drives the TUI's OnAddHost / OnDeleteHost callbacks
+// TestRun_LiveHostEdits drives the TUI's OnAddHost / OnDeleteTarget callbacks
 // through run(): valid edits apply live to the running session (one
 // persistent UI run, no reload), and rejected edits leave the target list
 // untouched.
@@ -23,9 +23,9 @@ func TestRun_LiveHostEdits(t *testing.T) {
 	}{
 		{"adding a new host keeps the session", []string{"example.com"}, func(o ui.RunOptions) error { return o.OnAddHost("newhost.example.com") }, false, 2},
 		{"adding a duplicate host is rejected", []string{"example.com"}, func(o ui.RunOptions) error { return o.OnAddHost("example.com") }, true, 1},
-		{"deleting one host keeps the session", []string{"host-a", "host-b"}, func(o ui.RunOptions) error { return o.OnDeleteHost("host-b") }, false, 1},
-		{"deleting the last host is rejected", []string{"example.com"}, func(o ui.RunOptions) error { return o.OnDeleteHost("example.com") }, true, 1},
-		{"deleting an unknown host is rejected", []string{"example.com"}, func(o ui.RunOptions) error { return o.OnDeleteHost("nonexistent.host") }, true, 1},
+		{"deleting one host keeps the session", []string{"host-a", "host-b"}, func(o ui.RunOptions) error { return o.OnDeleteTarget(o.Targets[1].ID()) }, false, 1},
+		{"deleting the last host is rejected", []string{"example.com"}, func(o ui.RunOptions) error { return o.OnDeleteTarget(o.Targets[0].ID()) }, true, 1},
+		{"deleting an unknown target is rejected", []string{"example.com"}, func(o ui.RunOptions) error { return o.OnDeleteTarget(0) }, true, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

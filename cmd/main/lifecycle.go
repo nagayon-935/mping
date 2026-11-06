@@ -327,7 +327,7 @@ func uiRouteMode(cfg config) ui.RouteMode {
 
 // buildRunOptions assembles the ui.RunOptions for one loop iteration. Every
 // operation goes to the iteration's supervisor; host edits apply live,
-// without a reload. Reset callbacks exist only for the monitors running.
+// without a reload. OnReset resets statistics and all running monitors.
 func buildRunOptions(p runOptionsParams) ui.RunOptions {
 	opts := ui.RunOptions{
 		Targets:          p.targets,
@@ -356,19 +356,9 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 		},
 		OnReset:        p.sup.resetStats,
 		OnAddHost:      p.sup.addHost,
-		OnDeleteHost:   p.sup.deleteHost,
 		OnDeleteTarget: p.sup.deleteTargetID,
 		OnSaveReport:   p.sup.saveReport,
 		Groups:         p.currentGroups,
-	}
-	if p.cfg.routeEnabled() {
-		opts.OnResetRoute = p.sup.resetRoute
-	}
-	if len(p.cfg.httpURLs) > 0 {
-		opts.OnResetHTTP = p.sup.resetHTTP
-	}
-	if len(p.cfg.portSpecs) > 0 {
-		opts.OnResetPort = p.sup.resetPort
 	}
 	return opts
 }

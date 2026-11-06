@@ -6,51 +6,30 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
-
-	"github.com/nagayon-935/mping/internal/stats"
 )
 
 // inputHandlerDeps bundles everything the main key handler needs: widgets
 // and callbacks that stay fixed for Run()'s lifetime, plus pointers to the
-// render state it shares with tableRenderer (rowCount, and the viewState with
-// the error log and per-host alert/status caches) — pointers because both
-// sides must observe the same reassignment (e.g. the 'R' key resetting
-// errorLogs to a fresh slice).
+// viewState it shares with tableRenderer: the error log and per-host
+// alert/status caches. Both sides observe the same state after the R key
+// clears it.
 type inputHandlerDeps struct {
-	app             *tview.Application
-	table           *tview.Table
-	addHostInput    *tview.InputField
-	deleteHostInput *tview.InputField
-	footer          *tview.TextView
-	pages           *tview.Pages
-	targets         []*stats.TargetStats
+	app          *tview.Application
+	table        *tview.Table
+	addHostInput *tview.InputField
+	footer       *tview.TextView
+	pages        *tview.Pages
 
-	rowCount *int
-	vs       *viewState
-	// forceUpdate re-renders the table immediately after a scroll key
-	// changes the offset, rather than waiting for the next (possibly
-	// dirty-gated, see run_support.go's shouldRedraw) refresh tick — table
-	// rows are now rendered only within the visible scroll window, so
-	// without this a scroll could momentarily show blank rows until the
-	// next tick populates them.
-	forceUpdate    func()
+	vs             *viewState
 	navigate       func(tcell.Key)
 	openDetails    func()
 	deleteSelected func()
-
-	routeEnabled bool
-	portEnabled  bool
-	httpEnabled  bool
 
 	onReset          func()
 	onStop           func()
 	measurementState func() string
 	onRestart        func() error
-	onResetRoute     func()
-	onResetPort      func()
-	onResetHTTP      func()
 	onAddHost        func(host string) error
-	onDeleteHost     func(host string) error
 
 	session *uiSession
 }
@@ -94,8 +73,7 @@ func (h *inputHandler) handle(event *tcell.EventKey) *tcell.EventKey {
 		}
 	}
 	// Pass all events through when a text input is focused.
-	switch h.app.GetFocus() {
-	case h.addHostInput, h.deleteHostInput:
+	if h.app.GetFocus() == h.addHostInput {
 		return event
 	}
 	if h.app.GetFocus() == h.table {
@@ -108,8 +86,6 @@ func (h *inputHandler) handle(event *tcell.EventKey) *tcell.EventKey {
 		case tcell.KeyUp, tcell.KeyDown, tcell.KeyPgUp, tcell.KeyPgDn:
 			if h.navigate != nil {
 				h.navigate(event.Key())
-			} else {
-				h.scrollTable(event.Key())
 			}
 			return nil
 		}
@@ -126,14 +102,6 @@ func (h *inputHandler) handle(event *tcell.EventKey) *tcell.EventKey {
 			h.deleteSelected()
 			return nil
 		}
-		// Compatibility path for standalone handlers without deleteSelected.
-		// Run always wires deleteSelected, so production never reaches this
-		// path even though cmd/main also supplies OnDeleteHost.
-		if h.onDeleteHost != nil {
-			h.pages.SwitchToPage("deleteHost")
-			h.app.SetFocus(h.deleteHostInput)
-			return nil
-		}
 	case 'q':
 		h.session.Stop()
 		h.app.Stop()
@@ -145,28 +113,6 @@ func (h *inputHandler) handle(event *tcell.EventKey) *tcell.EventKey {
 		h.reset()
 	}
 	return event
-}
-
-// scrollTable moves the table's row offset when no selection-based
-// navigation is wired (standalone callers). Run always wires navigate,
-// so this fallback is unused in production.
-func (h *inputHandler) scrollTable(key tcell.Key) {
-	rowOffset, colOffset := h.table.GetOffset()
-	maxOffset := max(*h.rowCount-(tableMinVisibleRows+1), 0)
-	switch key {
-	case tcell.KeyUp:
-		rowOffset--
-	case tcell.KeyDown:
-		rowOffset++
-	case tcell.KeyPgUp:
-		rowOffset -= tableMinVisibleRows
-	case tcell.KeyPgDn:
-		rowOffset += tableMinVisibleRows
-	}
-	h.table.SetOffset(min(max(rowOffset, 0), maxOffset), colOffset)
-	if h.forceUpdate != nil {
-		h.forceUpdate()
-	}
 }
 
 func (h *inputHandler) showState() {
@@ -245,33 +191,10 @@ func (h *inputHandler) restart() {
 	h.showState()
 }
 
-// reset ('R') clears statistics and restarts the running monitors.
+// reset ('R') clears the view state and delegates measurement reset to its owner.
 func (h *inputHandler) reset() {
 	h.vs.reset()
 	if h.onReset != nil {
 		h.submit(h.onReset)
-		return
 	}
-	// Compatibility path for standalone callers. cmd/main always supplies
-	// OnReset, so production returns above even though the individual reset
-	// callbacks are also supplied when their monitors are enabled. Keep even
-	// the counter reset on the same FIFO worker as stop and restart.
-	running := h.state == monitorRunning || h.state == monitorRestarting
-	h.submit(func() {
-		for _, t := range h.targets {
-			t.Reset()
-		}
-		if !running {
-			return
-		}
-		if h.routeEnabled && h.onResetRoute != nil {
-			h.onResetRoute()
-		}
-		if h.portEnabled && h.onResetPort != nil {
-			h.onResetPort()
-		}
-		if h.httpEnabled && h.onResetHTTP != nil {
-			h.onResetHTTP()
-		}
-	})
 }

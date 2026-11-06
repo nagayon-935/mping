@@ -42,41 +42,35 @@ func refreshTickInterval(interval time.Duration) time.Duration {
 	return min(interval/2, redrawFloor)
 }
 
-// wireHostInputs sets the Enter/Escape behavior for the add-host and
-// delete-host input fields: Enter invokes the corresponding callback (if
-// non-nil and the field isn't empty) and logs any error, Escape clears the
-// field; both cases return focus to the footer page and the table.
-func wireHostInputs(
+// wireHostInput sets the Enter/Escape behavior for the add-host field:
+// Enter invokes the callback for a non-empty host and logs any error;
+// Escape clears the field. Both return focus to the footer and table.
+func wireHostInput(
 	app *tview.Application, table *tview.Table, pages *tview.Pages,
-	addHostInput, deleteHostInput *tview.InputField,
-	vs *viewState, session *uiSession,
-	onAddHost, onDeleteHost func(host string) error,
+	input *tview.InputField, vs *viewState, session *uiSession,
+	onAddHost func(host string) error,
 ) {
-	wire := func(input *tview.InputField, action string, callback func(string) error) {
-		input.SetDoneFunc(func(key tcell.Key) {
-			if key == tcell.KeyEnter {
-				host := strings.TrimSpace(input.GetText())
-				input.SetText("")
-				if host != "" && callback != nil {
-					if !session.Submit(func() {
-						if err := callback(host); err != nil {
-							session.Post(func() {
-								vs.appendLog(fmt.Sprintf("[red][%s] %s host error: %v[-]", time.Now().Format(logTimeLayout), action, err))
-							})
-						}
-					}) {
-						vs.appendLog(queueFullLog)
+	input.SetDoneFunc(func(key tcell.Key) {
+		if key == tcell.KeyEnter {
+			host := strings.TrimSpace(input.GetText())
+			input.SetText("")
+			if host != "" && onAddHost != nil {
+				if !session.Submit(func() {
+					if err := onAddHost(host); err != nil {
+						session.Post(func() {
+							vs.appendLog(fmt.Sprintf("[red][%s] Add host error: %v[-]", time.Now().Format(logTimeLayout), err))
+						})
 					}
+				}) {
+					vs.appendLog(queueFullLog)
 				}
-			} else if key == tcell.KeyEscape {
-				input.SetText("")
 			}
-			pages.SwitchToPage("footer")
-			app.SetFocus(table)
-		})
-	}
-	wire(addHostInput, "Add", onAddHost)
-	wire(deleteHostInput, "Delete", onDeleteHost)
+		} else if key == tcell.KeyEscape {
+			input.SetText("")
+		}
+		pages.SwitchToPage("footer")
+		app.SetFocus(table)
+	})
 }
 
 // startRefreshLoop launches the goroutine that redraws the table on each

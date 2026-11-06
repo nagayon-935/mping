@@ -9,8 +9,7 @@ import (
 )
 
 // TestHandle_CommandTable walks every (state, command) cell of the design's
-// command table, so resetRoute/resetPort/resetHTTP all follow one
-// rule set (in particular, no reset resurrects a component after shutdown).
+// command table (in particular, reset never resurrects a component after shutdown).
 func TestHandle_CommandTable(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -23,18 +22,12 @@ func TestHandle_CommandTable(t *testing.T) {
 		{"stop from stopped", stateStopped, cmdStop, stateStopped, nil},
 		{"restart from stopped", stateStopped, cmdRestart, stateRunning, nil},
 		{"resetStats from stopped", stateStopped, cmdResetStats, stateStopped, nil},
-		{"resetRoute from stopped", stateStopped, cmdResetRoute, stateStopped, nil},
-		{"resetPort from stopped", stateStopped, cmdResetPort, stateStopped, nil},
-		{"resetHTTP from stopped", stateStopped, cmdResetHTTP, stateStopped, nil},
 		{"terminate from stopped", stateStopped, cmdTerminate, stateTerminated, nil},
 
 		{"start from running", stateRunning, cmdStart, stateRunning, nil},
 		{"stop from running", stateRunning, cmdStop, stateStopped, nil},
 		{"restart from running", stateRunning, cmdRestart, stateRunning, nil},
 		{"resetStats from running", stateRunning, cmdResetStats, stateRunning, nil},
-		{"resetRoute from running", stateRunning, cmdResetRoute, stateRunning, nil},
-		{"resetPort from running", stateRunning, cmdResetPort, stateRunning, nil},
-		{"resetHTTP from running", stateRunning, cmdResetHTTP, stateRunning, nil},
 		{"terminate from running", stateRunning, cmdTerminate, stateTerminated, nil},
 
 		// Nothing may revive a terminated supervisor.
@@ -42,9 +35,6 @@ func TestHandle_CommandTable(t *testing.T) {
 		{"stop from terminated", stateTerminated, cmdStop, stateTerminated, nil},
 		{"restart from terminated", stateTerminated, cmdRestart, stateTerminated, errSupervisorTerminated},
 		{"resetStats from terminated", stateTerminated, cmdResetStats, stateTerminated, nil},
-		{"resetRoute from terminated", stateTerminated, cmdResetRoute, stateTerminated, nil},
-		{"resetPort from terminated", stateTerminated, cmdResetPort, stateTerminated, nil},
-		{"resetHTTP from terminated", stateTerminated, cmdResetHTTP, stateTerminated, nil},
 		{"terminate from terminated", stateTerminated, cmdTerminate, stateTerminated, nil},
 	}
 
@@ -85,8 +75,8 @@ func TestHandle_ResetAfterTerminateCreatesNothing(t *testing.T) {
 	sup, _ := newStateTestSupervisor(t)
 	sup.cfg.config.mtr = true
 	// portSpecs/httpURLs must be non-empty so startAll actually creates a
-	// port checker and an HTTP checker below — otherwise cmdResetPort/
-	// cmdResetHTTP would have nothing to (wrongly) replace and the guard
+	// port checker and an HTTP checker below — otherwise cmdResetStats
+	// would have nothing to (wrongly) replace and the guard
 	// would go untested. Both values are chosen so their check goroutines
 	// never do real network I/O: the fixture target has no IP set, so
 	// PortChecker.check() short-circuits on ip == "" before dialing; the
@@ -112,20 +102,20 @@ func TestHandle_ResetAfterTerminateCreatesNothing(t *testing.T) {
 			portCheckerAfter, httpCheckerAfter)
 	}
 
-	for _, k := range []cmdKind{cmdResetStats, cmdResetRoute, cmdResetPort, cmdResetHTTP} {
+	for _, k := range []cmdKind{cmdResetStats} {
 		if err := doCmd(t, sup, k); err != nil {
 			t.Fatalf("reset %v after terminate: %v", k, err)
 		}
 	}
 
 	if sup.routeEngine != engineAfter {
-		t.Error("resetRoute after terminate installed a new route engine")
+		t.Error("resetStats after terminate installed a new route engine")
 	}
 	if sup.portChecker != portCheckerAfter {
-		t.Error("resetPort after terminate installed a new port checker")
+		t.Error("resetStats after terminate installed a new port checker")
 	}
 	if sup.httpChecker != httpCheckerAfter {
-		t.Error("resetHTTP after terminate installed a new HTTP checker")
+		t.Error("resetStats after terminate installed a new HTTP checker")
 	}
 	if sup.state != stateTerminated {
 		t.Errorf("state = %v, want stateTerminated", sup.state)

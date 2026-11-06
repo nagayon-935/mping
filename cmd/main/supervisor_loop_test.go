@@ -62,7 +62,7 @@ func TestSendCmd_ConcurrentSendersDuringShutdown(t *testing.T) {
 		for range 8 {
 			wg.Go(func() {
 				<-start
-				_ = sup.sendCmd(command{kind: cmdResetPort})
+				_ = sup.sendCmd(command{kind: cmdResetStats})
 			})
 		}
 		close(start)

@@ -22,17 +22,17 @@ func TestRunRouteModes(t *testing.T) {
 				if opts.Route != tt.want {
 					t.Errorf("Route = %v, want %v", opts.Route, tt.want)
 				}
-				if opts.OnResetRoute == nil {
-					t.Error("OnResetRoute must not be nil when the route pane is shown")
+				if opts.OnReset == nil {
+					t.Error("OnReset must not be nil when the route pane is shown")
 					return nil
 				}
 				routeFailed := func() bool { return opts.Targets[0].GetView().MTRError != "" }
 				if !pollUntil(2*time.Second, routeFailed) {
 					t.Error("route engine did not run")
 				}
-				opts.OnResetRoute()
+				opts.OnReset()
 				if !pollUntil(2*time.Second, routeFailed) {
-					t.Error("route engine did not run again after OnResetRoute()")
+					t.Error("route engine did not run again after OnReset()")
 				}
 				return nil
 			})
@@ -59,7 +59,7 @@ func TestRunRejectsBothRouteModes(t *testing.T) {
 	}
 }
 
-// TestRunResetPort verifies that the OnResetPort callback passed to uiRun is
+// TestRunResetPort verifies that the OnReset callback passed to uiRun is
 // non-nil when port specs are provided, and that calling it stops and
 // restarts the port checker without panicking.
 func TestRunResetPort(t *testing.T) {
@@ -68,11 +68,11 @@ func TestRunResetPort(t *testing.T) {
 			t.Error("PortEnabled should be true when port specs given")
 			return nil
 		}
-		if opts.OnResetPort == nil {
-			t.Error("OnResetPort must not be nil when port specs are provided")
+		if opts.OnReset == nil {
+			t.Error("OnReset must not be nil when port specs are provided")
 			return nil
 		}
-		opts.OnResetPort()
+		opts.OnReset()
 		return nil
 	})
 
@@ -83,7 +83,7 @@ func TestRunResetPort(t *testing.T) {
 	}
 }
 
-// TestRunResetHTTP verifies that the OnResetHTTP callback passed to uiRun is
+// TestRunResetHTTP verifies that the OnReset callback passed to uiRun is
 // non-nil when HTTP URLs are provided, and that calling it stops (joining the
 // checker's goroutines via Wait) and swaps in a fresh HTTPChecker whose
 // results are reachable through the live HTTPResults accessor.
@@ -93,8 +93,8 @@ func TestRunResetHTTP(t *testing.T) {
 			t.Error("HTTPEnabled should be true when HTTP URLs given")
 			return nil
 		}
-		if opts.OnResetHTTP == nil || opts.HTTPResults == nil {
-			t.Error("OnResetHTTP and HTTPResults must not be nil when HTTP URLs are provided")
+		if opts.OnReset == nil || opts.HTTPResults == nil {
+			t.Error("OnReset and HTTPResults must not be nil when HTTP URLs are provided")
 			return nil
 		}
 		before := opts.HTTPResults()
@@ -102,14 +102,14 @@ func TestRunResetHTTP(t *testing.T) {
 			t.Errorf("HTTPResults before reset: got %d entries, want 1", len(before))
 			return nil
 		}
-		opts.OnResetHTTP()
+		opts.OnReset()
 		after := opts.HTTPResults()
 		if len(after) != 1 {
 			t.Errorf("HTTPResults after reset: got %d entries, want 1", len(after))
 			return nil
 		}
 		if before[0] == after[0] {
-			t.Error("OnResetHTTP should swap in a new HTTPCheckResult, not reuse the old one")
+			t.Error("OnReset should swap in a new HTTPCheckResult, not reuse the old one")
 		}
 		return nil
 	})
