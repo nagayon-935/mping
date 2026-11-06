@@ -8,6 +8,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// Tests may override this to exercise the source-address fallback.
+var interfaceBindingSupported = true
+
 // bindRawConnToInterface binds a socket, already reduced to its
 // syscall.RawConn, to the network interface named ifaceName using
 // SO_BINDTODEVICE, so outgoing packets always leave via that physical

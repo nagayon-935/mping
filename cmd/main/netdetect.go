@@ -9,8 +9,9 @@ import (
 )
 
 var (
-	interfaceByName = net.InterfaceByName
-	netInterfaces   = net.Interfaces
+	getInterfaceIPFn = getInterfaceIP
+	interfaceByName  = net.InterfaceByName
+	netInterfaces    = net.Interfaces
 )
 
 func getInterfaceIP(ifaceName string, wantIPv6 bool) (string, error) {
@@ -173,8 +174,9 @@ func detectAutoSourceIPs(specs []targetSpec) (string, string) {
 }
 
 func detectInterfaceSourceIPs(specs []targetSpec, iface string) (string, string) {
+	bind := checkerBindConfig(config{ifaceName: iface}, "")
 	return detectSourceIPs(specs, func(remote, network string) string {
-		return getPreferredOutboundIPBound(remote, network, pinger.BindConfig{Interface: iface})
+		return getPreferredOutboundIPBound(remote, network, bind)
 	})
 }
 

@@ -16,10 +16,11 @@ import (
 // makePingerFactory returns a closure that creates a configured pinger instance
 // with the given payload size. The returned factory is called each time a new
 // pinger is needed (initial start and after restart).
-func makePingerFactory(targets []*stats.TargetStats, opts pinger.Options, cfg config, bindIP string) func(size int) pingerController {
+func makePingerFactory(targets []*stats.TargetStats, opts pinger.Options, cfg config, bind pinger.BindConfig) func(size int) pingerController {
 	return func(size int) pingerController {
 		p := newPinger(targets, opts)
-		p.SetSource(bindIP)
+		p.SetSource(bind.Source)
+		p.SetInterfaceSources(bind.SourceV4, bind.SourceV6)
 		p.SetInterface(cfg.ifaceName)
 		p.SetSize(size)
 		p.SetCount(cfg.count)

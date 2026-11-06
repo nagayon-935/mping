@@ -41,19 +41,25 @@ func determineSourceIPs(cfg config, hosts []targetSpec) (string, string, string,
 	}
 	if cfg.ifaceName != "" {
 		if !cfg.ipv4Only && !cfg.ipv6Only {
-			v4, err4 := getInterfaceIP(cfg.ifaceName, false)
-			v6, err6 := getInterfaceIP(cfg.ifaceName, true)
+			v4, err4 := getInterfaceIPFn(cfg.ifaceName, false)
+			v6, err6 := getInterfaceIPFn(cfg.ifaceName, true)
 			if err4 != nil && err6 != nil {
 				return "", "", "", fmt.Errorf("no usable address on interface %s: %w", cfg.ifaceName, errors.Join(err4, err6))
 			}
 			// Bind the interface, leaving source/family selection to the OS
 			// for each destination rather than pinning every target to IPv4.
 			if len(hosts) > 0 {
-				v4, v6 = detectInterfaceSourceIPs(hosts, cfg.ifaceName)
+				detected4, detected6 := detectInterfaceSourceIPs(hosts, cfg.ifaceName)
+				if detected4 != "" {
+					v4 = detected4
+				}
+				if detected6 != "" {
+					v6 = detected6
+				}
 			}
 			return "", v4, v6, nil
 		}
-		ip, err := getInterfaceIP(cfg.ifaceName, cfg.ipv6Only)
+		ip, err := getInterfaceIPFn(cfg.ifaceName, cfg.ipv6Only)
 		if err != nil {
 			return "", "", "", err
 		}

@@ -1,6 +1,7 @@
 package pinger
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
@@ -17,6 +18,8 @@ import (
 type BindConfig struct {
 	Source    string // -S: source IP address to bind outgoing sockets to
 	Interface string // -I: physical interface name to bind outgoing sockets to
+	SourceV4  string // Interface source when Source is empty
+	SourceV6  string // Interface source when Source is empty
 }
 
 // IsZero reports whether bc requests no binding at all.
@@ -50,9 +53,8 @@ func localAddrFor(network, source string) net.Addr {
 // the port/HTTP checkers so name resolution leaves via the same egress path.
 //
 // Both are opt-in: with a zero BindConfig the returned dialer is a plain
-// &net.Dialer{Timeout: timeout}, and on platforms without an
-// interface-binding facility the Control hook resolves to a no-op (see
-// bindif_other.go).
+// &net.Dialer{Timeout: timeout}, and on platforms without native interface binding the Control hook binds
+// the matching interface source address (see bindsource*.go).
 func NewBoundDialer(network string, timeout time.Duration, bc BindConfig) *net.Dialer {
 	d := &net.Dialer{Timeout: timeout}
 	// localAddrFor returns an untyped nil net.Addr (never a typed nil pointer)
@@ -65,7 +67,18 @@ func NewBoundDialer(network string, timeout time.Duration, bc BindConfig) *net.D
 		// family is known — bc alone cannot tell us, since a hostname target
 		// may resolve either way.
 		d.Control = func(network, _ string, c syscall.RawConn) error {
-			bindRawConnToInterfaceFn(c, bc.Interface, strings.HasSuffix(network, "6"))
+			v6 := strings.HasSuffix(network, "6")
+			if bc.Source == "" && !interfaceBindingSupported {
+				source := bc.SourceV4
+				if v6 {
+					source = bc.SourceV6
+				}
+				if source == "" {
+					return fmt.Errorf("interface %s has no source address for %s", bc.Interface, network)
+				}
+				return bindRawConnToSourceFn(c, source, v6)
+			}
+			bindRawConnToInterfaceFn(c, bc.Interface, v6)
 			return nil
 		}
 	}

@@ -57,21 +57,9 @@ func (c nativeIPv6PMTUSocket) PathMTU() (int, error) { return ipv6SocketPathMTU(
 // A connected socket makes the kernel's PMTU query destination-specific.
 // Never silently continue when the OS cannot prohibit sender fragmentation.
 var openIPv6PMTUSocket = func(ctx context.Context, p *Pinger, dst *net.IPAddr) (ipv6PMTUSocket, error) {
-	dialer := net.Dialer{Timeout: time.Second}
-	if p.Source != "" {
-		addr, err := netip.ParseAddr(p.Source)
-		if err != nil || !addr.Unmap().Is6() {
-			return nil, fmt.Errorf("IPv6 PMTU requires an IPv6 source")
-		}
-		dialer.LocalAddr = &net.IPAddr{IP: net.IP(addr.AsSlice()), Zone: addr.Zone()}
-	}
-	dialer.Control = func(_, _ string, raw syscall.RawConn) error {
-		bindRawConnToInterfaceFn(raw, p.Interface, true)
-		var optionErr error
-		if err := raw.Control(func(fd uintptr) { optionErr = setIPv6PMTUDiscovery(int(fd)) }); err != nil {
-			return err
-		}
-		return optionErr
+	dialer, err := p.ipv6PMTUDialer()
+	if err != nil {
+		return nil, err
 	}
 	conn, err := dialer.DialContext(ctx, "ip6:ipv6-icmp", dst.String())
 	if err != nil {
@@ -185,4 +173,34 @@ func (p *Pinger) discoverIPv6PathMTU(ctx context.Context, c ipv6PMTUSocket, dst 
 		result.MTU, result.Payload = next, next-48
 	}
 	return result, nil
+}
+
+// ipv6PMTUDialer preserves OS source selection where native interface binding
+// is available, and supplies a family-specific LocalAddr on other platforms.
+func (p *Pinger) ipv6PMTUDialer() (*net.Dialer, error) {
+	dialer := &net.Dialer{Timeout: time.Second}
+	source := p.Source
+	if source == "" && p.Interface != "" && !interfaceBindingSupported {
+		var err error
+		source, err = p.interfaceSource(true)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if source != "" {
+		addr, err := netip.ParseAddr(source)
+		if err != nil || !addr.Unmap().Is6() {
+			return nil, fmt.Errorf("IPv6 PMTU requires an IPv6 source")
+		}
+		dialer.LocalAddr = &net.IPAddr{IP: net.IP(addr.AsSlice()), Zone: addr.Zone()}
+	}
+	dialer.Control = func(_, _ string, raw syscall.RawConn) error {
+		bindRawConnToInterfaceFn(raw, p.Interface, true)
+		var optionErr error
+		if err := raw.Control(func(fd uintptr) { optionErr = setIPv6PMTUDiscovery(int(fd)) }); err != nil {
+			return err
+		}
+		return optionErr
+	}
+	return dialer, nil
 }

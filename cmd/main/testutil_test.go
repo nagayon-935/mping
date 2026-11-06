@@ -245,6 +245,8 @@ func (f *fakePinger) DiscoverPathMTU(ctx context.Context, dest string, start int
 	return pinger.PathMTUResult{IP: "192.0.2.1", MTU: payload + 28, Payload: payload, Source: "probe", Status: "probed", BottleneckIP: hop}, err
 }
 
+func (f *fakePinger) SetInterfaceSources(v4, v6 string) {}
+
 func (f *fakePinger) SetSource(ip string)                       {}
 func (f *fakePinger) SetSize(size int)                          {}
 func (f *fakePinger) SetCount(count int)                        {}

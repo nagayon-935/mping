@@ -9,6 +9,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// Tests may override this to exercise the source-address fallback.
+var interfaceBindingSupported = true
+
 // interfaceByNameFn resolves an interface name to its OS-assigned index;
 // overridden in tests so the interface-lookup path can be exercised without
 // depending on the host's real network interfaces.

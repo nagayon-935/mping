@@ -126,7 +126,9 @@ type traceMsg struct {
 type Pinger struct {
 	Targets []*stats.TargetStats
 
-	Source string // Source IP address to bind to
+	Source   string // Explicit source IP address to bind to
+	SourceV4 string // Interface IPv4 source when Source is empty
+	SourceV6 string // Interface IPv6 source when Source is empty
 
 	// Interface is the network interface name requested via -I. When set,
 	// Start() and OpenHopSocketContext() additionally bind each socket to this
@@ -135,9 +137,8 @@ type Pinger struct {
 	// on top of the source-IP bind Source already performs. This enforces
 	// the egress interface even when the routing table would otherwise
 	// choose a different one, or when the same address is assigned to more
-	// than one interface. It has no effect on platforms without a
-	// supported binding facility (bindif_other.go), where source-IP bind
-	// via Source remains the only interface-selection mechanism.
+	// than one interface. On platforms without native binding,
+	// SourceV4/SourceV6 select the interface address for each family.
 	Interface string
 
 	Size  int // Payload size in bytes
@@ -319,7 +320,7 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 	}
 	if resolveContext == nil && resolve == nil {
 		p.resolveWithContext = func(ctx context.Context, network, address string) (*net.IPAddr, error) {
-			return ResolveUsableIPAddrContext(ctx, resolver, network, address, BindConfig{Source: p.Source, Interface: p.Interface})
+			return ResolveUsableIPAddrContext(ctx, resolver, network, address, BindConfig{Source: p.Source, Interface: p.Interface, SourceV4: p.SourceV4, SourceV6: p.SourceV6})
 		}
 	}
 	return p
@@ -356,12 +357,24 @@ func (p *Pinger) Stop() {
 // configured Source address, or to the wildcard address when none is set.
 // Interface binding is left to the caller via bindToInterfaceFn.
 func (p *Pinger) listenICMP(v6 bool) (net.PacketConn, error) {
+	source := p.Source
+	if source == "" && p.Interface != "" && !interfaceBindingSupported {
+		var err error
+		source, err = p.interfaceSource(v6)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return p.listenICMPSource(v6, source)
+}
+
+func (p *Pinger) listenICMPSource(v6 bool, source string) (net.PacketConn, error) {
 	network, bindAddr := "ip4:icmp", "0.0.0.0"
 	if v6 {
 		network, bindAddr = "ip6:ipv6-icmp", "::"
 	}
-	if p.Source != "" {
-		bindAddr = p.Source
+	if source != "" {
+		bindAddr = source
 	}
 	c, err := p.listenPacket(network, bindAddr)
 	if err != nil {

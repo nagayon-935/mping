@@ -26,6 +26,7 @@ type pingerController interface {
 	DiscoverPathMTU(ctx context.Context, dest string, start int, min int, logf func(string)) (pinger.PathMTUResult, error)
 	ResolveTarget(ctx context.Context, dest string) (*net.IPAddr, error)
 	SetSource(ip string)
+	SetInterfaceSources(v4, v6 string)
 	SetInterface(name string)
 	SetSize(size int)
 	SetCount(count int)
@@ -42,6 +43,11 @@ type pingerAdapter struct {
 
 func (p *pingerAdapter) SetSource(ip string) {
 	p.Source = ip
+}
+
+// SetInterfaceSources supplies the interface fallback for each address family.
+func (p *pingerAdapter) SetInterfaceSources(v4, v6 string) {
+	p.SourceV4, p.SourceV6 = v4, v6
 }
 
 // SetInterface arms true interface binding (see internal/pinger/bindif_*.go)

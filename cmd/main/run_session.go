@@ -122,7 +122,7 @@ func (s *session) startIteration(first bool) (*iteration, bool) {
 	pingerFactory := func(targets []*stats.TargetStats, specs []targetSpec) func(size int) pingerController {
 		opts := buildPingerOptions(cfg, env.resNetwork, customResolver, specs)
 		opts.IDs = s.ids
-		return makePingerFactory(targets, opts, cfg, env.bindIP)
+		return makePingerFactory(targets, opts, cfg, bind)
 	}
 
 	ifaceMTU, mtuErr := getInterfaceMTU(cfg.ifaceName, env.bindIP, hosts[0].resolveAddr())

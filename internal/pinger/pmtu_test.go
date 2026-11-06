@@ -329,3 +329,18 @@ func TestDiscoverMaxPayload_SearchesUseDistinctConsistentIDs(t *testing.T) {
 		firstID = ids[0]
 	}
 }
+
+func TestCanSendPayload_ExplicitSourceStillBindsInterface(t *testing.T) {
+	p := NewPingerWithOptions(nil, Options{ListenPacket: listenWith(&fakeNetPacketConn{})})
+	p.Interface, p.Source = "test0", "192.0.2.10"
+	calls := spyBindToInterface(t)
+	orig := newRawConnFn
+	t.Cleanup(func() { newRawConnFn = orig })
+	newRawConnFn = func(net.PacketConn) (pmtuRawConn, error) { return &fakeRawConn{}, nil }
+
+	_, _, _ = p.canSendPayload(context.Background(), &net.IPAddr{IP: net.ParseIP("198.51.100.1")}, 56, 1234)
+
+	if len(*calls) != 1 || (*calls)[0].ifaceName != "test0" {
+		t.Fatalf("PMTU interface bindings=%+v, want test0", *calls)
+	}
+}

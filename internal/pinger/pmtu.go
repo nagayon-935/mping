@@ -162,13 +162,21 @@ func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloa
 		return false, "", err
 	}
 
-	// Unlike the pinger and MTR sockets, this one deliberately does not bind
-	// to the interface.
-	c, err := p.listenICMP(false)
+	// Header-included IPv4 probes bind both the requested interface and its
+	// IPv4 source on every OS, measuring the same path as regular ping.
+	source := p.Source
+	if source == "" && p.Interface != "" {
+		source, err = p.interfaceSource(false)
+		if err != nil {
+			return false, "", err
+		}
+	}
+	c, err := p.listenICMPSource(false, source)
 	if err != nil {
 		return false, "", err
 	}
 	defer c.Close()
+	bindToInterfaceFn(c, p.Interface, false)
 
 	defer closeOnCancel(ctx, func() { _ = c.Close() })()
 
@@ -191,8 +199,8 @@ func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloa
 		Dst:      dstAddr.IP,
 		Flags:    ipv4.DontFragment,
 	}
-	if p.Source != "" {
-		h.Src = net.ParseIP(p.Source)
+	if source != "" {
+		h.Src = net.ParseIP(source)
 	}
 
 	if err := rc.WriteTo(h, b, nil); err != nil {

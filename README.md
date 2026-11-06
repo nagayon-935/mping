@@ -39,7 +39,7 @@
 | macOS | amd64, arm64 (Apple Silicon) | Uses `setuid` |
 | Windows | amd64 | **Experimental** — see below |
 
-> **Windows** — Each release includes a Windows build, but CI only checks that it compiles; it is not tested on Windows. Run it from an Administrator shell (raw ICMP sockets need it). TTL is not reported. Physical interface binding is unsupported; explicit source-address binding still applies. IPv4 PMTU discovery is unverified, and IPv6 PMTU discovery is unsupported.
+> **Windows** — Each release includes a Windows build, but CI only checks that it compiles; it is not tested on Windows. Run it from an Administrator shell (raw ICMP sockets need it). TTL is not reported. Physical interface binding is unsupported; `-I` binds the interface’s source address for each destination family, and explicit `-S` takes precedence. IPv4 PMTU discovery is unverified, and IPv6 PMTU discovery is unsupported.
 
 > **Privileges required** — mping uses raw ICMP sockets to obtain accurate TTL values. On Linux the preferred approach is granting `CAP_NET_RAW` with `setcap`; `install.sh` handles this automatically. On macOS a `setuid` bit is set instead. With a `setuid` install, the measurement process retains elevated privileges for socket operations and temporarily drops them when accessing user files (`-f`, `include:`, saved reports), so those files are accessed with the invoking user's permissions. The Web UI's browser-facing part permanently drops privileges in a separate process (see [Web UI](#web-ui-experimental)).
 
@@ -141,7 +141,7 @@ sudo ./install.sh
 
 Without `-4` / `-6`, hostnames use the address order and route/source selection of the OS and Go dialer. Each destination selects an IPv4 or IPv6 address that can be sent to locally; there is no fixed IPv4 preference or global IPv6-connectivity check against an unrelated host. This uses a UDP socket connection without sending datagrams. It checks local routing, not whether the destination answers Ping. Subsequent Ping loss does not trigger a family switch. DNS re-resolution re-evaluates the choice.
 
-Literal IPs retain their specified version and IPv6 zone. `-S` restricts selection to that source's family; `-I` alone leaves both families available on that interface. `-4` / `-6` remain explicit overrides. `--resolve-all` deliberately monitors all DNS addresses in the requested family, including currently unroutable ones.
+Literal IPs retain their specified version and IPv6 zone. `-S` restricts selection to that source's family; `-I` alone leaves both families available on that interface. On Windows/FreeBSD, `-I` binds the interface’s per-family source addresses instead of using native interface binding. `-4` / `-6` remain explicit overrides. `--resolve-all` deliberately monitors all DNS addresses in the requested family, including currently unroutable ones.
 
 These family choices apply to Ping targets and their route/port checks. HTTP URLs are checked independently; `-4` / `-6` alone do not force the HTTP address family. Source/interface binding (`-S` / `-I`) also applies to HTTP connections.
 
@@ -301,7 +301,7 @@ See [examples/hosts-patterns.yaml](examples/hosts-patterns.yaml) and [examples/b
 | `--dns-server` | `-d` | Custom DNS server IP address to resolve target hostnames | `""` (OS default) |
 | `--resolve-all` | | Resolve target hostnames to all IP addresses and monitor them concurrently | `false` |
 | `--discovery-mtu` | `-m` | Discover PMTU using IPv4 DF probes or IPv6 OS estimates with echo confirmation | `false` |
-| `--interface` | `-I` | Network interface name (e.g. `eth0`, `en0`) | `""` |
+| `--interface` | `-I` | Network interface name (e.g. `eth0`, `en0`); selects a source per destination family | `""` |
 | `--source` | `-S` | Source IP address, including scoped IPv6 | `""` (auto-detect) |
 | `--size` | `-s` | Payload size in bytes | `56` |
 | `--count` | `-c` | Number of packets per target (0 = unlimited) | `0` |

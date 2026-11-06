@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -110,7 +111,13 @@ func prepareRunEnv(cfg config, hosts []targetSpec, out, errOut io.Writer) (env r
 		if bindIP != "" {
 			fmt.Fprintf(out, "Binding to interface %s (%s)\n", cfg.ifaceName, bindIP)
 		} else {
-			fmt.Fprintf(out, "Binding to interface %s\n", cfg.ifaceName)
+			var addresses []string
+			for _, ip := range []string{dispV4, dispV6} {
+				if ip != "" {
+					addresses = append(addresses, ip)
+				}
+			}
+			fmt.Fprintf(out, "Binding to interface %s (%s)\n", cfg.ifaceName, strings.Join(addresses, ", "))
 		}
 	}
 
@@ -129,7 +136,15 @@ func prepareRunEnv(cfg config, hosts []targetSpec, out, errOut io.Writer) (env r
 // checkerBindConfig uses the same source and interface as the ICMP pinger.
 // Full reloads re-resolve these values before rebuilding all checkers.
 func checkerBindConfig(cfg config, bindIP string) pinger.BindConfig {
-	return pinger.BindConfig{Source: bindIP, Interface: cfg.ifaceName}
+	bind := pinger.BindConfig{Source: bindIP, Interface: cfg.ifaceName}
+	if cfg.sourceAddr != "" {
+		bind.Source = cfg.sourceAddr
+	}
+	if bind.Source == "" && cfg.ifaceName != "" {
+		bind.SourceV4, _ = getInterfaceIPFn(cfg.ifaceName, false)
+		bind.SourceV6, _ = getInterfaceIPFn(cfg.ifaceName, true)
+	}
+	return bind
 }
 
 // resolverBindConfig is checkerBindConfig for expandTargets' --resolve-all DNS
@@ -186,6 +201,7 @@ func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resol
 		}
 	}
 
+	bind := checkerBindConfig(cfg, cfg.sourceAddr)
 	resolve := func(ctx context.Context, _ string, address string) (*net.IPAddr, error) {
 		if ip, ok := pinned[address]; ok {
 			address = ip
@@ -194,7 +210,7 @@ func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resol
 		if customResolver != nil && cfg.dnsServer != "" {
 			resolver = customResolver
 		}
-		return pinger.ResolveUsableIPAddrContext(ctx, resolver, resNetwork, address, pinger.BindConfig{Source: cfg.sourceAddr, Interface: cfg.ifaceName})
+		return pinger.ResolveUsableIPAddrContext(ctx, resolver, resNetwork, address, bind)
 	}
 	return pinger.Options{
 		ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {
