@@ -27,9 +27,9 @@
 * **HTTP(S) health check pane** — monitor HTTP/HTTPS endpoints when `-H` is given. Performs GET requests at the ping interval and tracks status code, response time (Last/Min/Avg/Max), and cumulative Up/Down counts. Status changes are logged to the Log pane.
 * **Port Monitor pane** — monitor TCP/UDP port reachability in real time with `-p`. Displays the estimated service name, **Last / Min / Avg / Max RTT** (measured from TCP connect or UDP round-trip), cumulative Open/Closed counts, and time since last status change. RTT statistics are collected for `Open` responses only.
 * **PMTU discovery** — IPv4 DF probes and IPv6 OS path-MTU estimates with echo confirmation.
-* **Auto source IP detection** — automatically detects and displays the local IP used for each destination.
-* **RTT graph** — auto-scaling Y-axis (expands immediately on spike, shrinks after a hold period) × 30 seconds (X-axis) per target. Supports both ICMP and TCP/UDP port series.
-* **Statistics snapshots** — save every statistic collected so far, at any moment, as JSON or CSV from the TUI (`w`) or the Web UI's **Report** button.
+* **Auto source IP detection** — displays the bound source address or a representative automatically selected source for each address family.
+* **RTT graph** — auto-scaling Y-axis (expands immediately on spike, shrinks after a hold period) and roughly 30 seconds of recent samples at the configured interval (X-axis) per target. Supports both ICMP and TCP/UDP port series.
+* **Statistics snapshots** — save an investigation report with current statistics as JSON or CSV from the TUI (`w`) or the Web UI's **Report** button.
 
 ## Supported platforms
 
@@ -39,9 +39,9 @@
 | macOS | amd64, arm64 (Apple Silicon) | Uses `setuid` |
 | Windows | amd64 | **Experimental** — see below |
 
-> **Windows** — Each release includes a Windows build, but CI only checks that it compiles; it is not tested on Windows. Run it from an Administrator shell (raw ICMP sockets need it). TTL is not reported and `-I` (interface binding) has no effect there; `-m` (PMTU discovery) is unverified.
+> **Windows** — Each release includes a Windows build, but CI only checks that it compiles; it is not tested on Windows. Run it from an Administrator shell (raw ICMP sockets need it). TTL is not reported. Physical interface binding is unsupported; explicit source-address binding still applies. IPv4 PMTU discovery is unverified, and IPv6 PMTU discovery is unsupported.
 
-> **Privileges required** — mping uses raw ICMP sockets to obtain accurate TTL values. On Linux the preferred approach is granting `CAP_NET_RAW` with `setcap`; `install.sh` handles this automatically. On macOS a `setuid` bit is set instead. With a `setuid` install, mping keeps root only for opening raw sockets: every file it reads or writes (`-f`, `include:`, saved reports) is accessed with the invoking user's permissions, so it cannot be used to read or modify files that user couldn't access directly. The Web UI's browser-facing part runs in a separate process with no privileges at all (see [Web UI](#web-ui-experimental)).
+> **Privileges required** — mping uses raw ICMP sockets to obtain accurate TTL values. On Linux the preferred approach is granting `CAP_NET_RAW` with `setcap`; `install.sh` handles this automatically. On macOS a `setuid` bit is set instead. With a `setuid` install, the measurement process retains elevated privileges for socket operations and temporarily drops them when accessing user files (`-f`, `include:`, saved reports), so those files are accessed with the invoking user's permissions. The Web UI's browser-facing part permanently drops privileges in a separate process (see [Web UI](#web-ui-experimental)).
 
 > **Terminal Compatibility** — Standard terminals on Linux and macOS may not render colors correctly. If you experience issues with color display, consider using a modern terminal emulator (e.g., iTerm2, Alacritty, or kitty).
 
@@ -49,7 +49,9 @@
 
 ### Pre-built binary (recommended)
 
-Download the archive for your platform from the [Releases](https://github.com/nagayon-935/mping/releases) page and run the bundled `install.sh`.
+For Linux/macOS, download the archive for your platform from the [Releases](https://github.com/nagayon-935/mping/releases) page and run the bundled `install.sh`. Windows archives contain `mping.exe`; run it from an Administrator shell.
+
+This README describes the current source tree. Release binaries can differ by version; build from this source tree to use the functionality described here. The `v0.4.5` download commands below illustrate archive naming, so replace that version with the release you intend to install.
 
 #### Linux (amd64)
 
@@ -94,7 +96,9 @@ sudo ./install.sh
 To install to a different directory:
 
 ```bash
-sudo INSTALL_DIR=/usr/local/bin ./install.sh
+sudo mkdir -p /opt/mping/bin
+sudo INSTALL_DIR=/opt/mping/bin ./install.sh
+export PATH="/opt/mping/bin:$PATH"
 ```
 
 After installation, run mping **without** `sudo`:
@@ -139,6 +143,10 @@ Without `-4` / `-6`, hostnames use the address order and route/source selection 
 
 Literal IPs retain their specified version and IPv6 zone. `-S` restricts selection to that source's family; `-I` alone leaves both families available on that interface. `-4` / `-6` remain explicit overrides. `--resolve-all` deliberately monitors all DNS addresses in the requested family, including currently unroutable ones.
 
+These family choices apply to Ping targets and their route/port checks. HTTP URLs are checked independently; `-4` / `-6` alone do not force the HTTP address family. Source/interface binding (`-S` / `-I`) also applies to HTTP connections.
+
+`-c` finishes ICMP measurement after the count but leaves the TUI open. Use `--duration 30s` to exit automatically after a time limit, or **q** to quit.
+
 ```bash
 # Basic (no sudo needed after install.sh)
 mping google.com 1.1.1.1 8.8.8.8
@@ -148,6 +156,9 @@ mping -I eth0 google.com
 
 # Set packet size (100 bytes) and count (10 packets)
 mping -s 100 -c 10 google.com
+
+# Exit automatically after 30 seconds
+mping --duration 30s google.com
 
 # Load hosts from a YAML file
 mping -f hosts.yaml
@@ -294,13 +305,16 @@ See [examples/hosts-patterns.yaml](examples/hosts-patterns.yaml) and [examples/b
 | `--source` | `-S` | Source IP address, including scoped IPv6 | `""` (auto-detect) |
 | `--size` | `-s` | Payload size in bytes | `56` |
 | `--count` | `-c` | Number of packets per target (0 = unlimited) | `0` |
+| `--duration` | | Exit after the specified duration, e.g. `30s`, `5m`, `1h30m` (0 = no limit) | `0s` |
 | `--ipv4` | `-4` | Use IPv4 only | `false` |
 | `--ipv6` | `-6` | Use IPv6 only | `false` |
 | `--port` | `-p` | Ports to check (e.g. `443/tcp`, `53/udp`, `443`). Comma-separated for multiple. | `""` |
 | `--web` | | Serve the web UI on `http://127.0.0.1:<web-port>/` (this machine only; see [Web UI](#web-ui-experimental)) | `false` |
 | `--web-port` | | Port for `--web` (1–65535) | `8080` |
 | `--asn` | `-a` | Look up and display AS numbers for target IPs | `false` |
+| `--ptr` | `-r` | Look up and display reverse DNS names for target and hop IPs | `false` |
 | `--http` | `-H` | URL(s) to health-check, e.g. `https://example.com/health`. Comma-separated or repeated for multiple. | `""` |
+| `--check-config` | | Validate and print effective configuration without starting monitoring (CLI only) | `false` |
 | `--rtt-warn` | | RTT warn threshold in ms (orange) | `50` |
 | `--rtt-crit` | | RTT crit threshold in ms (red) | `200` |
 | `--jitter-warn` | | Jitter warn threshold in ms (orange) | `10` |
@@ -321,7 +335,7 @@ Current health is separate from lifetime loss and RTT statistics. By default, **
 | `--health-window` | `1m` | Recent-loss window, 1s–1h, in one-second buckets; changing its length starts a fresh recent window |
 | `--http-follow-redirects` | `true` | Follow redirects, up to 10; false inspects the first response |
 
-`health` in snapshots/reports includes status, reason, unavailability, consecutive counts, recent loss, and last probe/reply timestamps. Recent counters describe the window at `evaluated_at` (the last completed probe or policy change), so stopping preserves the judgment and its inputs together. `measurement_state` (`running`, `finished`, `stopped`) describes ICMP measurement separately from the Web server's `state`; after `--count` completes, auxiliary monitors may continue in the TUI. Graphs use actual timestamps and leave pauses blank instead of shifting an old reply to now.
+`health` in snapshots/reports includes status, reason, unavailability, consecutive counts, recent loss, and last probe/reply timestamps. Recent counters describe the window at `evaluated_at` (the last completed probe or policy change), so stopping preserves the judgment and its inputs together. `measurement_state` (`running`, `finished`, `stopped`) describes ICMP measurement separately from the Web server's `state`; after `--count` completes, auxiliary monitors may continue in the TUI. Web RTT graphs use actual timestamps and leave pauses blank instead of shifting an old reply to now.
 
 Each target in snapshots/reports also carries `levels` (`loss`, `last_rtt`, `jitter`), each `none`, `ok`, `warn` or `crit` against the configured thresholds; MTR hops carry `loss_level`, and port and HTTP checks `level` (`pending` before the first result). These are the values the TUI and Web UI colour by.
 
@@ -329,7 +343,7 @@ Each target in snapshots/reports also carries `levels` (`loss`, `last_rtt`, `jit
 mping --check-config -f examples/monitoring.yaml --interval 500
 ```
 
-`--check-config` (CLI only) prints the effective settings, expanded targets/count, groups and explicit CLI overrides. It starts no probes, listeners, UI or output writers and needs no raw-socket privileges. `--resolve-all` may perform DNS lookups. Header values are omitted; only their names are shown. CLI flags take precedence over YAML.
+`--check-config` (CLI only) prints the effective settings, expanded targets/count, groups and explicit CLI overrides. It starts no probes, listeners, UI or output writers and needs no raw-socket privileges. `--resolve-all` may perform DNS lookups. CLI flags take precedence over YAML.
 
 HTTP checks count a 2xx or 3xx response as up and anything else as down. URLs must be HTTP(S) without embedded credentials or fragments.
 
@@ -362,7 +376,7 @@ Pane folding and maximization are available in the overview. Folded title rows r
 >
 > Selection and deletion use stable target IDs, including duplicate host names. Echo IDs are never recycled within a session; after 32,768 worker allocations across initial starts, additions, and restarts, restart mping to obtain a fresh session.
 
-Stop, restart and reset operations execute in keypress order. A running reset discards results from probes sent before the reset and recreates enabled route/port/HTTP monitors. It keeps the remaining `--count` budget; restarting starts a fresh budget. When stopped, reset clears ping and MTR counters while preserving the last route and port/HTTP results. Quitting waits for measurement workers before writing the final JSON snapshot.
+Stop, restart and reset operations execute in keypress order. A running reset discards results from probes sent before the reset and recreates enabled route/port/HTTP monitors. It keeps the remaining `--count` budget; restarting starts a fresh budget. When stopped, reset clears ping and MTR counters while preserving the last route and port/HTTP results. Quitting waits for measurement workers and prints a terminal summary. Reports are saved explicitly with **w** or the Web UI's **Report** button.
 
 ### Saving investigation results
 
@@ -370,7 +384,7 @@ Press **w**, enter a new file path ending in **.json** or **.csv**, and press **
 
 JSON reports include the session and collection start times, capture interval, stable target IDs, ping statistics window, effective settings, DNS IP changes, Ping, traceroute, MTR, port results, and retained target events. They use `schema_version: 1`; fields ending in `_ms` are milliseconds. `statistics` reuses the existing JSON target summary, including its `loss_rate_pct` denominator (sent probes) and separate cancelled probes.
 
-CSV reports are a table with one row per target — active targets first, then removed ones with `removed_at` set — for spreadsheets. Columns: `captured_at`, `target_id`, `host`, `ip`, `group`, `removed_at`, `measurement_state`, `health_status`, `health_reason`, `sent`, `received`, `lost`, `loss_pct`, `recent_loss_pct`, `duplicates`, `late_replies`, `last_rtt_ms`, `min_rtt_ms`, `avg_rtt_ms`, `max_rtt_ms`, `jitter_ms`, `last_ttl`, `last_error`, `last_loss_at`, `last_reply_at`, `started_at`, `statistics_since`, `asn`, `org`, `ptr` and `route_changes`. RTT and TTL columns stay empty until a target has replied. Ports, HTTP checks, hops and events are only in JSON. The file is UTF-8 with a byte order mark so spreadsheet applications read non-ASCII names; text cells starting with `=`, `+`, `-` or `@` get a leading `'` so they are not evaluated as formulas.
+CSV reports are a table with one row per target — active targets first, then removed ones with `removed_at` set — for spreadsheets. Columns: `captured_at`, `target_id`, `host`, `ip`, `group`, `removed_at`, `measurement_state`, `health_status`, `health_reason`, `sent`, `received`, `lost`, `loss_pct`, `recent_loss_pct`, `duplicates`, `late_replies`, `last_rtt_ms`, `min_rtt_ms`, `avg_rtt_ms`, `max_rtt_ms`, `jitter_ms`, `last_ttl`, `last_error`, `last_loss_at`, `last_reply_at`, `started_at`, `statistics_since`, `asn`, `org`, `ptr`, `route_changes`, `path_mtu`, `pmtu_payload`, `pmtu_status` and `pmtu_source`. RTT and TTL columns stay empty until a target has replied. Ports, HTTP checks, hops and events are only in JSON. The file is UTF-8 with a byte order mark so spreadsheet applications read non-ASCII names; text cells starting with `=`, `+`, `-` or `@` get a leading `'` so they are not evaluated as formulas.
 
 The most recent 128 removed targets, 128 events per target, and 64 destination IP history entries are retained; reports include omitted-entry counts. A reload that rebuilds probe/network settings starts a new collection and clears earlier targets and removal history; live metadata/membership reloads retain them. Manual reset starts a new ping statistics window; when stopped, port/HTTP results retain their previous counters. Measurements and auxiliary checks are captured sequentially within the recorded capture interval. Reports contain aggregate results and retained events, not individual ping records.
 
@@ -427,20 +441,21 @@ Regenerate saved scripts after upgrading mping to include new flags. To monitor 
 
 ## TUI columns
 
-* **Src IP** — Local IP address used for sending.
+* **Src IP** — The bound source address, or the automatically detected source-address hint for the destination's address family.
 * **Dst IP** — Resolved destination IP. Shown as `domain (IP)` when a hostname is given.
-* **ASN** — Autonomous System Number, country code, and organization name of the target IP (enabled with `-a`). Example: `AS15169 US Google LLC`.
+* **ASN** — Autonomous System Number and organization name of the target IP (enabled with `-a`). Example: `AS15169 Google LLC`.
+* **PTR** — Reverse DNS name of the target IP (enabled with `-r`).
 * **Success** — Number of packets received successfully.
 * **Loss** — Number of lost packets.
 * **Loss Ratio** — Packet loss percentage. Colour boundaries are configurable (defaults shown).
-  * **Green**: 0%–20% &nbsp;|&nbsp; **Orange**: 20%–80% &nbsp;|&nbsp; **Vivid red**: >80%
+  * **Green**: 0%–20% &nbsp;|&nbsp; **Orange**: >20% and ≤80% &nbsp;|&nbsp; **Vivid red**: >80%
 * **RTT / Avg / Jitter** — Latest / average / jitter round-trip time. Colour boundaries are configurable (defaults shown).
   * **RTT**: Green (≤50 ms) / Orange (≤200 ms) / Red (>200 ms)
   * **Jitter**: Green (≤10 ms) / Orange (≤50 ms) / Red (>50 ms)
   * Override with `--rtt-warn/--rtt-crit`, `--jitter-warn/--jitter-crit`, `--loss-warn/--loss-crit`, or the `thresholds:` YAML block.
 * **Size** — Payload size of sent packets.
-* **MTU** — MTU of the outbound interface.
-* **TTL** — Time To Live of the last received packet.
+* **MTU** — MTU of the specified or initially inferred outbound interface.
+* **TTL** — IPv4 TTL or IPv6 Hop Limit of the last reply.
 * **Error** — Abbreviated latest error message (red). Full details appear in the Log pane.
 * **Last Loss** — Time elapsed since the last packet loss.
 
@@ -503,18 +518,20 @@ Regenerate saved scripts after upgrading mping to include new flags. To monitor 
 * Performs TCP/UDP reachability checks in real time at the ping interval.
 * Multiple ports can be specified comma-separated (e.g. `-p 443/tcp,53/udp`).
 * Omitting the protocol defaults to TCP (e.g. `-p 443` → `443/tcp`).
+* UDP sends an empty datagram. A reply is `Open`, an ICMP Port Unreachable or similar receive error is `Closed`, and no reply is `Open|Filtered`. This does not validate an application protocol such as DNS.
 * Columns:
   * **Target** — Hostname
   * **Port** — Port number and protocol (e.g. `443/tcp`)
   * **Service** — Estimated service name (`Unknown` if not recognized)
   * **Status** — Green `Open` / Red `Closed` / Yellow `Filtered` or `Open|Filtered`
-  * **Open/Closed** — Cumulative Open count / Closed+Filtered count
+  * **Last / Min / Avg / Max** — Latest, minimum, average and maximum RTT; Min/Avg/Max use Open results only.
+  * **Open/Closed** — Cumulative Open count / Closed+Filtered+Open|Filtered count
   * **Last Change** — Time elapsed since the last status change
 
 ## PMTU discovery
 
 * `--discovery-mtu` / `-m` is the common PMTU switch. It checks each destination independently at startup and dispatches to the IPv4 or IPv6 implementation using the resolved IP. `-4` / `-6` are not required for PMTU discovery.
-* IPv4 uses the existing DF probe search, starting at a payload upper bound of 9872 bytes (or the interface limit). For successful IPv4-only runs, **Size** uses the smallest discovered payload limit.
+* IPv4 uses the existing DF probe search. The initial payload upper bound is the detected interface MTU minus 28 bytes, or 9872 bytes when the interface MTU is unknown. For successful IPv4-only runs, **Size** uses the smallest discovered payload limit.
 * IPv6 on macOS/Linux uses the OS path-MTU estimate. It disables sender fragmentation, sends an echo at that size, and retries only if the OS lowers its estimate. An exact echo reply marks the result **confirmed**; otherwise it remains **estimated**. A timeout alone never lowers the estimate. An OS estimate may initially be just the outgoing interface MTU.
 * TUI details and Web Summary show the IP-packet **PMTU**, ICMP **payload** limit, and confirmation status. IPv6 and mixed-family runs keep the configured regular Ping size. A changed destination IP clears the old path's result; restarting measurement setup discovers it again.
 * JSON retains `pmtu` as the payload limit and adds `path_mtu` (whole IP packet), `pmtu_source` (`os` / `probe`), and `pmtu_status` (`estimated` / `confirmed` for IPv6, `probed` for IPv4). CSV includes the same information, with `pmtu_payload` for the payload column. For example, IPv6 PMTU 1450 allows 1402 bytes of ICMP data without extension headers.
@@ -534,7 +551,7 @@ mping --web google.com 1.1.1.1      # then open http://127.0.0.1:8080/
 </picture>
 
 - It listens on loopback only (`127.0.0.1`, plus `[::1]` when available) and is not reachable from other machines. Requests whose `Host` or `Origin` header is not this server are rejected (DNS-rebinding / cross-site protection).
-- What the browser talks to runs as a separate process, started and stopped with mping. Before it serves anything it gives up every privilege for good: it runs as the invoking user (the calling user under `sudo`, `nobody` when root started mping itself), and on Linux it cannot gain the `CAP_NET_RAW` or setuid root mping was installed with. It reaches mping's measurements through a UNIX socket in a private directory that only that user can open, and mping itself checks the control token. Because the process is unprivileged, `--web-port` must be 1024 or above.
+- What the browser talks to runs as a separate process, started and stopped with mping. Before it serves anything it gives up every privilege for good: it runs as the invoking user (the calling user under `sudo`, `nobody` when root started mping itself), and on Linux it cannot gain the `CAP_NET_RAW` or setuid root mping was installed with. It reaches mping's measurements through a UNIX socket in a private directory that only that user can open, and mping itself checks the control token. Use `--web-port` 1024 or above for portability; lower ports may be unavailable to the unprivileged process on your OS.
 - The control link the TUI's Log shows contains a secret token. To choose the token yourself, set the `MPING_WEB_TOKEN` environment variable (at least 16 characters of letters, digits and `-._~`; keep it out of command lines and shell history) and open `http://127.0.0.1:8080/#token=<your token>`.
 - `--web` / `--web-port` are read at startup; a hosts-file reload does not restart the server (changing them in the hosts file logs a restart-required warning).
 - The desktop dashboard fills the browser width and height. Ping monitor and the selected host's **Summary** occupy the upper row; route monitoring and **RTT graphs** share the lower row. Each pane scrolls internally. Narrower windows stack the panes; phone widths are not supported, and below 720px the page scrolls horizontally. Summary contains statistics, enabled port checks and target actions, with no tabs.
@@ -543,7 +560,7 @@ mping --web google.com 1.1.1.1      # then open http://127.0.0.1:8080/
 - RTT graphs share a time axis and default to a shared vertical scale with four rounded intervals and an explicit ms label. Per target scale remains available. Hovering any graph compares all targets at the same time.
 - The table shows as many columns as fit the window, dropping the least important first (Status, Host, Loss % and latest RTT are always kept). Each row explains its status, based on consecutive failures/replies, recent loss, latest RTT and jitter. Average/minimum/peak RTT describe the run since start/reset in Summary. RTT history appears only in the graphs, whose numeric readout is shown at the cursor. Wide screens show the list and details side by side. Click **Enable controls** to paste a token or the full URL copied from the TUI, without reloading. A token is stored only after successful verification; connection failures and rejected tokens have separate explanations.
 - Column widths and row heights stay stable as measurements update. The table responds to the available width and keeps Status, Host, Loss % and latest RTT; there is no size selector. Inspect tables retain horizontal scroll positions across updates. Long names and IPv6 addresses are ellipsized, with full text in tooltips/details. Large counts use M/B/T and very large RTTs use scientific notation, with unabridged values in tooltips. See the [column width and display budgets](internal/web/COLUMNS.md).
-- **Making changes from the browser.** With `--web`, the TUI header permanently shows the browser address and the **b** shortcut. Press **b** from the overview or host details to show the current token URL, then activate **Copy URL** (Enter) to request clipboard copying through the terminal. **Esc** returns to the previous view. Clipboard support depends on the terminal; the full URL remains visible for manual selection. This does not depend on retained Log entries. The Log also shows the link at startup, e.g. `Web UI: http://127.0.0.1:8080/#token=…`. The token is generated for each launch and lets that page add hosts, delete targets and reset statistics after a confirmation dialog; each change is noted in the TUI Log pane. Opened without the token (or with one from an earlier run) the page is read-only. The same token enables Stop/Restart, matching the TUI, and report downloads. The **Report** button opens a dialog to choose **JSON** or **Text** and edit the download file name; the extension follows the selected format. Cancelling closes the dialog without downloading.
+- **Making changes from the browser.** With `--web`, the TUI header permanently shows the browser address and the **b** shortcut. Press **b** from the overview or host details to show the current token URL, then activate **Copy URL** (Enter) to request clipboard copying through the terminal. **Esc** returns to the previous view. Clipboard support depends on the terminal; the full URL remains visible for manual selection. This does not depend on retained Log entries. The Log also shows the link at startup, e.g. `Web UI: http://127.0.0.1:8080/#token=…`. The token is generated for each launch and lets that page add hosts, delete targets and reset statistics after a confirmation dialog; each change is noted in the TUI Log pane. Opened without the token (or with one from an earlier run) the page is read-only. The same token enables Stop/Restart, matching the TUI, and report downloads. The **Report** button opens a dialog to choose **JSON** or **CSV** and edit the download file name; the extension follows the selected format. Cancelling closes the dialog without downloading.
 - Health count buttons filter the monitor, route panes and graphs. Text and health filters combine; the shown/total count is always visible. Sorting via headings or the order selector works across groups, preserving group names beside hosts. Order is frozen during live updates: use **Refresh order** to apply new rankings, or **Configured order** to restore grouping. New hosts append while an order is frozen.
 - Selection is highlighted in the monitor, routes and graphs. **Selected host** scrolls the corresponding pane explicitly; selection and live updates never automatically scroll other panes. Summary keeps a selection outside the current filters and says so. Current/recent results precede lifetime statistics and network details.
 - Browser connection, measurement state and host health are separate. **Last probe** shows the actual latest probe time; reconnecting retains values with an explanation. Notifications overlay the workspace; errors remain until dismissed. **Stop all / Restart all** retains statistics. Delete and reset dialogs describe their scope, initially focus Cancel, and do not expire. Narrow screens collect controls under **Actions**.
