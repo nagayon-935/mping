@@ -235,8 +235,8 @@ func TestDiscoverPathMTUIPv6ClosesSocketAndKeepsZone(t *testing.T) {
 	}
 }
 
-// Preserve the direct net.Error assertion in the PMTU read loop: adding
-// wrapped-timeout support is deliberately outside this refactor.
+// Direct and wrapped timeouts leave the OS estimate unchanged; other read
+// errors still propagate to the caller.
 func TestIPv6PMTUReadErrorClassification(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
@@ -244,9 +244,11 @@ func TestIPv6PMTUReadErrorClassification(t *testing.T) {
 		wantErr bool
 	}{
 		{"socket timeout leaves estimate", timeoutOpError(), false},
-		{"wrapped timeout is returned", fmt.Errorf("read: %w", timeoutOpError()), true},
+		{"wrapped timeout leaves estimate", fmt.Errorf("read: %w", timeoutOpError()), false},
+		{"nested wrapped timeout leaves estimate", fmt.Errorf("probe: %w", fmt.Errorf("read: %w", timeoutOpError())), false},
 		{"EMSGSIZE leaves estimate", syscall.EMSGSIZE, false},
 		{"other read errors are returned", syscall.ENETUNREACH, true},
+		{"wrapped non-timeout read errors are returned", fmt.Errorf("read: %w", syscall.ENETUNREACH), true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			p := NewPingerWithOptions(nil, Options{IDs: &IDAllocator{}})
