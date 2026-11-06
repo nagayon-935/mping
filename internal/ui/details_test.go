@@ -114,7 +114,7 @@ func TestDetailsOptionalSectionsFollowOptionsEvenWithCachedData(t *testing.T) {
 	target := stats.NewTargetStats("router")
 	target.SetASNInfo("AS64500", "JP", "Example")
 	target.SetPTR("router.example")
-	target.SetPMTU(1400)
+	target.SetPathMTU(stats.PathMTUInfo{MTU: 1450, Payload: 1402, Source: "os", Status: "estimated"})
 	setRouteHops(target, "192.0.2.1")
 	target.SetPortResults([]*stats.PortCheckResult{stats.NewPortCheckResult(443, "tcp")})
 	off := renderHostDetails(target, RunOptions{})
@@ -126,6 +126,9 @@ func TestDetailsOptionalSectionsFollowOptionsEvenWithCachedData(t *testing.T) {
 		if !strings.Contains(on, label) {
 			t.Fatalf("enabled option hidden: %s", label)
 		}
+	}
+	if !strings.Contains(on, "PMTU: 1450 (estimated)") || !strings.Contains(on, "PMTU payload: 1402") {
+		t.Fatalf("PMTU confidence or units missing: %s", on)
 	}
 	if perHop := renderHostDetails(target, RunOptions{Route: RouteMonitor}); !strings.Contains(perHop, "[yellow]MTR") || strings.Contains(perHop, "[yellow]Route") {
 		t.Fatalf("per-hop mode should show the MTR section instead of the route line:\n%s", perHop)

@@ -1,11 +1,40 @@
 package pinger
 
 import (
+	"context"
 	"net"
 	"syscall"
 	"testing"
 	"time"
 )
+
+// A scoped source must not silently fall back to the OS-selected source.
+// With no binding, both dials to this loopback listener would succeed.
+func TestNewBoundDialer_ScopedSourceIsBound(t *testing.T) {
+	ln, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback unavailable: %v", err)
+	}
+	defer ln.Close()
+	for _, network := range []string{"tcp", "udp"} {
+		t.Run(network, func(t *testing.T) {
+			unbound := NewBoundDialer(network, time.Second, BindConfig{})
+			baseline, err := unbound.DialContext(context.Background(), network+"6", ln.Addr().String())
+			if err != nil {
+				t.Fatalf("unbound dial to IPv6 loopback: %v", err)
+			}
+			baseline.Close()
+			d := NewBoundDialer(network, time.Second, BindConfig{Source: "fe80::dead%mping-no-such-interface"})
+			conn, err := d.DialContext(context.Background(), network+"6", ln.Addr().String())
+			if conn != nil {
+				conn.Close()
+			}
+			if err == nil {
+				t.Fatal("dial succeeded with an unassignable scoped source; source binding was ignored")
+			}
+		})
+	}
+}
 
 // rawBindCall records a single invocation of bindRawConnToInterfaceFn.
 type rawBindCall struct {
@@ -58,36 +87,45 @@ func TestBindConfig_IsZero(t *testing.T) {
 // type", so the type is part of the contract, not an implementation detail.
 func TestNewBoundDialer_SourceSetsLocalAddrPerNetwork(t *testing.T) {
 	tests := []struct {
-		network string
-		source  string
-		wantIP  string
+		network  string
+		source   string
+		wantIP   string
+		wantZone string
 	}{
-		{"tcp", "192.0.2.5", "192.0.2.5"},
-		{"udp", "192.0.2.5", "192.0.2.5"},
-		{"tcp", "2001:db8::1", "2001:db8::1"},
-		{"udp", "2001:db8::1", "2001:db8::1"},
+		{"tcp", "192.0.2.5", "192.0.2.5", ""},
+		{"udp", "192.0.2.5", "192.0.2.5", ""},
+		{"tcp", "2001:db8::1", "2001:db8::1", ""},
+		{"udp", "2001:db8::1", "2001:db8::1", ""},
+		{"tcp6", "fe80::1%en0", "fe80::1", "en0"},
+		{"udp6", "fe80::1%en0", "fe80::1", "en0"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.network+"/"+tt.source, func(t *testing.T) {
 			d := NewBoundDialer(tt.network, time.Second, BindConfig{Source: tt.source})
 
 			var gotIP net.IP
+			var gotZone string
 			switch tt.network {
-			case "tcp":
+			case "tcp", "tcp6":
 				addr, ok := d.LocalAddr.(*net.TCPAddr)
 				if !ok {
 					t.Fatalf("LocalAddr: got %T, want *net.TCPAddr", d.LocalAddr)
 				}
 				gotIP = addr.IP
-			case "udp":
+				gotZone = addr.Zone
+			case "udp", "udp6":
 				addr, ok := d.LocalAddr.(*net.UDPAddr)
 				if !ok {
 					t.Fatalf("LocalAddr: got %T, want *net.UDPAddr", d.LocalAddr)
 				}
 				gotIP = addr.IP
+				gotZone = addr.Zone
 			}
 			if !gotIP.Equal(net.ParseIP(tt.wantIP)) {
 				t.Errorf("LocalAddr IP: got %v, want %v", gotIP, tt.wantIP)
+			}
+			if gotZone != tt.wantZone {
+				t.Errorf("LocalAddr zone: got %q, want %q", gotZone, tt.wantZone)
 			}
 		})
 	}

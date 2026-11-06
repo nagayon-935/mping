@@ -19,18 +19,23 @@ import (
 type fakeDNS struct {
 	conn     net.PacketConn
 	dropAAAA bool
+	a, aaaa  net.IP
 
 	mu    sync.Mutex
 	types []dnsmessage.Type
 }
 
 func startFakeDNS(t *testing.T, dropAAAA bool) *fakeDNS {
+	return startFakeDNSAddresses(t, dropAAAA, "192.0.2.10", "2001:db8::10")
+}
+
+func startFakeDNSAddresses(t *testing.T, dropAAAA bool, a, aaaa string) *fakeDNS {
 	t.Helper()
 	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	f := &fakeDNS{conn: conn, dropAAAA: dropAAAA}
+	f := &fakeDNS{conn: conn, dropAAAA: dropAAAA, a: net.ParseIP(a), aaaa: net.ParseIP(aaaa)}
 	t.Cleanup(func() { conn.Close() })
 	go f.serve()
 	return f
@@ -61,10 +66,14 @@ func (f *fakeDNS) serve() {
 		hdr := dnsmessage.ResourceHeader{Name: q.Name, Type: q.Type, Class: dnsmessage.ClassINET, TTL: 60}
 		switch q.Type {
 		case dnsmessage.TypeA:
-			resp.Answers = []dnsmessage.Resource{{Header: hdr, Body: &dnsmessage.AResource{A: [4]byte{192, 0, 2, 10}}}}
+			var a [4]byte
+			copy(a[:], f.a.To4())
+			resp.Answers = []dnsmessage.Resource{{Header: hdr, Body: &dnsmessage.AResource{A: a}}}
 		case dnsmessage.TypeAAAA:
+			var aaaa [16]byte
+			copy(aaaa[:], f.aaaa.To16())
 			resp.Answers = []dnsmessage.Resource{{Header: hdr, Body: &dnsmessage.AAAAResource{
-				AAAA: [16]byte{0x20, 0x01, 0x0d, 0xb8, 15: 0x10}}}}
+				AAAA: aaaa}}}
 		}
 		out, err := resp.Pack()
 		if err != nil {
@@ -130,18 +139,65 @@ func TestResolveIPAddrContext_IP6QueriesOnlyAAAA(t *testing.T) {
 	}
 }
 
-func TestResolveIPAddrContext_IPPrefersIPv4(t *testing.T) {
-	dns := startFakeDNS(t, false)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	addr, err := ResolveIPAddrContext(ctx, dns.resolver(), "ip", "host.example.test.")
-
-	if err != nil {
-		t.Fatalf("ip lookup: %v", err)
+func TestPickIPAddrPreservesOSOrder(t *testing.T) {
+	for _, first := range []string{"2001:db8::10", "192.0.2.10"} {
+		other := "192.0.2.10"
+		if first == other {
+			other = "2001:db8::10"
+		}
+		addr, err := pickIPAddr("ip", "host.example.test", []net.IPAddr{{IP: net.ParseIP(first)}, {IP: net.ParseIP(other)}})
+		if err != nil || addr.IP.String() != first {
+			t.Fatalf("OS preference %s overridden: %v %v", first, addr, err)
+		}
 	}
-	if got := addr.IP.String(); got != "192.0.2.10" {
-		t.Errorf("addr = %s, want 192.0.2.10", got)
+}
+
+func TestResolveUsableIPAddrContextHonorsSourceFamily(t *testing.T) {
+	dns := startFakeDNSAddresses(t, false, "127.0.0.1", "::1")
+	for _, source := range []string{"127.0.0.1", "::1"} {
+		t.Run(source, func(t *testing.T) {
+			if source == "::1" {
+				c, err := net.ListenPacket("udp6", "[::1]:0")
+				if err != nil {
+					t.Skipf("IPv6 unavailable: %v", err)
+				}
+				c.Close()
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			addr, err := ResolveUsableIPAddrContext(ctx, dns.resolver(), "ip", "host.example.test.", BindConfig{Source: source})
+			if err != nil || addr.IP.String() != source {
+				t.Fatalf("source=%s addr=%v err=%v", source, addr, err)
+			}
+		})
+	}
+}
+
+func TestResolveUsableIPAddrContextRejectsUnassignableSource(t *testing.T) {
+	dns := startFakeDNSAddresses(t, false, "127.0.0.1", "::1")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	addr, err := ResolveUsableIPAddrContext(ctx, dns.resolver(), "ip", "host.example.test.", BindConfig{Source: "2001:db8::dead"})
+	if err == nil {
+		t.Fatalf("unassignable source was ignored: addr=%v", addr)
+	}
+}
+
+func TestResolveUsableIPAddrContextForcedFamilyAndCancellation(t *testing.T) {
+	dns := startFakeDNSAddresses(t, true, "127.0.0.1", "::1")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	addr, err := ResolveUsableIPAddrContext(ctx, dns.resolver(), "ip4", "host.example.test.", BindConfig{})
+	if err != nil || addr.IP.String() != "127.0.0.1" || dns.queried(dnsmessage.TypeAAAA) {
+		t.Fatalf("forced IPv4: addr=%v err=%v", addr, err)
+	}
+	cancel()
+	if _, err := ResolveUsableIPAddrContext(ctx, dns.resolver(), "ip", "other.example.test.", BindConfig{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled lookup: %v", err)
+	}
+	addr, err = ResolveUsableIPAddrContext(context.Background(), nil, "ip", "fe80::1%test0", BindConfig{})
+	if err != nil || addr.Zone != "test0" {
+		t.Fatalf("literal zone lost: %v %v", addr, err)
 	}
 }
 

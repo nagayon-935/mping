@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 	"time"
+
+	"github.com/nagayon-935/mping/internal/pinger"
 )
 
 var (
@@ -147,8 +149,12 @@ var getPreferredOutboundIPFn = getPreferredOutboundIP
 
 // getPreferredOutboundIP determines the preferred local IP address for reaching a remote host.
 func getPreferredOutboundIP(remoteAddr, network string) string {
+	return getPreferredOutboundIPBound(remoteAddr, network, pinger.BindConfig{})
+}
+
+func getPreferredOutboundIPBound(remoteAddr, network string, bind pinger.BindConfig) string {
 	// network should be "udp", "udp4", or "udp6"
-	dialer := &net.Dialer{Timeout: 200 * time.Millisecond}
+	dialer := pinger.NewBoundDialer("udp", 200*time.Millisecond, bind)
 	conn, err := dialer.Dial(network, net.JoinHostPort(remoteAddr, probePort))
 	if err != nil {
 		return ""
@@ -162,26 +168,23 @@ func getPreferredOutboundIP(remoteAddr, network string) string {
 	return localAddr.IP.String()
 }
 
-func hasIPv6Connectivity() bool {
-	// Use Cloudflare's public IPv6 DNS address to probe for outbound IPv6 route
-	out := getPreferredOutboundIPFn("2606:4700:4700::1111", "udp6")
-	if out == "" {
-		return false
-	}
-	ip := net.ParseIP(out)
-	if ip == nil || ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() {
-		return false
-	}
-	return true
+func detectAutoSourceIPs(specs []targetSpec) (string, string) {
+	return detectSourceIPs(specs, getPreferredOutboundIPFn)
 }
 
-func detectAutoSourceIPs(specs []targetSpec) (string, string) {
+func detectInterfaceSourceIPs(specs []targetSpec, iface string) (string, string) {
+	return detectSourceIPs(specs, func(remote, network string) string {
+		return getPreferredOutboundIPBound(remote, network, pinger.BindConfig{Interface: iface})
+	})
+}
+
+func detectSourceIPs(specs []targetSpec, probe func(string, string) string) (string, string) {
 	var src4, src6 string
 	for _, spec := range specs {
 		cleanHost := spec.resolveAddr()
 		if src4 == "" {
 			if ip, err := net.ResolveIPAddr("ip4", cleanHost); err == nil && ip != nil && ip.IP != nil {
-				if out := getPreferredOutboundIPFn(ip.IP.String(), "udp4"); out != "" {
+				if out := probe(ip.IP.String(), "udp4"); out != "" {
 					src4 = out
 				}
 			}
@@ -189,7 +192,7 @@ func detectAutoSourceIPs(specs []targetSpec) (string, string) {
 		if src6 == "" {
 			if ip, err := net.ResolveIPAddr("ip6", cleanHost); err == nil && ip != nil && ip.IP != nil {
 				remote := ip.String()
-				if out := getPreferredOutboundIPFn(remote, "udp6"); out != "" {
+				if out := probe(remote, "udp6"); out != "" {
 					src6 = out
 				}
 			}

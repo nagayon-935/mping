@@ -60,8 +60,16 @@ func (p *Pinger) DiscoverMaxPayload(ctx context.Context, dest string, start int,
 	if dstAddr.IP.To4() == nil {
 		return p.Size, "", fmt.Errorf("PMTU discovery not supported for IPv6")
 	}
+	return p.discoverIPv4MaxPayload(ctx, dstAddr, start, min, logf)
+}
 
-	low := min
+// Use the already selected destination throughout the IPv4 search. In
+// particular, never perform a second DNS lookup after deciding the family.
+func (p *Pinger) discoverIPv4MaxPayload(ctx context.Context, dstAddr *net.IPAddr, start, min int, logf func(string)) (int, string, error) {
+	if start <= 0 {
+		return 0, "", fmt.Errorf("start MTU must be > 0")
+	}
+	low := max(min, 0)
 	if low > start {
 		low = start
 	}

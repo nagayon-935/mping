@@ -67,6 +67,9 @@ func renderHostDetails(t *stats.TargetStats, opts RunOptions) string {
 		annotations = append(annotations, fmt.Sprintf("Interface MTU: %d", v.IfaceMTU))
 	}
 	if opts.MTUEnabled && v.PMTU > 0 {
+		if v.PathMTU > 0 {
+			annotations = append(annotations, fmt.Sprintf("PMTU: %d (%s)", v.PathMTU, v.PMTUStatus))
+		}
 		annotations = append(annotations, fmt.Sprintf("PMTU payload: %d", v.PMTU))
 	}
 	if len(annotations) > 0 {

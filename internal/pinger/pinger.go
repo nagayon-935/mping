@@ -264,11 +264,6 @@ type Options struct {
 func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 	resolve := opts.ResolveIPAddr
 	resolveContext := opts.ResolveIPAddrContext
-	if resolveContext == nil && resolve == nil {
-		resolveContext = func(ctx context.Context, network, address string) (*net.IPAddr, error) {
-			return ResolveIPAddrContext(ctx, opts.Resolver, network, address)
-		}
-	}
 
 	now := opts.Now
 	if now == nil {
@@ -292,7 +287,7 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Pinger{
+	p := &Pinger{
 		Targets:            targets,
 		ids:                opts.IDs,
 		workerStates:       make(map[*stats.TargetStats]*targetWorker),
@@ -322,6 +317,12 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		asnJitter:          func() time.Duration { return time.Duration(rand.Int63n(int64(asnJitterMax))) },
 		ptrJitter:          func() time.Duration { return time.Duration(rand.Int63n(int64(ptrJitterMax))) },
 	}
+	if resolveContext == nil && resolve == nil {
+		p.resolveWithContext = func(ctx context.Context, network, address string) (*net.IPAddr, error) {
+			return ResolveUsableIPAddrContext(ctx, resolver, network, address, BindConfig{Source: p.Source, Interface: p.Interface})
+		}
+	}
+	return p
 }
 
 // applyLastErrSource substitutes the bound source IP into raw-socket write

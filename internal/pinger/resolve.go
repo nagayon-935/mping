@@ -43,20 +43,49 @@ func ResolveIPAddrContext(ctx context.Context, resolver *net.Resolver, network, 
 	return pickIPAddr(network, address, addrs)
 }
 
-// pickIPAddr returns the first address matching network, preferring IPv4 for
-// "ip" to match net.ResolveIPAddr.
+// ResolveUsableIPAddrContext lets the OS and net.Dialer's address ordering
+// select an address with a usable route and source. UDP connect performs
+// local route selection only: no datagram or reachability probe is sent.
+// Literal IPs keep their explicitly requested family, even without a route.
+func ResolveUsableIPAddrContext(ctx context.Context, resolver *net.Resolver, network, address string, bind BindConfig) (*net.IPAddr, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var udpNetwork string
+	switch network {
+	case "ip":
+		udpNetwork = "udp"
+	case "ip4":
+		udpNetwork = "udp4"
+	case "ip6":
+		udpNetwork = "udp6"
+	default:
+		return nil, net.UnknownNetworkError(network)
+	}
+	if _, err := netip.ParseAddr(address); err == nil {
+		return ResolveIPAddrContext(ctx, resolver, network, address)
+	}
+	dialer := NewBoundDialer("udp", resolveTimeout, bind)
+	dialer.Resolver = resolver
+	conn, err := dialer.DialContext(ctx, udpNetwork, net.JoinHostPort(address, "9"))
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	remote, ok := conn.RemoteAddr().(*net.UDPAddr)
+	if !ok {
+		return nil, fmt.Errorf("unexpected route-selection address %T", conn.RemoteAddr())
+	}
+	return &net.IPAddr{IP: remote.IP, Zone: remote.Zone}, nil
+}
+
+// pickIPAddr preserves the resolver/OS order within the requested family.
 func pickIPAddr(network, address string, addrs []net.IPAddr) (*net.IPAddr, error) {
 	for _, addr := range addrs {
 		if network == "ip4" && addr.IP.To4() == nil || network == "ip6" && addr.IP.To4() != nil {
 			continue
 		}
-		if network == "ip" && addr.IP.To4() == nil {
-			continue // match net.ResolveIPAddr's IPv4 preference for hostnames
-		}
 		return &addr, nil
-	}
-	if network == "ip" && len(addrs) > 0 {
-		return &addrs[0], nil // IPv6-only hostname or literal, including its zone
 	}
 	return nil, &net.DNSError{Err: "no suitable address", Name: address, IsNotFound: true}
 }

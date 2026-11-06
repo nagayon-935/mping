@@ -63,8 +63,8 @@ func expandTargets(specs []targetSpec, groups []ui.TargetGroup, cfg config) ([]t
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// resolveNetwork can probe for IPv6 connectivity, so it runs once and only
-	// when some host actually needs a DNS lookup.
+	// --resolve-all intentionally keeps every DNS address in the selected
+	// family, including those that cannot currently be routed.
 	var network string
 	resolvedIPs := make(map[string][]string)
 	for _, spec := range specs {

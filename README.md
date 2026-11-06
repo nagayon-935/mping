@@ -26,7 +26,7 @@
 * **Route monitoring in two modes** — `-T` shows the route to each target in a Host/Route table, rediscovered every 10 minutes at low probe load. `-M` additionally probes every hop each second and shows Hop, Host, Loss%, Snt, Recv, Last, Avg, Min, Max, Jitter — the same columns as `mtr`. Both modes detect route changes; choose one of them.
 * **HTTP(S) health check pane** — monitor HTTP/HTTPS endpoints when `-H` is given. Performs GET requests at the ping interval and tracks status code, response time (Last/Min/Avg/Max), and cumulative Up/Down counts. Status changes are logged to the Log pane.
 * **Port Monitor pane** — monitor TCP/UDP port reachability in real time with `-p`. Displays the estimated service name, **Last / Min / Avg / Max RTT** (measured from TCP connect or UDP round-trip), cumulative Open/Closed counts, and time since last status change. RTT statistics are collected for `Open` responses only.
-* **PMTU discovery** — probe maximum payload size using DF-bit ICMP packets.
+* **PMTU discovery** — IPv4 DF probes and IPv6 OS path-MTU estimates with echo confirmation.
 * **Auto source IP detection** — automatically detects and displays the local IP used for each destination.
 * **RTT graph** — auto-scaling Y-axis (expands immediately on spike, shrinks after a hold period) × 30 seconds (X-axis) per target. Supports both ICMP and TCP/UDP port series.
 * **Statistics snapshots** — save every statistic collected so far, at any moment, as JSON or CSV from the TUI (`w`) or the Web UI's **Report** button.
@@ -135,6 +135,10 @@ sudo ./install.sh
 
 ## Usage
 
+Without `-4` / `-6`, hostnames use the address order and route/source selection of the OS and Go dialer. Each destination selects an IPv4 or IPv6 address that can be sent to locally; there is no fixed IPv4 preference or global IPv6-connectivity check against an unrelated host. This uses a UDP socket connection without sending datagrams. It checks local routing, not whether the destination answers Ping. Subsequent Ping loss does not trigger a family switch. DNS re-resolution re-evaluates the choice.
+
+Literal IPs retain their specified version and IPv6 zone. `-S` restricts selection to that source's family; `-I` alone leaves both families available on that interface. `-4` / `-6` remain explicit overrides. `--resolve-all` deliberately monitors all DNS addresses in the requested family, including currently unroutable ones.
+
 ```bash
 # Basic (no sudo needed after install.sh)
 mping google.com 1.1.1.1 8.8.8.8
@@ -157,8 +161,11 @@ mping -6 google.com
 # Show Traceroute pane
 mping -T google.com
 
-# PMTU discovery (probes from payload size 9872 downward)
+# PMTU discovery (automatically uses the selected address's version)
 mping -m google.com
+
+# IPv6 PMTU is selected from the destination IP; the same -m works for both
+mping -m 1.1.1.1 2606:4700:4700::1111
 
 # TCP port reachability check (443/tcp)
 mping -p 443/tcp google.com
@@ -282,9 +289,9 @@ See [examples/hosts-patterns.yaml](examples/hosts-patterns.yaml) and [examples/b
 | `--mtr` | `-M` | Also probe every hop each second, MTR-style (not with `-T`) | `false` |
 | `--dns-server` | `-d` | Custom DNS server IP address to resolve target hostnames | `""` (OS default) |
 | `--resolve-all` | | Resolve target hostnames to all IP addresses and monitor them concurrently | `false` |
-| `--discovery-mtu` | `-m` | Discover max payload size with DF bit | `false` |
+| `--discovery-mtu` | `-m` | Discover PMTU using IPv4 DF probes or IPv6 OS estimates with echo confirmation | `false` |
 | `--interface` | `-I` | Network interface name (e.g. `eth0`, `en0`) | `""` |
-| `--source` | `-S` | Source IPv4 address | `""` (auto-detect) |
+| `--source` | `-S` | Source IP address, including scoped IPv6 | `""` (auto-detect) |
 | `--size` | `-s` | Payload size in bytes | `56` |
 | `--count` | `-c` | Number of packets per target (0 = unlimited) | `0` |
 | `--ipv4` | `-4` | Use IPv4 only | `false` |
@@ -506,9 +513,12 @@ Regenerate saved scripts after upgrading mping to include new flags. To monitor 
 
 ## PMTU discovery
 
-* Enabled with `--discovery-mtu` / `-m`.
-* Probes maximum payload size using DF-bit ICMP, starting from 9872 bytes.
-* The discovered size is reflected in the **Size** column.
+* `--discovery-mtu` / `-m` is the common PMTU switch. It checks each destination independently at startup and dispatches to the IPv4 or IPv6 implementation using the resolved IP. `-4` / `-6` are not required for PMTU discovery.
+* IPv4 uses the existing DF probe search, starting at a payload upper bound of 9872 bytes (or the interface limit). For successful IPv4-only runs, **Size** uses the smallest discovered payload limit.
+* IPv6 on macOS/Linux uses the OS path-MTU estimate. It disables sender fragmentation, sends an echo at that size, and retries only if the OS lowers its estimate. An exact echo reply marks the result **confirmed**; otherwise it remains **estimated**. A timeout alone never lowers the estimate. An OS estimate may initially be just the outgoing interface MTU.
+* TUI details and Web Summary show the IP-packet **PMTU**, ICMP **payload** limit, and confirmation status. IPv6 and mixed-family runs keep the configured regular Ping size. A changed destination IP clears the old path's result; restarting measurement setup discovers it again.
+* JSON retains `pmtu` as the payload limit and adds `path_mtu` (whole IP packet), `pmtu_source` (`os` / `probe`), and `pmtu_status` (`estimated` / `confirmed` for IPv6, `probed` for IPv4). CSV includes the same information, with `pmtu_payload` for the payload column. For example, IPv6 PMTU 1450 allows 1402 bytes of ICMP data without extension headers.
+* IPv6 PMTU discovery is unsupported on other OSes; it reports a discovery error and continues ordinary Ping. Received `Packet Too Big` errors and their advertised MTU are also recorded by ordinary IPv6 Ping.
 
 ## Web UI (experimental)
 

@@ -29,6 +29,9 @@ type TargetView struct {
 	DNSServer        string
 	IfaceMTU         int
 	PMTU             int
+	PathMTU          int
+	PMTUSource       string
+	PMTUStatus       string
 	PMTUBottleneckIP string
 	PortResults      []PortCheckView
 	MTRHops          []HopView
@@ -98,8 +101,11 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 		PTR:              t.ptr,
 		DNSServer:        t.dnsServer,
 		IfaceMTU:         t.ifaceMTU,
-		PMTU:             t.pmtu,
-		PMTUBottleneckIP: t.pmtuBottleneckIP,
+		PMTU:             t.pathMTU.Payload,
+		PathMTU:          t.pathMTU.MTU,
+		PMTUSource:       t.pathMTU.Source,
+		PMTUStatus:       t.pathMTU.Status,
+		PMTUBottleneckIP: t.pathMTU.BottleneckIP,
 		PortResults:      portCopy,
 		MTRHops:          mtrHops,
 		MTRFlapCount:     mtrFlapCount,

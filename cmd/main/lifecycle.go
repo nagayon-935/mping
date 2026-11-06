@@ -106,8 +106,12 @@ func prepareRunEnv(cfg config, hosts []targetSpec, out, errOut io.Writer) (env r
 		return runEnv{}, 1, false
 	}
 	env.bindIP, env.dispV4, env.dispV6 = bindIP, dispV4, dispV6
-	if cfg.ifaceName != "" && bindIP != "" {
-		fmt.Fprintf(out, "Binding to interface %s (%s)\n", cfg.ifaceName, bindIP)
+	if cfg.ifaceName != "" {
+		if bindIP != "" {
+			fmt.Fprintf(out, "Binding to interface %s (%s)\n", cfg.ifaceName, bindIP)
+		} else {
+			fmt.Fprintf(out, "Binding to interface %s\n", cfg.ifaceName)
+		}
 	}
 
 	for _, raw := range cfg.portSpecs {
@@ -190,7 +194,7 @@ func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resol
 		if customResolver != nil && cfg.dnsServer != "" {
 			resolver = customResolver
 		}
-		return pinger.ResolveIPAddrContext(ctx, resolver, resNetwork, address)
+		return pinger.ResolveUsableIPAddrContext(ctx, resolver, resNetwork, address, pinger.BindConfig{Source: cfg.sourceAddr, Interface: cfg.ifaceName})
 	}
 	return pinger.Options{
 		ResolveIPAddr: func(network, address string) (*net.IPAddr, error) {

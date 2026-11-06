@@ -116,6 +116,7 @@ type fakePinger struct {
 	discoverBottleneckIP string
 	discoverErr          error
 	discoverLogs         []string
+	discoverPath         func(string) (pinger.PathMTUResult, error)
 
 	// routeStarted and routeReturned, when set, make the route prober's
 	// OpenHopSocket block on ctx.Done() (a slow, in-flight lookup) instead
@@ -225,6 +226,14 @@ func (f *fakePinger) DiscoverMaxPayload(ctx context.Context, dest string, start 
 		return start, "", nil
 	}
 	return f.discoverMTU, f.discoverBottleneckIP, nil
+}
+
+func (f *fakePinger) DiscoverPathMTU(ctx context.Context, dest string, start int, min int, logf func(string)) (pinger.PathMTUResult, error) {
+	if f.discoverPath != nil {
+		return f.discoverPath(dest)
+	}
+	payload, hop, err := f.DiscoverMaxPayload(ctx, dest, start, min, logf)
+	return pinger.PathMTUResult{IP: "192.0.2.1", MTU: payload + 28, Payload: payload, Source: "probe", Status: "probed", BottleneckIP: hop}, err
 }
 
 func (f *fakePinger) SetSource(ip string)                       {}

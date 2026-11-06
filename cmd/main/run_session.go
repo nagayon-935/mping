@@ -131,7 +131,7 @@ func (s *session) startIteration(first bool) (*iteration, bool) {
 	}
 
 	makePinger := pingerFactory(s.targets, hosts)
-	it.packetSize, it.preLogs = setupPMTU(makePinger, cfg, ifaceMTU, s.targets, hosts[0].display(), s.errOut)
+	it.packetSize, it.preLogs = setupPMTU(makePinger, cfg, ifaceMTU, s.targets, s.errOut)
 	it.preLogs = append(it.preLogs, s.pendingWarnings...)
 	s.pendingWarnings = nil
 

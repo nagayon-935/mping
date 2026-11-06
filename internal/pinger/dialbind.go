@@ -3,6 +3,7 @@ package pinger
 import (
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"syscall"
 	"time"
@@ -26,17 +27,19 @@ func (bc BindConfig) IsZero() bool {
 // localAddrFor builds the net.Dialer.LocalAddr value for network ("tcp" or
 // "udp"). net.Dialer rejects a LocalAddr whose concrete type doesn't match the
 // network being dialled ("mismatched local address type"), so the two cases
-// cannot share one address type. A source that isn't a literal IP yields nil,
+// cannot share one address type. Scoped IPv6 literals retain their zone.
+// A source that isn't a literal IP yields nil,
 // leaving the OS to pick the source address.
 func localAddrFor(network, source string) net.Addr {
-	ip := net.ParseIP(source) // nil for "" as well as a non-literal
-	if ip == nil {
+	address, err := netip.ParseAddr(source)
+	if err != nil {
 		return nil
 	}
+	ip := net.IP(address.AsSlice())
 	if strings.HasPrefix(network, "udp") {
-		return &net.UDPAddr{IP: ip}
+		return &net.UDPAddr{IP: ip, Zone: address.Zone()}
 	}
-	return &net.TCPAddr{IP: ip}
+	return &net.TCPAddr{IP: ip, Zone: address.Zone()}
 }
 
 // NewBoundDialer returns a net.Dialer for network ("tcp" or "udp") that

@@ -22,6 +22,7 @@ type pingerController interface {
 	WaitWorkers()
 	Close()
 	DiscoverMaxPayload(ctx context.Context, dest string, start int, min int, logf func(string)) (int, string, error)
+	DiscoverPathMTU(ctx context.Context, dest string, start int, min int, logf func(string)) (pinger.PathMTUResult, error)
 	SetSource(ip string)
 	SetInterface(name string)
 	SetSize(size int)
