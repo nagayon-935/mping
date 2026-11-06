@@ -108,14 +108,14 @@ func (d *saveDialog) submit() {
 			}
 		})
 	}) {
-		d.status.SetText("Operation queue full; please try again")
+		d.status.SetText(queueFullMessage)
 		return
 	}
 	d.close()
 	d.notify("Saving report: "+path, false)
 }
 
-// While a save form is open, global shortcuts must not intercept typed paths.
+// handle keeps global shortcuts from intercepting paths while the save form is open.
 func (d *saveDialog) handle(event *tcell.EventKey) *tcell.EventKey {
 	if event.Key() == tcell.KeyEscape {
 		d.close()

@@ -25,7 +25,7 @@ type columnRowContext struct {
 // cell text and color are derived from a row, and where it sits in the
 // shrink/grow priority order when the terminal is too narrow or too wide for
 // every column's desired width. Keeping the priority on the column itself
-// (rather than in index-based arrays) means the optional DNS/ASN columns
+// (rather than in index-based arrays) means the optional DNS/ASN/PTR columns
 // shifting later columns' positions cannot point width adjustment at the
 // wrong column.
 type column struct {
@@ -33,7 +33,7 @@ type column struct {
 	align          int
 	base, min, max int
 	// dynamic marks a column whose width should track the widest rendered
-	// value across all targets (Src/Dst IP, DNS, ASN), rather than staying
+	// value across all targets (Src/Dst IP, DNS, ASN, PTR), rather than staying
 	// fixed at base.
 	dynamic bool
 	// shrinkPriority/growPriority order columns when fitting to available
@@ -46,12 +46,12 @@ type column struct {
 	// color".
 	color func(ctx columnRowContext, text string) (tcell.Color, bool)
 	// bold marks a column whose color override (when it fires) should also
-	// set AttrBold, matching the legacy Loss Ratio column's styling.
+	// set AttrBold.
 	bold bool
 }
 
 // mainTableColumns returns the Ping Monitor table's column schema in display
-// order. DNS/ASN are inserted after Dst IP only when enabled; every column
+// order. DNS/ASN/PTR are inserted after Dst IP only when enabled; every column
 // carries its own shrink/grow priority, so enabling them cannot desync width
 // adjustment.
 func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled bool) []column {
@@ -176,11 +176,7 @@ func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled bool) []column {
 // compactTableColumns returns the narrow-terminal fallback table's column
 // schema (Host/Path/Stats/Error), the single source of buildCompactLayout's
 // headers, aligns, min/max widths and priorities. The slice is fresh on every
-// call because the width fitting adjusts max in place. Priorities reproduce
-// the legacy behavior exactly: the old shrinkOrder/growOrder arrays were
-// shared with the 13+ column main table and filtered by bounds-checking,
-// which happened to yield the effective order Path, Host, Stats, Error for
-// both shrinking and growing this 4-column layout.
+// call because the width fitting adjusts max in place.
 func compactTableColumns() []column {
 	return []column{
 		{name: "Host", align: tview.AlignLeft, min: 8, max: 40, shrinkPriority: 1, growPriority: 1},
@@ -190,10 +186,8 @@ func compactTableColumns() []column {
 	}
 }
 
-// columnsByName finds a column by name, for the rare case a caller needs to
-// patch a single column after construction (e.g. the Error column's
-// data-derived max width).
-func columnsByName(cols []column, name string) int {
+// columnIndex returns the index of the named column, or -1 if absent.
+func columnIndex(cols []column, name string) int {
 	return slices.IndexFunc(cols, func(c column) bool { return c.name == name })
 }
 
@@ -209,7 +203,7 @@ func renderRowTexts(cols []column, ctx columnRowContext) []string {
 
 // renderRowCells builds formatted, colored table cells for one row from
 // already-rendered text. Each column owns its own color logic, so it can't
-// drift out of sync with where DNS/ASN happen to sit.
+// drift out of sync with where DNS/ASN/PTR happen to sit.
 func renderRowCells(cols []column, texts []string, widths, aligns []int, ctx columnRowContext, rowColor tcell.Color) []*tview.TableCell {
 	cells := make([]*tview.TableCell, len(cols))
 	for i, c := range cols {

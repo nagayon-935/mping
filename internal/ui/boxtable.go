@@ -51,16 +51,16 @@ func boxBorder(widths []int, kind borderKind) string {
 }
 
 // boxColumn is one column of a box-drawn monitor table. Cells are left-aligned
-// with a leading space (paddedCell) unless leftAlign is set, which right-aligns
+// with a leading space (paddedCell) unless rightAlign is set, which right-aligns
 // them with a trailing space (rightPaddedCell).
 type boxColumn struct {
-	header    string
-	width     int
-	leftAlign bool
+	header     string
+	width      int
+	rightAlign bool
 }
 
 func (c boxColumn) pad(text string) string {
-	if c.leftAlign {
+	if c.rightAlign {
 		return rightPaddedCell(text, c.width)
 	}
 	return paddedCell(text, c.width)

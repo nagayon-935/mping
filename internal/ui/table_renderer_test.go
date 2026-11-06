@@ -87,7 +87,7 @@ func TestTableRendererUpdate_VirtualizesOffscreenRows(t *testing.T) {
 	}
 
 	// A target far before the window (e.g. row 1, target index 0) must be
-	// empty: outside [midOffset-margin, midOffset+tableMaxRows+1+margin).
+	// empty: outside [midOffset-margin, midOffset+tableMinVisibleRows+1+margin).
 	if got := tr.table.GetCell(1, 0).Text; got != "" {
 		t.Errorf("row 1 (far above window): expected empty cell, got %q", got)
 	}

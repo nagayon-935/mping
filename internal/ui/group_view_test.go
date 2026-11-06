@@ -176,7 +176,7 @@ func TestTableRendererUpdate_GroupHeaderRendersEvenWhenMembersOffWindow(t *testi
 	}
 
 	// G1's last member is rowIdx 44 -> table row 45, well past the window
-	// end (23+tableMaxRows+1+rowRenderMargin = 23+10+1+5 = 39) and should
+	// end (23+tableMinVisibleRows+1+rowRenderMargin = 23+10+1+5 = 39) and should
 	// be empty.
 	farRow := 45
 	if got := tr.table.GetCell(farRow, 0).Text; got != "" {

@@ -155,7 +155,7 @@ func TestRenderRowCells(t *testing.T) {
 				"Size":       tcell.ColorWhite,
 			}
 			for name, want := range wantColor {
-				idx := columnsByName(cols, name)
+				idx := columnIndex(cols, name)
 				if idx < 0 {
 					t.Fatalf("column %q missing", name)
 				}

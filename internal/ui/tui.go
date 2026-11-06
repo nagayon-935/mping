@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	tableMaxRows  = 10                     // floor for the visible Ping Monitor rows and the PgUp/PgDn page step; taller panes show more
-	minUIRefresh  = 200 * time.Millisecond // minimum refresh to avoid flicker at very short ping intervals
-	fastUIRefresh = 100 * time.Millisecond // UI refresh rate when ping interval < minUIRefresh
+	tableMinVisibleRows = 10                     // floor for the visible Ping Monitor rows and the PgUp/PgDn page step; taller panes show more
+	minUIRefresh        = 200 * time.Millisecond // minimum refresh to avoid flicker at very short ping intervals
+	fastUIRefresh       = 100 * time.Millisecond // UI refresh rate when ping interval < minUIRefresh
 )
 
 var newApplication = tview.NewApplication
@@ -21,11 +21,14 @@ var newApplication = tview.NewApplication
 type RouteMode int
 
 const (
+	// RouteOff disables the route pane at startup; in TargetSet it keeps the current mode.
 	RouteOff     RouteMode = iota
 	RoutePath              // each target's hops, rediscovered periodically (-T)
 	RouteMonitor           // the hops with per-hop loss and latency (-M)
 )
 
+// TargetSet is a live snapshot of targets, groups and display configuration
+// returned by RunOptions.TargetSource on refresh.
 type TargetSet struct {
 	Targets    []*stats.TargetStats
 	Groups     []TargetGroup

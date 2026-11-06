@@ -5,7 +5,8 @@ import (
 	"github.com/rivo/tview"
 )
 
-// The URL lives outside Log retention and is shown only on explicit request.
+// webAccessDialog shows the control URL only on explicit request, independently
+// of Log retention.
 type webAccessDialog struct {
 	app     *tview.Application
 	root    *tview.Pages

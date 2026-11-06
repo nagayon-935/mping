@@ -61,7 +61,7 @@ func wireHostInputs(
 					if !session.Submit(func() {
 						if err := callback(host); err != nil {
 							session.Post(func() {
-								vs.appendLog(fmt.Sprintf("[red][%s] %s host error: %v[-]", time.Now().Format("15:04:05"), action, err))
+								vs.appendLog(fmt.Sprintf("[red][%s] %s host error: %v[-]", time.Now().Format(logTimeLayout), action, err))
 							})
 						}
 					}) {
@@ -125,7 +125,7 @@ func startRefreshLoop(
 				// External reload requested (e.g. YAML file changed).
 				session.Post(func() {
 					vs.appendLog(fmt.Sprintf("[yellow][%s] Reloading configuration...[-]",
-						time.Now().Format("15:04:05")))
+						time.Now().Format(logTimeLayout)))
 					session.Stop()
 					app.Stop()
 				})

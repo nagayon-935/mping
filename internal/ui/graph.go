@@ -46,6 +46,8 @@ type GraphView struct {
 	scaleHoldUntil time.Time
 }
 
+// NewGraphView creates an ICMP RTT graph with a trailing 30-second window
+// and an automatically scaled Y axis. interval is the positive sample interval.
 func NewGraphView(targets []*stats.TargetStats, interval time.Duration) *GraphView {
 	return &GraphView{
 		Box:          tview.NewBox(),
@@ -198,6 +200,7 @@ type graphCell struct {
 	bottom                 int // first screen row below the pane
 }
 
+// drawCell draws one series header, scaled plot, grid labels and separator.
 func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell, windowPoints int, yMax time.Duration) {
 	// Header: label + last RTT
 	headerStr := fmt.Sprintf("% -20s %s", s.label, formatRTT(s.lastRTT))
@@ -206,14 +209,12 @@ func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell,
 
 	graphX := cell.x
 	graphY := cell.y + 1
-	labelWidth := graphLabelWidth
-	graphWidth := max(cell.width-labelWidth-2, graphMinWidth)
+	graphWidth := max(cell.width-graphLabelWidth-2, graphMinWidth)
 
 	data, hasData := projectDurationsToGraph(s.history, windowPoints, graphWidth)
 	plotY, plotHeight := adjustPlotArea(graphY, cell.graphHeight)
 
-	gy25, gy50, gy75, gy100 := gridStepsForHeight(plotHeight)
-	gridSteps := [4]int{gy25, gy50, gy75, gy100}
+	gridSteps := gridStepsForHeight(plotHeight)
 	gridYPos := make(map[int]bool)
 	for i, val := range g.currentScale.grid {
 		gy := gridSteps[i]
@@ -223,11 +224,11 @@ func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell,
 			for gx := range graphWidth {
 				screen.SetContent(graphX+gx, py, '·', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
 			}
-			tview.Print(screen, fmt.Sprintf("%dms", val), graphX+graphWidth+1, py, labelWidth, tview.AlignLeft, tcell.ColorGray)
+			tview.Print(screen, fmt.Sprintf("%dms", val), graphX+graphWidth+1, py, graphLabelWidth, tview.AlignLeft, tcell.ColorGray)
 		}
 	}
 	// 0ms label at bottom
-	tview.Print(screen, "0ms", graphX+graphWidth+1, plotY+plotHeight-1, labelWidth, tview.AlignLeft, tcell.ColorGray)
+	tview.Print(screen, "0ms", graphX+graphWidth+1, plotY+plotHeight-1, graphLabelWidth, tview.AlignLeft, tcell.ColorGray)
 
 	for i, val := range data {
 		if hasData[i] {

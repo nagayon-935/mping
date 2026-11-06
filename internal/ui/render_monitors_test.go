@@ -122,7 +122,7 @@ func TestRenderPortMonitorTable(t *testing.T) {
 		lastStatuses := make(map[string]string)
 		errorLogs := []string{}
 		errorView := tview.NewTextView()
-		got := renderPortMonitorTable([]*stats.TargetStats{target}, 120, lastStatuses, &errorLogs, errorView)
+		got := renderPortMonitorTable([]*stats.TargetStats{target}, 120, lastStatuses, func(msg string) { appendErrorLog(&errorLogs, errorView, msg) })
 		if !strings.Contains(got, "Waiting for results") {
 			t.Fatalf("expected waiting message, got: %s", got)
 		}
@@ -138,7 +138,7 @@ func TestRenderPortMonitorTable(t *testing.T) {
 		lastStatuses := make(map[string]string)
 		errorLogs := []string{}
 		errorView := tview.NewTextView()
-		got := renderPortMonitorTable([]*stats.TargetStats{target}, 120, lastStatuses, &errorLogs, errorView)
+		got := renderPortMonitorTable([]*stats.TargetStats{target}, 120, lastStatuses, func(msg string) { appendErrorLog(&errorLogs, errorView, msg) })
 		if !strings.Contains(got, "example.com") {
 			t.Fatalf("expected hostname, got: %s", got)
 		}
@@ -157,7 +157,7 @@ func TestRenderPortMonitorTable(t *testing.T) {
 		lastStatuses := make(map[string]string)
 		errorLogs := []string{}
 		errorView := tview.NewTextView()
-		got := renderPortMonitorTable([]*stats.TargetStats{target}, 30, lastStatuses, &errorLogs, errorView)
+		got := renderPortMonitorTable([]*stats.TargetStats{target}, 30, lastStatuses, func(msg string) { appendErrorLog(&errorLogs, errorView, msg) })
 		if !strings.Contains(got, "example.com") {
 			t.Fatalf("expected hostname, got: %s", got)
 		}
@@ -178,7 +178,7 @@ func TestRenderPortMonitorTable(t *testing.T) {
 		}
 		errorLogs := []string{}
 		errorView := tview.NewTextView()
-		renderPortMonitorTable([]*stats.TargetStats{target}, 120, lastStatuses, &errorLogs, errorView)
+		renderPortMonitorTable([]*stats.TargetStats{target}, 120, lastStatuses, func(msg string) { appendErrorLog(&errorLogs, errorView, msg) })
 
 		if len(errorLogs) == 0 {
 			t.Fatal("expected status change log entry")

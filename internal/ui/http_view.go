@@ -12,11 +12,11 @@ import (
 )
 
 const (
-	httpStatusColW = 12 // " Checking... "
+	httpStatusColW = 12 // " Checking..."
 	httpCodeColW   = 6  // "  200 "
 	httpCountColW  = 7  // " 99999 "
 	httpLatColW    = 10 // " 123.45ms " — hundreds to 2 decimal places in ms
-	httpSinceColW  = 12 // " 1h23m45s  "
+	httpSinceColW  = 12 // " 1h23m45s   "
 	minHTTPURLW    = 20
 )
 
@@ -24,10 +24,10 @@ const (
 // or full layout, including the separators between columns.
 func httpFixedW(compact bool) int {
 	if compact {
-		// URL + Status + Code + Last + Up + Down + 5 inner separators
+		// Status + Code + Last + Up + Down + 5 inner separators
 		return httpStatusColW + httpCodeColW + httpLatColW + httpCountColW*2 + 5
 	}
-	// URL + Status + Code + Last + Min + Avg + Max + Up + Down + Since + 9 inner separators
+	// Status + Code + Last + Min + Avg + Max + Up + Down + Since + 9 inner separators
 	return httpStatusColW + httpCodeColW + httpLatColW*4 + httpCountColW*2 + httpSinceColW + 9
 }
 
@@ -96,9 +96,8 @@ func httpSinceStr(t time.Time) string {
 }
 
 // renderHTTPMonitorTable builds the HTTP Monitor pane string.
-// It also detects status changes and appends log messages when errorLogs/errorView
-// are non-nil.
-func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, th stats.Thresholds, availW int, lastStatuses map[string]string, errorLogs *[]string, errorView *tview.TextView) string {
+// It also detects status changes and appends log messages when log is non-nil.
+func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, th stats.Thresholds, availW int, lastStatuses map[string]string, log func(string)) string {
 	// Compact: drop Min/Avg/Max/Since when screen is narrow.
 	compact := availW < minHTTPURLW+httpFixedW(false)+httpBorderW
 
@@ -109,10 +108,10 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, th stats.Threshold
 	urlW := httpURLColW(views, availW, compact)
 
 	// Detect status changes and log them.
-	if lastStatuses != nil && errorLogs != nil {
+	if lastStatuses != nil && log != nil {
 		for _, v := range views {
 			subject := fmt.Sprintf("[white]HTTP %s:[white]", tview.Escape(v.URL))
-			logStatusChangeIfNeeded(lastStatuses, v.URL, v.Status, "Up", subject, errorLogs, errorView)
+			logStatusChangeIfNeeded(lastStatuses, v.URL, v.Status, "Up", subject, log)
 		}
 	}
 

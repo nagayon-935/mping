@@ -4,6 +4,8 @@ import (
 	"time"
 )
 
+// projectDurationsToGraph maps the trailing sample window to graph columns,
+// interpolating gaps and marking columns with no sample as absent.
 func projectDurationsToGraph(data []time.Duration, windowPoints, graphWidth int) ([]time.Duration, []bool) {
 	if windowPoints <= 0 || graphWidth <= 0 || len(data) == 0 {
 		return nil, nil
@@ -72,6 +74,7 @@ func (g *GraphView) clampScroll(numRowsTotal, visibleRows int) {
 	}
 }
 
+// adjustPlotArea fits the plot within its cell with evenly spaced quarter grids.
 func adjustPlotArea(graphY, graphHeight int) (plotY, plotHeight int) {
 	plotHeight = graphHeight
 	plotY = graphY
@@ -94,7 +97,9 @@ func adjustPlotArea(graphY, graphHeight int) (plotY, plotHeight int) {
 	return plotY, plotHeight
 }
 
-func gridStepsForHeight(plotHeight int) (gy25, gy50, gy75, gy100 int) {
+// gridStepsForHeight returns quarter-grid offsets from the bottom of the plot,
+// distributing leftover rows among the lower segments first.
+func gridStepsForHeight(plotHeight int) [4]int {
 	totalSteps := max(plotHeight-1, 1)
 	baseStep := totalSteps / 4
 	rem := totalSteps % 4
@@ -102,11 +107,7 @@ func gridStepsForHeight(plotHeight int) (gy25, gy50, gy75, gy100 int) {
 	for i := range rem {
 		seg[i]++
 	}
-	gy25 = seg[0]
-	gy50 = seg[0] + seg[1]
-	gy75 = seg[0] + seg[1] + seg[2]
-	gy100 = totalSteps
-	return gy25, gy50, gy75, gy100
+	return [4]int{seg[0], seg[0] + seg[1], seg[0] + seg[1] + seg[2], totalSteps}
 }
 
 // preferredHeight is the pane height (borders included) at which every

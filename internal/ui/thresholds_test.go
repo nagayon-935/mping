@@ -36,7 +36,7 @@ func TestTableColorsFollowTheTargetsThresholds(t *testing.T) {
 
 	want := map[string]tcell.Color{"Loss Ratio": vividRed, "RTT": vividRed, "Jitter": tcell.ColorGreen}
 	for name, color := range want {
-		idx := columnsByName(tr.cols, name)
+		idx := columnIndex(tr.cols, name)
 		if idx < 0 {
 			t.Fatalf("column %q missing", name)
 		}

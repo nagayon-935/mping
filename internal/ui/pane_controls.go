@@ -237,7 +237,7 @@ func (c *paneControls) rebuild() {
 	c.layout.AddItem(c.footer, footerHeight, 0, false)
 }
 
-// Handles display operations only; measurement callbacks are never involved.
+// handle processes display operations only; measurement callbacks are never involved.
 func (c *paneControls) handle(event *tcell.EventKey) bool {
 	pane := c.current()
 	if pane == nil {

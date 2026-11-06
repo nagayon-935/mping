@@ -11,6 +11,10 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
+// logTimeLayout is the time-only layout used in UI log lines and events.
+const logTimeLayout = "15:04:05"
+
+// alertFlags tracks which metrics were critical on the previous render.
 type alertFlags struct {
 	lossRed   bool
 	rttRed    bool
@@ -55,21 +59,29 @@ func normalizeWriteIP(errMsg, sourceIP string) string {
 	return errMsg
 }
 
+// buildErrorLogMessage formats a socket error using the displayed source IP.
 func buildErrorLogMessage(view stats.TargetView, sourceIP string, errMsg string, ts time.Time) string {
-	msg := normalizeWriteIP(errMsg, sourceIP)
-	return fmt.Sprintf("[red][%s] %s (%s): %s[-]", ts.Format("15:04:05"), view.Host, sourceIP, msg)
+	return alertLogMessage(view.Host, sourceIP, normalizeWriteIP(errMsg, sourceIP), ts)
 }
 
+// alertLogMessage formats a critical metric or socket error for one target.
+func alertLogMessage(host, sourceIP, msg string, ts time.Time) string {
+	return fmt.Sprintf("[red][%s] %s (%s): %s[-]", ts.Format(logTimeLayout), host, sourceIP, msg)
+}
+
+// updateAlertState logs only new critical threshold crossings for targets
+// whose health alerts are not already supplied by the backend.
 func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, now time.Time, state alertFlags) (alertFlags, []string) {
+	// Backend events are delivered through ExternalLogCh.
 	if view.Health.Configured {
 		return state, nil
-	} // backend events are delivered through ExternalLogCh
+	}
 	var msgs []string
 	// edge logs a message when a metric newly crosses its critical threshold
 	// (red was false, over is true) and records whether it is over.
 	edge := func(red *bool, over bool, detail func() string) {
 		if over && !*red {
-			msgs = append(msgs, fmt.Sprintf("[red][%s] %s (%s): %s[-]", now.Format("15:04:05"), view.Host, sourceIP, detail()))
+			msgs = append(msgs, alertLogMessage(view.Host, sourceIP, detail(), now))
 		}
 		*red = over
 	}
@@ -80,6 +92,7 @@ func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, 
 	return state, msgs
 }
 
+// appendErrorLog appends a line to the bounded log and scrolls its view to the end.
 func appendErrorLog(errorLogs *[]string, errorView *tview.TextView, msg string) {
 	*errorLogs = append(*errorLogs, msg)
 	if len(*errorLogs) > errorLogMaxSize {
@@ -93,7 +106,8 @@ func appendErrorLog(errorLogs *[]string, errorView *tview.TextView, msg string) 
 	errorView.ScrollToEnd()
 }
 
-// Stable keys distinguish repeated hosts and re-added targets.
+// targetViewKey uses a stable ID to distinguish repeated hosts and re-added
+// targets, falling back to the host when no ID is assigned.
 func targetViewKey(v stats.TargetView) string {
 	if v.ID == 0 {
 		return v.Host

@@ -36,7 +36,7 @@ func niceCeil(x float64) float64 {
 }
 
 // computeYScale calculates a stable Y-axis scale from the observed maximum RTT.
-// floorMs sets the minimum upper bound (use 100 to preserve legacy behaviour).
+// floorMs sets the minimum upper bound.
 func computeYScale(dataMax time.Duration, floorMs float64) yScale {
 	// Apply 10% headroom to the raw data before clamping to the floor.
 	// This keeps values near the ceiling from touching the top of the graph
