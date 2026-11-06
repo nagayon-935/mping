@@ -185,13 +185,13 @@ func TestSupervisorStopResetRestartPreservesStateAndOwnership(t *testing.T) {
 	if old.OnFailure("late timeout") {
 		t.Fatal("stopped reset accepted old probe")
 	}
-	if err := sup.do(cmdRestart); err != nil {
+	if err := sup.sendCmd(command{kind: cmdRestart}); err != nil {
 		t.Fatal(err)
 	}
 	fresh := target.NewProbe()
 	fresh.IncSent()
 	fresh.OnSuccess(time.Millisecond, 64)
-	if err := sup.do(cmdRestart); err != nil {
+	if err := sup.sendCmd(command{kind: cmdRestart}); err != nil {
 		t.Fatal(err)
 	}
 	if target.GetView().Recv != 1 || len(*created) != 3 {

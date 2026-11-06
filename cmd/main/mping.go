@@ -30,7 +30,7 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 	if len(args) > 0 && args[0] == "completion" {
 		return runCompletion(args[1:], out, errOut)
 	}
-	if len(args) > 0 && args[0] == "__complete-interfaces" {
+	if len(args) > 0 && args[0] == completeInterfacesCommand {
 		return runCompleteInterfaces(out)
 	}
 	if len(args) > 0 && args[0] == webProcessCommand {
@@ -99,23 +99,6 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 			return 0
 		}
 	}
-}
-
-// reloadWarnings collects the Log notices for a reload: settings that only
-// require a process restart (web), rebuilt port checks and a failed --resolve-all
-// re-expansion. startup is the config mping was started with.
-func reloadWarnings(startup, reloaded config, activePortSpecs []string, expandWarning string) []string {
-	var warnings []string
-	for _, w := range []string{
-		checkWebReloadDrift(startup, reloaded),
-		checkPortReloadDrift(activePortSpecs, reloaded.portSpecs),
-		expandWarning,
-	} {
-		if w != "" {
-			warnings = append(warnings, w)
-		}
-	}
-	return warnings
 }
 
 func main() {

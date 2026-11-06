@@ -21,13 +21,13 @@ func TestSupervisorNotifiesEachCountCompletion(t *testing.T) {
 		return p
 	}})
 	sup.Start()
-	t.Cleanup(func() { _ = sup.do(cmdTerminate); sup.Shutdown() })
+	t.Cleanup(func() { _ = sup.sendCmd(command{kind: cmdTerminate}); sup.Shutdown() })
 	if err := sup.startPinger(); err != nil {
 		t.Fatal(err)
 	}
 	for i := range 2 {
 		if i > 0 {
-			if err := sup.do(cmdRestart); err != nil {
+			if err := sup.sendCmd(command{kind: cmdRestart}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -42,7 +42,7 @@ func TestSupervisorNotifiesEachCountCompletion(t *testing.T) {
 		}
 	}
 	// A stale completion from the first pinger must not complete a new run.
-	if err := sup.do(cmdRestart); err != nil {
+	if err := sup.sendCmd(command{kind: cmdRestart}); err != nil {
 		t.Fatal(err)
 	}
 	reply := make(chan error, 1)

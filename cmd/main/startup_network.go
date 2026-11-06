@@ -11,6 +11,8 @@ import (
 	"github.com/nagayon-935/mping/internal/pinger"
 )
 
+// resolveNetwork selects the requested family, falling back to the source
+// address family and then dual-stack resolution.
 func resolveNetwork(cfg config) string {
 	if cfg.ipv4Only {
 		return "ip4"
@@ -27,6 +29,7 @@ func resolveNetwork(cfg config) string {
 	return "ip"
 }
 
+// classifySourceIP returns the bind address and the matching display hint.
 func classifySourceIP(bindIP string) (bind, v4, v6 string) {
 	if ip, err := netip.ParseAddr(bindIP); err == nil && ip.Unmap().Is6() {
 		return bindIP, "", bindIP
@@ -34,7 +37,10 @@ func classifySourceIP(bindIP string) (bind, v4, v6 string) {
 	return bindIP, bindIP, ""
 }
 
-func determineSourceIPs(cfg config, hosts []targetSpec) (string, string, string, error) {
+// determineSourceIPs chooses an explicit source or interface addresses,
+// otherwise detecting display hints from routes to hosts. In dual-stack
+// interface mode the bind IP stays empty so the OS selects it per destination.
+func determineSourceIPs(cfg config, hosts []targetSpec) (bindIP, displayIPv4, displayIPv6 string, err error) {
 	if cfg.sourceAddr != "" {
 		bind, v4, v6 := classifySourceIP(cfg.sourceAddr)
 		return bind, v4, v6, nil

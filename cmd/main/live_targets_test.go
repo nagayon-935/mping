@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -8,6 +9,63 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 	ui "github.com/nagayon-935/mping/internal/ui"
 )
+
+type partialRegistrationPinger struct {
+	*liveFakePinger
+	addErr    error
+	added     []*stats.TargetStats
+	addresses []string
+	removed   []*stats.TargetStats
+}
+
+func (p *partialRegistrationPinger) AddTarget(target *stats.TargetStats, address string) error {
+	p.added = append(p.added, target)
+	p.addresses = append(p.addresses, address)
+	if len(p.added) == 2 {
+		return p.addErr
+	}
+	return nil
+}
+
+func (p *partialRegistrationPinger) RemoveTarget(target *stats.TargetStats) {
+	p.removed = append(p.removed, target)
+}
+
+func TestLiveReloadRollsBackPartialRegistration(t *testing.T) {
+	specs := []targetSpec{{Host: "192.0.2.1"}, {Host: "192.0.2.2"}}
+	targets := buildTargetsForIteration(specs, config{})
+	groups := []ui.TargetGroup{{Name: "original", Indices: []int{0, 1}}}
+	p := &partialRegistrationPinger{liveFakePinger: newLiveFakePinger(), addErr: errors.New("ID allocation failed")}
+	s := newSupervisor(supervisorConfig{
+		targets: targets, specs: specs, groups: groups,
+		makePinger: func(int) pingerController { return p },
+	})
+	s.Start()
+	t.Cleanup(s.Shutdown)
+	if err := s.startPinger(); err != nil {
+		t.Fatal(err)
+	}
+	before := targets[0].GetView()
+	updated := []targetSpec{
+		{Host: "new.example", PinnedIP: "192.0.2.3", Name: "new"},
+		specs[1],
+		{Host: "192.0.2.4"},
+		{Host: "192.0.2.5"},
+	}
+	if applied, _, err := s.reloadLive(config{}, updated, nil); applied || err != p.addErr {
+		t.Fatalf("reload = %v, %v; want false, %v", applied, err, p.addErr)
+	}
+	if !reflect.DeepEqual(p.addresses, []string{"192.0.2.3", "192.0.2.4"}) ||
+		len(p.removed) != 1 || p.removed[0] != p.added[0] {
+		t.Fatalf("registration addresses = %v, rollback = %v", p.addresses, p.removed)
+	}
+	set := s.liveTargets()
+	if !reflect.DeepEqual(set.Targets, targets) || !reflect.DeepEqual(set.Groups, groups) ||
+		!reflect.DeepEqual(s.cfg.specs, specs) || len(s.removed) != 0 ||
+		!reflect.DeepEqual(targets[0].GetView(), before) {
+		t.Fatal("failed registration changed membership, groups, archive or existing statistics")
+	}
+}
 
 func TestLiveEditsKeepStatisticsAndStoppedState(t *testing.T) {
 	a, b := stats.NewTargetStats("a"), stats.NewTargetStats("b")

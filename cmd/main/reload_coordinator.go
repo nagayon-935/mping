@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/nagayon-935/mping/internal/hostsfile"
@@ -38,9 +39,9 @@ type pendingReload struct {
 }
 
 // reloadCoordinator owns the pending hosts-file reload (the validated result
-// of parsing the YAML doc) and applies it once the previous iteration's pinger/watcher have been
-// fully stopped. Host edits from the TUI or web UI do not go through here:
-// the supervisor applies them live (see live_targets.go).
+// of parsing the YAML doc) and applies it once the previous iteration's
+// pinger/watcher have been fully stopped. Host edits from the TUI or web UI
+// do not go through here: the supervisor applies them live (see live_targets.go).
 type reloadCoordinator struct {
 	fs       *pflag.FlagSet
 	cliCfg   config
@@ -56,8 +57,9 @@ func newReloadCoordinator(fs *pflag.FlagSet, cliCfg config, cliHosts []string) *
 }
 
 // requestFileReload is the watcher's onChange callback (post-debounce). It
-// parses and validates the hosts file; on failure it logs to logCh and
-// leaves the running instance untouched.
+// parses and validates the hosts file, then tries to apply it live. If a full
+// rebuild is needed, it queues the validated reload and closes sig. On failure
+// it logs to logCh and leaves the running instance untouched.
 func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile string, logCh chan<- string) {
 	doc, err := hostsfile.Parse(hostsFile)
 	if err != nil {
@@ -132,4 +134,44 @@ func (rc *reloadCoordinator) apply(currentCfg config, currentHosts []targetSpec,
 	rc.mu.Unlock()
 
 	return currentHosts, currentGroups, currentCfg, true, warning
+}
+
+// reloadWarnings collects the Log notices for a reload: settings that only
+// require a process restart (web), rebuilt port checks and a failed --resolve-all
+// re-expansion. startup is the config mping was started with.
+func reloadWarnings(startup, reloaded config, activePortSpecs []string, expandWarning string) []string {
+	var warnings []string
+	for _, w := range []string{
+		checkWebReloadDrift(startup, reloaded),
+		checkPortReloadDrift(activePortSpecs, reloaded.portSpecs),
+		expandWarning,
+	} {
+		if w != "" {
+			warnings = append(warnings, w)
+		}
+	}
+	return warnings
+}
+
+// checkPortReloadDrift explains that port checks were rebuilt from the new
+// configuration. reloadWarnings emits it after a successful reload whose port
+// specs differ from the ones the running checkers were built from.
+func checkPortReloadDrift(activeRaw, reloadedRaw []string) string {
+	if slices.Equal(activeRaw, reloadedRaw) {
+		return ""
+	}
+	return fmt.Sprintf("[yellow][%s] port: change detected in the reloaded config — port checks restarted with updated configuration[-]",
+		clock())
+}
+
+// checkWebReloadDrift warns when a reload changes web:/web-port:. The web
+// server is started once from the startup config (active) and never moved;
+// changing it requires restarting mping.
+func checkWebReloadDrift(active, reloaded config) string {
+	if active.webEnabled == reloaded.webEnabled &&
+		(!active.webEnabled || active.webPort == reloaded.webPort) {
+		return ""
+	}
+	return fmt.Sprintf("[yellow][%s] web: change detected in the reloaded config — the web UI requires a full restart of mping to take effect[-]",
+		clock())
 }

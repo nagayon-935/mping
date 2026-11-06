@@ -327,8 +327,8 @@ func (p *liveFakePinger) WorkersFinished() bool           { return false }
 func (p *liveFakePinger) Done() <-chan struct{}           { return p.done }
 
 // stateSnapshot returns the state as of the last processed command. Test-only:
-// production code never reads state off the loop. Because do() waits for its
-// reply, a stateSnapshot() call after a do() always observes that command.
+// production code never reads state off the loop. Because sendCmd() waits for its
+// reply, a stateSnapshot() call after a sendCmd() always observes that command.
 func (s *supervisor) stateSnapshot() supervisorState {
 	return supervisorState(s.stateSnap.Load())
 }
@@ -336,7 +336,7 @@ func (s *supervisor) stateSnapshot() supervisorState {
 // newStateTestSupervisor builds a supervisor whose pinger factory records
 // every pinger it hands out, so a test can assert lifecycle effects without
 // opening a real raw socket. The factory only runs on the supervisor's command
-// goroutine, so created is safe to read once a do()/handle() call has returned.
+// goroutine, so created is safe to read once a sendCmd()/handle() call has returned.
 func newStateTestSupervisor(t *testing.T) (*supervisor, *[]*fakePinger) {
 	t.Helper()
 	var created []*fakePinger

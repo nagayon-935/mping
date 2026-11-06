@@ -9,8 +9,10 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
+// maxRemovedTargets bounds the report archive of targets removed this iteration.
 const maxRemovedTargets = 128
 
+// groupNameForIndex returns the last matching group's name, or an empty string.
 func (s *supervisor) groupNameForIndex(targetIdx int) string {
 	var name string
 	for _, group := range s.cfg.groups {
@@ -40,11 +42,20 @@ func (s *supervisor) archiveTarget(target *stats.TargetStats) {
 // Measurements continue; counters and events share a target lock, while
 // port and MTR results use their own locks within the capture interval.
 func (s *supervisor) captureReport(selectedID uint64) (report.Report, error) {
-	r := report.Report{SchemaVersion: 1, SessionStartedAt: s.cfg.startedAt, CollectionStartedAt: s.cfg.collectionStartedAt, CapturedAt: time.Now().UTC(), State: s.state.String(), Scope: "session", Targets: make([]report.Target, 0, len(s.cfg.targets))}
-	if p, ok := s.p.(dynamicPinger); ok {
+	r := report.Report{
+		SchemaVersion:       1,
+		SessionStartedAt:    s.cfg.startedAt,
+		CollectionStartedAt: s.cfg.collectionStartedAt,
+		CapturedAt:          time.Now().UTC(),
+		State:               s.state.String(),
+		Scope:               "session",
+		Targets:             make([]report.Target, 0, len(s.cfg.targets)),
+	}
+	if p, ok := s.livePinger(); ok {
 		r.PingFinished = p.WorkersFinished()
 	}
 	cfg := s.cfg.config
+	policy := healthPolicy(cfg)
 	r.Settings = report.Settings{
 		IntervalMS: s.cfg.interval.Milliseconds(), TimeoutMS: s.cfg.timeout.Milliseconds(),
 		PayloadBytes: s.cfg.packetSize, Interface: s.cfg.bind.Interface, BoundSource: s.cfg.bind.Source,
@@ -52,9 +63,12 @@ func (s *supervisor) captureReport(selectedID uint64) (report.Report, error) {
 		Count: cfg.count, Duration: s.cfg.durationLimit.String(),
 		DNSServer: cfg.dnsServer, ResolveAll: cfg.resolveAll,
 		Traceroute: cfg.trace, MTR: cfg.mtr, PMTUDiscovery: cfg.mtuEnabled,
-		HTTPURLs:       append([]string(nil), s.cfg.httpURLs...),
-		HealthFailures: healthPolicy(cfg).Failures, HealthRecoveries: healthPolicy(cfg).Recoveries, HealthWindowSeconds: healthPolicy(cfg).Window.Seconds(), HTTPFollowRedirects: cfg.httpFollowRedirects,
-		Thresholds: thresholdsMap(cfg.thresholds),
+		HTTPURLs:            append([]string(nil), s.cfg.httpURLs...),
+		HealthFailures:      policy.Failures,
+		HealthRecoveries:    policy.Recoveries,
+		HealthWindowSeconds: policy.Window.Seconds(),
+		HTTPFollowRedirects: cfg.httpFollowRedirects,
+		Thresholds:          thresholdsMap(cfg.thresholds),
 	}
 	if !s.cfg.durationDeadline.IsZero() {
 		deadline := s.cfg.durationDeadline.UTC()
@@ -91,16 +105,22 @@ func (s *supervisor) captureReport(selectedID uint64) (report.Report, error) {
 	return r, nil
 }
 
-func (s *supervisor) saveReport(path, format string, selectedID uint64) error {
-	if format != "csv" && format != "json" {
-		return fmt.Errorf("unsupported report format %q", format)
-	}
-	var snapshot report.Report
-	err := s.editTargets(func(s *supervisor) error {
+// snapshotReport captures a report through the command loop so membership and
+// settings stay consistent. Callers perform file I/O after the command returns.
+func (s *supervisor) snapshotReport(selectedID uint64) (snapshot report.Report, err error) {
+	err = s.editTargets(func(s *supervisor) error {
 		var err error
 		snapshot, err = s.captureReport(selectedID)
 		return err
 	})
+	return
+}
+
+func (s *supervisor) saveReport(path, format string, selectedID uint64) error {
+	if format != "csv" && format != "json" {
+		return fmt.Errorf("unsupported report format %q", format)
+	}
+	snapshot, err := s.snapshotReport(selectedID)
 	if err != nil {
 		return err
 	}

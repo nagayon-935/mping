@@ -20,7 +20,7 @@ func TestSupervisorSerializesConcurrentRestarts(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Go(func() {
-			if err := sup.do(cmdRestart); err != nil {
+			if err := sup.sendCmd(command{kind: cmdRestart}); err != nil {
 				t.Errorf("cmdRestart: %v", err)
 			}
 		})

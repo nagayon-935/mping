@@ -22,8 +22,9 @@ const (
 	maxIntervalMs = 60000
 )
 
-// Validate the effective configuration after CLI overrides are applied. This
-// is shared by initial loading and reload admission, before any probes stop.
+// validateMergedHosts validates the effective configuration after CLI
+// overrides are applied. Initial loading and reload admission share this
+// check, before any probes stop.
 func validateMergedHosts(cfg config, hosts []hostsfile.Entry, groups []hostsfile.Group, cliHosts []string) error {
 	allHosts := append([]hostsfile.Entry(nil), hosts...)
 	for _, host := range cliHosts {

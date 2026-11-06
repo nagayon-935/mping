@@ -8,6 +8,8 @@ import (
 	"github.com/spf13/pflag"
 )
 
+const completeInterfacesCommand = "__complete-interfaces"
+
 // flagInfo is the shell-agnostic description of a single mping flag,
 // extracted from the FlagSet that registerFlags produces. It is the
 // intermediate representation every shell template renders from, so adding a
@@ -188,7 +190,7 @@ func bashCompletion(flags []flagInfo) string {
 			b.WriteString("        " + names + ")\n")
 			b.WriteString("            while IFS= read -r candidate; do\n")
 			b.WriteString("                [[ \"$candidate\" == \"$cur\"* ]] && COMPREPLY+=( \"$prefix$candidate\" )\n")
-			b.WriteString("            done < <(\"${COMP_WORDS[0]}\" __complete-interfaces 2>/dev/null)\n")
+			b.WriteString("            done < <(\"${COMP_WORDS[0]}\" " + completeInterfacesCommand + " 2>/dev/null)\n")
 			b.WriteString("            return 0\n")
 			b.WriteString("            ;;\n")
 		case "none":
@@ -216,7 +218,7 @@ func zshCompletion(flags []flagInfo) string {
 	b.WriteString("# Install after compinit: source <(mping completion zsh)\n\n")
 	b.WriteString(`_mping_interfaces() {
     local -a interfaces
-    interfaces=("${(@f)$("${words[1]}" __complete-interfaces 2>/dev/null)}")
+    interfaces=("${(@f)$("${words[1]}" ` + completeInterfacesCommand + ` 2>/dev/null)}")
     _describe 'network interface' interfaces
 }
 
@@ -290,8 +292,8 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-// zshEscape escapes characters that are meaningful inside a zsh _arguments
-// spec string ('[...]' description field): ':' separates the description
+// zshEscape escapes backslashes and characters meaningful inside a zsh
+// _arguments spec's '[...]' description field: ':' separates the description
 // from the action, and unescaped '[' / ']' would prematurely close the
 // description field.
 func zshEscape(s string) string {
@@ -329,7 +331,7 @@ complete -c mping -n '__mping_completion_command' -s h -l help -d 'show completi
 		case "file":
 			line.WriteString(" -r -F")
 		case "interface":
-			line.WriteString(" -r -f -a '(mping __complete-interfaces)'")
+			line.WriteString(" -r -f -a '(mping " + completeInterfacesCommand + ")'")
 		case "none":
 			line.WriteString(" -r -f")
 		}
@@ -340,8 +342,8 @@ complete -c mping -n '__mping_completion_command' -s h -l help -d 'show completi
 	return b.String()
 }
 
-// fishEscape escapes single quotes inside a fish `-d '...'` description so
-// the literal string isn't terminated early.
+// fishEscape escapes backslashes and single quotes inside a fish `-d '...'`
+// description so the literal string isn't terminated early.
 func fishEscape(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s)
 }

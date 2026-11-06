@@ -137,9 +137,8 @@ func TestCheckPortReloadDrift(t *testing.T) {
 
 // TestRunReload_PortChangeWarnsRestartRequired verifies that reloading a
 // hosts file whose port: list differs from what the running port checker
-// was built with surfaces a warning in the next iteration's InitialLogs,
-// rather than silently doing nothing (port checks are parsed once at startup
-// and never re-applied on a reload; see checkPortReloadDrift in lifecycle.go).
+// was built with explains the rebuilt checks in the next iteration's
+// InitialLogs (see checkPortReloadDrift in reload_coordinator.go).
 func TestRunReload_PortChangeWarnsRestartRequired(t *testing.T) {
 	stubRunSeams(t, nil)
 	yamlPath := writeHostsYAML(t, "hosts:\n  - example.com\nport:\n  - \"80\"\n")

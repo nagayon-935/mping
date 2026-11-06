@@ -46,12 +46,8 @@ func TestRunConnectsReportSavingToEffectiveSession(t *testing.T) {
 
 func captureTestReport(t *testing.T, s *supervisor, id uint64) report.Report {
 	t.Helper()
-	var r report.Report
-	if err := s.editTargets(func(s *supervisor) error {
-		var err error
-		r, err = s.captureReport(id)
-		return err
-	}); err != nil {
+	r, err := s.snapshotReport(id)
+	if err != nil {
 		t.Fatal(err)
 	}
 	return r

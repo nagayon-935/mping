@@ -14,6 +14,7 @@ var (
 	netInterfaces    = net.Interfaces
 )
 
+// getInterfaceIP selects a non-loopback address on the named interface.
 func getInterfaceIP(ifaceName string, wantIPv6 bool) (string, error) {
 	iface, err := interfaceByName(ifaceName)
 	if err != nil {
@@ -106,6 +107,8 @@ func selectInterfaceIP(addrs []net.Addr, ifaceName string, wantIPv6 bool) (strin
 	return "", fmt.Errorf("no %s address found for interface %s", ver, ifaceName)
 }
 
+// getInterfaceMTU uses the named interface or finds the interface owning
+// sourceIP. With no source it probes the route to firstHost for a local IP.
 func getInterfaceMTU(ifaceName, sourceIP, firstHost string) (int, error) {
 	if ifaceName != "" {
 		iface, err := interfaceByName(ifaceName)
@@ -116,10 +119,9 @@ func getInterfaceMTU(ifaceName, sourceIP, firstHost string) (int, error) {
 	}
 
 	lookupIP := sourceIP
-	// If sourceIP is empty, we can't easily guess the outgoing interface MTU without a route lookup.
-	// We'll skip complex route lookup here.
+	// Without an explicit source, a UDP route probe supplies the local IP
+	// whose interface MTU is used below.
 	if lookupIP == "" {
-		// Fallback: Try to guess based on first host reachability
 		lookupIP = getPreferredOutboundIP(firstHost, "udp")
 	}
 	if lookupIP == "" {
@@ -153,8 +155,9 @@ func getPreferredOutboundIP(remoteAddr, network string) string {
 	return getPreferredOutboundIPBound(remoteAddr, network, pinger.BindConfig{})
 }
 
+// getPreferredOutboundIPBound probes local UDP route selection with bind.
+// network must be "udp", "udp4", or "udp6"; failures return an empty string.
 func getPreferredOutboundIPBound(remoteAddr, network string, bind pinger.BindConfig) string {
-	// network should be "udp", "udp4", or "udp6"
 	dialer := pinger.NewBoundDialer("udp", 200*time.Millisecond, bind)
 	conn, err := dialer.Dial(network, net.JoinHostPort(remoteAddr, probePort))
 	if err != nil {
@@ -169,19 +172,22 @@ func getPreferredOutboundIPBound(remoteAddr, network string, bind pinger.BindCon
 	return localAddr.IP.String()
 }
 
-func detectAutoSourceIPs(specs []targetSpec) (string, string) {
+// detectAutoSourceIPs finds display hints using the default egress routes.
+func detectAutoSourceIPs(specs []targetSpec) (src4, src6 string) {
 	return detectSourceIPs(specs, getPreferredOutboundIPFn)
 }
 
-func detectInterfaceSourceIPs(specs []targetSpec, iface string) (string, string) {
+// detectInterfaceSourceIPs finds source hints with route probes bound to iface.
+func detectInterfaceSourceIPs(specs []targetSpec, iface string) (src4, src6 string) {
 	bind := checkerBindConfig(config{ifaceName: iface}, "")
 	return detectSourceIPs(specs, func(remote, network string) string {
 		return getPreferredOutboundIPBound(remote, network, bind)
 	})
 }
 
-func detectSourceIPs(specs []targetSpec, probe func(string, string) string) (string, string) {
-	var src4, src6 string
+// detectSourceIPs returns the first non-empty source hint for each family,
+// trying hosts in order until both are found or all hosts have been tried.
+func detectSourceIPs(specs []targetSpec, probe func(string, string) string) (src4, src6 string) {
 	for _, spec := range specs {
 		cleanHost := spec.resolveAddr()
 		if src4 == "" {

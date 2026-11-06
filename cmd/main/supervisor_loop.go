@@ -7,8 +7,8 @@ import "errors"
 // once run() has torn the iteration down.
 var errSupervisorShutDown = errors.New("supervisor shut down")
 
-// cmdChanBuffer accommodates commands from the UI worker and completion
-// observers. Each caller still waits for its command to finish.
+// cmdChanBuffer bounds queued commands from UI, web and reload callbacks and
+// completion observers. Synchronous callers wait for their command to finish.
 const cmdChanBuffer = 16
 
 // Start launches the command goroutine. Every supervisor mutation happens on
@@ -25,7 +25,7 @@ func (s *supervisor) Start() {
 // outlive the supervisor, even when a caller omits an explicit cmdTerminate.
 func (s *supervisor) Shutdown() {
 	s.shutdownOnce.Do(func() {
-		_ = s.do(cmdTerminate)
+		_ = s.sendCmd(command{kind: cmdTerminate})
 		close(s.done)
 	})
 	<-s.loopDone
@@ -71,11 +71,6 @@ func (s *supervisor) sendCmd(c command) error {
 	case <-s.done:
 		return errSupervisorShutDown
 	}
-}
-
-// do sends a command and waits for its result.
-func (s *supervisor) do(k cmdKind) error {
-	return s.sendCmd(command{kind: k})
 }
 
 // publish republishes the values read outside the command loop. httpResults()
