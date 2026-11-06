@@ -205,6 +205,49 @@ func TestProbeHop_NoMatchingReplyTimesOut(t *testing.T) {
 	})
 }
 
+func TestProbeHop_SetTTLFailure(t *testing.T) {
+	for _, shared := range []bool{false, true} {
+		name := "standalone"
+		if shared {
+			name = "shared receiver"
+		}
+		t.Run(name, func(t *testing.T) {
+			ids := &IDAllocator{}
+			p := NewPingerWithOptions(nil, Options{IDs: ids, ResolveIPAddr: resolveTo("8.8.8.8")})
+			if shared {
+				p.connV4 = &fakePacketConn{}
+			}
+			ttlErr := errors.New("set TTL failed")
+			conn := &fakeHopConn{ttl: 64, ttlErr: ttlErr}
+			sock := &HopSocket{isV4: true, sendV4: conn}
+
+			reply, err := p.ProbeHop(context.Background(), sock, "8.8.8.8", 3, p.NextTraceID(), 10*time.Millisecond)
+			if !errors.Is(err, ttlErr) {
+				t.Errorf("ProbeHop error = %v, want wrapped SetTTL error", err)
+			} else if !strings.Contains(err.Error(), "ttl=3") {
+				t.Errorf("ProbeHop error = %v, want requested TTL", err)
+			}
+			if reply != (HopReply{}) {
+				t.Errorf("reply = %+v, want empty reply", reply)
+			}
+			if len(conn.sentTTLs) != 0 {
+				t.Errorf("sent TTLs = %v, want no send after SetTTL failure", conn.sentTTLs)
+			}
+			if !sock.sendMu.TryLock() {
+				t.Error("send lock held after SetTTL failure")
+			} else {
+				sock.sendMu.Unlock()
+			}
+			if len(p.traceChans) != 0 {
+				t.Error("trace channel leaked after SetTTL failure")
+			}
+			if len(ids.traces) != 0 {
+				t.Errorf("trace ID still held after SetTTL failure: %v", ids.traces)
+			}
+		})
+	}
+}
+
 func TestProbeHop_Errors(t *testing.T) {
 	t.Run("resolve failure", func(t *testing.T) {
 		p := NewPingerWithOptions(nil, Options{

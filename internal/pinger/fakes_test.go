@@ -168,6 +168,8 @@ type fakeHopConn struct {
 	readQueue []readResult
 	// deadlineErr fails SetReadDeadline.
 	deadlineErr error
+	// ttlErr fails SetTTL without changing the connection-wide TTL.
+	ttlErr error
 	// onWrite runs on every WriteTo; a non-nil result fails the write.
 	onWrite func(b []byte, dst net.Addr) error
 	// ttlDelay is slept inside SetTTL after the value is stored, widening the
@@ -185,6 +187,11 @@ type fakeHopConn struct {
 
 func (f *fakeHopConn) SetTTL(ttl int) error {
 	f.mu.Lock()
+	if f.ttlErr != nil {
+		err := f.ttlErr
+		f.mu.Unlock()
+		return err
+	}
 	f.ttl = ttl
 	delay := f.ttlDelay
 	f.mu.Unlock()
