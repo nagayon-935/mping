@@ -32,7 +32,9 @@ type HopStats struct {
 func (h *HopStats) annotate(ip, asn, country, org string) {
 	if ip != "" {
 		if ip != h.IP {
-			h.PTR = ""
+			// A different responder: the previous router's annotations no
+			// longer apply until a lookup for ip fills them in.
+			h.ASN, h.Country, h.Org, h.PTR = "", "", "", ""
 		}
 		h.IP = ip
 	}
@@ -174,6 +176,24 @@ func (m *MTRStats) SetPTR(ttl int, ip, name string) {
 	defer m.mu.Unlock()
 	if h := m.hopAt(ttl); h != nil && h.IP == ip {
 		h.PTR = name
+	}
+}
+
+// AnnotateIP applies lookup results to every hop still answering from ip.
+// Results for an IP no hop uses any more are dropped, so a late lookup can
+// never label a different router. Empty values leave fields unchanged.
+func (m *MTRStats) AnnotateIP(ip, asn, country, org, ptr string) {
+	defer bumpGeneration()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, h := range m.hops {
+		if h == nil || h.IP != ip {
+			continue
+		}
+		h.annotate(ip, asn, country, org)
+		if ptr != "" {
+			h.PTR = ptr
+		}
 	}
 }
 

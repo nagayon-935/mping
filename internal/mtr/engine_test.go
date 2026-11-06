@@ -199,10 +199,10 @@ func TestProbe_UnknownHopRecoversWithoutRediscovery(t *testing.T) {
 	cfg := (&Config{MaxHops: 5}).withDefaults()
 	ctx := context.Background()
 	sock := &fakeHopSocket{}
-	n := discover(ctx, prober, sock, m, "8.8.8.8", cfg, nil)
-	probe(ctx, prober, sock, m, "8.8.8.8", n, cfg, nil)
+	n := discover(ctx, prober, sock, m, "8.8.8.8", cfg, nil, nil)
+	probe(ctx, prober, sock, m, "8.8.8.8", n, cfg, nil, nil)
 	prober.replies[2] = pinger.HopReply{SrcIP: "10.0.0.2", Responded: true, RTT: 5 * time.Millisecond}
-	probe(ctx, prober, sock, m, "8.8.8.8", n, cfg, nil)
+	probe(ctx, prober, sock, m, "8.8.8.8", n, cfg, nil, nil)
 	h := m.View()[1]
 	if h.IP != "10.0.0.2" || h.Sent != 2 || h.Recv != 1 || h.LossPct != 50 {
 		t.Fatalf("hop should recover on the next probe and retain earlier loss: %+v", h)
@@ -223,11 +223,11 @@ func TestDiscover_SendErrorsLeaveProbeableSlots(t *testing.T) {
 	cfg := (&Config{MaxHops: 3}).withDefaults()
 	ctx := context.Background()
 	sock := &fakeHopSocket{}
-	n := discover(ctx, failedDiscoveryProber{prober}, sock, m, "8.8.8.8", cfg, nil)
+	n := discover(ctx, failedDiscoveryProber{prober}, sock, m, "8.8.8.8", cfg, nil, nil)
 	if n != 3 || len(m.View()) != 3 {
 		t.Fatalf("failed discovery must retain all TTL slots: count=%d, hops=%+v", n, m.View())
 	}
-	probe(ctx, prober, sock, m, "8.8.8.8", n, cfg, nil)
+	probe(ctx, prober, sock, m, "8.8.8.8", n, cfg, nil, nil)
 	if h := m.View()[2]; h.IP != "8.8.8.8" || h.Recv != 1 {
 		t.Fatalf("slot must accept a later response: %+v", h)
 	}

@@ -453,3 +453,48 @@ func TestMTRStats_ErrorIsClearedByReset(t *testing.T) {
 		t.Fatalf("Error() after Reset = %q, want empty", got)
 	}
 }
+
+// TestMTRStats_IPChangeClearsStaleAnnotations verifies a hop that starts
+// answering from a different router does not keep the previous router's
+// ASN, country, org or PTR until a fresh lookup finishes.
+func TestMTRStats_IPChangeClearsStaleAnnotations(t *testing.T) {
+	// Arrange
+	m := NewMTRStats()
+	m.EnsureLen(1)
+	m.SetIP(1, "10.0.0.1", "AS1", "JP", "org-1")
+	m.SetPTR(1, "10.0.0.1", "gw1.example")
+
+	// Act
+	m.RecordReply(1, "10.0.0.9", "", "", "", time.Millisecond)
+
+	// Assert
+	h := m.View()[0]
+	if h.IP != "10.0.0.9" || h.ASN != "" || h.Country != "" || h.Org != "" || h.PTR != "" {
+		t.Fatalf("hop = %+v, want new IP with no stale annotations", h)
+	}
+}
+
+// TestMTRStats_AnnotateIPAppliesOnlyToMatchingHops verifies late lookup
+// results are not applied to a hop whose responder has since changed.
+func TestMTRStats_AnnotateIPAppliesOnlyToMatchingHops(t *testing.T) {
+	// Arrange
+	m := NewMTRStats()
+	m.EnsureLen(3)
+	m.SetIP(1, "10.0.0.1", "", "", "")
+	m.SetIP(2, "10.0.0.2", "", "", "")
+	m.SetIP(3, "10.0.0.1", "", "", "")
+
+	// Act
+	m.AnnotateIP("10.0.0.1", "AS1", "JP", "org-1", "gw1.example")
+
+	// Assert
+	hops := m.View()
+	for _, i := range []int{0, 2} {
+		if hops[i].ASN != "AS1" || hops[i].Org != "org-1" || hops[i].PTR != "gw1.example" {
+			t.Errorf("hop %d = %+v, want annotated", i+1, hops[i])
+		}
+	}
+	if hops[1].ASN != "" || hops[1].PTR != "" {
+		t.Errorf("hop 2 = %+v, want untouched", hops[1])
+	}
+}

@@ -37,7 +37,12 @@ func TestEngine_PathOnlyDiscoversWithoutProbing(t *testing.T) {
 			t.Errorf("hop %d sent %d probes, want none in path-only mode", h.TTL, h.Sent)
 		}
 	}
-	if hops[0].PTR != "gw.example" || hops[1].PTR != "" {
+	// PTR lookups run in the background (hopAnnotator), so wait for them.
+	ptrsReady := waitUntil(500*time.Millisecond, func() bool {
+		v := target.MTR().View()
+		return len(v) == 2 && v[0].PTR == "gw.example"
+	})
+	if hops = target.MTR().View(); !ptrsReady || hops[1].PTR != "" {
 		t.Errorf("PTR = %q, %q, want gw.example and none", hops[0].PTR, hops[1].PTR)
 	}
 }
