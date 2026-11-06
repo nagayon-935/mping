@@ -92,10 +92,12 @@ func (a *pingerMTRAdapter) ProbeHop(ctx context.Context, sock mtr.HopSocket, des
 }
 
 func (a *pingerMTRAdapter) NextTraceID() int { return a.p.NextTraceID() }
-func (a *pingerMTRAdapter) ASNInfoFor(ip string) pinger.ASNInfo {
-	return a.p.GetASNInfoFor(ip)
+func (a *pingerMTRAdapter) ASNInfoFor(ctx context.Context, ip string) pinger.ASNInfo {
+	return a.p.GetASNInfoForContext(ctx, ip)
 }
-func (a *pingerMTRAdapter) PTRFor(ip string) string { return a.p.GetPTRFor(ip) }
+func (a *pingerMTRAdapter) PTRFor(ctx context.Context, ip string) string {
+	return a.p.GetPTRForContext(ctx, ip)
+}
 
 var newPinger = func(targets []*stats.TargetStats, opts pinger.Options) pingerController {
 	return &pingerAdapter{Pinger: pinger.NewPingerWithOptions(targets, opts)}

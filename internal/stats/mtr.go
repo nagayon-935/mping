@@ -29,7 +29,7 @@ type HopStats struct {
 // annotate overwrites IP/ASN/Country/Org with each non-empty argument; empty
 // arguments leave the existing value untouched. A new responder IP drops the
 // previous one's PTR name. Caller must hold the owning MTRStats.mu.
-func (h *HopStats) annotate(ip, asn, country, org string) {
+func (h *HopStats) annotate(ip string, a HopAnnotation) {
 	if ip != "" {
 		if ip != h.IP {
 			// A different responder: the previous router's annotations no
@@ -38,15 +38,23 @@ func (h *HopStats) annotate(ip, asn, country, org string) {
 		}
 		h.IP = ip
 	}
-	if asn != "" {
-		h.ASN = asn
+	if a.ASN != "" {
+		h.ASN = a.ASN
 	}
-	if country != "" {
-		h.Country = country
+	if a.Country != "" {
+		h.Country = a.Country
 	}
-	if org != "" {
-		h.Org = org
+	if a.Org != "" {
+		h.Org = a.Org
 	}
+	if a.PTR != "" {
+		h.PTR = a.PTR
+	}
+}
+
+// HopAnnotation is the lookup-derived description of a hop's responder.
+type HopAnnotation struct {
+	ASN, Country, Org, PTR string
 }
 
 // HopView is the read-only per-hop snapshot for UI/export.
@@ -114,6 +122,12 @@ func (m *MTRStats) TruncateLen(n int) {
 // RecordReply records a successful probe response for the hop at ttl.
 // ttl is 1-based.
 func (m *MTRStats) RecordReply(ttl int, ip, asn, country, org string, rtt time.Duration) {
+	m.RecordReplyAnnotated(ttl, ip, HopAnnotation{ASN: asn, Country: country, Org: org}, rtt)
+}
+
+// RecordReplyAnnotated is RecordReply that also sets the PTR, so a hop that
+// switches responder gets the new router's annotations in the same update.
+func (m *MTRStats) RecordReplyAnnotated(ttl int, ip string, a HopAnnotation, rtt time.Duration) {
 	defer bumpGeneration()
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -123,7 +137,7 @@ func (m *MTRStats) RecordReply(ttl int, ip, asn, country, org string, rtt time.D
 	}
 	h.Sent++
 	h.Recv++
-	h.annotate(ip, asn, country, org)
+	h.annotate(ip, a)
 	// RFC 1889 jitter
 	if h.Recv > 1 {
 		h.jitter = updateJitter(h.jitter, rtt, h.LastRTT)
@@ -155,6 +169,11 @@ func (m *MTRStats) RecordLoss(ttl int) {
 // Used during discovery when no RTT measurement was taken.
 // ttl is 1-based.
 func (m *MTRStats) SetIP(ttl int, ip, asn, country, org string) {
+	m.SetIPAnnotated(ttl, ip, HopAnnotation{ASN: asn, Country: country, Org: org})
+}
+
+// SetIPAnnotated is SetIP that also sets the PTR (see RecordReplyAnnotated).
+func (m *MTRStats) SetIPAnnotated(ttl int, ip string, a HopAnnotation) {
 	defer bumpGeneration()
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -162,7 +181,7 @@ func (m *MTRStats) SetIP(ttl int, ip, asn, country, org string) {
 	if h == nil {
 		return
 	}
-	h.annotate(ip, asn, country, org)
+	h.annotate(ip, a)
 	if ip != "" {
 		h.routeIP = ip // track discovery-time IP separately for flap detection
 	}
@@ -190,10 +209,7 @@ func (m *MTRStats) AnnotateIP(ip, asn, country, org, ptr string) {
 		if h == nil || h.IP != ip {
 			continue
 		}
-		h.annotate(ip, asn, country, org)
-		if ptr != "" {
-			h.PTR = ptr
-		}
+		h.annotate(ip, HopAnnotation{ASN: asn, Country: country, Org: org, PTR: ptr})
 	}
 }
 

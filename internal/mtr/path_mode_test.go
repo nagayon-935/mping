@@ -42,8 +42,8 @@ func TestEngine_PathOnlyDiscoversWithoutProbing(t *testing.T) {
 		v := target.MTR().View()
 		return len(v) == 2 && v[0].PTR == "gw.example"
 	})
-	if hops = target.MTR().View(); !ptrsReady || hops[1].PTR != "" {
-		t.Errorf("PTR = %q, %q, want gw.example and none", hops[0].PTR, hops[1].PTR)
+	if hops = target.MTR().View(); !ptrsReady || len(hops) != 2 || hops[1].PTR != "" {
+		t.Errorf("hops = %+v, want PTR gw.example on hop 1 and none on hop 2", hops)
 	}
 }
 

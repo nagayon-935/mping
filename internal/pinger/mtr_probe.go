@@ -106,6 +106,22 @@ func (p *Pinger) GetASNInfoFor(ip string) ASNInfo {
 	return p.getASNInfo(ip)
 }
 
+// GetASNInfoForContext is GetASNInfoFor that gives up when ctx is cancelled.
+func (p *Pinger) GetASNInfoForContext(ctx context.Context, ip string) ASNInfo {
+	if !p.AsnEnabled {
+		return ASNInfo{}
+	}
+	return p.getASNInfoContext(ctx, ip)
+}
+
+// GetPTRForContext is GetPTRFor that gives up when ctx is cancelled.
+func (p *Pinger) GetPTRForContext(ctx context.Context, ip string) string {
+	if !p.PtrEnabled {
+		return ""
+	}
+	return p.getPTRContext(ctx, ip)
+}
+
 // GetPTRFor returns ip's reverse DNS name when PTR lookup is enabled.
 func (p *Pinger) GetPTRFor(ip string) string {
 	if !p.PtrEnabled {

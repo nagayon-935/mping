@@ -57,9 +57,9 @@ func (f *fakeProber) NextTraceID() int {
 	return f.idSeq
 }
 
-func (f *fakeProber) ASNInfoFor(ip string) pinger.ASNInfo { return pinger.ASNInfo{} }
+func (f *fakeProber) ASNInfoFor(context.Context, string) pinger.ASNInfo { return pinger.ASNInfo{} }
 
-func (f *fakeProber) PTRFor(ip string) string {
+func (f *fakeProber) PTRFor(_ context.Context, ip string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.ptrs[ip]

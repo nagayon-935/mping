@@ -36,9 +36,10 @@ type HopProber interface {
 	OpenHopSocket(ctx context.Context, dest string) (HopSocket, error)
 	ProbeHop(ctx context.Context, sock HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error)
 	NextTraceID() int
-	ASNInfoFor(ip string) pinger.ASNInfo
+	// ASNInfoFor and PTRFor give up when ctx is cancelled (target stopped).
+	ASNInfoFor(ctx context.Context, ip string) pinger.ASNInfo
 	// PTRFor returns ip's reverse DNS name, or "" when unknown or disabled.
-	PTRFor(ip string) string
+	PTRFor(ctx context.Context, ip string) string
 }
 
 // Config holds tunable parameters for the MTR engine.
@@ -59,6 +60,9 @@ type Config struct {
 	// host is the target's display name (TargetStats.DisplayName); desc
 	// summarises what changed.
 	OnFlap func(host, desc string)
+	// AnnotationRetry is how long an incomplete ASN/PTR result is kept before
+	// it is looked up again. Defaults to defaultAnnotationRetry when <= 0.
+	AnnotationRetry time.Duration
 }
 
 func (c *Config) withDefaults() Config {
@@ -77,6 +81,9 @@ func (c *Config) withDefaults() Config {
 	}
 	if out.MaxConcurrentProbes <= 0 {
 		out.MaxConcurrentProbes = defaultMaxConcurrentProbes
+	}
+	if out.AnnotationRetry <= 0 {
+		out.AnnotationRetry = defaultAnnotationRetry
 	}
 	return out
 }
@@ -138,7 +145,7 @@ func (e *Engine) Stop() {
 // and retried at the next rediscovery.
 func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg Config, sem chan struct{}) {
 	mtr := ts.MTR()
-	ann := newHopAnnotator(prober, mtr)
+	ann := newHopAnnotator(ctx, prober, mtr, cfg.AnnotationRetry)
 	defer ann.close()
 	var sock HopSocket
 	var dest string
@@ -285,8 +292,9 @@ func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.
 	for _, res := range results {
 		if res.ttl <= hopCount {
 			if ip := res.reply.SrcIP; res.reply.Responded && ip != "" {
-				// Register the IP now; ASN/PTR follow from the annotator.
-				mtr.SetIP(res.ttl, ip, "", "", "")
+				// Register the IP now, with whatever is already known about
+				// it; missing ASN/PTR follow from the annotator.
+				mtr.SetIPAnnotated(res.ttl, ip, ann.cached(ip))
 				ann.note(ip)
 			}
 		}
@@ -302,7 +310,7 @@ func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.
 func probe(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTRStats, dest string, hopCount int, cfg Config, sem chan struct{}, ann *hopAnnotator) {
 	fanOut(ctx, prober, sock, dest, cfg.HopTimeout, sem, hopCount, func(ttl int, reply pinger.HopReply) {
 		if reply.Responded {
-			mtr.RecordReply(ttl, reply.SrcIP, "", "", "", reply.RTT)
+			mtr.RecordReplyAnnotated(ttl, reply.SrcIP, ann.cached(reply.SrcIP), reply.RTT)
 			ann.note(reply.SrcIP)
 		} else {
 			mtr.RecordLoss(ttl)
