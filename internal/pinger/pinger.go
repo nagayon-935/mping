@@ -210,12 +210,18 @@ type resolveIPAddrFunc func(network, address string) (*net.IPAddr, error)
 
 type listenPacketFunc func(network, address string) (net.PacketConn, error)
 
+// runPrivileged is the single entry point this package uses for
+// privilege.Privileged. It is a seam so tests can observe every privileged
+// section, in particular reentry: privilege's RWMutex is not reentrant, and a
+// nested section deadlocks once an AsRealUser section waits in between.
+var runPrivileged = privilege.Privileged
+
 // privilegedListenPacket is the default listenPacketFunc: raw ICMP sockets
 // need root (or CAP_NET_RAW), so they are opened inside privilege.Privileged,
 // never while a setuid-root run has dropped to the invoking user for file I/O.
 func privilegedListenPacket(network, address string) (net.PacketConn, error) {
 	var c net.PacketConn
-	err := privilege.Privileged(func() error {
+	err := runPrivileged(func() error {
 		var err error
 		c, err = net.ListenPacket(network, address)
 		return err
@@ -231,7 +237,7 @@ func privilegedListenPacket(network, address string) (net.PacketConn, error) {
 var bindToInterfaceFn = func(c net.PacketConn, ifaceName string, isIPv6 bool) {
 	// SO_BINDTODEVICE needs CAP_NET_RAW on Linux, which a setuid-root run
 	// only has while not inside privilege.AsRealUser.
-	_ = privilege.Privileged(func() error {
+	_ = runPrivileged(func() error {
 		bindToInterface(c, ifaceName, isIPv6)
 		return nil
 	})

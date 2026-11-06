@@ -3,8 +3,6 @@ package pinger
 import (
 	"net"
 	"syscall"
-
-	"github.com/nagayon-935/mping/internal/privilege"
 )
 
 // bindRawConnToInterfaceFn is a seam over the platform-specific
@@ -15,7 +13,7 @@ import (
 // connection. It mirrors bindToInterfaceFn, the equivalent seam for the ICMP
 // net.PacketConn path.
 var bindRawConnToInterfaceFn = func(c syscall.RawConn, ifaceName string, isIPv6 bool) {
-	_ = privilege.Privileged(func() error {
+	_ = runPrivileged(func() error {
 		bindRawConnToInterface(c, ifaceName, isIPv6)
 		return nil
 	})

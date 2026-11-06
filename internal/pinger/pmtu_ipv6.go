@@ -9,7 +9,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nagayon-935/mping/internal/privilege"
 	"github.com/nagayon-935/mping/internal/stats"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv6"
@@ -55,10 +54,8 @@ type nativeIPv6PMTUSocket struct{ *net.IPConn }
 
 func (c nativeIPv6PMTUSocket) PathMTU() (int, error) { return ipv6SocketPathMTU(c.IPConn) }
 
-// runPrivileged and dialIPv6PMTUConn are seams so tests can verify that the
-// raw socket is created inside a privileged section without real privileges.
-var runPrivileged = privilege.Privileged
-
+// dialIPv6PMTUConn is a seam so tests can verify that the raw socket is
+// created inside a privileged section without real privileges.
 var dialIPv6PMTUConn = func(ctx context.Context, d *net.Dialer, address string) (net.Conn, error) {
 	return d.DialContext(ctx, "ip6:ipv6-icmp", address)
 }
@@ -218,10 +215,15 @@ func (p *Pinger) ipv6PMTUDialer() (*net.Dialer, error) {
 		// Control runs inside the privileged dial: never re-enter it here.
 		bindRawConnToInterfaceHeldFn(raw, p.Interface, true)
 		var optionErr error
-		if err := raw.Control(func(fd uintptr) { optionErr = setIPv6PMTUDiscovery(int(fd)) }); err != nil {
+		if err := raw.Control(func(fd uintptr) { optionErr = setIPv6PMTUDiscoveryFn(int(fd)) }); err != nil {
 			return err
 		}
 		return optionErr
 	}
 	return dialer, nil
 }
+
+// setIPv6PMTUDiscoveryFn is a seam over the platform setIPv6PMTUDiscovery
+// (pmtu_darwin.go / pmtu_linux.go / pmtu_other.go) so tests can run the dial's
+// Control hook without a real socket.
+var setIPv6PMTUDiscoveryFn = setIPv6PMTUDiscovery
