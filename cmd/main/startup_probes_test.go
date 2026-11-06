@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"io"
+	"net"
 	"regexp"
 	"strings"
 	"testing"
@@ -74,7 +76,9 @@ func TestSetupPMTU(t *testing.T) {
 		{
 			name: "-m alone records the IPv6 OS estimate and keeps the ping payload",
 			cfg:  config{mtuEnabled: true, packetSize: 56}, ifaceMTU: 1500,
-			fake: &fakePinger{discoverPath: func(string) (pinger.PathMTUResult, error) {
+			fake: &fakePinger{resolveTarget: func(context.Context, string) (*net.IPAddr, error) {
+				return &net.IPAddr{IP: net.ParseIP("2001:db8::1")}, nil
+			}, discoverPath: func(string) (pinger.PathMTUResult, error) {
 				return pinger.PathMTUResult{IP: "2001:db8::1", MTU: 1450, Payload: 1402, Source: "os", Status: "estimated"}, nil
 			}}, wantFactoryCalled: true,
 			wantPacketSize: 56, wantPMTU: 1402, wantNoPreLogs: true,
@@ -108,8 +112,11 @@ func TestSetupPMTU(t *testing.T) {
 			targets := []*stats.TargetStats{stats.NewTargetStats("example.com")}
 			var errOut bytes.Buffer
 
-			packetSize, preLogs := setupPMTU(makeFn, tt.cfg, tt.ifaceMTU, targets, &errOut)
+			packetSize, preLogs, deferred := setupPMTU(makeFn, tt.cfg, tt.ifaceMTU, targets, &errOut)
 
+			if deferred != nil {
+				deferred(context.Background(), func(string) {})
+			}
 			if called != tt.wantFactoryCalled {
 				t.Errorf("makePinger called = %v, want %v", called, tt.wantFactoryCalled)
 			}
@@ -142,7 +149,7 @@ func TestSetupPMTU_ProgressLinesKeepTheirPrefixAndTimestamp(t *testing.T) {
 	var errOut bytes.Buffer
 	cfg := config{mtuEnabled: true, packetSize: 56}
 
-	_, preLogs := setupPMTU(makeFn, cfg, 1500, []*stats.TargetStats{stats.NewTargetStats("example.com")}, &errOut)
+	_, preLogs, _ := setupPMTU(makeFn, cfg, 1500, []*stats.TargetStats{stats.NewTargetStats("example.com")}, &errOut)
 
 	if len(preLogs) != 1 {
 		t.Fatalf("preLogs = %q, want one line", preLogs)
@@ -168,7 +175,11 @@ func TestSetupPMTU_PerTargetMixedFamilies(t *testing.T) {
 		}
 	}}
 	var errOut bytes.Buffer
-	size, _ := setupPMTU(func(int) pingerController { return fake }, config{mtuEnabled: true, packetSize: 56}, 1500, targets, &errOut)
+	size, _, deferred := setupPMTU(func(int) pingerController { return fake }, config{mtuEnabled: true, packetSize: 56}, 1500, targets, &errOut)
+	if deferred == nil {
+		t.Fatal("missing IPv6 deferred discovery")
+	}
+	deferred(context.Background(), func(string) {})
 	if errOut.Len() != 0 || size != 56 {
 		t.Fatalf("size=%d error=%s", size, errOut.String())
 	}
@@ -194,8 +205,10 @@ func TestSetupPMTU_PerTargetIPv6PartialFailure(t *testing.T) {
 		}
 	}}
 	var errOut bytes.Buffer
-	size, _ := setupPMTU(func(int) pingerController { return fake }, config{mtuEnabled: true, ipv6Only: true, packetSize: 56}, 1500, targets, &errOut)
-	if size != 56 || !strings.Contains(errOut.String(), "2001:db8::2") {
+	size, _, deferred := setupPMTU(func(int) pingerController { return fake }, config{mtuEnabled: true, ipv6Only: true, packetSize: 56}, 1500, targets, &errOut)
+	var logs []string
+	deferred(context.Background(), func(line string) { logs = append(logs, line) })
+	if size != 56 || errOut.Len() != 0 || !strings.Contains(strings.Join(logs, "\n"), "2001:db8::2") {
 		t.Fatalf("size=%d errors=%s", size, errOut.String())
 	}
 	confirmed, estimated, unknown := targets[0].GetView(), targets[1].GetView(), targets[2].GetView()

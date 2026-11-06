@@ -183,3 +183,8 @@ func (p *Pinger) resolveTargetContext(ctx context.Context, t *stats.TargetStats)
 	}
 	return addr
 }
+
+// ResolveTarget selects the usable destination family before startup discovery.
+func (p *Pinger) ResolveTarget(ctx context.Context, dest string) (*net.IPAddr, error) {
+	return p.resolveIPAddrContext(ctx, "ip", dest)
+}

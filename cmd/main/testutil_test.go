@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,6 +117,8 @@ type fakePinger struct {
 	discoverBottleneckIP string
 	discoverErr          error
 	discoverLogs         []string
+	resolveTarget        func(context.Context, string) (*net.IPAddr, error)
+	discoverPathContext  func(context.Context, string) (pinger.PathMTUResult, error)
 	discoverPath         func(string) (pinger.PathMTUResult, error)
 
 	// routeStarted and routeReturned, when set, make the route prober's
@@ -134,7 +137,7 @@ type fakePinger struct {
 	// onStop / onClose / onWait run at the start of the matching call, before
 	// the call is recorded. Tests use them to check ordering against other
 	// events without a wrapper type per method.
-	onStop, onClose, onWait func()
+	onStart, onStop, onClose, onWait func()
 
 	// waited is written by Wait(), which — like the real *pinger.Pinger.Wait()
 	// it stands in for (a thin sync.WaitGroup.Wait() wrapper, safe for
@@ -158,6 +161,9 @@ func (f *fakePinger) Start(interval, timeout time.Duration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.started = true
+	if f.onStart != nil {
+		f.onStart()
+	}
 	return nil
 }
 
@@ -229,6 +235,9 @@ func (f *fakePinger) DiscoverMaxPayload(ctx context.Context, dest string, start 
 }
 
 func (f *fakePinger) DiscoverPathMTU(ctx context.Context, dest string, start int, min int, logf func(string)) (pinger.PathMTUResult, error) {
+	if f.discoverPathContext != nil {
+		return f.discoverPathContext(ctx, dest)
+	}
 	if f.discoverPath != nil {
 		return f.discoverPath(dest)
 	}
@@ -360,4 +369,18 @@ func plainLogLine(line string) string {
 // of a separate web process.
 func inProcessFrontend(socket string, port int, _ identity) (webFrontend, error) {
 	return web.StartFrontend(web.FrontendOptions{Port: port, Backend: socket})
+}
+
+func (f *fakePinger) ResolveTarget(ctx context.Context, dest string) (*net.IPAddr, error) {
+	if f.resolveTarget != nil {
+		return f.resolveTarget(ctx, dest)
+	}
+	if ip := net.ParseIP(strings.Split(dest, "%")[0]); ip != nil {
+		zone := ""
+		if _, after, ok := strings.Cut(dest, "%"); ok {
+			zone = after
+		}
+		return &net.IPAddr{IP: ip, Zone: zone}, nil
+	}
+	return &net.IPAddr{IP: net.ParseIP("192.0.2.1")}, nil
 }

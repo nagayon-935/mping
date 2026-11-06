@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/mtr"
@@ -23,6 +24,7 @@ type pingerController interface {
 	Close()
 	DiscoverMaxPayload(ctx context.Context, dest string, start int, min int, logf func(string)) (int, string, error)
 	DiscoverPathMTU(ctx context.Context, dest string, start int, min int, logf func(string)) (pinger.PathMTUResult, error)
+	ResolveTarget(ctx context.Context, dest string) (*net.IPAddr, error)
 	SetSource(ip string)
 	SetInterface(name string)
 	SetSize(size int)

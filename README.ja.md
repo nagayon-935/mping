@@ -519,9 +519,9 @@ mping completion fish > ~/.config/fish/completions/mping.fish
 
 ## PMTU 探索
 
-* PMTU の有効化は共通の `--discovery-mtu` / `-m` だけです。起動時に宛先ごとに調べ、解決された実際の IP に応じて IPv4 / IPv6 の実装を自動で切り替えます。PMTU 探索に `-4` / `-6` の指定は不要です。
-* IPv4 は従来の DF プローブで探索します。payload の探索上限は検出したインターフェイスの MTU から 28 バイトを引いた値で、MTU が不明な場合は 9872 バイトです。全宛先が IPv4 で探索に成功した場合、最小の payload 上限を **Size** に反映します。
-* macOS/Linux の IPv6 は OS の PMTU 推定値を取得します。送信元の断片化を禁止して、そのサイズの Echo を送り、OS が推定値を下げた場合だけ再送します。同じサイズの応答を確認できれば **confirmed**、確認できなければ **estimated** と表示します。タイムアウトだけでは推定値を下げません。OS の初期推定値は送出インターフェイスの MTU の場合があります。
+* PMTU の有効化は共通の `--discovery-mtu` / `-m` だけです。宛先ごとに名前解決し、解決された実際の IP に応じて IPv4 / IPv6 の実装を自動で切り替えます。PMTU 探索に `-4` / `-6` の指定は不要です。
+* IPv4 は起動時に DF プローブで並列探索します（最大 8 宛先）。payload の探索上限は検出したインターフェイスの MTU から 28 バイトを引いた値で、MTU が不明な場合は 9872 バイトです。解決できた全宛先が IPv4 の場合、探索に成功した宛先の最小の payload 上限を **Size** に反映します。到達不能・ICMP が遮断された宛先や名前解決に失敗した宛先は除外し、PMTU を記録しません。
+* IPv6 は Ping 開始後にバックグラウンドで探索します。Path MTU は最初 **Unknown** と表示され、探索完了後に値が入ります。macOS/Linux では OS の PMTU 推定値を取得します。送信元の断片化を禁止して、そのサイズの Echo を送り、OS が推定値を下げた場合だけ再送します。同じサイズの応答を確認できれば **confirmed**、確認できなければ **estimated** と表示します。タイムアウトだけでは推定値を下げません。OS の初期推定値は送出インターフェイスの MTU の場合があります。
 * TUI の詳細と Web の Summary に、IP パケット全体の **PMTU**、ICMP **payload** 上限、確認状態を表示します。IPv6・IPv4/IPv6 混在時の通常の Ping サイズは設定値を維持します。宛先 IP が変わった場合は古い経路の値を消し、計測設定の再構築時に調べ直します。
 * JSON の既存の `pmtu` は payload 上限のまま維持し、`path_mtu`（IP パケット全体）、`pmtu_source`（`os` / `probe`）、`pmtu_status`（IPv6 は `estimated` / `confirmed`、IPv4 は `probed`）を追加します。CSV も同じ情報を含み、payload 列は `pmtu_payload` です。拡張ヘッダーなしの IPv6 では PMTU 1450 に対して ICMP データは 1402 バイトです。
 * その他の OS では IPv6 PMTU 探索は未対応のため、探索エラーを出して通常の Ping を継続します。通常の IPv6 Ping も、受信した `Packet Too Big` と通知 MTU をエラー・イベントに記録します。

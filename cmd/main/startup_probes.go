@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/netip"
+	"net"
+	"sync"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/pinger"
@@ -27,71 +28,134 @@ func makePingerFactory(targets []*stats.TargetStats, opts pinger.Options, cfg co
 	}
 }
 
-// setupPMTU runs PMTU discovery using a probe pinger and updates per-target
-// sizes. It returns the discovered payload size and any pre-log messages.
-func setupPMTU(makePinger func(size int) pingerController, cfg config, ifaceMTU int, targets []*stats.TargetStats, errOut io.Writer) (packetSize int, preLogs []string) {
+const pmtuWorkers = 8
+
+type deferredPMTU func(context.Context, func(string))
+
+// runPMTUWorkers bounds both resolver and probe concurrency and joins all work.
+func runPMTUWorkers(ctx context.Context, count int, work func(int)) {
+	var next int
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for range min(count, pmtuWorkers) {
+		wg.Go(func() {
+			for {
+				mu.Lock()
+				if next >= count || ctx.Err() != nil {
+					mu.Unlock()
+					return
+				}
+				i := next
+				next++
+				mu.Unlock()
+				work(i)
+			}
+		})
+	}
+	wg.Wait()
+}
+
+func pmtuLog(line string) string {
+	return fmt.Sprintf("[%s] %s", clock(), tview.Escape(line))
+}
+
+// setupPMTU resolves targets and discovers IPv4 paths before choosing Size.
+// IPv6 paths are returned as background work to start after regular ping.
+func setupPMTU(makePinger func(size int) pingerController, cfg config, ifaceMTU int, targets []*stats.TargetStats, errOut io.Writer) (packetSize int, preLogs []string, deferred deferredPMTU) {
 	packetSize = cfg.packetSize
 	if !cfg.mtuEnabled {
 		return
 	}
 	probe := makePinger(cfg.packetSize)
-	// probe.Start() is never called — discovery opens/closes
-	// its own sockets internally. Stop() only closes the done channel
-	// (safe to call without Start) and prevents any future goroutine
-	// from blocking on it.
-	defer probe.Stop()
 	defer probe.Close()
+	defer probe.Stop()
 	startPayload := pmtuMaxPayload
 	if ifaceMTU > pmtuHeaderBytes {
 		startPayload = ifaceMTU - pmtuHeaderBytes
 	}
-	// Progress lines are plain text ("[PMTU] payload=…"); escape them so the
-	// Log pane does not read "[PMTU]" as a colour tag.
 	type outcome struct {
+		addr *net.IPAddr
 		info pinger.PathMTUResult
 		err  error
 		logs []string
 	}
 	results := make([]outcome, len(targets))
-	// The IPv4 search shares an echo ID/sequence, so discoveries are serial.
-	// Family dispatch is exclusively based on each resolved destination IP.
-	for i := range targets {
+	runPMTUWorkers(context.Background(), len(targets), func(i int) {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-		results[i].info, results[i].err = probe.DiscoverPathMTU(ctx, targets[i].ResolveAddress(), startPayload, cfg.packetSize, func(line string) {
-			results[i].logs = append(results[i].logs, fmt.Sprintf("[%s] %s", clock(), tview.Escape(line)))
+		defer cancel()
+		r := &results[i]
+		r.addr, r.err = probe.ResolveTarget(ctx, targets[i].ResolveAddress())
+		if r.err != nil {
+			return
+		}
+		if r.addr == nil || r.addr.IP == nil {
+			r.err = fmt.Errorf("resolver returned no IP address")
+			return
+		}
+		if r.addr.IP.To4() == nil {
+			return
+		}
+		r.info, r.err = probe.DiscoverPathMTU(ctx, r.addr.String(), startPayload, cfg.packetSize, func(line string) {
+			r.logs = append(r.logs, pmtuLog(line))
 		})
-		cancel()
-	}
-	// Every destination has its own path. IPv6 PMTU describes that path and
-	// does not change the regular ping payload. Keep the legacy IPv4 payload
-	// adjustment only when every target was successfully searched as IPv4.
-	allIPv4 := true
-	minPayload := 0
+	})
+	allIPv4, minPayload := true, 0
+	var ipv6Targets []int
 	for i, t := range targets {
-		preLogs = append(preLogs, results[i].logs...)
-		if results[i].err != nil {
-			fmt.Fprintf(errOut, "PMTU discovery failed for %s: %v\n", t.Host(), results[i].err)
-			// A failed confirmation does not invalidate an already retrieved
-			// kernel estimate. Keep its explicitly unconfirmed status.
-			if info := results[i].info; info.Source == "os" && info.MTU >= 1280 {
-				info.Status = "estimated"
-				t.SetPathMTU(info)
-			}
+		r := results[i]
+		preLogs = append(preLogs, r.logs...)
+		if r.addr != nil && r.addr.IP.To4() == nil && r.err == nil {
 			allIPv4 = false
+			ipv6Targets = append(ipv6Targets, i)
 			continue
 		}
-		result := results[i].info
-		t.SetPathMTU(result)
-		ip, _ := netip.ParseAddr(result.IP)
-		if !ip.Unmap().Is4() {
-			allIPv4 = false
+		if r.err != nil {
+			fmt.Fprintf(errOut, "PMTU discovery failed for %s: %v\n", t.Host(), r.err)
+			continue
 		}
-		if minPayload == 0 || result.Payload < minPayload {
-			minPayload = result.Payload
+		t.SetPathMTU(r.info)
+		if minPayload == 0 || r.info.Payload < minPayload {
+			minPayload = r.info.Payload
 		}
 	}
 	if allIPv4 && minPayload > 0 {
 		packetSize = minPayload
+	}
+	if len(ipv6Targets) == 0 {
+		return
+	}
+	deferred = func(ctx context.Context, logf func(string)) {
+		if ctx.Err() != nil {
+			return
+		}
+		backgroundProbe := makePinger(cfg.packetSize)
+		defer backgroundProbe.Close()
+		defer backgroundProbe.Stop()
+		var logMu sync.Mutex
+		log := func(line string) {
+			logMu.Lock()
+			defer logMu.Unlock()
+			if logf != nil {
+				logf(pmtuLog(line))
+			}
+		}
+		runPMTUWorkers(ctx, len(ipv6Targets), func(j int) {
+			i := ipv6Targets[j]
+			probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+			defer cancel()
+			info, err := backgroundProbe.DiscoverPathMTU(probeCtx, results[i].addr.String(), startPayload, cfg.packetSize, log)
+			if ctx.Err() != nil {
+				return
+			}
+			if err != nil {
+				log(fmt.Sprintf("PMTU discovery failed for %s: %v", targets[i].Host(), err))
+				if info.Source != "os" || info.MTU < 1280 {
+					return
+				}
+				info.Status = "estimated"
+			}
+			targets[i].SetPathMTU(info)
+		})
 	}
 	return
 }
