@@ -163,6 +163,8 @@ type supervisor struct {
 	stateSnap  atomic.Int32
 }
 
+// newSupervisor wires targets whose health policy is already initialized by
+// buildTargetsForIteration, preserving their last health judgment.
 func newSupervisor(cfg supervisorConfig) *supervisor {
 	if cfg.startedAt.IsZero() {
 		cfg.startedAt = time.Now().UTC()
@@ -172,7 +174,7 @@ func newSupervisor(cfg supervisorConfig) *supervisor {
 	}
 	s := &supervisor{cfg: cfg}
 	for _, t := range cfg.targets {
-		s.configureTarget(t)
+		s.attachTargetEventSink(t)
 	}
 	if cfg.countLimited {
 		s.finished = make(chan struct{}, 1)
@@ -378,6 +380,10 @@ func (s *supervisor) startCountObserver(next pingerController) {
 
 func (s *supervisor) configureTarget(t *stats.TargetStats) {
 	t.ConfigureHealth(healthPolicy(s.cfg.config))
+	s.attachTargetEventSink(t)
+}
+
+func (s *supervisor) attachTargetEventSink(t *stats.TargetStats) {
 	host := t.DisplayName()
 	logCh := s.cfg.logCh
 	t.SetEventSink(func(e stats.Event) {

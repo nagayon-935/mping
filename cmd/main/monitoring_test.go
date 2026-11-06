@@ -116,7 +116,7 @@ func TestLiveReloadAddFailureIsAtomic(t *testing.T) {
 }
 
 func TestHealthTransitionsReachTheLog(t *testing.T) {
-	target := stats.NewTargetStats("router")
+	target := buildTargetsForIteration([]targetSpec{{Host: "router"}}, config{})[0]
 	logs := make(chan string, 16)
 	newSupervisor(supervisorConfig{targets: []*stats.TargetStats{target}, logCh: logs})
 	target.OnSuccess(time.Millisecond, 64)

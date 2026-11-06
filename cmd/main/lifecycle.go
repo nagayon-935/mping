@@ -177,13 +177,12 @@ func resolverBindConfig(cfg config, specs []targetSpec) pinger.BindConfig {
 }
 
 // buildTargetsForIteration creates TargetStats for hosts and tags each with
-// its display DNS server (used by the UI's DNS column).
+// its display DNS server (used by the UI's DNS column). It configures health
+// once, before startup PMTU work and supervisor event-sink attachment.
 func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetStats {
 	targets := initTargets(specs)
 	for i, t := range targets {
 		t.SetResolveAddress(specs[i].resolveAddr())
-		// Health is available during startup PMTU work, before the supervisor
-		// reapplies the policy and attaches the event sink.
 		t.ConfigureHealth(healthPolicy(cfg))
 		hostName := specs[i].Host
 		if net.ParseIP(hostName) == nil {
