@@ -51,6 +51,33 @@ func TestTargetSnapshotRemainsImmutableAcrossResetAndUpdates(t *testing.T) {
 	}
 }
 
+func TestTargetUsesConsistentSubMicrosecondPrecision(t *testing.T) {
+	const d = 1234567 * time.Nanosecond
+	target := stats.NewTargetStats("example.com")
+	target.IncSent()
+	target.OnSuccess(d, 64)
+	port := stats.NewPortCheckResult(443, "tcp")
+	port.SetResult("Open", d)
+	target.SetPortResults([]*stats.PortCheckResult{port})
+	data, err := json.Marshal(NewTarget(target))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Target
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	p := decoded.PortDetails[0]
+	for name, got := range map[string]float64{
+		"ping": decoded.Statistics.LastRTTMs, "port summary": decoded.Statistics.PortResults[0].RTTMs,
+		"port last": p.LastRTTMS, "port min": p.MinRTTMS, "port avg": p.AvgRTTMS, "port max": p.MaxRTTMS,
+	} {
+		if got != 1.234567 {
+			t.Errorf("%s = %v ms, want 1.234567", name, got)
+		}
+	}
+}
+
 func TestWriteNeverOverwritesAndPublishesCompleteFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "report.json")

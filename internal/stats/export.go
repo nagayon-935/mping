@@ -95,9 +95,9 @@ type HTTPCheckSummary struct {
 	DownCount  int     `json:"down_count"`
 }
 
-// durationMs converts a time.Duration to milliseconds (float64).
-func durationMs(d time.Duration) float64 {
-	return float64(d.Microseconds()) / 1000.0
+// DurationMs converts a duration to milliseconds without truncating to whole microseconds.
+func DurationMs(d time.Duration) float64 {
+	return float64(d) / float64(time.Millisecond)
 }
 
 // BuildSnapshot builds an ExportSnapshot from the given targets and optional HTTP results.
@@ -157,11 +157,11 @@ func TargetSummaryFromView(v TargetView) TargetSummary {
 		Duplicates:       v.Duplicates,
 		LateReplies:      v.LateReplies,
 		LossRatePct:      lossRatePct,
-		MinRTTMs:         durationMs(v.MinRTT),
-		AvgRTTMs:         durationMs(v.AvgRTT),
-		MaxRTTMs:         durationMs(v.MaxRTT),
-		LastRTTMs:        durationMs(v.LastRTT),
-		JitterMs:         durationMs(v.Jitter),
+		MinRTTMs:         DurationMs(v.MinRTT),
+		AvgRTTMs:         DurationMs(v.AvgRTT),
+		MaxRTTMs:         DurationMs(v.MaxRTT),
+		LastRTTMs:        DurationMs(v.LastRTT),
+		JitterMs:         DurationMs(v.Jitter),
 		LastTTL:          v.LastTTL,
 		LastError:        v.LastError,
 		LastLossTime:     lastLossTime,
@@ -184,7 +184,7 @@ func portSummaries(results []PortCheckView) []PortSummary {
 			Protocol:    p.Protocol,
 			Status:      p.Status,
 			Level:       PortStatusLevel(p.Status),
-			RTTMs:       durationMs(p.RTT),
+			RTTMs:       DurationMs(p.RTT),
 			OpenCount:   p.OpenCount,
 			ClosedCount: p.ClosedCount,
 		})
@@ -206,11 +206,11 @@ func hopSummaries(hops []HopView, thresholds Thresholds) []HopSummary {
 			Recv:      h.Recv,
 			LossPct:   h.LossPct,
 			LossLevel: thresholds.HopLoss(h.LossPct),
-			LastRTTMs: durationMs(h.LastRTT),
-			AvgRTTMs:  durationMs(h.AvgRTT),
-			MinRTTMs:  durationMs(h.MinRTT),
-			MaxRTTMs:  durationMs(h.MaxRTT),
-			JitterMs:  durationMs(h.Jitter),
+			LastRTTMs: DurationMs(h.LastRTT),
+			AvgRTTMs:  DurationMs(h.AvgRTT),
+			MinRTTMs:  DurationMs(h.MinRTT),
+			MaxRTTMs:  DurationMs(h.MaxRTT),
+			JitterMs:  DurationMs(h.Jitter),
 		})
 	}
 	return mtrHops
@@ -226,10 +226,10 @@ func HTTPCheckSummaries(httpResults []HTTPCheckView) []HTTPCheckSummary {
 			Status:     v.Status,
 			Level:      HTTPStatusLevel(v.Status),
 			StatusCode: v.StatusCode,
-			LastRTTMs:  durationMs(v.RTT),
-			MinRTTMs:   durationMs(v.MinRTT),
-			AvgRTTMs:   durationMs(v.AvgRTT),
-			MaxRTTMs:   durationMs(v.MaxRTT),
+			LastRTTMs:  DurationMs(v.RTT),
+			MinRTTMs:   DurationMs(v.MinRTT),
+			AvgRTTMs:   DurationMs(v.AvgRTT),
+			MaxRTTMs:   DurationMs(v.MaxRTT),
 			UpCount:    v.UpCount,
 			DownCount:  v.DownCount,
 		})

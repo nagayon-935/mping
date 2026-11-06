@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"time"
 
 	"github.com/nagayon-935/mping/internal/report"
 	"github.com/nagayon-935/mping/internal/stats"
@@ -199,10 +198,10 @@ func webMeta(cfg config, hosts []targetSpec, portCount int) web.Meta {
 			MTU:        cfg.mtuEnabled,
 		},
 		Thresholds: web.Thresholds{
-			RTTWarnMs:    durationMs(th.RTTWarn),
-			RTTCritMs:    durationMs(th.RTTCrit),
-			JitterWarnMs: durationMs(th.JitterWarn),
-			JitterCritMs: durationMs(th.JitterCrit),
+			RTTWarnMs:    stats.DurationMs(th.RTTWarn),
+			RTTCritMs:    stats.DurationMs(th.RTTCrit),
+			JitterWarnMs: stats.DurationMs(th.JitterWarn),
+			JitterCritMs: stats.DurationMs(th.JitterCrit),
 			LossWarnPct:  th.LossWarn,
 			LossCritPct:  th.LossCrit,
 		},
@@ -223,8 +222,4 @@ func webGroups(set ui.TargetSet) []web.Group {
 		groups = append(groups, web.Group{Name: g.Name, TargetIDs: ids})
 	}
 	return groups
-}
-
-func durationMs(d time.Duration) float64 {
-	return float64(d) / float64(time.Millisecond)
 }

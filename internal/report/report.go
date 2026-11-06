@@ -72,16 +72,15 @@ func NewTarget(t *stats.TargetStats) Target {
 	v, events, dropped := t.ReportData()
 	summary := stats.TargetSummaryFromView(v)
 	ports := make([]Port, 0, len(v.PortResults))
-	ms := func(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
 	for _, p := range v.PortResults {
 		ports = append(ports, Port{
 			Port:        p.Port,
 			Protocol:    p.Protocol,
 			Status:      p.Status,
-			LastRTTMS:   ms(p.RTT),
-			MinRTTMS:    ms(p.MinRTT),
-			AvgRTTMS:    ms(p.AvgRTT),
-			MaxRTTMS:    ms(p.MaxRTT),
+			LastRTTMS:   stats.DurationMs(p.RTT),
+			MinRTTMS:    stats.DurationMs(p.MinRTT),
+			AvgRTTMS:    stats.DurationMs(p.AvgRTT),
+			MaxRTTMS:    stats.DurationMs(p.MaxRTT),
 			OpenCount:   p.OpenCount,
 			ClosedCount: p.ClosedCount,
 			LastChange:  p.LastChange,

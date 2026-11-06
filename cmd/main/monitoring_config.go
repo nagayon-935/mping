@@ -95,10 +95,10 @@ func printCheckedConfig(out io.Writer, sp startupParams) error {
 
 func thresholdsMap(th stats.Thresholds) map[string]float64 {
 	return map[string]float64{
-		"rtt_warn_ms":    durationMs(th.RTTWarn),
-		"rtt_crit_ms":    durationMs(th.RTTCrit),
-		"jitter_warn_ms": durationMs(th.JitterWarn),
-		"jitter_crit_ms": durationMs(th.JitterCrit),
+		"rtt_warn_ms":    stats.DurationMs(th.RTTWarn),
+		"rtt_crit_ms":    stats.DurationMs(th.RTTCrit),
+		"jitter_warn_ms": stats.DurationMs(th.JitterWarn),
+		"jitter_crit_ms": stats.DurationMs(th.JitterCrit),
 		"loss_warn_pct":  th.LossWarn,
 		"loss_crit_pct":  th.LossCrit,
 	}
