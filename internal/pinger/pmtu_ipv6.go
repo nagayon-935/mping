@@ -81,7 +81,11 @@ var openIPv6PMTUSocket = func(ctx context.Context, p *Pinger, dst *net.IPAddr) (
 	if err != nil {
 		return nil, fmt.Errorf("open IPv6 PMTU socket: %w", err)
 	}
-	c := conn.(*net.IPConn)
+	c, ok := conn.(*net.IPConn)
+	if !ok {
+		_ = conn.Close()
+		return nil, fmt.Errorf("open IPv6 PMTU socket: unexpected connection type %T", conn)
+	}
 	if err := configureICMPBuffers(c); err != nil {
 		c.Close()
 		return nil, err
@@ -211,7 +215,8 @@ func (p *Pinger) ipv6PMTUDialer() (*net.Dialer, error) {
 		dialer.LocalAddr = &net.IPAddr{IP: net.IP(addr.AsSlice()), Zone: addr.Zone()}
 	}
 	dialer.Control = func(_, _ string, raw syscall.RawConn) error {
-		bindRawConnToInterfaceFn(raw, p.Interface, true)
+		// Control runs inside the privileged dial: never re-enter it here.
+		bindRawConnToInterfaceHeldFn(raw, p.Interface, true)
 		var optionErr error
 		if err := raw.Control(func(fd uintptr) { optionErr = setIPv6PMTUDiscovery(int(fd)) }); err != nil {
 			return err
