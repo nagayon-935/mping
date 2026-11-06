@@ -43,6 +43,7 @@ func NewPortCheckResult(port int, protocol string) *PortCheckResult {
 	return &PortCheckResult{port: port, protocol: protocol, status: "Checking..."}
 }
 
+// SetResult records a port check, updating counters and RTT statistics for open responses.
 func (r *PortCheckResult) SetResult(status string, rtt time.Duration) {
 	defer bumpGeneration()
 	r.mu.Lock()

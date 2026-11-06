@@ -4,6 +4,11 @@ import { el } from "./dom.js";
 import { tokenFromHash } from "./model.js";
 
 const TOKEN_KEY = "mping.token";
+const TOKEN_HEADER = "X-Mping-Token";
+
+function authHeaders(token) {
+  return { [TOKEN_HEADER]: token ?? "" };
+}
 
 export function controlToken(raw, origin) {
   let value = String(raw ?? "").trim();
@@ -15,6 +20,7 @@ export function controlToken(raw, origin) {
       value = tokenFromHash(url.hash) ?? "";
     } catch { return null; }
   }
+  // Keep token rules in sync with CheckToken in internal/web/control.go.
   return /^[A-Za-z0-9._~-]{16,}$/.test(value) ? value : null;
 }
 
@@ -69,7 +75,7 @@ export function createControl() {
   };
 
   const request = async (method, path, body) => {
-    const headers = { "X-Mping-Token": token ?? "" };
+    const headers = authHeaders(token);
     if (body !== undefined) headers["Content-Type"] = "application/json";
     let resp;
     try {
@@ -88,7 +94,7 @@ export function createControl() {
       if (!token) return (allowed = false);
       const version = revision;
       try {
-        const resp = await fetch("api/v1/session", { headers: { "X-Mping-Token": token } });
+        const resp = await fetch("api/v1/session", { headers: authHeaders(token) });
         const valid = resp.ok && (await resp.json()).control === true;
         if (version !== revision) return allowed;
         allowed = valid;
@@ -103,7 +109,7 @@ export function createControl() {
       if (!candidate) return { ok: false, error: "Paste the control token or the URL copied from mping's b menu (same port)." };
       const version = ++revision;
       try {
-        const resp = await fetch("api/v1/session", { headers: { "X-Mping-Token": candidate }, signal });
+        const resp = await fetch("api/v1/session", { headers: authHeaders(candidate), signal });
         if (!resp.ok) return { ok: false, error: `Couldn't verify controls (HTTP ${resp.status}). Try again.` };
         const body = await resp.json();
         if (signal?.aborted || version !== revision) return { ok: false, cancelled: true };
@@ -123,7 +129,7 @@ export function createControl() {
     restart: () => request("POST", "api/v1/restart"),
     async downloadReport(format, filename, { signal } = {}) {
       try {
-        const response = await fetch(`api/v1/report?format=${format}`, { headers: { "X-Mping-Token": token ?? "" }, signal });
+        const response = await fetch(`api/v1/report?format=${format}`, { headers: authHeaders(token), signal });
         if (!response.ok) {
           return parseErrorResponse(response);
         }

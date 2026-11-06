@@ -8,9 +8,9 @@ import (
 
 type fileOwner struct{ uid, gid int }
 
-// For setuid installations, the real IDs identify the caller. sudo sets
-// both real and effective UID to root, so use its original caller IDs only
-// in that case. Ordinary users' environment variables are never consulted.
+// ownerForCaller uses the real IDs to identify the caller in setuid installations.
+// sudo sets both real and effective UID to root, so use its original caller
+// IDs only in that case. Ordinary users' environment variables are never consulted.
 func ownerForCaller(uid, gid, euid int, getenv func(string) string) (fileOwner, error) {
 	owner := fileOwner{uid: uid, gid: gid}
 	if uid != 0 || euid != 0 {
@@ -37,7 +37,7 @@ func ownerForCaller(uid, gid, euid int, getenv func(string) string) (fileOwner, 
 	return owner, nil
 }
 
-// Swappable in tests so the root-only paths can run without privileges.
+// geteuid and callerOwner are swappable in tests so root-only paths need no privileges.
 var (
 	geteuid     = os.Geteuid
 	callerOwner = func() (fileOwner, error) {

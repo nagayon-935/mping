@@ -7,17 +7,12 @@ import (
 )
 
 const (
-	historySize   = 3000 // 30s of data at the minimum UI refresh rate (100ms per point)
+	historySize   = 3000 // Ping samples: about 5 minutes at the minimum ping interval (100ms).
 	jitterDivisor = 16   // RFC 1889 §A.8 smoothing factor: J = J + (|D| - J) / 16
 )
 
 // targetIDs allocates TargetStats.ID() values.
 var targetIDs atomic.Uint64
-
-type IPChange struct {
-	At time.Time `json:"at"`
-	IP string    `json:"ip"`
-}
 
 // PathMTUInfo keeps the kernel estimate's confidence and destination together.
 // MTU counts the entire IP packet; Payload counts ICMP data bytes only.
@@ -96,6 +91,7 @@ type TargetStats struct {
 	mu sync.RWMutex
 }
 
+// NewTargetStats creates a running target with a unique identity and empty statistics.
 func NewTargetStats(host string) *TargetStats {
 	now := time.Now()
 	return &TargetStats{
@@ -124,6 +120,7 @@ func (t *TargetStats) MTR() *MTRStats {
 	return t.mtrStats
 }
 
+// SetIP records the resolved IP, tracking changes and clearing estimates for another IP.
 func (t *TargetStats) SetIP(ip string) {
 	defer bumpGeneration()
 	t.mu.Lock()
@@ -144,6 +141,7 @@ func (t *TargetStats) SetIP(ip string) {
 	t.ip = ip
 }
 
+// SetASNInfo records the resolved ASN number, country and organization.
 func (t *TargetStats) SetASNInfo(number, country, org string) {
 	defer bumpGeneration()
 	t.mu.Lock()
@@ -161,6 +159,7 @@ func (t *TargetStats) SetPTR(name string) {
 	t.ptr = name
 }
 
+// SetDNSServer records the DNS server used to resolve the target.
 func (t *TargetStats) SetDNSServer(dnsServer string) {
 	defer bumpGeneration()
 	t.mu.Lock()
@@ -168,6 +167,7 @@ func (t *TargetStats) SetDNSServer(dnsServer string) {
 	t.dnsServer = dnsServer
 }
 
+// SetIfaceMTU records the outgoing interface MTU in bytes.
 func (t *TargetStats) SetIfaceMTU(mtu int) {
 	defer bumpGeneration()
 	t.mu.Lock()
@@ -175,25 +175,12 @@ func (t *TargetStats) SetIfaceMTU(mtu int) {
 	t.ifaceMTU = mtu
 }
 
-func (t *TargetStats) SetPMTU(pmtu int) {
-	defer bumpGeneration()
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.pathMTU.Payload = pmtu
-}
-
+// SetPathMTU replaces the path MTU estimate and its associated metadata.
 func (t *TargetStats) SetPathMTU(info PathMTUInfo) {
 	defer bumpGeneration()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.pathMTU = info
-}
-
-func (t *TargetStats) SetPMTUBottleneckIP(ip string) {
-	defer bumpGeneration()
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.pathMTU.BottleneckIP = ip
 }
 
 // SetPortResults replaces the port check results slice atomically.
@@ -204,6 +191,7 @@ func (t *TargetStats) SetPortResults(results []*PortCheckResult) {
 	t.portResults = results
 }
 
+// IncSent records a transmitted ping probe.
 func (t *TargetStats) IncSent() {
 	defer bumpGeneration()
 	t.mu.Lock()
@@ -211,6 +199,7 @@ func (t *TargetStats) IncSent() {
 	t.sent++
 }
 
+// OnSuccess records a ping reply and updates RTT, TTL, jitter and health.
 func (t *TargetStats) OnSuccess(rtt time.Duration, ttl int) {
 	defer bumpGeneration()
 	t.mu.Lock()
@@ -257,6 +246,7 @@ func (t *TargetStats) OnLateReply() {
 	t.lateReplies++
 }
 
+// OnFailure records a lost ping probe, its reason and the loss time.
 func (t *TargetStats) OnFailure(reason string) {
 	defer bumpGeneration()
 	t.mu.Lock()
@@ -273,6 +263,8 @@ func (t *TargetStats) onFailureLocked(reason string) {
 	t.recordOutcomeLocked(t.lastLossTime, false)
 }
 
+// Reset starts a new statistics window, invalidating outstanding probes.
+// Target identity, address metadata, port results and health policy are retained.
 func (t *TargetStats) Reset() {
 	defer bumpGeneration()
 	t.mu.Lock()
@@ -310,6 +302,7 @@ func (t *TargetStats) displayNameLocked() string {
 	return t.host
 }
 
+// SetDisplayName changes the displayed label without changing the configured host.
 func (t *TargetStats) SetDisplayName(name string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -321,12 +314,14 @@ func (t *TargetStats) SetDisplayName(name string) {
 	bumpGeneration()
 }
 
+// SetResolveAddress sets the address used for name resolution and auxiliary probes.
 func (t *TargetStats) SetResolveAddress(address string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.resolveAddress = address
 }
 
+// ResolveAddress returns the resolution address, falling back to the configured host.
 func (t *TargetStats) ResolveAddress() string {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -350,14 +345,6 @@ func (t *TargetStats) CurrentIP() string {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.ip
-}
-
-// HostAndIP returns the target's display label and currently resolved IP
-// under a single read lock without copying RTT history or auxiliary views.
-func (t *TargetStats) HostAndIP() (host, ip string) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.displayNameLocked(), t.ip
 }
 
 // PortCount returns the number of port check results without copying them.

@@ -45,6 +45,7 @@ func (t *TargetStats) recordEventLocked(kind, message string) {
 	}
 }
 
+// SetEventSink installs a callback for new and folded target events.
 // The sink must return immediately; it is called under the target lock.
 func (t *TargetStats) SetEventSink(sink func(Event)) {
 	t.mu.Lock()
@@ -52,6 +53,7 @@ func (t *TargetStats) SetEventSink(sink func(Event)) {
 	t.eventSink = sink
 }
 
+// RecordEvent appends a timestamped target event and notifies the event sink.
 func (t *TargetStats) RecordEvent(kind, message string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -59,6 +61,7 @@ func (t *TargetStats) RecordEvent(kind, message string) {
 	bumpGeneration()
 }
 
+// Events returns a copy of retained events and the number dropped from the bounded log.
 func (t *TargetStats) Events() ([]Event, int) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()

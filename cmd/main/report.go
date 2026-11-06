@@ -85,7 +85,7 @@ func (s *supervisor) captureReport(selectedID uint64) (report.Report, error) {
 				views = append(views, check.GetView())
 			}
 		}
-		r.HTTPChecks = stats.BuildSnapshotFromViews(nil, views).HTTPChecks
+		r.HTTPChecks = stats.HTTPCheckSummaries(views)
 	}
 	r.CaptureCompletedAt = time.Now().UTC()
 	return r, nil

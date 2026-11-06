@@ -32,6 +32,8 @@ var mu sync.RWMutex
 // Privileged runs fn, an operation that needs mping's elevated privileges,
 // waiting for any in-progress AsRealUser section to finish first.
 // Privileged sections may run concurrently with each other.
+// Privileged and AsRealUser must not be nested within each other: doing so
+// can deadlock when privileges need to be dropped.
 func Privileged(fn func() error) error {
 	mu.RLock()
 	defer mu.RUnlock()
@@ -43,6 +45,8 @@ func Privileged(fn func() error) error {
 // already match (ordinary run, sudo, setcap, Windows) it just runs fn.
 // If privileges can't be dropped, fn is not run. A failure to restore them
 // is returned joined with fn's own error.
+// AsRealUser and Privileged must not be nested within each other: doing so
+// can deadlock when privileges need to be dropped.
 func AsRealUser(fn func() error) (err error) {
 	uid, euid := sys.getuid(), sys.geteuid()
 	gid, egid := sys.getgid(), sys.getegid()

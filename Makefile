@@ -40,7 +40,7 @@ coverage:
 #     depend on the toolchain used to build the code.
 #   - gofmt is pointed at the module's own package directories instead of
 #     `.`, because plain `gofmt -l .` descends into dot-directories that the
-#     other three checks skip (`./...` ignores them). Locally that means
+#     other checks skip (`./...` ignores them). Locally that means
 #     .claude/worktrees/, which is git-ignored and absent from CI's clean
 #     checkout, so scratch work in a worktree would otherwise fail the build.
 lint:

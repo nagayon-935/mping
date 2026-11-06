@@ -31,8 +31,8 @@ func TestGeneration_AdvancesOnMutation(t *testing.T) {
 	mustAdvance("SetASNInfo", func() { tgt.SetASNInfo("AS15169", "US", "Google LLC") })
 	mustAdvance("SetDNSServer", func() { tgt.SetDNSServer("8.8.8.8") })
 	mustAdvance("SetIfaceMTU", func() { tgt.SetIfaceMTU(1500) })
-	mustAdvance("SetPMTU", func() { tgt.SetPMTU(1400) })
-	mustAdvance("SetPMTUBottleneckIP", func() { tgt.SetPMTUBottleneckIP("10.0.0.1") })
+	mustAdvance("SetPathMTU payload", func() { tgt.SetPathMTU(PathMTUInfo{Payload: 1400}) })
+	mustAdvance("SetPathMTU bottleneck", func() { tgt.SetPathMTU(PathMTUInfo{BottleneckIP: "10.0.0.1"}) })
 	mustAdvance("SetPortResults", func() { tgt.SetPortResults(nil) })
 	mustAdvance("TargetStats.Reset", func() { tgt.Reset() })
 

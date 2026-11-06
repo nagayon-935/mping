@@ -4,10 +4,10 @@ import { el, badgeIcon, readSession, writeSession } from "./dom.js";
 import { SORTS } from "./workspace.js";
 
 export const STATUS_LABELS = { crit: "Critical", warn: "Warning", pending: "Waiting", ok: "OK" };
-export const STATUSES = ["all", ...Object.keys(STATUS_LABELS)];
+const STATUSES = ["all", ...Object.keys(STATUS_LABELS)];
 
 /** One pressed-state button per health level; counts are filled by the header. */
-export function healthFilterItems(current, onSelect) {
+function healthFilterItems(current, onSelect) {
   return STATUSES.map((status) => {
     const button = el("button", {
       className: `health-filter health-${status}`,
@@ -22,7 +22,7 @@ export function healthFilterItems(current, onSelect) {
 }
 
 /** Configured order has no direction; every other key offers ↓ then ↑. */
-export function sortOptions() {
+function sortOptions() {
   return Object.entries(SORTS).flatMap(([key, label]) =>
     (key === "config" ? ["asc"] : ["desc", "asc"]).map((direction) =>
       el("option", {

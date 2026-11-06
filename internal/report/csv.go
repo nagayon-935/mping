@@ -27,6 +27,7 @@ func (r Report) CSV() ([]byte, error) {
 	var b bytes.Buffer
 	b.WriteString("\ufeff")
 	w := csv.NewWriter(&b)
+	// Writes retain a sticky error, checked with w.Error after Flush below.
 	_ = w.Write(csvHeader)
 	for _, t := range append(append([]Target(nil), r.Targets...), r.RemovedTargets...) {
 		_ = w.Write(csvRow(r.CapturedAt, t))

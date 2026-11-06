@@ -40,7 +40,8 @@ type Options struct {
 type handlerConfig struct {
 	streamInterval    time.Duration
 	heartbeatInterval time.Duration
-	generation        func() uint64
+	// generation is a test seam; nil uses stats.Generation.
+	generation func() uint64
 	// token authorizes control requests; empty makes the server read-only.
 	token string
 }
@@ -61,6 +62,9 @@ type Server struct {
 // serves in the background until Close. 127.0.0.1 is required; [::1] on the
 // same port is added when available so a browser that resolves "localhost"
 // to IPv6 first still connects directly.
+//
+// Start is for in-process use and tests only; mping uses StartFrontend and
+// ServeBackend.
 func Start(opts Options) (*Server, error) {
 	token := opts.Token
 	if token == "" {
@@ -119,24 +123,19 @@ func serve(port int, token string, handler func(context.Context, handlerConfig) 
 	}
 	listeners := []net.Listener{ln4}
 	port = ln4.Addr().(*net.TCPAddr).Port
-	// Best effort by design: IPv6 may be disabled, and the advertised URL is
-	// the 127.0.0.1 one, so a missing [::1] listener loses nothing.
+	// Best effort by design: IPv6 may be disabled. The advertised URL uses
+	// localhost, with 127.0.0.1 available even if [::1] cannot be bound.
 	if ln6, err := net.Listen("tcp6", net.JoinHostPort("::1", strconv.Itoa(port))); err == nil {
 		listeners = append(listeners, ln6)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{
-		srv: &http.Server{
-			Handler: handler(ctx, handlerConfig{
-				streamInterval:    defaultStreamInterval,
-				heartbeatInterval: defaultHeartbeatInterval,
-				token:             token,
-			}),
-			ReadHeaderTimeout: 5 * time.Second,
-			IdleTimeout:       60 * time.Second,
-			// No WriteTimeout: /api/v1/stream responses are open-ended.
-		},
+		srv: newHTTPServer(handler(ctx, handlerConfig{
+			streamInterval:    defaultStreamInterval,
+			heartbeatInterval: defaultHeartbeatInterval,
+			token:             token,
+		})),
 		addr:   ln4.Addr().String(),
 		token:  token,
 		cancel: cancel,
@@ -176,15 +175,33 @@ func (s *Server) Close() error {
 		// Streams never go idle on their own, so end them before Shutdown
 		// waits for in-flight requests.
 		s.cancel()
-		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-		if err := s.srv.Shutdown(ctx); err != nil {
-			s.closeErr = fmt.Errorf("web: shutdown: %w", err)
-			_ = s.srv.Close()
-		}
-		<-s.done
+		s.closeErr = closeHTTPServer(s.srv, s.done, "web: shutdown")
 	})
 	return s.closeErr
+}
+
+// newHTTPServer supplies the same timeouts for frontend and backend listeners.
+func newHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		// No WriteTimeout: /api/v1/stream responses are open-ended.
+	}
+}
+
+// closeHTTPServer shuts down a listener and waits for its serve goroutines.
+// Callers end streams first when they own the stream lifetime context.
+func closeHTTPServer(srv *http.Server, done <-chan struct{}, errorPrefix string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	var closeErr error
+	if err := srv.Shutdown(ctx); err != nil {
+		closeErr = fmt.Errorf("%s: %w", errorPrefix, err)
+		_ = srv.Close()
+	}
+	<-done
+	return closeErr
 }
 
 // newHandler is the whole web UI in one process: the frontend reaches the

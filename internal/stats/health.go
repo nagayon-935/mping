@@ -15,10 +15,12 @@ type HealthPolicy struct {
 	Thresholds
 }
 
+// DefaultHealthPolicy returns the default failure, recovery and recent-window rules.
 func DefaultHealthPolicy() HealthPolicy {
 	return HealthPolicy{Failures: 3, Recoveries: 2, Window: time.Minute, Thresholds: DefaultThresholds()}
 }
 
+// Validate checks health policy limits and metric thresholds.
 func (p HealthPolicy) Validate() error {
 	if p.Failures < 1 || p.Failures > 10000 || p.Recoveries < 1 || p.Recoveries > 10000 {
 		return fmt.Errorf("health failure/recovery thresholds must be between 1 and 10000")
@@ -32,6 +34,7 @@ func (p HealthPolicy) Validate() error {
 	return nil
 }
 
+// Health is a snapshot of the last health judgment and the measurements behind it.
 type Health struct {
 	Unavailable          bool      `json:"unavailable"`
 	Configured           bool      `json:"configured"`
@@ -216,57 +219,4 @@ func (t *TargetStats) healthViewLocked() Health {
 	return Health{Unavailable: h.down, Configured: h.configured, Status: status, Reason: reason, Since: h.since, LastProbeAt: h.lastProbe, LastReplyAt: h.lastReply,
 		ConsecutiveFailures: h.failures, ConsecutiveSuccesses: h.successes, RecentCompleted: received + lost, RecentLoss: lost,
 		RecentLossPct: rate, WindowSeconds: t.healthPolicyLocked().Window.Seconds(), EvaluatedAt: h.evaluatedAt}
-}
-
-// SetMeasurementState is independent of the HTTP server/session state.
-func (t *TargetStats) SetMeasurementState(state string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.measurementState = state
-	bumpGeneration()
-}
-
-func (t *TargetStats) MeasurementState() string {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.measurementState
-}
-
-// HistorySample preserves wall time. A nil RTT marks a lost probe.
-type HistorySample struct {
-	At    time.Time `json:"at"`
-	RTTMS *float64  `json:"rtt_ms"`
-}
-
-func (t *TargetStats) appendHistoryLocked(rtt time.Duration, at time.Time) {
-	t.rtt.appendHistory(rtt, historySize)
-	if t.historyTimes == nil {
-		t.historyTimes = make([]int64, historySize)
-	}
-	t.historyTimes[(t.rtt.historyIdx-1)%historySize] = at.UnixNano()
-}
-
-func (t *TargetStats) HistorySamples(n int) []HistorySample {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	if n > t.rtt.historyLen {
-		n = t.rtt.historyLen
-	}
-	if n < 0 {
-		n = 0
-	}
-	out := make([]HistorySample, 0, n)
-	for i := t.rtt.historyLen - n; i < t.rtt.historyLen; i++ {
-		idx := (t.rtt.historyIdx - t.rtt.historyLen + i) % historySize
-		if t.historyTimes == nil || t.historyTimes[idx] == 0 {
-			continue
-		}
-		sample := HistorySample{At: time.Unix(0, t.historyTimes[idx]).UTC()}
-		if d := t.rtt.history[idx]; d > 0 {
-			ms := float64(d) / float64(time.Millisecond)
-			sample.RTTMS = &ms
-		}
-		out = append(out, sample)
-	}
-	return out
 }
