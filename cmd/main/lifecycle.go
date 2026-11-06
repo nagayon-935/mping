@@ -203,6 +203,8 @@ func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetSta
 // by targetSpec.display(), the same string as stats.TargetStats.Host())
 // so --resolve-all entries resolve straight to their pinned IP and named
 // entries resolve to their configured host rather than their name.
+// A non-nil customResolver is used regardless of cfg.dnsServer; nil falls
+// back to net.DefaultResolver.
 func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resolver, specs []targetSpec) pinger.Options {
 	pinned := make(map[string]string, len(specs))
 	for _, s := range specs {
@@ -217,8 +219,7 @@ func buildPingerOptions(cfg config, resNetwork string, customResolver *net.Resol
 			address = ip
 		}
 		resolver := net.DefaultResolver
-		// Preserve default resolution for unset DNS settings and nil test resolvers.
-		if customResolver != nil && cfg.dnsServer != "" {
+		if customResolver != nil {
 			resolver = customResolver
 		}
 		return pinger.ResolveUsableIPAddrContext(ctx, resolver, resNetwork, address, bind)
