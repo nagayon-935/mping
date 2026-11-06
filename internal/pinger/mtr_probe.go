@@ -187,6 +187,7 @@ func (p *Pinger) openHopSocketAddr(dstAddr *net.IPAddr) (*HopSocket, error) {
 // traceID must be unique per probe (use p.NextTraceID()). ProbeHop takes
 // ownership of the reservation and releases it on every return path.
 // Returns HopReply with Responded=false on timeout.
+// Other socket read failures are returned as errors.
 func (p *Pinger) ProbeHop(ctx context.Context, sock *HopSocket, dest string, ttl, traceID int, timeout time.Duration) (HopReply, error) {
 	if traceID < 0 {
 		return HopReply{}, fmt.Errorf("route-probe IDs exhausted")
@@ -348,7 +349,10 @@ func receiveViaSocket(ctx context.Context, sock *HopSocket, accept func(*icmp.Me
 			n, _, src, err = sock.sendV6.ReadFrom(buf)
 		}
 		if err != nil {
-			return HopReply{Responded: false}, nil
+			if isTimeout(err) {
+				return HopReply{Responded: false}, nil
+			}
+			return HopReply{}, fmt.Errorf("read probe reply: %w", err)
 		}
 		parsed, err := icmp.ParseMessage(proto, buf[:n])
 		if err != nil {

@@ -3,6 +3,7 @@ package pinger
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"reflect"
 	"sort"
@@ -378,6 +379,44 @@ func TestProbeHop_OwnSocketFailures(t *testing.T) {
 			t.Fatalf("err = %v, want context.Canceled", err)
 		}
 	})
+}
+
+func TestProbeHop_OwnSocketReadErrors(t *testing.T) {
+	readErr := errors.New("socket read failed")
+	for _, v6 := range []bool{false, true} {
+		for _, tt := range []struct {
+			name    string
+			readErr error
+			wantErr error
+		}{
+			{"timeout", timeoutOpError(), nil},
+			{"wrapped timeout", fmt.Errorf("read: %w", timeoutOpError()), nil},
+			{"read failure", readErr, readErr},
+			{"wrapped read failure", fmt.Errorf("read: %w", readErr), readErr},
+			{"closed socket", net.ErrClosed, net.ErrClosed},
+		} {
+			t.Run(fmt.Sprintf("v6=%v/%s", v6, tt.name), func(t *testing.T) {
+				dst := "192.0.2.1"
+				sock := &HopSocket{isV4: !v6}
+				if v6 {
+					dst = "2001:db8::1"
+					sock.sendV6 = &fakeHopConnV6{readQueue: []readResultV6{{err: tt.readErr}}}
+				} else {
+					sock.sendV4 = &fakeHopConn{readQueue: []readResult{{err: tt.readErr}}}
+				}
+				p := newHopPinger(dst)
+
+				reply, err := p.ProbeHop(context.Background(), sock, dst, 1, p.NextTraceID(), time.Second)
+
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("error = %v, want %v", err, tt.wantErr)
+				}
+				if reply != (HopReply{}) {
+					t.Fatalf("reply = %+v, want an empty reply on read error", reply)
+				}
+			})
+		}
+	}
 }
 
 // TestProbeHopAddr_ConcurrentIPv4SendsDoNotRaceOnTTL reproduces the MTR
