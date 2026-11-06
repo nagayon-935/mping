@@ -363,7 +363,15 @@ func (p *Pinger) listenICMP(v6 bool) (net.PacketConn, error) {
 	if p.Source != "" {
 		bindAddr = p.Source
 	}
-	return p.listenPacket(network, bindAddr)
+	c, err := p.listenPacket(network, bindAddr)
+	if err != nil {
+		return nil, err
+	}
+	if err := configureICMPBuffers(c); err != nil {
+		c.Close()
+		return nil, err
+	}
+	return c, nil
 }
 
 func (p *Pinger) Start(interval, timeout time.Duration) error {

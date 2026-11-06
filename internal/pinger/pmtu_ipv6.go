@@ -78,6 +78,10 @@ var openIPv6PMTUSocket = func(ctx context.Context, p *Pinger, dst *net.IPAddr) (
 		return nil, fmt.Errorf("open IPv6 PMTU socket: %w", err)
 	}
 	c := conn.(*net.IPConn)
+	if err := configureICMPBuffers(c); err != nil {
+		c.Close()
+		return nil, err
+	}
 	applyICMPv6Filter(ipv6.NewPacketConn(c))
 	return nativeIPv6PMTUSocket{c}, nil
 }

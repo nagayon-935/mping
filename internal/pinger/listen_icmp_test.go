@@ -41,3 +41,42 @@ func TestListenICMPNetworkAndBindAddress(t *testing.T) {
 		})
 	}
 }
+
+type bufferPacketConn struct {
+	net.PacketConn
+	readSize, writeSize int
+	readErr, writeErr   error
+	closed              bool
+}
+
+func (c *bufferPacketConn) SetReadBuffer(size int) error  { c.readSize = size; return c.readErr }
+func (c *bufferPacketConn) SetWriteBuffer(size int) error { c.writeSize = size; return c.writeErr }
+func (c *bufferPacketConn) Close() error                  { c.closed = true; return nil }
+
+func TestListenICMPConfiguresLargePacketBuffers(t *testing.T) {
+	for _, failure := range []string{"", "receive", "send"} {
+		t.Run("failure="+failure, func(t *testing.T) {
+			conn := &bufferPacketConn{}
+			wantErr := errors.New("buffer option failed")
+			if failure == "receive" {
+				conn.readErr = wantErr
+			}
+			if failure == "send" {
+				conn.writeErr = wantErr
+			}
+			p := NewPingerWithOptions(nil, Options{ListenPacket: func(string, string) (net.PacketConn, error) { return conn, nil }})
+			defer p.Stop()
+			got, err := p.listenICMP(true)
+			if failure != "" {
+				if !errors.Is(err, wantErr) || !conn.closed || got != nil {
+					t.Fatalf("got=%v err=%v closed=%v", got, err, conn.closed)
+				}
+				return
+			}
+			if err != nil || got != conn || conn.readSize < 2*receiverBufferSize || conn.writeSize < 2*receiverBufferSize {
+				t.Fatalf("got=%v err=%v buffers=%d/%d", got, err, conn.readSize, conn.writeSize)
+			}
+			got.Close()
+		})
+	}
+}

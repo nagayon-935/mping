@@ -25,9 +25,12 @@ func TestIntegration_LoopbackEcho(t *testing.T) {
 		name    string
 		host    string
 		network string
+		size    int
 	}{
-		{"IPv4", "127.0.0.1", "ip4:icmp"},
-		{"IPv6", "::1", "ip6:ipv6-icmp"},
+		{"IPv4", "127.0.0.1", "ip4:icmp", 56},
+		{"IPv6", "::1", "ip6:ipv6-icmp", 56},
+		{"IPv4Large", "127.0.0.1", "ip4:icmp", 9000},
+		{"IPv6Large", "::1", "ip6:ipv6-icmp", 16336},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -44,6 +47,7 @@ func TestIntegration_LoopbackEcho(t *testing.T) {
 			target := stats.NewTargetStats(tt.host)
 			p := pinger.NewPingerWithOptions([]*stats.TargetStats{target}, pinger.Options{})
 			p.Count = count
+			p.Size = tt.size
 			if err := p.Start(100*time.Millisecond, time.Second); err != nil {
 				t.Fatalf("Start: %v", err)
 			}
