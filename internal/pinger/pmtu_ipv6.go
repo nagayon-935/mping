@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nagayon-935/mping/internal/privilege"
 	"github.com/nagayon-935/mping/internal/stats"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv6"
@@ -54,6 +55,14 @@ type nativeIPv6PMTUSocket struct{ *net.IPConn }
 
 func (c nativeIPv6PMTUSocket) PathMTU() (int, error) { return ipv6SocketPathMTU(c.IPConn) }
 
+// runPrivileged and dialIPv6PMTUConn are seams so tests can verify that the
+// raw socket is created inside a privileged section without real privileges.
+var runPrivileged = privilege.Privileged
+
+var dialIPv6PMTUConn = func(ctx context.Context, d *net.Dialer, address string) (net.Conn, error) {
+	return d.DialContext(ctx, "ip6:ipv6-icmp", address)
+}
+
 // A connected socket makes the kernel's PMTU query destination-specific.
 // Never silently continue when the OS cannot prohibit sender fragmentation.
 var openIPv6PMTUSocket = func(ctx context.Context, p *Pinger, dst *net.IPAddr) (ipv6PMTUSocket, error) {
@@ -61,7 +70,14 @@ var openIPv6PMTUSocket = func(ctx context.Context, p *Pinger, dst *net.IPAddr) (
 	if err != nil {
 		return nil, err
 	}
-	conn, err := dialer.DialContext(ctx, "ip6:ipv6-icmp", dst.String())
+	// Like privilegedListenPacket: this runs after ping has started, so it
+	// must not overlap an AsRealUser section that has dropped privileges.
+	var conn net.Conn
+	err = runPrivileged(func() error {
+		var dialErr error
+		conn, dialErr = dialIPv6PMTUConn(ctx, dialer, dst.String())
+		return dialErr
+	})
 	if err != nil {
 		return nil, fmt.Errorf("open IPv6 PMTU socket: %w", err)
 	}
