@@ -221,19 +221,6 @@ func (f *fakePinger) isReleased() bool {
 	return f.stopped && f.closed
 }
 
-func (f *fakePinger) DiscoverMaxPayload(ctx context.Context, dest string, start int, min int, logf func(string)) (int, string, error) {
-	if f.discoverErr != nil {
-		return 0, "", f.discoverErr
-	}
-	for _, line := range f.discoverLogs {
-		logf(line)
-	}
-	if f.discoverMTU == 0 {
-		return start, "", nil
-	}
-	return f.discoverMTU, f.discoverBottleneckIP, nil
-}
-
 func (f *fakePinger) DiscoverPathMTU(ctx context.Context, dest string, start int, min int, logf func(string)) (pinger.PathMTUResult, error) {
 	if f.discoverPathContext != nil {
 		return f.discoverPathContext(ctx, dest)
@@ -241,7 +228,19 @@ func (f *fakePinger) DiscoverPathMTU(ctx context.Context, dest string, start int
 	if f.discoverPath != nil {
 		return f.discoverPath(dest)
 	}
-	payload, hop, err := f.DiscoverMaxPayload(ctx, dest, start, min, logf)
+	var payload int
+	var hop string
+	err := f.discoverErr
+	if err == nil {
+		for _, line := range f.discoverLogs {
+			logf(line)
+		}
+		if f.discoverMTU == 0 {
+			payload = start
+		} else {
+			payload, hop = f.discoverMTU, f.discoverBottleneckIP
+		}
+	}
 	return pinger.PathMTUResult{IP: "192.0.2.1", MTU: payload + 28, Payload: payload, Source: "probe", Status: "probed", BottleneckIP: hop}, err
 }
 

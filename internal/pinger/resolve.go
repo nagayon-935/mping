@@ -11,11 +11,9 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
-// resolveTimeout bounds each target DNS resolution. resolveIPAddr takes no
-// context, and neither net.ResolveIPAddr nor a *net.Resolver driven with
-// context.Background() has a timeout of its own — an unresponsive
-// --dns-server was measured blocking ~40s. A var (not const) so tests can
-// shrink it, matching asnLookupTimeout.
+// resolveTimeout bounds each target DNS resolution and route-selection dial.
+// Context-aware resolvers receive this deadline directly; explicitly injected
+// context-free hooks use a bounded wait. A var so tests can shorten the wait.
 var resolveTimeout = 5 * time.Second
 
 // ResolveIPAddrContext resolves an address using the requested family while

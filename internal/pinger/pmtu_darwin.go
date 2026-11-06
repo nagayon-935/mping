@@ -36,7 +36,7 @@ func ipv6SocketPathMTU(c syscall.Conn) (int, error) {
 	return mtu, queryErr
 }
 
-// setSocketDontFragment sets IP_DONTFRAG (0x43 / 67) on the underlying socket
+// setSocketDontFragment sets IP_DONTFRAG on the underlying socket
 // so that the macOS kernel returns EMSGSIZE instead of silently fragmenting
 // packets that exceed the outgoing interface MTU.
 //

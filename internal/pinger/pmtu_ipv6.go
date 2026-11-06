@@ -11,7 +11,22 @@ import (
 
 	"github.com/nagayon-935/mping/internal/stats"
 	"golang.org/x/net/icmp"
+	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
+)
+
+const (
+	ipv4EchoOverhead     = ipv4.HeaderLen + icmpEchoHeaderLen
+	icmpEchoHeaderLen    = 8
+	ipv6EchoOverhead     = ipv6.HeaderLen + icmpEchoHeaderLen
+	ipv6MinimumMTU       = 1280
+	pmtuMaxAttempts      = 8
+	pmtuDiscoveryTimeout = 3 * time.Second
+	pmtuSourceProbe      = "probe"
+	pmtuSourceOS         = "os"
+	pmtuStatusProbed     = "probed"
+	pmtuStatusEstimated  = "estimated"
+	pmtuStatusConfirmed  = "confirmed"
 )
 
 // PathMTUResult separates an IP packet's MTU from its ICMP payload budget.
@@ -19,19 +34,19 @@ import (
 type PathMTUResult = stats.PathMTUInfo
 
 // DiscoverPathMTU uses kernel PMTUD for IPv6 and the existing DF search for IPv4.
-func (p *Pinger) DiscoverPathMTU(ctx context.Context, dest string, start, min int, logf func(string)) (PathMTUResult, error) {
+func (p *Pinger) DiscoverPathMTU(ctx context.Context, dest string, start, minPayload int, logf func(string)) (PathMTUResult, error) {
 	dst, err := p.resolveIPAddrContext(ctx, "ip", dest)
 	if err != nil {
 		return PathMTUResult{}, err
 	}
 	if dst.IP.To4() != nil {
-		payload, hop, err := p.discoverIPv4MaxPayload(ctx, dst, start, min, logf)
+		payload, hop, err := p.discoverIPv4MaxPayload(ctx, dst, start, minPayload, logf)
 		if err != nil {
 			return PathMTUResult{}, err
 		}
-		return PathMTUResult{IP: dst.String(), MTU: payload + 28, Payload: payload, Source: "probe", Status: "probed", BottleneckIP: hop}, nil
+		return PathMTUResult{IP: dst.String(), MTU: payload + ipv4EchoOverhead, Payload: payload, Source: pmtuSourceProbe, Status: pmtuStatusProbed, BottleneckIP: hop}, nil
 	}
-	ctx, cancel := p.lookupContext(ctx, 3*time.Second)
+	ctx, cancel := p.lookupContext(ctx, pmtuDiscoveryTimeout)
 	defer cancel()
 	c, err := openIPv6PMTUSocket(ctx, p, dst)
 	if err != nil {
@@ -92,19 +107,17 @@ var openIPv6PMTUSocket = func(ctx context.Context, p *Pinger, dst *net.IPAddr) (
 }
 
 func (p *Pinger) discoverIPv6PathMTU(ctx context.Context, c ipv6PMTUSocket, dst *net.IPAddr, logf func(string)) (PathMTUResult, error) {
-	result := PathMTUResult{IP: dst.String(), Source: "os", Status: "estimated"}
-	id := p.NextTraceID()
+	result := PathMTUResult{IP: dst.String(), Source: pmtuSourceOS, Status: pmtuStatusEstimated}
+	id, release := p.acquireTraceID()
 	if id < 0 {
 		return result, fmt.Errorf("PMTU probe IDs exhausted")
 	}
-	if p.ids != nil {
-		defer p.ids.releaseTrace(id)
-	}
+	defer release()
 	buf := make([]byte, receiverBufferSize)
 	// The IPv6 payload length excludes the 40-byte base header. In
 	// particular, Linux loopback's 65536-byte MTU is not a jumbogram.
-	const maxProbeMTU = receiverBufferSize + 40
-	for seq := 1; seq <= 8; seq++ {
+	const maxProbeMTU = receiverBufferSize + ipv6.HeaderLen
+	for seq := 1; seq <= pmtuMaxAttempts; seq++ {
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
@@ -112,18 +125,18 @@ func (p *Pinger) discoverIPv6PathMTU(ctx context.Context, c ipv6PMTUSocket, dst 
 		if err != nil {
 			return result, fmt.Errorf("query IPv6 path MTU: %w", err)
 		}
-		if mtu < 1280 {
+		if mtu < ipv6MinimumMTU {
 			return result, fmt.Errorf("invalid IPv6 path MTU %d", mtu)
 		}
-		result.MTU, result.Payload = mtu, mtu-48
+		result.MTU, result.Payload = mtu, mtu-ipv6EchoOverhead
 		if logf != nil {
 			logf(fmt.Sprintf("[PMTU] %s: MTU=%d (OS estimate)", dst, mtu))
 		}
 		// Bound memory and wire size even for unusual jumbo loopback routes.
-		payload := make([]byte, min(mtu, maxProbeMTU)-48)
+		payload := make([]byte, min(mtu, maxProbeMTU)-ipv6EchoOverhead)
 		copy(payload, fmt.Sprintf("MPING-PMTU-%d-%d-%d", id, seq, time.Now().UnixNano()))
 		message := icmp.Message{Type: ipv6.ICMPTypeEchoRequest, Body: &icmp.Echo{ID: id, Seq: seq, Data: payload}}
-		packet, err := message.Marshal(nil)
+		packet, err := marshalProbe(&message)
 		if err != nil {
 			return result, err
 		}
@@ -139,41 +152,18 @@ func (p *Pinger) discoverIPv6PathMTU(ctx context.Context, c ipv6PMTUSocket, dst 
 			return result, err
 		}
 		if err == nil {
-			for {
-				if err := ctx.Err(); err != nil {
-					return result, err
+			matched, err := waitIPv6PMTUReply(ctx, c, buf, id, seq, payload)
+			if err != nil {
+				return result, err
+			}
+			if matched {
+				if mtu <= maxProbeMTU {
+					result.Status = pmtuStatusConfirmed
 				}
-				n, readErr := c.Read(buf)
-				if readErr != nil {
-					if ctx.Err() != nil {
-						return result, ctx.Err()
-					}
-					if e, ok := readErr.(net.Error); !ok || !e.Timeout() {
-						if !isMTUTooLarge(readErr) {
-							return result, readErr
-						}
-					}
-					break
+				if logf != nil {
+					logf(fmt.Sprintf("[PMTU] %s: MTU=%d, payload=%d (%s)", dst, mtu, result.Payload, result.Status))
 				}
-				msg, parseErr := icmp.ParseMessage(58, buf[:n])
-				if parseErr != nil {
-					continue
-				}
-				if echo, ok := msg.Body.(*icmp.Echo); msg.Type == ipv6.ICMPTypeEchoReply && ok && echo.ID == id && echo.Seq == seq && bytes.Equal(echo.Data, payload) {
-					if mtu <= maxProbeMTU {
-						result.Status = "confirmed"
-					}
-					if logf != nil {
-						logf(fmt.Sprintf("[PMTU] %s: MTU=%d, payload=%d (%s)", dst, mtu, result.Payload, result.Status))
-					}
-					return result, nil
-				}
-				if msg.Type == ipv6.ICMPTypePacketTooBig {
-					gotID, gotSeq, ok := extractEchoIDSeq(msg)
-					if ok && gotID == id && gotSeq == seq {
-						break // Kernel processes the PTB; query its updated estimate below.
-					}
-				}
+				return result, nil
 			}
 		}
 		next, err := c.PathMTU()
@@ -184,12 +174,48 @@ func (p *Pinger) discoverIPv6PathMTU(ctx context.Context, c ipv6PMTUSocket, dst 
 			// A timeout supplies no evidence that the size is too large.
 			return result, nil
 		}
-		if next < 1280 {
+		if next < ipv6MinimumMTU {
 			return result, fmt.Errorf("invalid IPv6 path MTU %d", next)
 		}
-		result.MTU, result.Payload = next, next-48
+		result.MTU, result.Payload = next, next-ipv6EchoOverhead
 	}
 	return result, nil
+}
+
+// waitIPv6PMTUReply waits for an echo matching the complete probe payload.
+// A timeout, EMSGSIZE, or matching Packet Too Big leaves the OS estimate to
+// be queried again by the caller.
+func waitIPv6PMTUReply(ctx context.Context, c ipv6PMTUSocket, buf []byte, id, seq int, payload []byte) (bool, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		n, readErr := c.Read(buf)
+		if readErr != nil {
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			if e, ok := readErr.(net.Error); !ok || !e.Timeout() {
+				if !isMTUTooLarge(readErr) {
+					return false, readErr
+				}
+			}
+			return false, nil
+		}
+		msg, parseErr := icmp.ParseMessage(protoICMPv6, buf[:n])
+		if parseErr != nil {
+			continue
+		}
+		if echo, ok := msg.Body.(*icmp.Echo); msg.Type == ipv6.ICMPTypeEchoReply && ok && echo.ID == id && echo.Seq == seq && bytes.Equal(echo.Data, payload) {
+			return true, nil
+		}
+		if msg.Type == ipv6.ICMPTypePacketTooBig {
+			gotID, gotSeq, ok := extractEchoIDSeq(msg)
+			if ok && gotID == id && gotSeq == seq {
+				return false, nil // Kernel processes the PTB; caller queries its updated estimate.
+			}
+		}
+	}
 }
 
 // ipv6PMTUDialer preserves OS source selection where native interface binding

@@ -44,20 +44,20 @@ func (p *Pinger) broadcastTrace(msg *icmp.Message, src net.Addr) {
 // receiverConfig holds IP-version-specific parameters for the unified receiver loop.
 type receiverConfig struct {
 	protocol      int         // ICMP protocol number (1 for v4, 58 for v6)
-	echoReply     icmp.Type   // ICMPTypeEchoReply or ICMPTypeEchoReply (v6)
+	echoReply     icmp.Type   // IPv4 or IPv6 echo reply type
 	errorTypes    []icmp.Type // Destination Unreachable, Time Exceeded, Parameter Problem
 	errorStringFn func(icmp.Type, int) string
 }
 
 var receiverV4Config = receiverConfig{
-	protocol:      1,
+	protocol:      protoICMP,
 	echoReply:     ipv4.ICMPTypeEchoReply,
 	errorTypes:    []icmp.Type{ipv4.ICMPTypeDestinationUnreachable, ipv4.ICMPTypeTimeExceeded, ipv4.ICMPTypeParameterProblem},
 	errorStringFn: icmpErrorString,
 }
 
 var receiverV6Config = receiverConfig{
-	protocol:  58,
+	protocol:  protoICMPv6,
 	echoReply: ipv6.ICMPTypeEchoReply,
 	// ipv6.ICMPTypePacketTooBig (type 2) has no IPv4 equivalent code to piggyback
 	// on - IPv4's "Fragmentation Needed" is DstUnreach code 4, but IPv6 carries the
@@ -166,8 +166,9 @@ func (p *Pinger) runReceiver(
 			}
 			n, ttl, src, err := readFrom(buf)
 			if err != nil {
+				// Only socket-operation timeouts are retried.
 				var opErr *net.OpError
-				if errors.As(err, &opErr) && opErr.Timeout() {
+				if errors.As(err, &opErr) && isTimeout(opErr) {
 					continue
 				}
 				return

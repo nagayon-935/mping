@@ -97,8 +97,7 @@ func (hc *HTTPChecker) Results() []*stats.HTTPCheckResult {
 // Start launches one goroutine per URL. Safe to call once.
 func (hc *HTTPChecker) Start() {
 	for _, r := range hc.results {
-		hc.wg.Add(1)
-		go hc.loop(r)
+		hc.wg.Go(func() { hc.loop(r) })
 	}
 }
 
@@ -113,7 +112,6 @@ func (hc *HTTPChecker) Wait() {
 }
 
 func (hc *HTTPChecker) loop(r *stats.HTTPCheckResult) {
-	defer hc.wg.Done()
 	runPeriodic(hc.ctx, hc.interval, func() { hc.check(r) })
 }
 
@@ -122,7 +120,7 @@ func (hc *HTTPChecker) check(r *stats.HTTPCheckResult) {
 		return
 	}
 	start := time.Now()
-	req, err := http.NewRequestWithContext(hc.ctx, "GET", r.URL(), nil)
+	req, err := http.NewRequestWithContext(hc.ctx, http.MethodGet, r.URL(), nil)
 	if err != nil {
 		r.SetResult(0, 0, err)
 		return

@@ -31,17 +31,13 @@ func (p *Pinger) getASN(ipStr string) string {
 
 // sendProbe marshals and sends an ICMP echo request. Returns the send time, or an error string.
 func (p *Pinger) sendProbe(t *stats.TargetStats, id, seq int, payload []byte, dstAddr *net.IPAddr) (time.Time, bool) {
-	return p.sendProbeWithStats(t, t.NewProbe(), id, seq, payload, dstAddr)
+	return p.sendProbeWithStats(t.NewProbe(), id, seq, payload, dstAddr)
 }
 
 // runWorker is a test helper that runs runTargetWorker (the production worker
 // loop; see its doc) with a background context.
 func (p *Pinger) runWorker(t *stats.TargetStats, id int, interval, timeout time.Duration) {
-	p.runTargetWorker(t, id, interval, timeout, context.Background())
-}
-
-func (pc *PortChecker) check(t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
-	pc.checkContext(pc.ctx, t, spec, result)
+	p.runTargetWorker(context.Background(), t, id, interval, timeout)
 }
 
 func (p *Pinger) OpenHopSocket(dest string) (*HopSocket, error) {

@@ -105,7 +105,7 @@ func TestStoppedPortCheckerPreservesLastResult(t *testing.T) {
 	r.SetResult("Open", time.Millisecond)
 	before := r.GetView()
 	pc.Stop()
-	pc.check(target, spec, r)
+	pc.check(pc.ctx, target, spec, r)
 	if got := r.GetView(); !reflect.DeepEqual(got, before) {
 		t.Fatalf("shutdown changed port result: %+v", got)
 	}
@@ -154,10 +154,10 @@ func TestLookupContext(t *testing.T) {
 	})
 }
 
-func TestLookupBounded_AfterStopDoesNotStartLookup(t *testing.T) {
+func TestLookupBoundedContext_AfterStopDoesNotStartLookup(t *testing.T) {
 	p := NewPinger(nil)
 	p.Stop()
-	_, err := lookupBounded(p, time.Second, "TXT", "example.com",
+	_, err := lookupBoundedContext(context.Background(), p, time.Second, "TXT", "example.com",
 		func(context.Context, string) (string, error) {
 			t.Error("context-aware lookup started after Stop")
 			return "", nil

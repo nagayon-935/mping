@@ -267,8 +267,10 @@ func TestProbe_ECMPHopKeepsAnnotationsWhenResponderAlternates(t *testing.T) {
 	prober := newFakeProber(map[int]pinger.HopReply{1: {SrcIP: "10.0.0.1", Responded: true}})
 	ann := newHopAnnotator(context.Background(), prober, m, time.Hour)
 	defer ann.close()
-	ann.remember("10.0.0.1", pinger.ASNInfo{Number: "AS1"}, "a.example")
-	ann.remember("10.0.0.2", pinger.ASNInfo{Number: "AS2"}, "b.example")
+	ann.mu.Lock()
+	ann.rememberLocked("10.0.0.1", pinger.ASNInfo{Number: "AS1"}, "a.example")
+	ann.rememberLocked("10.0.0.2", pinger.ASNInfo{Number: "AS2"}, "b.example")
+	ann.mu.Unlock()
 	cfg := annotateTestConfig(false)
 
 	for round, ip := range []string{"10.0.0.1", "10.0.0.2", "10.0.0.1", "10.0.0.2"} {

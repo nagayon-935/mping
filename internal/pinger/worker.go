@@ -31,7 +31,7 @@ func (p *Pinger) getWriteFunc(dstAddr *net.IPAddr) (icmp.Type, func([]byte, net.
 	return nil, nil, "No IPv6 Conn"
 }
 
-func (p *Pinger) sendProbeWithStats(t *stats.TargetStats, probe stats.Probe, id, seq int, payload []byte, dstAddr *net.IPAddr) (time.Time, bool) {
+func (p *Pinger) sendProbeWithStats(probe stats.Probe, id, seq int, payload []byte, dstAddr *net.IPAddr) (time.Time, bool) {
 	msgType, writeFunc, errStr := p.getWriteFunc(dstAddr)
 	if writeFunc == nil {
 		probe.OnFailure(errStr)
@@ -220,21 +220,19 @@ func rearmSweepTimer(sweepTimer *time.Timer, unacked map[int]pendingProbe, timeo
 // draining `unacked` — until every outstanding probe has been resolved,
 // then returns. This is the same "wait out the stragglers before reporting
 // the final tally" idea as ping.c's almost_done.
-func (p *Pinger) runTargetWorker(t *stats.TargetStats, id int, interval, timeout time.Duration, ctx context.Context) {
+func (p *Pinger) runTargetWorker(ctx context.Context, t *stats.TargetStats, id int, interval, timeout time.Duration) {
 	dstAddr := p.resolveTargetContext(ctx, t)
 
 	seq := p.initialSeq
 	// sendTimer fires once immediately (duration 0) for the first probe,
 	// then is explicitly Reset(interval) after every fire that doesn't
-	// terminate sending — see the case below. This reproduces the prior
-	// implementation's "send right away, then pace off the ticker"
-	// structure without a separate pre-loop send.
+	// terminate sending — see the case below.
 	sendTimer := time.NewTimer(0)
 	defer sendTimer.Stop()
 
 	resInterval := p.ResolveInterval
 	if resInterval <= 0 {
-		resInterval = 60 * time.Second
+		resInterval = defaultResolveInterval
 	}
 	dnsTicker := time.NewTicker(resInterval)
 	defer dnsTicker.Stop()
@@ -306,7 +304,7 @@ func (p *Pinger) runTargetWorker(t *stats.TargetStats, id int, interval, timeout
 			seq++
 
 			probe := t.NewProbe()
-			start, ok := p.sendProbeWithStats(t, probe, id, seq, payload, dstAddr)
+			start, ok := p.sendProbeWithStats(probe, id, seq, payload, dstAddr)
 			if ok {
 				unacked[seq&seqMask] = pendingProbe{start: start, stats: probe}
 				rearmSweepTimer(sweepTimer, unacked, timeout)
@@ -320,12 +318,12 @@ func (p *Pinger) runTargetWorker(t *stats.TargetStats, id int, interval, timeout
 			}
 
 		case reply := <-replyCh:
-			if p.settleReply(t, reply, unacked, hist) {
+			if p.settleReply(reply, unacked, hist) {
 				rearmSweepTimer(sweepTimer, unacked, timeout)
 			}
 
 		case <-sweepTimer.C:
-			p.sweepTimeouts(t, unacked, hist, timeout)
+			p.sweepTimeouts(unacked, hist, timeout)
 			rearmSweepTimer(sweepTimer, unacked, timeout)
 		}
 
@@ -340,7 +338,7 @@ func (p *Pinger) runTargetWorker(t *stats.TargetStats, id int, interval, timeout
 // may have moved); a reply for a recently settled seq is classified as a
 // duplicate or late arrival. Called only from the worker's goroutine, which
 // owns unacked and hist.
-func (p *Pinger) settleReply(t *stats.TargetStats, reply Reply, unacked map[int]pendingProbe, hist *recentSeqHistory) bool {
+func (p *Pinger) settleReply(reply Reply, unacked map[int]pendingProbe, hist *recentSeqHistory) bool {
 	if pend, found := unacked[reply.Seq]; found {
 		delete(unacked, reply.Seq)
 		if reply.Err != "" {
@@ -394,7 +392,7 @@ func (p *Pinger) settleReply(t *stats.TargetStats, reply Reply, unacked map[int]
 
 // sweepTimeouts records a loss for every outstanding probe older than
 // timeout, remembering each so a reply arriving later counts as late.
-func (p *Pinger) sweepTimeouts(t *stats.TargetStats, unacked map[int]pendingProbe, hist *recentSeqHistory, timeout time.Duration) {
+func (p *Pinger) sweepTimeouts(unacked map[int]pendingProbe, hist *recentSeqHistory, timeout time.Duration) {
 	now := time.Now()
 	for wireSeq, pend := range unacked {
 		if now.Sub(pend.start) >= timeout {

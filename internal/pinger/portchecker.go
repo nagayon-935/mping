@@ -113,7 +113,7 @@ func (pc *PortChecker) Wait() {
 // when IP is still empty, leaving the status stuck at "Checking...".
 const maxDNSWait = 5 * time.Second
 
-func (pc *PortChecker) loopContext(ctx context.Context, t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
+func (pc *PortChecker) loop(ctx context.Context, t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
 
 	// Defer the first check until the target IP is resolved (or we time out),
 	// so the user sees a real Open/Closed/Filtered result on the first tick.
@@ -130,10 +130,10 @@ func (pc *PortChecker) loopContext(ctx context.Context, t *stats.TargetStats, sp
 		}
 	}
 
-	runPeriodic(ctx, pc.interval, func() { pc.checkContext(ctx, t, spec, result) })
+	runPeriodic(ctx, pc.interval, func() { pc.check(ctx, t, spec, result) })
 }
 
-func (pc *PortChecker) checkContext(ctx context.Context, t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
+func (pc *PortChecker) check(ctx context.Context, t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
 	if ctx.Err() != nil {
 		return
 	}
@@ -230,20 +230,23 @@ func (pc *PortChecker) launchTarget(t *stats.TargetStats, results []*stats.PortC
 		defer close(run.done)
 		var wg sync.WaitGroup
 		for j, spec := range pc.specs {
-			wg.Add(1)
-			go func(spec PortSpec, result *stats.PortCheckResult) {
-				defer wg.Done()
-				pc.loopContext(ctx, t, spec, result)
-			}(spec, results[j])
+			result := results[j]
+			wg.Go(func() {
+				pc.loop(ctx, t, spec, result)
+			})
 		}
 		wg.Wait()
 	})
 }
+
+// AddTarget initializes t's port results and launches its checks.
 func (pc *PortChecker) AddTarget(t *stats.TargetStats) {
 	results := newPortResults(pc.specs)
 	t.SetPortResults(results)
 	pc.launchTarget(t, results)
 }
+
+// RemoveTarget cancels and joins all port checks for t.
 func (pc *PortChecker) RemoveTarget(t *stats.TargetStats) {
 	pc.targetMu.Lock()
 	r := pc.targetRuns[t]

@@ -38,54 +38,24 @@ var newRawConnFn = func(c net.PacketConn) (pmtuRawConn, error) {
 	return rc, nil
 }
 
-// DiscoverMaxPayload performs a binary search to find the maximum ICMP payload
-// size that can be sent to dest without fragmentation (DF flag set).
-// start is the upper bound to probe; min is the lower bound (usually the
-// configured packet size). IPv6 destinations are not supported.
-// Returns the max payload size, the bottleneck router IP (if detected), and any error.
-func (p *Pinger) DiscoverMaxPayload(ctx context.Context, dest string, start int, min int, logf func(string)) (int, string, error) {
-	if dest == "" {
-		return 0, "", fmt.Errorf("destination is empty")
-	}
-	if start <= 0 {
-		return 0, "", fmt.Errorf("start MTU must be > 0")
-	}
-	if min < 0 {
-		min = 0
-	}
-
-	dstAddr, err := p.resolveIPAddrContext(ctx, "ip", dest)
-	if err != nil {
-		return 0, "", fmt.Errorf("resolve %s: %w", dest, err)
-	}
-
-	// PMTU currently only supported for IPv4
-	if dstAddr.IP.To4() == nil {
-		return p.Size, "", fmt.Errorf("PMTU discovery not supported for IPv6")
-	}
-	return p.discoverIPv4MaxPayload(ctx, dstAddr, start, min, logf)
-}
-
 // Use the already selected destination throughout the IPv4 search. In
 // particular, never perform a second DNS lookup after deciding the family.
-func (p *Pinger) discoverIPv4MaxPayload(ctx context.Context, dstAddr *net.IPAddr, start, min int, logf func(string)) (int, string, error) {
+func (p *Pinger) discoverIPv4MaxPayload(ctx context.Context, dstAddr *net.IPAddr, start, minPayload int, logf func(string)) (int, string, error) {
 	if start <= 0 {
 		return 0, "", fmt.Errorf("start MTU must be > 0")
 	}
-	low := max(min, 0)
+	low := max(minPayload, 0)
 	if low > start {
 		low = start
 	}
 	if err := ctx.Err(); err != nil {
 		return 0, "", err
 	}
-	id := p.NextTraceID()
+	id, release := p.acquireTraceID()
 	if id < 0 {
 		return 0, "", fmt.Errorf("PMTU probe IDs exhausted")
 	}
-	if p.ids != nil {
-		defer p.ids.releaseTrace(id)
-	}
+	defer release()
 	ok, hop, err := canSendPayloadFn(ctx, p, dstAddr, low, id)
 	if err != nil {
 		return 0, hop, err
@@ -157,27 +127,17 @@ func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloa
 			Data: payload,
 		},
 	}
-	b, err := msg.Marshal(nil)
+	b, err := marshalProbe(&msg)
 	if err != nil {
 		return false, "", err
 	}
 
-	// Header-included IPv4 probes bind both the requested interface and its
-	// IPv4 source on every OS, measuring the same path as regular ping.
-	source := p.Source
-	if source == "" && p.Interface != "" {
-		source, err = p.interfaceSource(false)
-		if err != nil {
-			return false, "", err
-		}
-	}
-	c, err := p.listenICMPSource(false, source)
+	c, source, err := p.openIPv4PMTUSocket()
 	if err != nil {
 		return false, "", err
 	}
 	defer c.Close()
 	bindToInterfaceFn(c, p.Interface, false)
-
 	defer closeOnCancel(ctx, func() { _ = c.Close() })()
 
 	rc, err := newRawConnFn(c)
@@ -195,7 +155,7 @@ func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloa
 		Len:      ipv4.HeaderLen,
 		TotalLen: ipv4.HeaderLen + len(b),
 		TTL:      64,
-		Protocol: 1,
+		Protocol: protoICMP,
 		Dst:      dstAddr.IP,
 		Flags:    ipv4.DontFragment,
 	}
@@ -210,6 +170,29 @@ func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloa
 		return false, "", err
 	}
 
+	return waitIPv4PMTUReply(rc, id)
+}
+
+// openIPv4PMTUSocket selects the source and opens a socket for header-included
+// DF probes. The caller owns interface binding, cancellation, and closing.
+func (p *Pinger) openIPv4PMTUSocket() (net.PacketConn, string, error) {
+	// Header-included IPv4 probes bind both the requested interface and its
+	// IPv4 source on every OS, measuring the same path as regular ping.
+	source := p.Source
+	if source == "" && p.Interface != "" {
+		var err error
+		source, err = p.interfaceSource(false)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	c, err := p.listenICMPSource(false, source)
+	return c, source, err
+}
+
+// waitIPv4PMTUReply accepts a matching echo or fragmentation-needed response.
+// All read errors remain equivalent to no reply.
+func waitIPv4PMTUReply(rc pmtuRawConn, id int) (bool, string, error) {
 	deadline := time.Now().Add(pmtuProbeTimeout)
 	// The receive buffer must be large enough to hold a full ICMP Echo Reply
 	// for any probe size we send. Using probeBufferSize (1500) would cause
@@ -224,7 +207,7 @@ func (p *Pinger) canSendPayload(ctx context.Context, dstAddr *net.IPAddr, payloa
 			// treated as no reply.
 			return false, "", nil
 		}
-		parsed, err := icmp.ParseMessage(1, pld)
+		parsed, err := icmp.ParseMessage(protoICMP, pld)
 		if err != nil {
 			continue
 		}

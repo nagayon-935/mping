@@ -15,9 +15,8 @@ import (
 var ptrLookupTimeout = 3 * time.Second
 
 // lookupPTR performs a (potentially slow) reverse DNS (PTR) lookup for ipStr
-// and records the result on t. Guarded by p.done so that a lookup queued
-// just before Stop() doesn't fire at all — mirrors lookupASN exactly,
-// including the getPTR -> lookupAddrBounded race against p.done.
+// and records the result on t. The pinger lifetime cancels its DNS calls;
+// Wait joins the metadata goroutine before the target statistics are reused.
 func (p *Pinger) lookupPTR(t *stats.TargetStats, ipStr string) {
 	select {
 	case <-p.done:
@@ -73,10 +72,4 @@ func (p *Pinger) getPTRContext(ctx context.Context, ipStr string) string {
 	p.ptrCache[ipStr] = name
 	p.ptrMu.Unlock()
 	return name
-}
-
-// lookupAddrBounded runs cancellable DNS on the calling goroutine. Only
-// explicitly injected context-free hooks use the legacy bounded adapter.
-func (p *Pinger) lookupAddrBounded(ipStr string) ([]string, error) {
-	return lookupBounded(p, ptrLookupTimeout, "ptr", ipStr, p.lookupAddrContext, p.lookupAddr)
 }
