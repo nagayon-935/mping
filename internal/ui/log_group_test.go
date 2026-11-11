@@ -58,6 +58,14 @@ func TestAppendLog_GroupsSameCauseInOneSecond(t *testing.T) {
 			},
 		},
 		{
+			name: "duplicate reports from the same host in the same second are deduplicated",
+			lines: []string{
+				"[12:00:00] h1: ok: Within thresholds",
+				"[12:00:00] h1: ok: Within thresholds",
+			},
+			want: []string{"[12:00:00] h1: ok: Within thresholds"},
+		},
+		{
 			name: "long groups name the first hosts and count the rest",
 			lines: []string{
 				"[12:00:00] h1: ok: Within thresholds", "[12:00:00] h2: ok: Within thresholds",

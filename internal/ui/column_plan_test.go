@@ -18,7 +18,7 @@ func newPlanRenderer(t *testing.T, targets []*stats.TargetStats, opts columnOpti
 	table := tview.NewTable().SetBorders(true)
 	pane := tview.NewFlex().AddItem(table, 0, 1, true)
 	tr := newTableRenderer(targets, "10.0.0.5", "", 56, opts, nil, table, pane, nil, newViewState(tview.NewTextView()))
-	_, texts := tr.renderTexts(fetchViews(targets))
+	_, texts := tr.renderTexts(fetchViews(targets, tr.sparkPoints))
 	return tr, texts
 }
 
@@ -212,7 +212,7 @@ func TestPlanColumns_ErrorColumnStaysAfterRecovery(t *testing.T) {
 	tr.planColumns(texts, 200)
 	target.IncSent()
 	target.OnSuccess(12*time.Millisecond, 64)
-	_, recovered := tr.renderTexts(fetchViews(tr.targets))
+	_, recovered := tr.renderTexts(fetchViews(tr.targets, tr.sparkPoints))
 
 	// Act
 	plan := tr.planColumns(recovered, 200)
@@ -233,7 +233,7 @@ func TestPlanColumns_StableWhenValuesShrink(t *testing.T) {
 		t.Fatal("fixture hides nothing")
 	}
 	short := replyingTarget("10.0.0.1", 9*time.Millisecond)
-	_, shortTexts := tr.renderTexts(fetchViews([]*stats.TargetStats{short}))
+	_, shortTexts := tr.renderTexts(fetchViews([]*stats.TargetStats{short}, tr.sparkPoints))
 
 	// Act: the next tick's values are narrower.
 	shortPlan := tr.planColumns(shortTexts, width)

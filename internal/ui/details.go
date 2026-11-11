@@ -44,7 +44,7 @@ func (d *hostDetails) refresh(targets []*stats.TargetStats) bool {
 }
 
 func renderHostDetails(t *stats.TargetStats, opts RunOptions) string {
-	v := t.GetView()
+	v := t.GetViewWindow(0)
 	var b strings.Builder
 	fmt.Fprintf(&b, "[yellow::b]%s[-::-]  Target #%d\n", tview.Escape(v.Host), v.ID)
 	fmt.Fprintf(&b, "IP: %s\nSource: %s\nStarted: %s  (%s elapsed)\n", tview.Escape(v.IP), tview.Escape(displaySourceIPForDst(v.IP, opts.SourceIPv4, opts.SourceIPv6)), detailTimestamp(v.StartedAt), time.Since(v.StartedAt).Round(time.Second))

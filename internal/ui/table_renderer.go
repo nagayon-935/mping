@@ -23,11 +23,12 @@ import (
 // the uiSession mailbox); no mutex guards them and background goroutines
 // must post updates through that mailbox.
 type tableRenderer struct {
-	targets    []*stats.TargetStats
-	sourceIPv4 string
-	sourceIPv6 string
-	packetSize int
-	groups     []TargetGroup
+	targets     []*stats.TargetStats
+	sourceIPv4  string
+	sourceIPv6  string
+	packetSize  int
+	sparkPoints int
+	groups      []TargetGroup
 
 	cols             []column
 	fullHeaders      []string
@@ -82,9 +83,9 @@ func newTableRenderer(
 	targets []*stats.TargetStats, sourceIPv4, sourceIPv6 string, packetSize int, colOpts columnOptions, groups []TargetGroup,
 	table *tview.Table, tablePane *tview.Flex, initialLogs []string, vs *viewState,
 ) *tableRenderer {
+	views := fetchViews(targets, max(colOpts.SparkPoints, 0))
 	colOpts.DNS = false
-	for _, t := range targets {
-		v := t.GetView()
+	for _, v := range views {
 		if v.DNSServer != "" && v.DNSServer != "-" {
 			colOpts.DNS = true
 			break
@@ -93,7 +94,9 @@ func newTableRenderer(
 
 	cols := mainTableColumns(colOpts)
 	tr := &tableRenderer{
-		targets: targets, sourceIPv4: sourceIPv4, sourceIPv6: sourceIPv6, packetSize: packetSize, groups: groups,
+		targets: targets, sourceIPv4: sourceIPv4, sourceIPv6: sourceIPv6, packetSize: packetSize,
+		sparkPoints:      max(colOpts.SparkPoints, 0),
+		groups:           groups,
 		cols:             cols,
 		fullHeaders:      make([]string, len(cols)),
 		fullAligns:       make([]int, len(cols)),
@@ -125,7 +128,7 @@ func newTableRenderer(
 
 	tr.widthSeen = make([]int, len(cols))
 	tr.everShown = make([]bool, len(cols))
-	tr.widths = tr.calcColumnWidths(fetchViews(targets))
+	tr.widths = tr.calcColumnWidths(views)
 	tr.active = make([]int, len(cols))
 	for i := range cols {
 		tr.active[i] = i
@@ -214,14 +217,15 @@ func (tr *tableRenderer) ensureRenderedForSize() {
 	}
 }
 
-// fetchViews takes one GetView() snapshot per target, in order. Called once
-// per tick (or once at construction) so every consumer within that tick —
-// width calculation, layout planning, row rendering — shares the same
-// snapshot instead of each re-fetching it independently.
-func fetchViews(targets []*stats.TargetStats) []stats.TargetView {
+// fetchViews takes one GetViewWindow(historyWindow) snapshot per target, in
+// order. Called once per tick (or once at construction) so every consumer
+// within that tick — width calculation, layout planning, row rendering —
+// shares the same snapshot instead of each re-fetching it independently, and
+// only the trailing RTT samples needed by the sparkline are copied.
+func fetchViews(targets []*stats.TargetStats, historyWindow int) []stats.TargetView {
 	views := make([]stats.TargetView, len(targets))
 	for i, t := range targets {
-		views[i] = t.GetView()
+		views[i] = t.GetViewWindow(historyWindow)
 	}
 	return views
 }
@@ -234,11 +238,10 @@ func (tr *tableRenderer) update() {
 	_, _, tr.lastRenderWidth, tr.lastRenderHeight = tr.tablePane.GetInnerRect()
 	tr.table.Clear()
 
-	// One GetView() snapshot per target for this whole tick — width calc,
+	// One GetViewWindow snapshot per target for this whole tick — width calc,
 	// layout planning, and row rendering all read from this same slice
-	// instead of each calling GetView() independently: GetView() copies the
-	// full RTT history ring, so one call per target per tick is the budget.
-	views := fetchViews(tr.targets)
+	// instead of each calling GetView() independently.
+	views := fetchViews(tr.targets, tr.sparkPoints)
 	rowCtx, texts := tr.renderTexts(views)
 	tr.chooseLayout(texts)
 	if tr.selectionEnabled {

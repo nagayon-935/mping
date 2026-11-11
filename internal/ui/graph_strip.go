@@ -52,17 +52,15 @@ func bucketHistory(history []time.Duration, windowPoints, width int) []stripBuck
 }
 
 // percentile95 returns the 95th percentile of the answered samples in the
-// trailing windowPoints of each history, or 0 when there are none.
-func percentile95(histories [][]time.Duration, windowPoints int) time.Duration {
+// trailing windowPoints of history, or 0 when there are none.
+func percentile95(history []time.Duration, windowPoints int) time.Duration {
+	if len(history) > windowPoints {
+		history = history[len(history)-windowPoints:]
+	}
 	var answered []time.Duration
-	for _, h := range histories {
-		if len(h) > windowPoints {
-			h = h[len(h)-windowPoints:]
-		}
-		for _, v := range h {
-			if v > 0 {
-				answered = append(answered, v)
-			}
+	for _, v := range history {
+		if v > 0 {
+			answered = append(answered, v)
 		}
 	}
 	if len(answered) == 0 {
@@ -100,14 +98,20 @@ func stripCell(b stripBucket, scaleMs float64) (rune, tcell.Color) {
 // all, probes were lost: the Warning color (see levelColor).
 var lossPartialColor = levelColor(stats.LevelWarn)
 
+// prepareSparkBuckets computes the p95 scale and bucket samples for a sparkline.
+func prepareSparkBuckets(history []time.Duration, windowPoints, width int) ([]stripBucket, float64) {
+	scaleMs := computeYScale(percentile95(history, windowPoints), stripScaleFloorMs).maxMs
+	return bucketHistory(history, windowPoints, width), scaleMs
+}
+
 // sparkline draws the trailing windowPoints samples of history in width
 // cells against the samples' own p95 scale, with the same marks as a strip
 // (▲ above the scale, × lost). It is always width cells wide, blank where
 // there are no samples yet, so the column keeps its width from the start.
 func sparkline(history []time.Duration, windowPoints, width int) string {
-	scaleMs := computeYScale(percentile95([][]time.Duration{history}, windowPoints), stripScaleFloorMs).maxMs
+	buckets, scaleMs := prepareSparkBuckets(history, windowPoints, width)
 	runes := make([]rune, 0, width)
-	for _, b := range bucketHistory(history, windowPoints, width) {
+	for _, b := range buckets {
 		r, _ := stripCell(b, scaleMs)
 		runes = append(runes, r)
 	}
@@ -125,9 +129,9 @@ func colorTag(color tcell.Color) string {
 // loss (orange for some, red for all), for the Ping Monitor cell whose own
 // text color (cyan) draws the rest. It has the same width on screen.
 func sparklineStyled(history []time.Duration, windowPoints, width int) string {
-	scaleMs := computeYScale(percentile95([][]time.Duration{history}, windowPoints), stripScaleFloorMs).maxMs
+	buckets, scaleMs := prepareSparkBuckets(history, windowPoints, width)
 	var b strings.Builder
-	for _, bucket := range bucketHistory(history, windowPoints, width) {
+	for _, bucket := range buckets {
 		r, color := stripCell(bucket, scaleMs)
 		switch color {
 		case vividRed, lossPartialColor:

@@ -18,7 +18,7 @@
 
 * **Multi-target ping** — monitor multiple hosts concurrently in a single view.
 * **Real-time statistics** — packet loss, RTT, TTL, and error messages updated live.
-* **TUI dashboard** — high-visibility table on a black background. Column widths are distributed automatically based on terminal width; switches to a compact 2-row-per-target layout when the window is narrow.
+* **TUI dashboard** — high-visibility table on a black background. Column widths are distributed automatically based on terminal width; whole columns are hidden in priority order on narrow screens while keeping one row per target.
 * **Color-coded alerts** — loss ratio, RTT, and Jitter are color-coded for instant status recognition. Alerts are recorded in the Log pane when thresholds are exceeded; the same status change hitting several targets in the same second is logged once with the targets it hit (e.g. `[12:09:03] crit: Jitter > 50.0ms ×3 — 1.1.1.1, 8.8.8.8, 9.9.9.9`).
 * **Flexible configuration** — specify interface, source IP, packet size, send count, and more.
 * **YAML host list** — manage target hosts in a file.

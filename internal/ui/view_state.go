@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"strings"
 	"time"
 
@@ -55,7 +56,11 @@ func newViewState(errorView *tview.TextView) *viewState {
 func (vs *viewState) appendLog(msg string) {
 	g, ok := parseHealthLogLine(msg)
 	if ok && vs.logGroup != nil && vs.logGroup.key == g.key && len(vs.errorLogs) > 0 {
-		vs.logGroup.hosts = append(vs.logGroup.hosts, g.hosts...)
+		for _, h := range g.hosts {
+			if !slices.Contains(vs.logGroup.hosts, h) {
+				vs.logGroup.hosts = append(vs.logGroup.hosts, h)
+			}
+		}
 		vs.errorLogs[len(vs.errorLogs)-1] = vs.logGroup.line()
 		vs.errorView.SetText(strings.Join(vs.errorLogs, "\n") + "\n")
 		vs.errorView.ScrollToEnd()

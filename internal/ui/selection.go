@@ -79,7 +79,7 @@ func (tr *tableRenderer) moveSelection(key tcell.Key) {
 		return
 	}
 	i := max(slices.IndexFunc(order, func(index int) bool { return tr.targets[index].ID() == tr.selectedID }), 0)
-	pageStep := max(tableMinVisibleRows, tr.tableInnerHeight()-1)
+	pageStep := tr.visibleDataRows()
 	delta := 1
 	switch key {
 	case tcell.KeyUp:

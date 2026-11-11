@@ -61,13 +61,13 @@ func TestPercentile95IgnoresLossAndSpikes(t *testing.T) {
 	h = append(h, 680*ms, 0, 0, 0)
 
 	// Act
-	got := percentile95([][]time.Duration{h}, len(h))
+	got := percentile95(h, len(h))
 
 	// Assert
 	if got >= 680*ms || got < 15*ms {
 		t.Errorf("p95 = %v, want the spike excluded and lost probes ignored", got)
 	}
-	if percentile95([][]time.Duration{{0, 0}}, 2) != 0 {
+	if percentile95([]time.Duration{0, 0}, 2) != 0 {
 		t.Error("p95 of only lost probes should be 0")
 	}
 }

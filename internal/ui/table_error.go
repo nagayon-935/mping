@@ -52,7 +52,7 @@ func calcInitialTableErrorWidth(targets []*stats.TargetStats, header string, min
 		}
 	}
 	for _, t := range targets {
-		if w := runewidth.StringWidth(formatTableError(t.GetView().LastError)); w > maxWidth {
+		if w := runewidth.StringWidth(formatTableError(t.GetViewWindow(0).LastError)); w > maxWidth {
 			maxWidth = w
 		}
 	}

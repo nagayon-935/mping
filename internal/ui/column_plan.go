@@ -218,7 +218,7 @@ func sharedValue(texts [][]string, i int) (string, bool) {
 		return "", false
 	}
 	for _, row := range texts[1:] {
-		if row[i] != v {
+		if i >= len(row) || row[i] != v {
 			return "", false
 		}
 	}
