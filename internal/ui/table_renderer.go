@@ -186,7 +186,7 @@ func (tr *tableRenderer) tableInnerHeight() int {
 // current inner height, floored at tableMinVisibleRows when the widget has not been
 // sized past the default minimum yet.
 func (tr *tableRenderer) visibleDataRows() int {
-	return max(tableMinVisibleRows, (tr.tableInnerHeight()-2)/2)
+	return max(tableMinVisibleRows, tr.tableInnerHeight()-1) // one line per row below the header
 }
 
 // visibleRowWindow returns the [start, end) range of data-row indices
@@ -356,7 +356,7 @@ func (tr *tableRenderer) renderRows(rowCtx []columnRowContext, texts [][]string,
 		case groupRowSpacer:
 			setGroupSpacerRow(tr.table, tableRow, len(tr.activeHeaders))
 		case groupRowHeader:
-			setGroupHeaderRow(tr.table, tableRow, len(tr.activeHeaders), row.groupName, len(tr.groups[row.groupIdx].Indices))
+			setGroupHeaderRow(tr.table, tableRow, tr.widths, row.groupName, len(tr.groups[row.groupIdx].Indices))
 		case groupRowSubHeader:
 			setHeaderRow(tr.table, tableRow, tr.activeHeaders, tr.widths, tr.activeAligns, tr.headerColor)
 		case groupRowUngrouped, groupRowTarget:

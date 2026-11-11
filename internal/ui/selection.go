@@ -41,7 +41,7 @@ func (tr *tableRenderer) reconcileSelection() {
 	}
 	offset, col := tr.table.GetOffset()
 	height := tr.tableInnerHeight()
-	visible := max(1, (height-3)/2) // Table borders consume one line per row.
+	visible := max(1, height-1) // One line per row below the header.
 	if tr.scrollToSelection {
 		row := tr.selectedRow() - 1
 		if row < offset {
@@ -79,7 +79,7 @@ func (tr *tableRenderer) moveSelection(key tcell.Key) {
 		return
 	}
 	i := max(slices.IndexFunc(order, func(index int) bool { return tr.targets[index].ID() == tr.selectedID }), 0)
-	pageStep := max(tableMinVisibleRows, (tr.tableInnerHeight()-3)/2)
+	pageStep := max(tableMinVisibleRows, tr.tableInnerHeight()-1)
 	delta := 1
 	switch key {
 	case tcell.KeyUp:

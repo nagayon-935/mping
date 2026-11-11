@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/stats"
@@ -21,8 +22,11 @@ import (
 // *viewState; if a future change needs to touch it from elsewhere (e.g. a
 // background checker), it must post through uiSession first.
 type viewState struct {
-	errorView        *tview.TextView
-	errorLogs        []string
+	errorView *tview.TextView
+	errorLogs []string
+	// logGroup is the health transition group the last Log line shows, so
+	// the same cause hitting several hosts in one second becomes one line.
+	logGroup         *healthLogGroup
 	lastLossTimes    map[string]time.Time
 	alertState       map[string]alertFlags
 	lastPortStatuses map[string]string
@@ -45,7 +49,22 @@ func newViewState(errorView *tview.TextView) *viewState {
 
 // appendLog appends msg to errorLogs and errorView, evicting the oldest
 // line once errorLogMaxSize is exceeded (see appendErrorLog).
+//
+// A health transition with the same time, status and cause as the group the
+// last line shows is folded into that line instead.
 func (vs *viewState) appendLog(msg string) {
+	g, ok := parseHealthLogLine(msg)
+	if ok && vs.logGroup != nil && vs.logGroup.key == g.key && len(vs.errorLogs) > 0 {
+		vs.logGroup.hosts = append(vs.logGroup.hosts, g.hosts...)
+		vs.errorLogs[len(vs.errorLogs)-1] = vs.logGroup.line()
+		vs.errorView.SetText(strings.Join(vs.errorLogs, "\n") + "\n")
+		vs.errorView.ScrollToEnd()
+		return
+	}
+	vs.logGroup = nil
+	if ok {
+		vs.logGroup = &g
+	}
 	appendErrorLog(&vs.errorLogs, vs.errorView, msg)
 }
 
@@ -53,6 +72,7 @@ func (vs *viewState) appendLog(msg string) {
 // log/state wipe. The thresholds are configuration and stay.
 func (vs *viewState) reset() {
 	vs.errorLogs = []string{}
+	vs.logGroup = nil
 	vs.errorView.SetText("")
 	vs.lastLossTimes = make(map[string]time.Time)
 	vs.alertState = make(map[string]alertFlags)

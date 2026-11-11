@@ -127,7 +127,7 @@ func (tr *tableRenderer) planColumns(texts [][]string, availableTableWidth int) 
 }
 
 // fitColumns fits the active columns' widths to the table width left after
-// their separators and outer borders.
+// the separators between them.
 func (tr *tableRenderer) fitColumns(active, desired, minW, maxW []int, availableTableWidth int) ([]int, bool) {
 	pick := func(all []int) []int {
 		out := make([]int, len(active))
@@ -136,7 +136,7 @@ func (tr *tableRenderer) fitColumns(active, desired, minW, maxW []int, available
 		}
 		return out
 	}
-	available := max(availableTableWidth-(len(active)+1), 0)
+	available := max(availableTableWidth-max(len(active)-1, 0), 0)
 	return fitWidthsToAvailable(pick(desired), pick(minW), pick(maxW), pick(tr.shrinkPriorities), pick(tr.growPriorities), available)
 }
 

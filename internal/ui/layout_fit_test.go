@@ -158,8 +158,8 @@ func TestPaneControlsFitLeavesNoBlankRows(t *testing.T) {
 
 	f.draw(t)
 
-	if got := paneHeight(f.table); got != 13 {
-		t.Errorf("ping pane height = %d, want 13 (5 bordered rows + pane border)", got)
+	if got := paneHeight(f.table); got != 7 {
+		t.Errorf("ping pane height = %d, want 7 (5 rows + pane border)", got)
 	}
 	if got := paneHeight(f.trace.pane); got != 11 {
 		t.Errorf("traceroute pane height = %d, want 11", got)
@@ -167,7 +167,7 @@ func TestPaneControlsFitLeavesNoBlankRows(t *testing.T) {
 	if got := paneHeight(f.log); got != fixedLogHeight {
 		t.Errorf("log pane height = %d, want %d", got, fixedLogHeight)
 	}
-	if got, want := paneHeight(f.mtr.pane), 150-3-13-11-fixedLogHeight-f.graph.preferredHeight(198); got != want {
+	if got, want := paneHeight(f.mtr.pane), 150-3-7-11-fixedLogHeight-f.graph.preferredHeight(198); got != want {
 		t.Errorf("mtr pane height = %d, want %d (all space the others leave)", got, want)
 	}
 }
@@ -208,7 +208,7 @@ func TestPaneControlsFitLogGrowsOnlyIntoSpareRows(t *testing.T) {
 	if got := paneHeight(f.log); got != 12+2 {
 		t.Errorf("log pane height = %d, want its content height %d", got, 12+2)
 	}
-	if got, want := paneHeight(f.graph), 150-3-13-11-22-(12+2); got != want {
+	if got, want := paneHeight(f.graph), 150-3-7-11-22-(12+2); got != want {
 		t.Errorf("graph height = %d, want the remaining %d rows", got, want)
 	}
 }
@@ -230,7 +230,7 @@ func TestPaneControlsFitGivesSpareRowsToGraph(t *testing.T) {
 	}
 	defer screen.Fini()
 	view.Draw(screen)
-	if got, want := paneHeight(graph), 60-3-7-fixedLogHeight; got != want {
+	if got, want := paneHeight(graph), 60-3-4-fixedLogHeight; got != want {
 		t.Errorf("graph height = %d, want %d", got, want)
 	}
 }

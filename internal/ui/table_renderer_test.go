@@ -172,7 +172,7 @@ func TestTableRendererUpdate_TallPaneRendersAllVisibleRows(t *testing.T) {
 	if maxVisible <= visible {
 		t.Fatalf("maximized visibleDataRows() = %d, want > %d", maxVisible, visible)
 	}
-	for row := 1; row <= maxVisible; row++ {
+	for row := 1; row <= min(maxVisible, len(tr.targets)); row++ {
 		if got := tr.table.GetCell(row, 1).Text; got == "" {
 			t.Fatalf("maximized row %d (within visible %d rows) was not rendered", row, maxVisible)
 		}

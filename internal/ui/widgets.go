@@ -14,7 +14,8 @@ import (
 
 func newPingTable() *tview.Table {
 	table := tview.NewTable().
-		SetBorders(true).
+		SetBorders(false).
+		SetSeparator(tview.Borders.Vertical).
 		SetSelectable(false, false).
 		SetFixed(1, 1)
 	table.SetBackgroundColor(tcell.ColorBlack)
@@ -32,6 +33,7 @@ func newTablePane(table *tview.Table) *tview.Flex {
 
 func newGraphPane(targets []*stats.TargetStats, interval time.Duration) *GraphView {
 	graphView := NewGraphView(targets, interval)
+	graphView.strips = true
 	graphView.SetBorder(true).SetTitle(" RTT Graphs ").SetTitleColor(vividCyan).SetBorderColor(vividCyan)
 	graphView.SetBackgroundColor(tcell.ColorBlack)
 	return graphView

@@ -60,10 +60,9 @@ func newPaneControls(app *tview.Application, layout *tview.Flex, header *tview.T
 		c.panes = append(c.panes, pane)
 		return pane
 	}
-	// Bordered table: a top border plus each row and the rule below it,
-	// inside the pane's own border.
+	// One line per table row (header included) inside the pane's border.
 	add("Ping Monitor", tablePane, table, 3, tcell.ColorWhite, func(color tcell.Color) { tablePane.SetBorderColor(color) },
-		func(int) int { return 2*max(tableRows(), 1) + 3 })
+		func(int) int { return max(tableRows(), 1) + 2 })
 	active := 0
 	for _, pane := range monitors {
 		if pane.enabled {

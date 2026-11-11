@@ -75,7 +75,13 @@ type columnOptions struct {
 	SourceExplicit bool // -S or -I
 	SizeExplicit   bool // -s with a non-default payload size
 	MTU            bool // -m: the MTU column shows the discovered path MTU
+	// SparkPoints is how many trailing samples the RTT sparkline covers;
+	// 0 leaves the sparkline column out.
+	SparkPoints int
 }
+
+// sparkWidth is the RTT sparkline column's width in cells.
+const sparkWidth = 16
 
 // Hide ranks. Supplementary columns (defaults, values derivable from other
 // columns) go first; columns requested by an option go only after all of
@@ -85,6 +91,7 @@ const (
 	rankMTU
 	rankSrc
 	rankDNS
+	rankSpark
 	rankLastLoss
 	rankLost
 	rankRecv
@@ -197,6 +204,16 @@ func mainTableColumns(o columnOptions) []column {
 				return levelColor(ctx.view.Levels.Jitter), true
 			},
 		},
+	)
+	if o.SparkPoints > 0 {
+		cols = append(cols, column{
+			name: "RTT 60s", align: tview.AlignLeft, base: sparkWidth, min: sparkWidth, max: sparkWidth,
+			shrinkPriority: 5, growPriority: 130, hideRank: rankSpark,
+			render: func(ctx columnRowContext) string { return sparkline(ctx.view.History, o.SparkPoints, sparkWidth) },
+			color:  func(columnRowContext, string) (tcell.Color, bool) { return vividCyan, true },
+		})
+	}
+	cols = append(cols,
 		column{
 			name: "SIZE", align: tview.AlignRight, base: 6, min: 4, max: 8,
 			shrinkPriority: 120, growPriority: 100,

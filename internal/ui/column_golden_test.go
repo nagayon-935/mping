@@ -21,9 +21,8 @@ import (
 // y-offset so the helper survives unrelated layout changes above the table
 // pane.
 //
-// SetBorders(true) draws a border line between every table row, so the
-// sequence returned is header, border, row1, border, row2, ... — callers
-// pick out actual content at even offsets (rows[0], rows[2], rows[4], ...).
+// The table draws no lines between rows, so the sequence returned is
+// header, row1, row2, ...
 func captureTableRows(t *testing.T, opts RunOptions, width, height int, headerMarker string, extraRows int) []string {
 	t.Helper()
 	h := startTUI(t, opts, width, height)
@@ -56,8 +55,8 @@ func TestColumnGolden_FullLayout(t *testing.T) {
 	}{
 		{
 			name:       "NoDNSNoASN",
-			wantHeader: "║│SRC   │DST                                                         │       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│    SIZE│     MTU│   TTL│LAST LOSS                   │ ║",
-			wantData:   "║│Auto  │example.com (93.184.216.34)                                 │         0│         0│        0.0%│           -│           -│           -│      56│       -│     -│-                           │ ║",
+			wantHeader: "║SRC   │DST                                                         │       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│RTT 60s           │    SIZE│     MTU│   TTL│LAST LOSS   ║",
+			wantData:   "║Auto  │example.com (93.184.216.34)                                 │         0│         0│        0.0%│           -│           -│           -│                  │      56│       -│     -│-           ║",
 		},
 		{
 			// DNS's rendered width comes from the same render func used for
@@ -65,8 +64,8 @@ func TestColumnGolden_FullLayout(t *testing.T) {
 			// its own grow priority.
 			name:       "DNSOnly",
 			dns:        true,
-			wantHeader: "║│SRC   │DST                                                         │DNS      │       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│    SIZE│     MTU│   TTL│LAST LOSS         │ ║",
-			wantData:   "║│Auto  │example.com (93.184.216.34)                                 │8.8.8.8  │         0│         0│        0.0%│           -│           -│           -│      56│       -│     -│-                 │ ║",
+			wantHeader: "║SRC   │DST                                                │DNS      │       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│RTT 60s           │    SIZE│     MTU│   TTL│LAST LOSS  ║",
+			wantData:   "║Auto  │example.com (93.184.216.34)                        │8.8.8.8  │         0│         0│        0.0%│           -│           -│           -│                  │      56│       -│     -│-          ║",
 		},
 		{
 			// ASN's width is measured from the same render func used for the
@@ -75,15 +74,15 @@ func TestColumnGolden_FullLayout(t *testing.T) {
 			// "AS1513...".
 			name:       "ASNOnly",
 			asn:        true,
-			wantHeader: "║│SRC   │DST                                                        │               ASN│       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│    SIZE│     MTU│   TTL│LAST LOSS  │║",
-			wantData:   "║│Auto  │example.com (93.184.216.34)                                │  AS15133 EdgeCast│         0│         0│        0.0%│           -│           -│           -│      56│       -│     -│-          │║",
+			wantHeader: "║SRC   │DST                                       │               ASN│       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│RTT 60s           │    SIZE│     MTU│   TTL│LAST LOSS  ║",
+			wantData:   "║Auto  │example.com (93.184.216.34)               │  AS15133 EdgeCast│         0│         0│        0.0%│           -│           -│           -│                  │      56│       -│     -│-          ║",
 		},
 		{
 			name:       "DNSAndASN",
 			dns:        true,
 			asn:        true,
-			wantHeader: "║│SRC   │DST                                              │DNS      │               ASN│       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│    SIZE│     MTU│   TTL│LAST LOSS  │║",
-			wantData:   "║│Auto  │example.com (93.184.216.34)                      │8.8.8.8  │  AS15133 EdgeCast│         0│         0│        0.0%│           -│           -│           -│      56│       -│     -│-          │║",
+			wantHeader: "║SRC   │DST                             │DNS      │               ASN│       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│RTT 60s           │    SIZE│     MTU│   TTL│LAST LOSS  ║",
+			wantData:   "║Auto  │example.com (93.184.216.34)     │8.8.8.8  │  AS15133 EdgeCast│         0│         0│        0.0%│           -│           -│           -│                  │      56│       -│     -│-          ║",
 		},
 	}
 	for i := range scenarios {
@@ -104,13 +103,13 @@ func TestColumnGolden_FullLayout(t *testing.T) {
 				PacketSize: 56,
 				ASNEnabled: sc.asn,
 			}
-			// extraRows=2: header, border, first data row.
-			rows := captureTableRows(t, opts, 200, 50, "DST", 2)
+			// extraRows=1: header and first data row.
+			rows := captureTableRows(t, opts, 200, 50, "DST", 1)
 			if rows[0] != sc.wantHeader {
 				t.Errorf("header mismatch:\n got  %q\n want %q", rows[0], sc.wantHeader)
 			}
-			if rows[2] != sc.wantData {
-				t.Errorf("data row mismatch:\n got  %q\n want %q", rows[2], sc.wantData)
+			if rows[1] != sc.wantData {
+				t.Errorf("data row mismatch:\n got  %q\n want %q", rows[1], sc.wantData)
 			}
 		})
 	}
@@ -120,8 +119,8 @@ func TestColumnGolden_FullLayout(t *testing.T) {
 // columns are hidden (and named in the pane title) instead of cutting cells.
 func TestColumnGolden_NarrowLayout(t *testing.T) {
 	const (
-		wantHeader = "║│DST                        │ RCV│LOST│ LOSS%│  RTT│  AVG│  JIT│TTL│║"
-		wantData   = "║│example.com (93.184.216.34)│   0│   0│  0.0%│    -│    -│    -│  -│║"
+		wantHeader = "║DST                        │RCV│LOST│LOSS%│RTT│AVG│JIT│TTL│LAST LOSS║"
+		wantData   = "║example.com (93.184.216.34)│  0│   0│ 0.0%│  -│  -│  -│  -│-        ║"
 	)
 	target := stats.NewTargetStats("example.com")
 	target.SetIP("93.184.216.34")
@@ -131,23 +130,23 @@ func TestColumnGolden_NarrowLayout(t *testing.T) {
 		Timeout:    50 * time.Millisecond,
 		PacketSize: 56,
 	}
-	rows := captureTableRows(t, opts, 70, 30, "DST", 2)
+	rows := captureTableRows(t, opts, 70, 30, "DST", 1)
 	if rows[0] != wantHeader {
 		t.Errorf("header mismatch:\n got  %q\n want %q", rows[0], wantHeader)
 	}
-	if rows[2] != wantData {
-		t.Errorf("data row mismatch:\n got  %q\n want %q", rows[2], wantData)
+	if rows[1] != wantData {
+		t.Errorf("data row mismatch:\n got  %q\n want %q", rows[1], wantData)
 	}
 }
 
 func TestColumnGolden_Groups(t *testing.T) {
 	const (
-		wantHeader        = "║│SRC               │DST                                                         │       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│    SIZE│     MTU│   TTL│LAST LOSS       │ ║"
-		wantUngrouped     = "║│Auto              │standalone.example.com (10.0.0.1)                           │         0│         0│        0.0%│           -│           -│           -│      56│       -│     -│-               │ ║"
-		wantSpacer        = "║│                  │                                                            │          │          │            │            │            │            │        │        │      │                │ ║"
-		wantGroupHeader   = "║│ ▸ core  (1 hosts)│                                                            │          │          │            │            │            │            │        │        │      │                │ ║"
+		wantHeader        = "║SRC   │DST                                                         │       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│RTT 60s           │    SIZE│     MTU│   TTL│LAST LOSS   ║"
+		wantUngrouped     = "║Auto  │standalone.example.com (10.0.0.1)                           │         0│         0│        0.0%│           -│           -│           -│                  │      56│       -│     -│-           ║"
+		wantSpacer        = "║      │                                                            │          │          │            │            │            │            │                  │        │        │      │            ║"
+		wantGroupHeader   = "║      │ ▸ core  (1 hosts)                                          │          │          │            │            │            │            │                  │        │        │      │            ║"
 		wantSubHeader     = wantHeader
-		wantGroupedTarget = "║│Auto              │grouped.example.com (10.0.0.2)                              │         0│         0│        0.0%│           -│           -│           -│      56│       -│     -│-               │ ║"
+		wantGroupedTarget = "║Auto  │grouped.example.com (10.0.0.2)                              │         0│         0│        0.0%│           -│           -│           -│                  │      56│       -│     -│-           ║"
 	)
 	ungrouped := stats.NewTargetStats("standalone.example.com")
 	ungrouped.SetIP("10.0.0.1")
@@ -160,27 +159,25 @@ func TestColumnGolden_Groups(t *testing.T) {
 		PacketSize: 56,
 		Groups:     []TargetGroup{{Name: "core", Indices: []int{1}}},
 	}
-	// Row order (each logical row followed by a border line):
-	// header, border, ungrouped-target, border, spacer, border,
-	// group-header (banner), border, subheader (column header repeated),
-	// border, grouped-target.
-	rows := captureTableRows(t, opts, 200, 50, "DST", 10)
+	// Row order: header, ungrouped-target, spacer, group-header (banner),
+	// subheader (column header repeated), grouped-target.
+	rows := captureTableRows(t, opts, 200, 50, "DST", 5)
 	if rows[0] != wantHeader {
 		t.Errorf("header mismatch:\n got  %q\n want %q", rows[0], wantHeader)
 	}
-	if rows[2] != wantUngrouped {
-		t.Errorf("ungrouped row mismatch:\n got  %q\n want %q", rows[2], wantUngrouped)
+	if rows[1] != wantUngrouped {
+		t.Errorf("ungrouped row mismatch:\n got  %q\n want %q", rows[1], wantUngrouped)
 	}
-	if rows[4] != wantSpacer {
-		t.Errorf("spacer row mismatch:\n got  %q\n want %q", rows[4], wantSpacer)
+	if rows[2] != wantSpacer {
+		t.Errorf("spacer row mismatch:\n got  %q\n want %q", rows[2], wantSpacer)
 	}
-	if rows[6] != wantGroupHeader {
-		t.Errorf("group header row mismatch:\n got  %q\n want %q", rows[6], wantGroupHeader)
+	if rows[3] != wantGroupHeader {
+		t.Errorf("group header row mismatch:\n got  %q\n want %q", rows[3], wantGroupHeader)
 	}
-	if rows[8] != wantSubHeader {
-		t.Errorf("subheader row mismatch:\n got  %q\n want %q", rows[8], wantSubHeader)
+	if rows[4] != wantSubHeader {
+		t.Errorf("subheader row mismatch:\n got  %q\n want %q", rows[4], wantSubHeader)
 	}
-	if rows[10] != wantGroupedTarget {
-		t.Errorf("grouped target row mismatch:\n got  %q\n want %q", rows[10], wantGroupedTarget)
+	if rows[5] != wantGroupedTarget {
+		t.Errorf("grouped target row mismatch:\n got  %q\n want %q", rows[5], wantGroupedTarget)
 	}
 }

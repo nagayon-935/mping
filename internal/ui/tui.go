@@ -136,5 +136,17 @@ func (o RunOptions) columnOptions() columnOptions {
 		SourceExplicit: o.SourceExplicit,
 		SizeExplicit:   o.SizeExplicit,
 		MTU:            o.MTUEnabled,
+		SparkPoints:    sparkPoints(o.Interval),
 	}
+}
+
+// sparkSeconds is the window of the Ping Monitor's RTT sparkline.
+const sparkSeconds = 60
+
+// sparkPoints is how many samples taken every interval span sparkSeconds.
+func sparkPoints(interval time.Duration) int {
+	if interval <= 0 {
+		return 0
+	}
+	return max(int(sparkSeconds*time.Second/interval), 1)
 }

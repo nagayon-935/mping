@@ -112,8 +112,12 @@ func gridStepsForHeight(plotHeight int) [4]int {
 
 // preferredHeight is the pane height (borders included) at which every
 // visible graph row gets graphPreferredRowHeight lines for the given inner
-// width.
+// width, or, for strips, every series gets its line.
 func (g *GraphView) preferredHeight(width int) int {
+	if g.strips {
+		// A legend line plus one line per series, inside the border.
+		return g.seriesCount() + 1 + 2
+	}
 	_, _, visibleRows, _, _ := layoutGraph(g.seriesCount(), width, graphMaxVisibleRows*graphPreferredRowHeight)
 	return visibleRows*graphPreferredRowHeight + 2
 }

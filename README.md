@@ -19,7 +19,7 @@
 * **Multi-target ping** — monitor multiple hosts concurrently in a single view.
 * **Real-time statistics** — packet loss, RTT, TTL, and error messages updated live.
 * **TUI dashboard** — high-visibility table on a black background. Column widths are distributed automatically based on terminal width; switches to a compact 2-row-per-target layout when the window is narrow.
-* **Color-coded alerts** — loss ratio, RTT, and Jitter are color-coded for instant status recognition. Alerts are recorded in the Log pane when thresholds are exceeded.
+* **Color-coded alerts** — loss ratio, RTT, and Jitter are color-coded for instant status recognition. Alerts are recorded in the Log pane when thresholds are exceeded; the same status change hitting several targets in the same second is logged once with the targets it hit (e.g. `[12:09:03] crit: Jitter > 50.0ms ×3 — 1.1.1.1, 8.8.8.8, 9.9.9.9`).
 * **Flexible configuration** — specify interface, source IP, packet size, send count, and more.
 * **YAML host list** — manage target hosts in a file.
 * **Host groups** — define named groups in the YAML file. Each group shows a header row with a member count, making it easy to visually separate sets of targets.
@@ -28,7 +28,7 @@
 * **Port Monitor pane** — monitor TCP/UDP port reachability in real time with `-p`. Displays the estimated service name, **Last / Min / Avg / Max RTT** (measured from TCP connect or UDP round-trip), cumulative Open/Closed counts, and time since last status change. RTT statistics are collected for `Open` responses only.
 * **PMTU discovery** — IPv4 DF probes and IPv6 OS path-MTU estimates with echo confirmation.
 * **Auto source IP detection** — displays the bound source address or a representative automatically selected source for each address family.
-* **RTT graph** — auto-scaling Y-axis (expands immediately on spike, shrinks after a hold period) and roughly 30 seconds of recent samples at the configured interval (X-axis) per target. Supports both ICMP and TCP/UDP port series.
+* **RTT graph** — one line per target covering the last 5 minutes, so every target is visible at once. The scale follows the 95th percentile of the window, so a single spike does not flatten the rest: samples above it are drawn as a red `▲` and lost probes as a red `×`, and each line ends with its p95 and maximum. The host details (Enter) keep a tall chart of the last 30 seconds, including TCP/UDP port series.
 * **Statistics snapshots** — save an investigation report with current statistics as JSON or CSV from the TUI (`w`) or the Web UI's **Report** button.
 
 ## Supported platforms
@@ -456,6 +456,7 @@ Regenerate saved scripts after upgrading mping to include new flags. To monitor 
   * Override with `--rtt-warn/--rtt-crit`, `--jitter-warn/--jitter-crit`, `--loss-warn/--loss-crit`, or the `thresholds:` YAML block.
 * **SIZE** — Payload size of sent packets.
 * **MTU** — MTU of the specified or initially inferred outbound interface. With `-m` the column is **PMTU** and shows the discovered path MTU.
+* **RTT 60s** — Sparkline of the last 60 seconds of RTT (`▲` above the row's p95 scale, `×` lost).
 * **TTL** — IPv4 TTL or IPv6 Hop Limit of the last reply.
 * **ERR** — Abbreviated latest error message (red), shown only while some target has one. Full details appear in the Log pane.
 * **LAST LOSS** — Time elapsed since the last packet loss.
@@ -464,7 +465,7 @@ Regenerate saved scripts after upgrading mping to include new flags. To monitor 
 
 Cells are not cut short. When the terminal is too narrow for every column, whole columns are hidden instead, in this order:
 
-1. Supplementary columns: SIZE → MTU → SRC → DNS → LAST LOSS → LOST → RCV → TTL → AVG (SIZE, MTU, SRC and DNS only when their option was not given).
+1. Supplementary columns: SIZE → MTU → SRC → DNS → RTT 60s → LAST LOSS → LOST → RCV → TTL → AVG (SIZE, MTU, SRC and DNS only when their option was not given).
 2. Columns requested with an option: SIZE (`-s`) → SRC (`-S` / `-I`) → DNS (`-d`) → ASN (`-a`) → PTR (`-r`) → PMTU (`-m`).
 
 DST, LOSS%, RTT and JIT (and ERR while an error is shown) are never hidden. The pane title lists hidden columns; a hidden setting every row shares, such as the payload size or a pinned source address, appears there with its value (`Ping Monitor · SIZE 56 · hidden: TTL AVG`). Every value stays available in the host details (Enter).
