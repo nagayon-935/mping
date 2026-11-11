@@ -122,8 +122,9 @@ func (c *paneControls) syncTableRect(width, paneHeight int) {
 // fit sizes the unfolded panes for a layout of the given inner size. The
 // Log keeps logLines of content; the other panes share the rest by content
 // and weight (see fitHeights). Rows nobody needs make the open RTT charts
-// taller; while they are folded the Log grows into them instead. A
-// maximized pane keeps the whole area.
+// taller up to their preferred height, then go to the Ping Monitor; while
+// the charts are folded the Log grows into them instead. A maximized pane
+// keeps the whole area.
 func (c *paneControls) fit(width, height int) {
 	for _, pane := range c.panes {
 		if pane.titleFn != nil && pane.folded {
@@ -164,18 +165,30 @@ func (c *paneControls) fit(width, height int) {
 			demands[i] = paneDemand{weight: pane.weight, desired: pane.desired(width)}
 		}
 		sizes, spare := fitHeights(avail, demands)
-		// While the RTT charts are open they take every spare row; the Log
-		// grows to its content only when they are folded.
+		// While the RTT charts are open the spare rows go to them and the
+		// Ping Monitor; the Log grows to its content only when they are
+		// folded.
 		graphOpen := slices.Index(others, c.graph) >= 0
 		if logOpen && !graphOpen {
 			grow := min(spare, max(c.log.desired(width)-logSize, 0))
 			logSize += grow
 			spare -= grow
 		}
+		if i := slices.Index(others, c.graph); i >= 0 && spare > 0 {
+			// The open graphs grow up to their preferred height; rows past
+			// that go to the Ping Monitor (blank rows below the hosts), so
+			// the charts do not dominate a tall terminal and the Log stays
+			// at its base height.
+			grow := min(spare, max(c.graph.desired(width)-sizes[i], 0))
+			sizes[i] += grow
+			spare -= grow
+			if spare > 0 && len(c.panes) > 0 && others[0] == c.panes[0] {
+				sizes[0] += spare
+				spare = 0
+			}
+		}
 		if spare > 0 {
-			switch i := slices.Index(others, c.graph); {
-			case i >= 0:
-				sizes[i] += spare
+			switch {
 			case logOpen:
 				logSize += spare
 			case len(others) > 0:
