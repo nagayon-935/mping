@@ -1,8 +1,8 @@
 // One SSE stream drives the monitoring workspace and independent global pages.
 import { $, el, fetchJSON, readSession, selectionWithin, writeSession } from "./dom.js";
-import { createGraphs } from "./graphs.js";
 import { createInspect } from "./inspect.js";
 import { createLog } from "./log.js";
+import { createActivity } from "./activity.js";
 import { httpFor } from "./checks.js";
 import { createControl } from "./control.js";
 import { createReportDialog } from "./report.js";
@@ -31,10 +31,9 @@ const view = {
   connected: false,
   filter: "",
   selectedId: null,
-  series: new Map(), // id -> samples for the graphs window
+  series: new Map(), // id -> samples for the Summary chart window (sparklines use its last minute)
   windows: [],
   window: null,
-  shared: true, // restored by graphTools.install() before the first render
   inspectOpen: false,
   historyNow: null,
   page: "monitor",
@@ -45,6 +44,25 @@ const view = {
 
 const hasTarget = (id) => !!view.snapshot?.targets.some((t) => t.id === id);
 const monitorHash = () => (view.selectedId == null ? "#monitor" : `#target-${view.selectedId}`);
+const targetFromHash = () => {
+  const m = /^#target-(\d+)$/.exec(location.hash);
+  return m ? Number(m[1]) : null;
+};
+
+/** Rows toggle: selecting the selected host again returns to Activity. */
+function toggleTarget(id) {
+  if (view.selectedId === id && view.inspectOpen) {
+    clearSelection();
+    focusRow(id);
+  } else {
+    selectTarget(id);
+  }
+}
+
+/** Keep keyboard users on the host they just closed. */
+function focusRow(id) {
+  requestAnimationFrame(() => $("targets").querySelector(`.host-open[data-target-id="${id}"]`)?.focus({ preventScroll: true }));
+}
 
 function selectTarget(id) {
   if (!hasTarget(id)) return;
@@ -69,18 +87,26 @@ function showMonitorPage() {
   scheduleRender();
 }
 
-const graphs = createGraphs({ grid: $("graphs"), cursorNote: $("graphs-cursor"), onSelect: selectTarget });
-
 const inspect = createInspect({
+  host: $("inspect-host"),
+  pill: $("inspect-pill"),
   target: $("inspect-target"),
   body: $("inspect-body"),
   canControl: () => control.allowed,
+  isStopped: () => view.state === "stopped",
   actionsFor(t) {
     if (!control.allowed) return null;
     const button = el("button", { className: "btn btn-danger", text: `Delete ${t.host}`, attrs: { type: "button" } });
     button.addEventListener("click", () => actions.deleteTarget(t.id));
     return button;
   },
+});
+
+const activity = createActivity({
+  body: $("activity-body"),
+  onSelect: selectTarget,
+  isStopped: () => view.state === "stopped",
+  requestRender: scheduleRender,
 });
 
 const log = createLog({
@@ -155,22 +181,20 @@ const toolbar = createMonitorToolbar(view, {
 });
 
 const workspace = createWorkspaceView({
-  graphs, inspect, selectTarget, sortColumn: toolbar.sortColumn,
+  inspect, activity, selectTarget: toggleTarget, sortColumn: toolbar.sortColumn,
   canControl: () => control.allowed,
   renderUnlessSelecting: unlessSelecting,
   selectedId: () => view.selectedId,
 });
 
-const graphTools = createGraphTools(view, {
-  window: $("graph-window"), perTarget: $("scale-each"), shared: $("scale-shared"),
-}, { requestRender: scheduleRender, refreshHistory });
+const graphTools = createGraphTools(view, { window: inspect.windowSelect }, { refreshHistory });
 
 // --- Pages and ordering ----------------------------------------------------
 
 function readPage() {
   view.page = location.hash === "#log" ? "log" : location.hash === "#http" ? "http" : "monitor";
-  const wanted = /^#target-(\d+)$/.exec(location.hash);
-  if (wanted && view.snapshot) selectTarget(Number(wanted[1]));
+  const wanted = targetFromHash();
+  if (wanted != null && view.snapshot) selectTarget(wanted);
   scheduleRender();
 }
 
@@ -188,6 +212,7 @@ function renderPages() {
   $("nav-monitor").href = monitorHash();
   $("nav-http").hidden = !view.meta?.features.http;
   log.activate(view.page === "log");
+  if (view.page !== "monitor") activity.activate(false);
 }
 
 const targetOrder = createTargetOrder();
@@ -267,6 +292,7 @@ function applySnapshot(body) {
   // The window choices depend on the probe interval, which a hosts-file
   // reload can change.
   const intervalChanged = view.meta?.interval_ms !== body.meta.interval_ms;
+  const hadData = [...view.series.values()].some((s) => s?.length > 0);
   view.snapshot = body.snapshot;
   view.meta = body.meta;
   view.state = body.state;
@@ -274,14 +300,15 @@ function applySnapshot(body) {
   if (intervalChanged) {
     graphTools.updateWindows(view.meta.interval_ms);
     refreshHistory();
+  } else if (!hadData && body.snapshot.targets.some((t) => t.recv + t.loss > 0)) {
+    refreshHistory();
   }
   scheduleRender();
   // Restore a selection from the address (reload or a shared link); a link
   // to a target that no longer exists is dropped rather than kept forever.
-  const wanted = /^#target-(\d+)$/.exec(location.hash);
-  if (wanted && view.selectedId == null) {
-    const id = Number(wanted[1]);
-    if (hasTarget(id)) selectTarget(id);
+  const wanted = targetFromHash();
+  if (wanted != null && view.selectedId == null) {
+    if (hasTarget(wanted)) selectTarget(wanted);
     else history.replaceState(null, "", location.pathname);
   }
 }
@@ -335,7 +362,8 @@ async function reloadSnapshot() {
 function renderControls() {
   const on = control.allowed;
   $("measurement-controls").hidden = !on;
-  $("open-auth").textContent = on ? "Controls enabled" : "Enable controls";
+  $("open-auth").textContent = on ? "Controls on" : "Enable controls";
+  $("open-auth").title = on ? "Browser controls are enabled for this tab." : "";
   $("open-auth").disabled = on;
   if (!on) {
     report.close();
@@ -389,6 +417,13 @@ function initShortcuts() {
     },
     openHelp: () => $("shortcuts-dialog").showModal(),
     openReport: report.open,
+    deselect() {
+      if (view.selectedId == null || view.page !== "monitor") return false;
+      const id = view.selectedId;
+      clearSelection();
+      focusRow(id);
+      return true;
+    },
     deleteTarget: actions.deleteTarget,
   });
 }
@@ -409,7 +444,6 @@ function rerenderOnWidthChange(node) {
 }
 rerenderOnWidthChange($("targets").parentElement);
 rerenderOnWidthChange($("mtr-table-wrap"));
-new ResizeObserver(() => graphs.repaint()).observe($("graphs"));
 
 toolbar.install();
 initShortcuts();
@@ -421,3 +455,4 @@ initControls();
 connect();
 scheduleRender();
 setInterval(refreshHistory, HISTORY_EVERY_MS);
+document.addEventListener("visibilitychange", refreshHistory);

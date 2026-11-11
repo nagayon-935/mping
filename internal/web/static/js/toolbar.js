@@ -1,22 +1,29 @@
-// Building blocks of the monitor toolbar: health filter chips and sort
+// Building blocks of the monitor toolbar: header health pills and sort
 // choices, plus their preferences and host-list focus.
 import { el, badgeIcon, readSession, writeSession } from "./dom.js";
+import { STATUS_LABELS } from "./model.js";
 import { SORTS } from "./workspace.js";
 
-export const STATUS_LABELS = { crit: "Critical", warn: "Warning", pending: "Waiting", ok: "OK" };
+export { STATUS_LABELS };
 const STATUSES = ["all", ...Object.keys(STATUS_LABELS)];
 
-/** One pressed-state button per health level; counts are filled by the header. */
-function healthFilterItems(current, onSelect) {
-  return STATUSES.map((status) => {
+/**
+ * Header pills, one per health level (shape + count + label, never colour
+ * alone). Each filters the monitor; pressing the active one shows all again.
+ * Counts are filled by the header.
+ */
+const PILL_ORDER = ["crit", "warn", "pending", "ok"];
+function healthFilterItems(current, onSelect, currentStatus) {
+  return PILL_ORDER.map((status) => {
     const button = el("button", {
-      className: `health-filter health-${status}`,
-      attrs: { type: "button", "data-status": status, "aria-pressed": String(status === current) },
+      className: `fleet-pill health-${status}`,
+      attrs: { type: "button", "data-status": status, "aria-pressed": String(status === current),
+        title: `Show only ${STATUS_LABELS[status]} hosts; press again to show all` },
     },
-    el("span", { text: status === "all" ? "" : badgeIcon(status), attrs: { "aria-hidden": "true" } }),
+    el("span", { className: "fleet-icon", text: badgeIcon(status), attrs: { "aria-hidden": "true" } }),
     el("strong", { text: "0" }),
-    el("span", { text: status === "all" ? "All" : STATUS_LABELS[status] }));
-    button.addEventListener("click", () => onSelect(status));
+    el("span", { text: STATUS_LABELS[status] }));
+    button.addEventListener("click", () => onSelect(currentStatus() === status ? "all" : status));
     return el("li", {}, button);
   });
 }
@@ -90,7 +97,7 @@ export function createMonitorToolbar(view, dom, { requestRender, onOrderChange, 
     if (!STATUSES.includes(view.status)) view.status = "all";
     dom.status.value = view.status;
     dom.status.addEventListener("change", (event) => setStatus(event.target.value));
-    dom.summary.replaceChildren(...healthFilterItems(view.status, setStatus));
+    dom.summary.replaceChildren(...healthFilterItems(view.status, setStatus, () => view.status));
 
     view.sort = parseSort(readSession(SORT_KEY)) ?? view.sort;
     dom.order.append(...sortOptions());

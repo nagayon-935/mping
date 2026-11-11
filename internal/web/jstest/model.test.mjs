@@ -16,7 +16,6 @@ import {
   buildSections,
   summarize,
   matchesFilter,
-  badgeFor,
   tokenFromHash,
   validateHost,
   isIPLiteral,
@@ -143,14 +142,6 @@ test("disabled optional data does not match an invisible AS or PTR field", () =>
   assert.equal(matchesFilter(t,"edge.example",{asn:false,ptr:false}),false);
   assert.equal(matchesFilter(t,"AS64500",{asn:true,ptr:false}),true);
   assert.equal(matchesFilter(t,"edge.example",{asn:false,ptr:true}),true);
-});
-
-test("badgeFor keeps a final stopped state when the stream drops", () => {
-  assert.equal(badgeFor("running", true).label, "Online");
-  assert.equal(badgeFor("reloading", true).label, "Reloading");
-  assert.equal(badgeFor("running", false).label, "Reconnecting");
-  assert.equal(badgeFor("stopped", false).label, "Session ended");
-  assert.equal(badgeFor(null, false).label, "Connecting");
 });
 
 test("tokenFromHash reads only a #token= fragment", () => {

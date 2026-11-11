@@ -4,13 +4,15 @@ import { el, statusChip } from "./dom.js";
 import { countCell, numCell, rttCell, textCell } from "./cells.js";
 import { columnWidthPx, setColumns } from "./columns.js";
 import { SORTS } from "./workspace.js";
+import { shortReason } from "./health_text.js";
+import { sparkline } from "./spark_view.js";
 import {
   buildSections, cellLevels, formatPct, isIPLiteral, lossRate, matchesFilter, rowLevel,
   selectColumns, statusReason,
 } from "./model.js";
 
-/** The overview keeps current measurements; historical RTT statistics live
- * in Summary and the separate graph pane carries all time-series detail. */
+/** The overview keeps current measurements plus a one-minute RTT sparkline;
+ * historical statistics and the large chart live in Summary. */
 export function targetColumns(features, targets = []) {
   // Use configured identities, not changing DNS results or filtered rows,
   // so receiving measurements and searching cannot add/remove this column.
@@ -20,6 +22,7 @@ export function targetColumns(features, targets = []) {
     { key: "host", label: "Host", required: true },
     showIP && { key: "ip", label: "IP", priority: 6 },
     features.asn && { key: "asn", label: "AS", priority: 8 },
+    { key: "spark", label: "RTT · 60s", priority: 2, title: "RTT over the last 60 seconds on a scale shared by all rows; red ticks are lost probes, a dashed red line means no replies" },
     { key: "loss", label: "Loss %", required: true, title: "Lifetime loss over completed probes; status uses recent loss and consecutive failures", num: true },
     { key: "sent", label: "Sent", num: true, priority: 4 },
     { key: "recv", label: "Recv", num: true, priority: 5 },
@@ -39,15 +42,20 @@ function hostCell(t, features, group, focused) {
   return td;
 }
 
-function targetCell(col, t, cells, features, group, focused) {
+function targetCell(col, t, cells, features, group, focused, sparks) {
   switch (col.key) {
     case "status": {
       // An OK row needs no explanation; leaving it blank makes the rows that
-      // do need attention stand out. Summary still states the reason.
+      // do need attention stand out. The row names what breached and its
+      // value; the thresholds are in the title and in Summary.
       const level = rowLevel(t);
       const reasons = statusReason(t);
       return el("td", { attrs: { title: reasons } }, statusChip(level),
-        el("span", { className: "status-reason", text: level === "ok" ? "" : reasons }));
+        el("span", { className: "status-reason", text: level === "ok" ? "" : shortReason(reasons) }));
+    }
+    case "spark": {
+      const series = sparks?.series.get(t.id);
+      return el("td", { className: "spark-cell" }, series ? sparkline(series, sparks.max) : null);
     }
     case "host": return hostCell(t, features, group, focused);
     case "ip": return textCell(t.ip || "–", "mono");
@@ -98,7 +106,7 @@ export function renderTargets(table, view, onOpen, onSort) {
     button.addEventListener("click", () => onSort(key));
     th.replaceChildren(button);
   }
-  const groupsById = new Map(meta.groups?.flatMap(g => g.target_ids.map(id => [id, g.name])) ?? []);
+  const groupsById = new Map(meta.groups?.flatMap(g => (g.target_ids ?? []).map(id => [id, g.name])) ?? []);
   const sortedFlat = view.sort?.key && view.sort.key !== "config";
   const rows = [];
   for (const section of buildSections(visible, sortedFlat ? [] : meta.groups)) {
@@ -118,19 +126,16 @@ export function renderTargets(table, view, onOpen, onSort) {
         },
       });
       for (const c of columns) {
-        const cell = targetCell(c, t, cells, meta.features, sortedFlat ? groupsById.get(t.id) : null, t.id === focusId);
+        const cell = targetCell(c, t, cells, meta.features, sortedFlat ? groupsById.get(t.id) : null, t.id === focusId, view.sparks);
         cell.classList.add(`col-${c.key}`);
         tr.append(cell);
       }
       tr.addEventListener("click", () => onOpen(t.id));
-      tr.querySelector(".host-open").addEventListener("keydown", e => {
-        if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onOpen(t.id); }
-      });
       tr.addEventListener("keydown", (e) => {
         if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
-        if (e.target === tr && (e.key === "Enter" || e.key === " ")) {
+        if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
+          e.stopPropagation();
           onOpen(t.id);
         }
       });

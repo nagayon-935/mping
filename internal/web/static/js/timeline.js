@@ -1,4 +1,5 @@
-// Time-window logic for the RTT graphs pane (no DOM, unit-tested under node).
+// Time-window logic for the RTT sparklines and the Summary chart (no DOM,
+// unit-tested under node).
 //
 // Timestamped samples share a wall-time axis. Missing intervals (including
 // pauses) are undefined; completed probes without a reply are null.
@@ -25,15 +26,6 @@ export function windowOptions(intervalMs, maxPoints) {
 /** 5 minutes when available, otherwise the widest window offered. */
 export function defaultWindow(options) {
   return options.find((o) => o.label === "5m") ?? options[options.length - 1];
-}
-
-/** Largest RTT across all series (lost probes are null), for a shared y axis. */
-export function sharedMax(seriesList) {
-  let max = 0;
-  for (const series of seriesList) {
-    for (const v of series) if (v != null && v > max) max = v;
-  }
-  return max;
 }
 
 /** "now", "12s ago", "1m 20s ago" for a cursor `samplesAgo` from the newest. */
@@ -115,4 +107,15 @@ export function alignSamples(samples, points, intervalMs, now) {
     else if (Number.isFinite(value)) out[i] = Math.max(out[i] ?? 0, value);
   }
   return out;
+}
+
+/**
+ * Aligns timestamped samples onto a `points`-sample window, or right-aligns a
+ * plain numeric series when timestamps are absent.
+ */
+export function windowSeries(samples, points, intervalMs, now) {
+  if (samples?.length && typeof samples[0] === "object" && samples[0] !== null) {
+    return alignSamples(samples, points, intervalMs, now);
+  }
+  return padTo(samples ?? [], points);
 }

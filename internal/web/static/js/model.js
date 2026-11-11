@@ -8,11 +8,12 @@ export function lossRate(t) {
   return done === 0 ? 0 : (t.loss / done) * 100;
 }
 
-const rowLevels = new Set(["pending", "ok", "warn", "crit"]);
+export const STATUS_LABELS = { crit: "Critical", warn: "Warning", pending: "Waiting", ok: "OK" };
+export const LEVEL_SEVERITY = { crit: 4, warn: 3, pending: 2, ok: 1 };
 
 /** Overall status of a target row: the server's current health judgment. */
 export function rowLevel(t) {
-  return rowLevels.has(t.health?.status) ? t.health.status : "pending";
+  return Object.hasOwn(STATUS_LABELS, t.health?.status) ? t.health.status : "pending";
 }
 
 /** Why the target has its rowLevel, as the server explained it. */
@@ -78,7 +79,7 @@ export function buildSections(targets, groups) {
   const sections = [];
   for (const g of groups) {
     const members = [];
-    for (const id of g.target_ids) {
+    for (const id of g.target_ids ?? []) {
       const t = byId.get(id);
       if (t && !placed.has(id)) {
         members.push(t);
@@ -103,24 +104,6 @@ export function matchesFilter(t, query, features = {ptr: true, asn: true}) {
   if (q === "") return true;
   return [t.host, t.ip, features.ptr && t.ptr, features.asn && t.asn, features.asn && t.org]
     .some((v) => typeof v === "string" && v.toLowerCase().includes(q));
-}
-
-/**
- * Header badge for the server-reported state and the stream connection.
- * A final "stopped" survives the disconnect that follows it.
- */
-export function badgeFor(state, connected) {
-  if (state === "stopped") return { level: "stopped", label: "Session ended" };
-  if (!connected) {
-    return state == null
-      ? { level: "pending", label: "Connecting" }
-      : { level: "warn", label: "Reconnecting" };
-  }
-  switch (state) {
-    case "running": return { level: "ok", label: "Online" };
-    case "reloading": return { level: "warn", label: "Reloading" };
-    default: return { level: "pending", label: "Starting" };
-  }
 }
 
 /** The control token from a "#token=<hex>" fragment, or null. */

@@ -22,6 +22,7 @@ Widths include cell padding. Numeric text uses a 13px monospace font, with
 | RTT / jitter | Positive Go durations up to roughly 9.22e12 ms | At most 10 chars including ` ms`; scientific notation from 1e6 ms | 100px |
 | Counts | Nonnegative Go integer counts, up to int64 maximum | At most 8 chars; grouped below 1M, M/B/T above, scientific from 1e15 | 88px |
 | TTL / hop | 0–255 | 3 digits | 60px |
+| RTT · 60s | Last minute of RTT samples | Fixed-size sparkline (no text); accessible label states the range and losses | 144px |
 | HTTP URL | No new length restriction | One line, ellipsis; full URL remains in the DOM and title | At least 240px; flexible |
 | HTTP code | 3-digit status codes | 3 digits | 64px |
 | Port | `65535/udp` | 9 chars | 104px |
@@ -34,7 +35,7 @@ the complete underlying strings, not their ellipsized presentation.
 
 The overview always keeps **Status, Host, Loss % and latest RTT**. Extra
 columns appear as the viewport or the available pane width grows, in priority
-order: Jitter, Sent, Recv, IP, TTL, AS (when enabled).
+order: RTT · 60s sparkline, Jitter, Sent, Recv, IP, TTL, AS (when enabled).
 Columns retain their normal display order. The current RTT header reads
 **RTT**, with units in each value. If all configured hosts are IP literals,
 the redundant IP column is omitted. This decision uses the full target list,
@@ -52,14 +53,14 @@ panes reserve scrollbar space, so filtering or receiving measurements cannot
 change column widths. Summary and HTTP tables keep all enabled columns and scroll
 horizontally when needed.
 
-The monitor shows current RTT; average/minimum/peak live in Summary. RTT
-history is shown only in the graphs pane. Graph cards show a numeric RTT only
-at the cursor, rather than repeating the monitor's current value.
+The monitor shows current RTT and a one-minute sparkline; average/minimum/peak
+live in Summary. The larger RTT history chart is in Summary only, with a
+numeric RTT at the cursor.
 
 On desktop (1100px and up), a two-row grid fills the space below the header.
-The upper row contains the monitor and, after selection, Summary (7:5 widths).
-The lower row contains the route pane and graphs (7:5), or full-width graphs
-when no route option is enabled. Summary selection does not move the lower row.
+The monitor fills the workspace; after selection, Summary takes the right
+column at full height (7:5 widths). With a route option, the route pane takes
+the lower row under the monitor.
 Every desktop pane takes its grid cell's height and scrolls internally. Narrower
 windows stack the panes. Phone widths are not supported: below 720px the page
 scrolls horizontally instead of compressing the layout. AS is omitted unless
@@ -67,14 +68,15 @@ enabled, including in
 the selected target's details; PTR annotations and PMTU details follow their
 respective options as well.
 
-Target rows are 68px tall, with one-line host/PTR and two reserved explanation
-lines so changing health cannot move the following rows. HTTP/MTR/port rows
+Target rows are 48px tall, with one-line host/PTR and one reserved explanation
+line so changing health cannot move the following rows. HTTP/MTR/port rows
 are 44px. Exceptionally long group headings are ellipsized. Abnormal overview
 values use a small tinted badge rather than coloring the whole cell.
 
 ## Summary and global pages
 
 Summary is the only selected-host detail view; there are no tabs. It contains
+the reason, KPI tiles, the RTT chart, recent events, and (under Details)
 statistics, enabled port checks and authorized target actions. It retains its
 height and action-button state during live measurements. Log is an independent
 `#log` page with the latest 200 events across all targets, unaffected by host
@@ -102,20 +104,22 @@ and optional AS/PTR annotations. Empty and `*` hops are unanswered; progress and
 error states are separate from the hop list. A responder matching the target IP
 has a Destination label. Target headings remain visible during vertical scroll.
 
-RTT charts default to a shared vertical scale. The tick interval is rounded to
-1/2/5 × 10^k, with four equal intervals, so all shared charts use identical ticks.
+The Summary RTT chart uses a robust vertical scale (top just above the p95,
+clipping higher peaks with a `▲` marker). The tick interval is rounded to
+1/2/5 × 10^k, with four equal intervals.
 
 ## Live ordering and interaction stability
 
-Health filters and text search apply to the monitor, routes and graph membership.
+Health filters and text search apply to the monitor and routes.
 Sorting uses a snapshot of target IDs across groups; incoming values do not
 reorder existing rows. New targets append, deleted IDs disappear, and Refresh
 order explicitly recomputes ranking. Configured order restores group headings.
 Headers expose sort direction, and keyboard focus survives table rebuilds.
 
-The header reserves two rows for actions and connection/measurement state.
+The header is a single row with health filter pills, connection/measurement
+state and actions.
 Notifications overlay the workspace; chart captions, numeric readouts and
-sample descriptions reserve their height even when idle. Route and graph
+sample descriptions reserve their height even when idle. Route
 Selected host buttons scroll only their own pane. Graph sample inspection
 works with pointer or keyboard and announces only explicit keyboard actions.
 Destructive actions use native modal dialogs with Cancel focused initially.

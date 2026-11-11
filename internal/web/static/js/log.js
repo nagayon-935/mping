@@ -7,7 +7,15 @@ export function createLog(dom) {
   let active = false, pending = false, events = null, error = null;
   let version = 0, rendered = -1;
   const refresh = async () => {
-    if (!active || pending || document.hidden || dom.isStopped?.()) return;
+    if (!active || pending || document.hidden) return;
+    if (dom.isStopped?.()) {
+      if (events === null && !error) {
+        error = "Session ended — events are not available.";
+        version++;
+        dom.requestRender();
+      }
+      return;
+    }
     pending = true;
     try {
       const result = await fetchJSON("api/v1/events?limit=200");
@@ -18,7 +26,7 @@ export function createLog(dom) {
       }
     } catch (err) {
       if (events === null) {
-        error = err;
+        error = `Couldn't load events: ${err.message}`;
         version++;
       }
     } finally {
@@ -27,6 +35,7 @@ export function createLog(dom) {
     }
   };
   setInterval(refresh, 5000);
+  document.addEventListener("visibilitychange", refresh);
   return {
     activate(on) {
       const opening = on && !active;
@@ -39,7 +48,7 @@ export function createLog(dom) {
       rendered = version;
       dom.status.textContent = "All targets · latest 200 events · newest first";
       if (error) {
-        dom.body.replaceChildren(el("p", { className: "empty", text: `Couldn't load events: ${error.message}` }));
+        dom.body.replaceChildren(el("p", { className: "empty", text: error }));
         return;
       }
       if (events === null) return;

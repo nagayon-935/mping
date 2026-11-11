@@ -2,6 +2,8 @@
 // host names, PTR records, AS org names and event messages can come from DNS
 // or remote systems and must never be parsed as HTML.
 
+import { STATUS_LABELS } from "./model.js";
+
 /** Element by id. */
 export const $ = (id) => document.getElementById(id);
 
@@ -20,10 +22,9 @@ export function el(tag, opts = {}, ...children) {
 }
 
 const icons = { ok: "●", warn: "▲", crit: "■", pending: "○", none: "○", stopped: "◼" };
-const labels = { ok: "OK", warn: "Warning", crit: "Critical", pending: "Waiting", none: "–" };
 
 /** Status as shape + label so it never relies on colour alone. */
-export function statusChip(level, label = labels[level]) {
+export function statusChip(level, label = STATUS_LABELS[level] ?? "–") {
   return el("span", { className: `status lvl-${level}` },
     el("span", { className: "status-icon", text: icons[level] ?? "○", attrs: { "aria-hidden": "true" } }),
     el("span", { text: label }));

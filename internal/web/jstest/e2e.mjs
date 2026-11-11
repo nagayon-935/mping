@@ -76,8 +76,8 @@ try {
   const page = await open({ viewport: WIDE });
 
   await check("live badge and grouped rows", async () => {
-    assert.match(await page.textContent("#badge"), /Online/);
-    assert.match(await page.textContent("#updated"), /^Last probe /);
+    assert.match(await page.textContent("#badge"), /Live/);
+    assert.match(await page.textContent("#updated"), /^· last probe /);
     assert.deepEqual(await page.$$eval("tr.group-row", (r) => r.map((x) => x.textContent)), ["core (2)", "internet (3)", "Ungrouped (1)"]);
     assert.equal(await page.$$eval("tr.target-row", (r) => r.length), 6);
     assert.ok(await page.isHidden("#pane-inspect"));
@@ -86,20 +86,13 @@ try {
     assert.equal(await page.textContent("#mtr-summary"),"6 hosts · ICMP");
     assert.ok(await page.isVisible("#nav-http"));
     assert.equal(await page.locator('#inspect-tabs [data-tab="summary"]').count(), 0);
-    assert.equal(await page.$$eval(".graph-card", (n) => n.length), 6);
-  });
-
-  await check("graphs default to identical rendered RTT ticks across all targets", async () => {
-    assert.equal(await page.getAttribute("#scale-shared", "aria-pressed"), "true");
-    const ticks = await page.$$eval(".graph-canvas", nodes => nodes.map(n => n.axisLabels));
-    assert.equal(ticks[0].length, 5);
-    for (const axis of ticks) assert.deepEqual(axis, ticks[0]);
+    assert.equal(await page.$$eval("svg.spark", (n) => n.length), 6);
   });
 
   await check("a wide screen shows every column; a narrow one keeps the highest-priority ones", async () => {
     const headers = () => page.$$eval("#targets th", (h) => h.map((x) => x.textContent));
     assert.deepEqual(await headers(),
-      ["Status", "Host", "IP", "AS", "Loss %", "Sent", "Recv", "RTT", "Jitter", "TTL"]);
+      ["Status", "Host", "IP", "AS", "RTT · 60s", "Loss %", "Sent", "Recv", "RTT", "Jitter", "TTL"]);
     assert.equal(await page.$$eval("#pane-monitor input[type=checkbox]", (n) => n.length), 0, "no column toggle any more");
     // Live values never change column widths. Columns respond only to available width.
     const fit = await page.$eval("#targets", (t) => ({
@@ -120,7 +113,7 @@ try {
     await page.waitForSelector("#targets th.col-asn", { state: "detached" });
     const narrow = await headers();
     assert.deepEqual(narrow.slice(0, 2), ["Status", "Host"]);
-    for (const kept of ["Loss %", "RTT", "Jitter"]) assert.ok(narrow.includes(kept), `${kept} must survive narrowing: ${narrow}`);
+    for (const kept of ["RTT · 60s", "Loss %", "RTT", "Jitter"]) assert.ok(narrow.includes(kept), `${kept} must survive narrowing: ${narrow}`);
     for (const dropped of ["IP", "AS", "TTL"]) assert.ok(!narrow.includes(dropped), `${dropped} should drop first: ${narrow}`);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
 
@@ -168,40 +161,31 @@ try {
   await check("selection opens only Summary in a viewport-filling workspace", async () => {
     await page.click("tr.target-row >> nth=2");
     await page.waitForSelector("#pane-inspect:not([hidden])");
-    assert.equal(await page.textContent("#inspect-title"), "Summary");
+    assert.equal(await page.textContent("#inspect-host"), "cdn.example");
     assert.equal(await page.locator('#inspect-tabs, #inspect-body [role="tab"]').count(), 0);
-    await page.waitForFunction(() => document.querySelector("#inspect-target").textContent === "cdn.example");
-    assert.equal(await page.getAttribute('.graph-card[data-target-id="3"]', "aria-pressed"), "true");
+    await page.waitForFunction(() => document.querySelector("#inspect-host").textContent === "cdn.example");
     const geometry = await page.evaluate(() => {
       const rect = id => { const r=document.getElementById(id).getBoundingClientRect(); return {x:r.x,y:r.y,right:r.right,bottom:r.bottom,width:r.width,height:r.height}; };
-      return {monitor:rect("pane-monitor"),summary:rect("pane-inspect"),route:rect("pane-mtr"),graphs:rect("pane-graphs"),work:rect("workspace"),w:innerWidth,h:innerHeight,scroll:document.documentElement.scrollHeight};
+      return {monitor:rect("pane-monitor"),summary:rect("pane-inspect"),route:rect("pane-mtr"),work:rect("workspace"),w:innerWidth,h:innerHeight,scroll:document.documentElement.scrollHeight};
     });
-    const {monitor,summary,route,graphs,work,w,h,scroll}=geometry;
+    const {monitor,summary,route,work,w,h,scroll}=geometry;
     assert.equal(work.width,w,"workspace uses full browser width");
     assert.ok(monitor.right<=summary.x+1);
-    assert.equal(monitor.height,summary.height);
-    assert.equal(route.y,graphs.y);
-    assert.equal(route.height,graphs.height);
-    assert.ok(route.right<=graphs.x+1,"route and graphs sit side by side");
-    assert.ok(Math.abs(graphs.bottom-(h-12))<=1,"bottom panes fill the viewport");
+    assert.ok(route.right<=summary.x+1,"route sits under monitor alongside Summary");
+    assert.ok(Math.abs(route.bottom-(h-12))<=1,"bottom panes fill the viewport");
+    assert.ok(Math.abs(summary.bottom-(h-12))<=1,"Summary fills the right column");
     assert.equal(scroll,h,"desktop scroll stays inside panes");
     assert.ok(await page.isHidden("#pane-traceroute"),"MTR wins when both route options are enabled");
     await shot(page,"panes");
   });
 
-  await check("hovering one RTT graph moves a shared cursor across all of them", async () => {
-    await page.locator(".graph-card canvas >> nth=0").scrollIntoViewIfNeeded();
-    const box = await page.locator(".graph-card canvas >> nth=0").boundingBox();
+  await check("hovering the Summary RTT chart shows sample readouts", async () => {
+    await page.locator("canvas.summary-canvas").scrollIntoViewIfNeeded();
+    const box = await page.locator("canvas.summary-canvas").boundingBox();
     await page.mouse.move(box.x + box.width - 20, box.y + box.height / 2);
-    await page.waitForFunction(() => document.querySelector("#graphs-cursor").textContent.startsWith("Cursor:"));
-    const values = await page.$$eval(".graph-value", (n) => n.map((x) => x.textContent));
-    assert.equal(values.length, 6);
-    assert.ok(values.every((v) => /ms$|^Lost$|^–$/.test(v)), `cursor readouts: ${values}`);
+    await page.waitForFunction(() => /RTT |No reply|No measurement/.test(document.querySelector("#summary-chart-readout").textContent));
     await page.mouse.move(0, 0);
-    await page.waitForFunction(() => !document.querySelector("#graphs-cursor").textContent.startsWith("Cursor:"));
-    await page.click('#scale-shared');
-    assert.equal(await page.getAttribute("#scale-shared", "aria-pressed"), "true");
-    await page.click('#scale-each');
+    await page.waitForFunction(() => document.querySelector("#summary-chart-readout").textContent.includes("Focus the chart"));
   });
 
   await check("Log is a global page independent of host selection and monitor filtering", async () => {
@@ -236,13 +220,13 @@ try {
     assert.equal(await page.$eval("#log-body .table-wrap",n=>n.scrollTop),logTop);
     await page.click("#nav-monitor");
     await page.waitForSelector("#workspace:not([hidden])");
-    assert.equal(await page.textContent("#inspect-target"),"cdn.example");
+    assert.equal(await page.textContent("#inspect-host"),"cdn.example");
     await page.fill("#filter","");
   });
 
   await check("enabled port checks appear within Summary", async () => {
     await page.click("tr.target-row >> nth=0");
-    await page.waitForFunction(()=>document.querySelector("#inspect-target").textContent === "core-rtr1.example");
+    await page.waitForFunction(()=>document.querySelector("#inspect-host").textContent === "core-rtr1.example");
     assert.match(await page.textContent("#inspect-body"), /443\/tcp/);
     assert.equal(await page.locator('#inspect-body [role="tab"]').count(),0);
   });
@@ -307,7 +291,7 @@ try {
   });
 
   await check("Summary stays stable on live updates and global-page round trips", async () => {
-    const geometry=()=>page.evaluate(()=>["pane-inspect","pane-mtr","pane-graphs"].map(id=>{const r=document.getElementById(id).getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height};}));
+    const geometry=()=>page.evaluate(()=>["pane-inspect","pane-mtr"].map(id=>{const r=document.getElementById(id).getBoundingClientRect();return {x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height};}));
     for(const viewport of [{width:1400,height:900},NARROWEST]) {
       await page.setViewportSize(viewport);
       await page.waitForTimeout(200);
@@ -494,11 +478,10 @@ try {
       const source=response.snapshot.targets[0];
       const target={...source,ptr:"cached.ptr.example",asn:"AS64500",org:"Cached org",pmtu:1400,
         mtr_hops:[{ttl:1,ip:"192.0.2.1",asn:"AS64500",org:"Cached org",loss_pct:0,sent:1,last_rtt_ms:1,avg_rtt_ms:1,min_rtt_ms:1,max_rtt_ms:1,jitter_ms:0}]};
-      const tabs=document.createElement("div"),body=document.createElement("div"),label=document.createElement("div");
-      const inspect=createInspect({tabs,body,target:label,onSelect(){},actionsFor(){return null},canControl(){return false},requestRender(){}});
-      const view={...response,snapshot:{...response.snapshot,targets:[target]},meta:{...response.meta,features:{mtr:true,asn:false,ptr:false,mtu:false,port:false,http:false}},selectedId:null};
+      const host=document.createElement("span"),pill=document.createElement("span"),body=document.createElement("div"),label=document.createElement("div");
+      const inspect=createInspect({host,pill,body,target:label,actionsFor(){return null},canControl(){return false},isStopped(){return false}});
+      const view={...response,snapshot:{...response.snapshot,targets:[target]},meta:{...response.meta,features:{mtr:true,asn:false,ptr:false,mtu:false,port:false,http:false}},selectedId:null,series:new Map()};
       inspect.render(view);
-      const initialTabs=[...tabs.querySelectorAll("button")].map(n=>n.dataset.tab);
       view.selectedId=target.id;
       inspect.render(view);
       const off=[...body.querySelectorAll("dt")].map(n=>n.textContent);
@@ -520,9 +503,8 @@ try {
       renderTargets(table,{...view,filter:"",selectedId:null},()=>{});
       const hiddenPTR=table.querySelector(".sub")==null;
       wrap.remove();
-      return {initialTabs,off,on,asOn,asOff,times,hiddenPTR};
+      return {off,on,asOn,asOff,times,hiddenPTR};
     });
-    assert.deepEqual(result.initialTabs,[]);
     for (const field of ["AS","PTR","Path MTU"]) {
       assert.ok(!result.off.includes(field), `${field} shown with option off`);
       assert.ok(result.on.includes(field), `${field} missing with option on`);
@@ -533,17 +515,16 @@ try {
     assert.ok(result.times.length>0 && result.times.every(t=>/^\d{2}:\d{2}:\d{2}$/.test(t)),`times: ${result.times}`);
   });
 
-  await check("closing details restores the overview width", async () => {
+  await check("closing details returns the detail area to Activity", async () => {
     await page.click("#close-inspect");
-    await page.waitForFunction(() => document.querySelector("#pane-inspect").hidden && !document.querySelector("#workspace").classList.contains("has-inspect"));
+    await page.waitForFunction(() => document.querySelector("#pane-inspect").hidden && !document.querySelector("#pane-activity").hidden);
     assert.ok(await page.isVisible("#pane-mtr"));
     assert.equal(await page.locator("#table-zoom").count(),0);
-    assert.equal(await page.$eval("#workspace",n=>n.classList.contains("has-inspect")),false);
     assert.equal(await page.evaluate(()=>location.hash),"");
     assert.ok(await page.isVisible("#targets th.col-asn"));
-    assert.equal(await page.locator("#targets th.col-avg, #targets th.col-spark").count(),0);
-    assert.ok((await page.locator(".graph-value").allTextContents()).every(text=>!text));
-    assert.match(await page.textContent("#updated"), /^Last probe \d{2}:\d{2}:\d{2}$/);
+    assert.ok(await page.isVisible("#targets th.col-spark"));
+    assert.equal(await page.locator("#targets th.col-avg").count(),0);
+    assert.match(await page.textContent("#updated"), /^· last probe \d{2}:\d{2}:\d{2}$/);
   });
 
   await check("filter narrows the table", async () => {
@@ -582,7 +563,7 @@ try {
     assert.ok(await ro.isHidden("#reset-slot"));
     assert.ok(await ro.isHidden("#open-report"));
     await ro.click("tr.target-row >> nth=0");
-    await ro.waitForFunction(() => !!document.querySelector("#inspect-target").textContent);
+    await ro.waitForFunction(() => !!document.querySelector("#inspect-host").textContent);
     assert.equal(await ro.$$eval('#inspect-body [data-section="actions"]', (n) => n.length), 0);
     await ro.click("#open-auth");
     assert.ok(await ro.isVisible("#readonly-explanation"));
@@ -605,12 +586,11 @@ try {
       const table = document.querySelector("#targets").getBoundingClientRect();
       const wrap = document.querySelector("#targets").parentElement;
       const cell = document.querySelector("#targets td.col-jitter");
-      return {height: pane.height, gap: document.querySelector("#pane-graphs").getBoundingClientRect().top - pane.bottom,
+      return {height: pane.height,
         width: table.width, available: wrap.clientWidth, cell: getComputedStyle(cell).backgroundColor,
         value: getComputedStyle(cell.querySelector(".metric-value")).backgroundColor};
     });
     assert.ok(geometry.height > 200, `single-host panel fills its grid cell: ${geometry.height}px`);
-    assert.ok(geometry.gap <= 17, `graph gap is ${geometry.gap}px`);
     assert.ok(Math.abs(geometry.width - geometry.available) <= 1, "no blank table area on the right");
     assert.equal(geometry.cell, "rgba(0, 0, 0, 0)");
     assert.notEqual(geometry.value, "rgba(0, 0, 0, 0)");
@@ -630,7 +610,7 @@ try {
     const many = await open({viewport: {width: 1400, height: 900}}, browser, base, body);
     const geometry = await many.$eval("#pane-monitor", n => ({height: n.getBoundingClientRect().height,
       scroll: n.querySelector(".pane-scroll").scrollHeight, visible: n.querySelector(".pane-scroll").clientHeight}));
-    assert.ok(geometry.height <= 542);
+    assert.ok(geometry.height <= 900);
     assert.ok(geometry.scroll > geometry.visible, "long list has an internal scrollbar");
     assert.equal(await many.locator("tr.target-row").count(), 40);
     await many.close();
