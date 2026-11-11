@@ -167,7 +167,12 @@ func TestPaneControlsFitLeavesNoBlankRows(t *testing.T) {
 	if got := paneHeight(f.log); got != fixedLogHeight {
 		t.Errorf("log pane height = %d, want %d", got, fixedLogHeight)
 	}
-	if got, want := paneHeight(f.mtr.pane), 150-3-7-11-fixedLogHeight-f.graph.preferredHeight(198); got != want {
+	// The MTR pane wants more rows than there are; the graphs keep one row
+	// of charts and the MTR pane gets everything else.
+	if got := paneHeight(f.graph); got != graphMinPaneHeight {
+		t.Errorf("graph height = %d, want %d (one row of charts)", got, graphMinPaneHeight)
+	}
+	if got, want := paneHeight(f.mtr.pane), 150-3-7-11-fixedLogHeight-graphMinPaneHeight; got != want {
 		t.Errorf("mtr pane height = %d, want %d (all space the others leave)", got, want)
 	}
 }
@@ -275,5 +280,39 @@ func TestPaneControlsFitLogStaysSmallWhileGraphOpen(t *testing.T) {
 	}
 	if got, want := paneHeight(graph), 40-3-pingMonitorHeight-fixedLogHeight; got != want {
 		t.Errorf("graph height = %d, want %d", got, want)
+	}
+}
+
+func TestPaneControlsFitEveryHostRowBeforeGraphs(t *testing.T) {
+	// Arrange: eight hosts in a 30-line terminal with the graphs open.
+	targets := make([]*stats.TargetStats, 8)
+	for i := range targets {
+		targets[i] = stats.NewTargetStats(fmt.Sprintf("h%d", i))
+	}
+	table := tview.NewTable()
+	tablePane := tview.NewFlex().AddItem(table, 0, 1, true)
+	graph := NewGraphView(targets, time.Second)
+	log := newLogView()
+	layout := tview.NewFlex().SetDirection(tview.FlexRow)
+	c := newPaneControls(tview.NewApplication(), layout, tview.NewTextView(), tview.NewPages(), table, tablePane,
+		func() int { return len(targets) + 1 }, nil, graph, log)
+	c.rebuild()
+	view := c.view()
+	view.SetRect(0, 0, 120, 30)
+	screen := tcell.NewSimulationScreen("")
+	if err := screen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer screen.Fini()
+
+	// Act
+	view.Draw(screen)
+
+	// Assert: the table holds all eight hosts; the graphs get the rest.
+	if got, want := paneHeight(tablePane), len(targets)+1+2; got != want {
+		t.Errorf("ping pane height = %d, want %d (every host row)", got, want)
+	}
+	if got, want := paneHeight(graph), 30-3-(len(targets)+1+2)-fixedLogHeight; got != want {
+		t.Errorf("graph height = %d, want the remaining %d rows", got, want)
 	}
 }

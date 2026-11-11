@@ -8,6 +8,11 @@ import (
 	"github.com/rivo/tview"
 )
 
+// graphMinPaneHeight is the RTT graph pane height (borders included) that
+// holds one row of charts at the smallest size layoutGraph draws: a
+// header, five plot lines and a separator.
+const graphMinPaneHeight = 7 + 2
+
 // pingMonitorHosts is how many hosts the Ping Monitor is sized to show at
 // once while the RTT graphs are open: spare rows fill it to this before the
 // graphs grow, so the charts never squeeze the host list on a tall screen.
@@ -160,7 +165,13 @@ func (c *paneControls) fit(width, height int) {
 		logSize := logBase
 		demands := make([]paneDemand, len(others))
 		for i, pane := range others {
-			demands[i] = paneDemand{weight: pane.weight, desired: pane.desired(width)}
+			desired := pane.desired(width)
+			if pane == c.graph {
+				// The graphs only ask for one row of charts here: they take
+				// the spare rows afterwards, so every host row fits first.
+				desired = min(desired, graphMinPaneHeight)
+			}
+			demands[i] = paneDemand{weight: pane.weight, desired: desired}
 		}
 		sizes, spare := fitHeights(avail, demands)
 		// While the RTT charts are open the spare rows go to them and the

@@ -166,3 +166,12 @@ func TestRenderRowCells(t *testing.T) {
 		})
 	}
 }
+
+func TestDSTBeforeTheNameResolves(t *testing.T) {
+	target := stats.NewTargetStats("lax-ca-us-ping.vultr.com")
+	cols := mainTableColumns(columnOptions{})
+	got := cols[columnIndex(cols, "DST")].render(columnRowContext{view: target.GetView()})
+	if got != "lax-ca-us-ping.vultr.com" {
+		t.Errorf("DST = %q, want the bare host name without empty parentheses", got)
+	}
+}

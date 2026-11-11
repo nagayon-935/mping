@@ -139,7 +139,8 @@ func mainTableColumns(o columnOptions) []column {
 			dynamic: true, shrinkPriority: 10, growPriority: 0, fill: true,
 			render: func(ctx columnRowContext) string {
 				v := ctx.view
-				if v.Host != v.IP && !strings.Contains(v.Host, " ("+v.IP+")") {
+				// Until the name resolves there is no address to append.
+				if v.IP != "" && v.Host != v.IP && !strings.Contains(v.Host, " ("+v.IP+")") {
 					return fmt.Sprintf("%s (%s)", v.Host, v.IP)
 				}
 				return v.Host
