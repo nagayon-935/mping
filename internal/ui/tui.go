@@ -25,6 +25,10 @@ const (
 
 var newApplication = tview.NewApplication
 
+// openScreen opens the screen Run draws to. A nil screen leaves the
+// application's own: tests give newApplication one and never open a terminal.
+var openScreen = openTerminalScreen
+
 // RouteMode selects what the route pane shows.
 type RouteMode int
 
@@ -129,7 +133,16 @@ func Run(opts RunOptions) error {
 	startRefreshLoop(t.app, t.tr, t.footer, opts.Interval, opts.ExternalLogCh, opts.ExternalCloseCh, opts.DoneCh,
 		t.vs, t.session)
 
-	err := t.app.SetRoot(t.root, true).Run()
+	// The terminal is opened last, so nothing before the event loop can
+	// leave it in raw mode.
+	screen, err := openScreen()
+	if err != nil {
+		return err
+	}
+	if screen != nil {
+		t.app.SetScreen(screen)
+	}
+	err = t.app.SetRoot(t.root, true).Run()
 	t.session.Stop() // also covers Ctrl-C, terminal failure, and external app.Stop
 	return err
 }
