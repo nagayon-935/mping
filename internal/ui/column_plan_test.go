@@ -263,3 +263,22 @@ func TestPlanColumns_LongHostKeepsColumnsThatStillFit(t *testing.T) {
 		t.Errorf("AVG hidden although it fits: shown %v hidden %v", shownNames(tr, plan), plan.hidden)
 	}
 }
+
+func TestSparklineWidth_SingleCellGlyphs(t *testing.T) {
+	target := replyingTarget("10.0.0.1", 12*time.Millisecond)
+	target.IncSent()
+	target.OnFailure("Timeout")
+	target.IncSent()
+	target.OnSuccess(680*time.Millisecond, 64)
+	tr, texts := newPlanRenderer(t, []*stats.TargetStats{target}, columnOptions{SparkPoints: 60})
+	sparkCol := columnIndex(tr.cols, "RTT 60s")
+	if sparkCol < 0 {
+		t.Fatal("RTT 60s column absent")
+	}
+	if got := tr.planColumns(texts, 200); !got.ok {
+		t.Fatal("plan did not fit")
+	}
+	if got := tr.widthSeen[sparkCol]; got != sparkWidth {
+		t.Errorf("RTT 60s content width = %d, want %d", got, sparkWidth)
+	}
+}

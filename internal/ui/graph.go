@@ -92,6 +92,9 @@ func seriesHistories(series []graphSeries) [][]time.Duration {
 
 // windowPoints is how many trailing samples the view plots.
 func (g *GraphView) windowPoints() int {
+	if g.interval <= 0 {
+		return 1
+	}
 	window := graphWindowSeconds * time.Second
 	if g.strips {
 		window = stripWindowSeconds * time.Second
@@ -275,7 +278,7 @@ var barRunes = []rune{' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 // column of block characters at screen column px, keeping grid dots visible
 // above the bar.
 func (g *GraphView) drawBar(screen tcell.Screen, px, plotY, plotHeight int, v time.Duration, gridYPos map[int]bool) {
-	ratio := float64(v.Milliseconds()) / g.currentScale.maxMs
+	ratio := float64(v) / float64(time.Millisecond) / g.currentScale.maxMs
 	if v > 0 && ratio < 0.05 {
 		ratio = 0.05
 	}

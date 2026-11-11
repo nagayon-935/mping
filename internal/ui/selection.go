@@ -102,7 +102,7 @@ func (tr *tableRenderer) highlightSelection() {
 	}
 	for c := range tr.activeHeaders {
 		cell := tr.table.GetCell(row, c)
-		if cell.Text != "" {
+		if cell != nil && cell.Text != "" {
 			cell.SetBackgroundColor(tcell.NewRGBColor(25, 50, 70))
 		}
 	}

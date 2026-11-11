@@ -6,8 +6,16 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/mattn/go-runewidth"
 	"github.com/rivo/tview"
 )
+
+func init() {
+	// Keep ambiguous-width box-drawing, block and marker glyphs (▁..█, ×, ▲, ·, ▸)
+	// at width 1 even under East Asian locales (e.g. ja_JP.UTF-8), matching
+	// sparkWidth and strip column calculations.
+	runewidth.DefaultCondition.EastAsianWidth = false
+}
 
 const (
 	tableMinVisibleRows = 10                     // floor for the visible Ping Monitor rows and the PgUp/PgDn page step; taller panes show more

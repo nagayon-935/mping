@@ -186,7 +186,7 @@ func hiddenLabel(names []string) []string {
 // sharedValue reports the value every row has in column i, when there is one
 // worth showing (not empty, "-" or the automatic source "Auto").
 func sharedValue(texts [][]string, i int) (string, bool) {
-	if len(texts) == 0 || i < 0 {
+	if len(texts) == 0 || i < 0 || i >= len(texts[0]) {
 		return "", false
 	}
 	v := texts[0][i]
