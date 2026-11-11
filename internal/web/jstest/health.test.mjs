@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { connectionSummary, explainBreach, parseBreaches, shortReason, ttlHops, withUnit } from "../static/js/health_text.js";
 import { commonCauseText, detectCommonCause, formatRange } from "../static/js/common_cause.js";
+import { describeEvent, latestEvents } from "../static/js/inspect_events.js";
+import { latestProbeAt, measurementState } from "../static/js/header.js";
 
 test("shortReason keeps what breached and its value, dropping the threshold", () => {
   assert.equal(shortReason("Jitter 50.5ms > 50.0ms"), "Jitter 50.5 ms");
@@ -22,11 +24,14 @@ test("parseBreaches reads every breach and ignores other reasons", () => {
 });
 
 test("explainBreach names the threshold level from the crit threshold", () => {
-  const th = { jitter_crit_ms: 50, jitter_warn_ms: 10 };
+  const th = { jitter_crit_ms: 50, jitter_warn_ms: 10, rtt_crit_ms: 200, rtt_warn_ms: 50 };
   assert.deepEqual(explainBreach({ metric: "Jitter", value: 50.5, threshold: 50, unit: "ms" }, th),
     { lead: "Jitter 50.5 ms", rest: "is over the 50.0 ms critical threshold" });
   assert.equal(explainBreach({ metric: "Jitter", value: 12.3, threshold: 10, unit: "ms" }, th).rest,
     "is over the 10.0 ms warning threshold");
+  // Group-specific thresholds: levels from the server override global thresholds.
+  assert.equal(explainBreach({ metric: "RTT", value: 120, threshold: 100, unit: "ms" }, th, { last_rtt: "crit" }).rest,
+    "is over the 100.0 ms critical threshold");
   assert.equal(withUnit(5, "%"), "5.0%");
 });
 
@@ -92,4 +97,29 @@ test("formatRange rounds from 10 up and keeps a decimal below", () => {
   assert.equal(formatRange(48.2, 48.4, "ms"), "48 ms");
   assert.equal(formatRange(1.24, 3, "ms"), "1.2–3.0 ms");
   assert.equal(formatRange(25, 40, "%"), "25–40%");
+});
+
+test("latestEvents orders repeated events by last_at and caps at limit", () => {
+  const events = [
+    { at: "2026-10-16T08:00:00Z", last_at: "2026-10-16T08:05:00Z", count: 4, kind: "health", message: "crit: Jitter 55.0ms > 50.0ms" },
+    { at: "2026-10-16T08:01:00Z", kind: "health", message: "warn: RTT 120.0ms > 100.0ms" },
+    { at: "2026-10-16T08:03:00Z", kind: "ip", message: "IP changed" },
+  ];
+  assert.deepEqual(latestEvents(events, 2).map((e) => e.at), [
+    "2026-10-16T08:00:00Z",
+    "2026-10-16T08:03:00Z",
+  ]);
+  const d = describeEvent(events[0]);
+  assert.equal(d.level, "crit");
+  assert.match(d.text, /^Jitter 55\.0ms > 50\.0ms ×4 \(last /);
+});
+
+test("latestProbeAt compares parsed timestamps rather than RFC3339Nano text", () => {
+  const targets = [
+    { health: { last_probe_at: "2026-10-16T08:30:00Z" } },
+    { health: { last_probe_at: "2026-10-16T08:30:00.1Z" } },
+  ];
+  assert.equal(latestProbeAt(targets), "2026-10-16T08:30:00.1Z");
+  assert.equal(latestProbeAt([]), undefined);
+  assert.equal(measurementState({ snapshot: {} }), undefined);
 });

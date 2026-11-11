@@ -20,7 +20,7 @@ export function describeEvent(event) {
 
 /** Newest first, at most `limit`, from the server's oldest-first list. */
 export function latestEvents(events, limit = RECENT_EVENTS) {
-  return [...(events ?? [])].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, limit);
+  return [...(events ?? [])].sort((a, b) => Date.parse(b.last_at ?? b.at) - Date.parse(a.last_at ?? a.at)).slice(0, limit);
 }
 
 export function createRecentEvents({ isStopped }) {
@@ -52,7 +52,15 @@ export function createRecentEvents({ isStopped }) {
 
   const refresh = async () => {
     const id = targetId;
-    if (id == null || pending || document.hidden || isStopped()) return;
+    if (id == null) return;
+    if (isStopped()) {
+      if (rendered === "") {
+        status.hidden = false;
+        status.textContent = "Session ended — events are not available.";
+      }
+      return;
+    }
+    if (pending || document.hidden) return;
     pending = true;
     try {
       const body = await fetchJSON(`api/v1/targets/${encodeURIComponent(id)}/events`);
@@ -64,6 +72,7 @@ export function createRecentEvents({ isStopped }) {
       }
     } finally {
       pending = false;
+      if (targetId != null && targetId !== id) refresh();
     }
   };
   setInterval(refresh, REFRESH_MS);

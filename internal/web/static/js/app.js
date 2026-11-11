@@ -264,12 +264,15 @@ function applySnapshot(body) {
   // The window choices depend on the probe interval, which a hosts-file
   // reload can change.
   const intervalChanged = view.meta?.interval_ms !== body.meta.interval_ms;
+  const hadData = [...view.series.values()].some((s) => s?.length > 0);
   view.snapshot = body.snapshot;
   view.meta = body.meta;
   view.state = body.state;
   renderControls();
   if (intervalChanged) {
     graphTools.updateWindows(view.meta.interval_ms);
+    refreshHistory();
+  } else if (!hadData && body.snapshot.targets.some((t) => t.recv + t.loss > 0)) {
     refreshHistory();
   }
   scheduleRender();

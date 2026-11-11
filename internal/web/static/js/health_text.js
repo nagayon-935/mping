@@ -39,12 +39,16 @@ export function shortReason(reason) {
 
 /**
  * One sentence per breach for Summary: "Jitter 50.5 ms is over the 50.0 ms
- * critical threshold". The level is decided by comparing with the
- * configured crit threshold, which is how the server chose it.
+ * critical threshold". The level uses the server's per-metric judgment when
+ * available, falling back to comparing with the configured crit threshold.
  */
-export function explainBreach(breach, thresholds = {}) {
+export function explainBreach(breach, thresholds = {}, levels = null) {
+  const metricLevel = { Loss: null, RTT: levels?.last_rtt, Jitter: levels?.jitter }[breach.metric];
   const crit = { Loss: thresholds.loss_crit_pct, RTT: thresholds.rtt_crit_ms, Jitter: thresholds.jitter_crit_ms }[breach.metric];
-  const level = crit > 0 && breach.value > crit ? "critical" : "warning";
+  const isCrit = metricLevel === "crit" || metricLevel === "warn"
+    ? metricLevel === "crit"
+    : crit > 0 && breach.value > crit;
+  const level = isCrit ? "critical" : "warning";
   return {
     lead: `${breach.metric} ${withUnit(breach.value, breach.unit)}`,
     rest: `is over the ${withUnit(breach.threshold, breach.unit)} ${level} threshold`,

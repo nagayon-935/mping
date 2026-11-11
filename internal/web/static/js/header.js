@@ -8,12 +8,27 @@ import { formatTime } from "./time.js";
 
 /** The measurement state, also reported per target by older snapshots. */
 export function measurementState(view) {
-  return view.meta?.measurement_state ?? view.snapshot?.targets[0]?.measurement_state;
+  return view.meta?.measurement_state ?? view.snapshot?.targets?.[0]?.measurement_state;
+}
+
+/** The newest probe timestamp across `targets`, or undefined when none is set. */
+export function latestProbeAt(targets) {
+  let latest;
+  let latestMs = -Infinity;
+  for (const t of targets ?? []) {
+    const at = t.health?.last_probe_at;
+    const ms = at ? Date.parse(at) : NaN;
+    if (ms > latestMs) {
+      latestMs = ms;
+      latest = at;
+    }
+  }
+  return latest;
 }
 
 export function renderHeader(view) {
   const measurement = measurementState(view);
-  const latest = view.snapshot?.targets.map((t) => t.health?.last_probe_at).filter(Boolean).sort().at(-1);
+  const latest = latestProbeAt(view.snapshot?.targets);
   const conn = connectionSummary({ state: view.state, connected: view.connected, measurement, hasSnapshot: !!view.snapshot });
   const node = $("connection");
   node.className = `conn lvl-${conn.level}`;

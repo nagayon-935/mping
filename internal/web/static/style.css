@@ -221,13 +221,8 @@ body {
 .pane-title { margin: 0; font-size: 15px; font-weight: 600; color: var(--ink); }
 .pane-hint { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
 .pane-head > div { min-width: 0; }
-.pane-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 13px; }
 .tool { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); }
 .tool select { font: inherit; color: var(--ink); background: var(--page); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
-.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
-.segmented button { font: inherit; font-size: 12px; padding: 5px 10px; border: 0; background: transparent; color: var(--ink-2); cursor: pointer; }
-.segmented button + button { border-left: 1px solid var(--border); }
-.segmented button[aria-pressed="true"] { background: var(--surface-2); color: var(--ink); font-weight: 600; }
 .table-wrap { overflow-x: auto; }
 .empty { margin: 0; padding: 24px; text-align: center; color: var(--muted); }
 
@@ -313,7 +308,6 @@ td.lvl-crit { background: var(--crit-tint); font-weight: 600; }
 .status.lvl-pending .status-icon, .status.lvl-none .status-icon { color: var(--muted); }
 
 
-.inspect-status { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; font-size: 13px; color: var(--ink-2); }
 .inspect-section { margin-top: 16px; }
 .inspect-section h3 { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.04em; }
 

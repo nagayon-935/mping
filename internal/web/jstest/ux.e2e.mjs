@@ -42,11 +42,10 @@ try{
   await p.click('#summary [data-status=crit]');await settle(p);
   assert.equal(await p.locator('#targets .target-row').count(),1);
   assert.equal(await p.locator('#mtr tbody').count(),1);
-  assert.equal(await p.locator('.graph-card').count(),1);
   assert.equal(await p.textContent('#shown-count'),'1 / 6 hosts');
   assert.ok(await p.isVisible('#selection-note'));assert.ok(await p.isVisible('#pane-inspect'));
   await p.fill('#filter','no-such-host');await settle(p);
-  assert.ok(await p.isVisible('#targets-empty'));assert.ok(await p.isVisible('#graphs-empty'));
+  assert.ok(await p.isVisible('#targets-empty'));
   await p.click('#empty-action');await settle(p);assert.equal((await ids(p)).length,6);
   assert.ok(await p.isHidden('#selection-note'));await p.click('#close-inspect');
  });
@@ -67,7 +66,7 @@ try{
   assert.equal(await p.locator('.host-open[tabindex="0"]').count(),1);
   await p.locator('.host-open').first().focus();await p.keyboard.press('j');
   assert.equal(await p.evaluate(()=>document.activeElement.dataset.targetId),'2');assert.ok(await p.isHidden('#pane-inspect'));
-  await p.keyboard.press('Enter');await settle(p);assert.equal(await p.textContent('#inspect-target'),fixture.snapshot.targets[1].host);
+  await p.keyboard.press('Enter');await settle(p);assert.equal(await p.textContent('#inspect-host'),fixture.snapshot.targets[1].host);
   await p.keyboard.press('/');await settle(p);assert.equal(await p.evaluate(()=>document.activeElement.id),'filter');
   await p.keyboard.type('jk/w?');assert.equal(await p.inputValue('#filter'),'jk/w?');
   await p.fill('#filter','');await settle(p);await p.keyboard.press('Escape');assert.equal(await p.evaluate(()=>document.activeElement.dataset.targetId),'2');
@@ -88,14 +87,14 @@ try{
   await p.click('#locate-mtr');assert.ok(await p.locator('#mtr-table-wrap').evaluate(n=>n.scrollTop)>top);
  });
  await check('keyboard graph readouts distinguish measurement, loss and missing history without moving panes',async()=>{
-  const chart=p.locator('.graph-card').first();await chart.focus();const before=await geometry(p);
-  await p.keyboard.press('End');await settle(p);assert.match(await chart.locator('.graph-readout').textContent(),/17:30:00.*RTT 30/);
-  await p.keyboard.press('ArrowLeft');await settle(p);assert.match(await chart.locator('.graph-readout').textContent(),/No reply/);
-  await p.keyboard.press('Home');await settle(p);assert.match(await chart.locator('.graph-readout').textContent(),/No measurement/);
-  const announcement=await p.locator('#graphs + [role=status]').textContent();await emit(p,fixture);
-  assert.equal(await p.locator('#graphs + [role=status]').textContent(),announcement);
-  assert.equal(await p.evaluate(()=>document.activeElement.className),'graph-card');
-  await p.keyboard.press('Escape');await settle(p);assert.equal(await chart.locator('.graph-value').textContent(),'');
+  const chart=p.locator('.summary-chart');await chart.focus();const before=await geometry(p);
+  await p.keyboard.press('End');await settle(p);assert.match(await p.textContent('#summary-chart-readout'),/17:30:00.*RTT 30/);
+  await p.keyboard.press('ArrowLeft');await settle(p);assert.match(await p.textContent('#summary-chart-readout'),/No reply/);
+  await p.keyboard.press('Home');await settle(p);assert.match(await p.textContent('#summary-chart-readout'),/No measurement/);
+  const announcement=await p.locator('[data-section="chart"] [role=status]').textContent();await emit(p,fixture);
+  assert.equal(await p.locator('[data-section="chart"] [role=status]').textContent(),announcement);
+  assert.equal(await p.evaluate(()=>document.activeElement.className),'summary-chart');
+  await p.keyboard.press('Escape');await settle(p);assert.match(await p.textContent('#summary-chart-readout'),/Focus the chart/);
   assert.deepEqual(await geometry(p),before);assert.equal(await p.evaluate(()=>document.documentElement.scrollHeight),1000);
  });
  await check('token input rejects bad values without persisting and distinguishes a connection failure',async()=>{
@@ -143,13 +142,14 @@ try{
  });
  await p.close();
  await check('filter, sort and graph preferences survive reloading the page',async()=>{
-  const q=await open();await q.fill('#filter',fixture.snapshot.targets[1].host);
+  const q=await open();await q.locator('.host-open').nth(1).click();await settle(q);
+  await q.fill('#filter',fixture.snapshot.targets[1].host);
   await q.selectOption('#status-filter','warn');await q.selectOption('#sort-order','last:desc');
-  await q.selectOption('#graph-window','1m');await q.click('#scale-each');
+  await q.selectOption('#graph-window','1m');
   await q.reload();await q.waitForSelector('#shown-count:text("hosts")');await settle(q);
   assert.equal(await q.inputValue('#filter'),fixture.snapshot.targets[1].host);
   assert.equal(await q.inputValue('#status-filter'),'warn');assert.equal(await q.inputValue('#sort-order'),'last:desc');
-  assert.equal(await q.inputValue('#graph-window'),'1m');assert.equal(await q.getAttribute('#scale-each','aria-pressed'),'true');
+  assert.equal(await q.inputValue('#graph-window'),'1m');
   assert.deepEqual(await ids(q),[2]);await q.close();
  });
  await check('cancelling pending authentication never stores the candidate',async()=>{
@@ -160,13 +160,13 @@ try{
   assert.equal(await q.evaluate(()=>localStorage.getItem('mping.token')),null);assert.ok(await q.isEnabled('#open-auth'));await q.close();
  });
  await check('connection loss retains timestamps and measurements; stopped is independent of online',async()=>{
-  const q=await open();assert.match(await q.textContent('#updated'),/17:30:00/);
+  const q=await open();assert.match(await q.textContent('#updated'),/last probe 17:30:00/);
   await q.evaluate(()=>window.testStream.dispatchEvent(new Event('error')));await settle(q);
-  assert.match(await q.textContent('#badge'),/Reconnecting/);assert.match(await q.textContent('#connection-note'),/last received values/);
-  assert.match(await q.textContent('#updated'),/17:30:00/);assert.equal((await ids(q)).length,6);
+  assert.match(await q.textContent('#badge'),/Reconnecting/);assert.match(await q.getAttribute('#connection','title'),/last received values/);
+  assert.match(await q.textContent('#updated'),/showing values from 17:30:00/);assert.equal((await ids(q)).length,6);
   const stopped=structuredClone(fixture);stopped.meta.measurement_state='stopped';await emit(q,stopped);
   await q.evaluate(()=>window.testStream.dispatchEvent(new Event('open')));await settle(q);
-  assert.match(await q.textContent('#badge'),/Online/);assert.match(await q.textContent('#measurement-state'),/stopped/);await q.close();
+  assert.match(await q.textContent('#badge'),/Stopped/);assert.match(await q.getAttribute('#connection','title'),/measurements are stopped/);await q.close();
  });
  await check('zero targets and unconfigured routes explain next steps; empty graphs are explicit',async()=>{
   const empty=structuredClone(fixture);empty.snapshot.targets=[];empty.meta.features={};
@@ -175,7 +175,8 @@ try{
   await q.click('#empty-action');assert.ok(await q.isVisible('#auth-dialog'));await q.close();
   const one=structuredClone(fixture);one.snapshot.targets=one.snapshot.targets.slice(0,1);one.meta.features.mtr=false;one.meta.features.traceroute=true;
   const r=await open(one);await r.route('**/api/v1/history?*',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({captured_at:'2026-10-16T08:30:00Z',targets:[{id:1,rtt_ms:[]}]})}));
-  await r.waitForTimeout(2200);assert.ok(await r.isVisible('.graph-empty'));await r.locator('.host-open').click();await settle(r);
+  await r.locator('.host-open').click();await settle(r);
+  await r.waitForTimeout(2200);assert.ok(await r.isVisible('.graph-empty'));
   assert.equal(await r.locator('.trace-target.is-selected').count(),1);assert.ok(await r.isVisible('#locate-traceroute'));await r.close();
  });
  assert.deepEqual(failures,[]);console.log('UX interaction checks passed.');

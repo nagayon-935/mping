@@ -41,7 +41,7 @@ function reasonBanner(t, meta) {
   const breaches = parseBreaches(t.health?.reason);
   const lines = breaches.length
     ? breaches.map((b) => {
-      const { lead, rest } = explainBreach(b, meta.thresholds);
+      const { lead, rest } = explainBreach(b, meta.thresholds, t.levels);
       return el("span", {}, el("strong", { text: lead }), ` ${rest}.`);
     })
     : [el("span", { text: statusReason(t) })];
