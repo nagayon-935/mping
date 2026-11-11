@@ -18,7 +18,8 @@ import (
 const (
 	stripWindowSeconds = 300  // trailing window of a mini chart
 	stripScaleFloorMs  = 10.0 // smallest mini chart / sparkline scale top, in ms
-	miniPlotRows       = 3    // bar rows of a mini chart
+	miniPlotRows       = 3    // fewest bar rows of a mini chart
+	miniMaxPlotRows    = 12   // most bar rows: taller pane rows go to the Log
 	miniCellRows       = miniPlotRows + 1
 	miniLabelWidth     = 6  // "680ms" scale label at the right
 	miniMinCellWidth   = 40 // narrowest cell for two cells side by side
@@ -157,17 +158,17 @@ type miniCell struct {
 	color tcell.Color
 }
 
-// miniColumn draws one bucket as miniPlotRows cells, bottom first: blank
+// miniColumn draws one bucket as plotRows cells, bottom first: blank
 // without samples, a red × at the bottom when every sample was lost, a full
 // bar topped by a red ▲ above the scale, otherwise a bar in eighths (red
 // when some samples in it were lost).
-func miniColumn(b stripBucket, scaleMs float64) [miniPlotRows]miniCell {
-	var col [miniPlotRows]miniCell
+func miniColumn(b stripBucket, scaleMs float64, plotRows int) []miniCell {
+	col := make([]miniCell, plotRows)
 	for i := range col {
 		col[i] = miniCell{' ', tcell.ColorDefault}
 	}
 	switch {
-	case !b.has:
+	case !b.has || plotRows == 0:
 		return col
 	case b.max == 0:
 		col[0] = miniCell{'×', vividRed}
@@ -176,14 +177,15 @@ func miniColumn(b stripBucket, scaleMs float64) [miniPlotRows]miniCell {
 		for i := range col {
 			col[i] = miniCell{'█', vividCyan}
 		}
-		col[miniPlotRows-1] = miniCell{'▲', vividRed}
+		col[plotRows-1] = miniCell{'▲', vividRed}
 		return col
 	}
 	color := vividCyan
 	if b.lost {
 		color = vividRed
 	}
-	levels := max(int(float64(b.max)/float64(time.Millisecond)/scaleMs*miniPlotRows*8), 1)
+	levels := max(int(float64(b.max)/float64(time.Millisecond)/scaleMs*float64(plotRows*8)), 1)
+	top := min((levels-1)/8, plotRows-1)
 	for i := range col {
 		switch lvl := levels - i*8; {
 		case lvl >= 8:
@@ -191,8 +193,33 @@ func miniColumn(b stripBucket, scaleMs float64) [miniPlotRows]miniCell {
 		case lvl > 0:
 			col[i] = miniCell{stripRunes[lvl-1], color}
 		}
+		if i < top && color == vividCyan {
+			// Only the top cell is bright, so the trend reads as a line
+			// instead of a wall when RTT stays well above zero.
+			col[i].color = miniBarFill
+		}
 	}
 	return col
+}
+
+// miniBarFill colors a mini chart bar below its top cell.
+var miniBarFill = tcell.NewRGBColor(30, 70, 110)
+
+// miniPlotRowsFor is how many bar rows each chart gets when rows rows of
+// cells share height lines (a legend line first): the pane's spare height
+// makes the charts taller, between miniPlotRows and miniMaxPlotRows.
+func miniPlotRowsFor(rows, height int) int {
+	if rows <= 0 {
+		return miniPlotRows
+	}
+	return min(max((height-1)/rows-1, miniPlotRows), miniMaxPlotRows)
+}
+
+// miniMaxHeight is the tallest the mini-chart pane is worth (borders
+// included): every row of cells at miniMaxPlotRows.
+func (g *GraphView) miniMaxHeight(width int) int {
+	_, rows := miniLayout(g.seriesCount(), width)
+	return 1 + rows*(miniMaxPlotRows+1) + 2
 }
 
 // drawMiniGrid draws a legend line and then one small chart per series
@@ -203,7 +230,8 @@ func (g *GraphView) drawMiniGrid(screen tcell.Screen, series []graphSeries, x, y
 	tview.Print(screen, legend, x, y, width, tview.AlignLeft, tcell.ColorGray)
 
 	cols, rows := miniLayout(len(series), width)
-	visible := max((height-1)/miniCellRows, 0)
+	plotRows := miniPlotRowsFor(rows, height)
+	visible := max((height-1)/(plotRows+1), 0)
 	g.clampScroll(rows, visible)
 	cellW := width / cols
 	for r := range visible {
@@ -212,14 +240,14 @@ func (g *GraphView) drawMiniGrid(screen tcell.Screen, series []graphSeries, x, y
 			if idx >= len(series) {
 				return
 			}
-			g.drawMiniCell(screen, series[idx], x+c*cellW, y+1+r*miniCellRows, cellW, windowPoints)
+			g.drawMiniCell(screen, series[idx], x+c*cellW, y+1+r*(plotRows+1), cellW, plotRows, windowPoints)
 		}
 	}
 }
 
 // drawMiniCell draws one series: its label, latest RTT and window summary,
 // then the bars with the scale top, middle and zero at the right.
-func (g *GraphView) drawMiniCell(screen tcell.Screen, s graphSeries, x, y, width, windowPoints int) {
+func (g *GraphView) drawMiniCell(screen tcell.Screen, s graphSeries, x, y, width, plotRows, windowPoints int) {
 	scaleMs := computeYScale(percentile95([][]time.Duration{s.history}, windowPoints), stripScaleFloorMs).maxMs
 	last := "-"
 	if s.lastRTT > 0 {
@@ -233,14 +261,17 @@ func (g *GraphView) drawMiniCell(screen tcell.Screen, s graphSeries, x, y, width
 
 	plotW := max(width-miniLabelWidth-3, 1)
 	for i, b := range bucketHistory(s.history, windowPoints, plotW) {
-		for row, cell := range miniColumn(b, scaleMs) {
-			screen.SetContent(x+1+i, y+miniPlotRows-row, cell.r, nil, tcell.StyleDefault.Foreground(cell.color).Background(tcell.ColorBlack))
+		for row, cell := range miniColumn(b, scaleMs, plotRows) {
+			screen.SetContent(x+1+i, y+plotRows-row, cell.r, nil, tcell.StyleDefault.Foreground(cell.color).Background(tcell.ColorBlack))
 		}
 	}
-	labels := [miniPlotRows]string{formatShortMs(time.Duration(scaleMs * float64(time.Millisecond))), "", "0"}
-	for row, text := range labels {
-		tview.Print(screen, text, x+2+plotW, y+1+row, miniLabelWidth, tview.AlignLeft, tcell.ColorGray)
+	// Scale top, middle and zero at the right of the bars.
+	top := time.Duration(scaleMs * float64(time.Millisecond))
+	tview.Print(screen, formatShortMs(top), x+2+plotW, y+1, miniLabelWidth, tview.AlignLeft, tcell.ColorGray)
+	if plotRows >= 5 {
+		tview.Print(screen, formatShortMs(top/2), x+2+plotW, y+1+plotRows/2, miniLabelWidth, tview.AlignLeft, tcell.ColorGray)
 	}
+	tview.Print(screen, "0", x+2+plotW, y+plotRows, miniLabelWidth, tview.AlignLeft, tcell.ColorGray)
 }
 
 // formatWindow names a trailing window of windowPoints samples taken every

@@ -181,9 +181,9 @@ func TestMiniLayout(t *testing.T) {
 }
 
 func TestMiniColumn(t *testing.T) {
-	runes := func(col [miniPlotRows]miniCell) string {
+	runes := func(col []miniCell) string {
 		var b strings.Builder
-		for i := miniPlotRows - 1; i >= 0; i-- {
+		for i := len(col) - 1; i >= 0; i-- {
 			b.WriteRune(col[i].r)
 		}
 		return b.String()
@@ -201,7 +201,7 @@ func TestMiniColumn(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := runes(miniColumn(tt.bucket, 80)); got != tt.want {
+			if got := runes(miniColumn(tt.bucket, 80, miniPlotRows)); got != tt.want {
 				t.Errorf("miniColumn = %q, want %q", got, tt.want)
 			}
 		})
@@ -225,4 +225,45 @@ func screenLines(screen tcell.SimulationScreen, width, height int) []string {
 		lines[y] = b.String()
 	}
 	return lines
+}
+
+func TestMiniPlotRowsFor(t *testing.T) {
+	tests := []struct {
+		name         string
+		rows, height int
+		want         int
+	}{
+		{"spare height makes charts taller", 1, 1 + 8, 7},
+		{"never below the minimum", 3, 6, miniPlotRows},
+		{"never above the maximum", 1, 200, miniMaxPlotRows},
+		{"no series", 0, 50, miniPlotRows},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := miniPlotRowsFor(tt.rows, tt.height); got != tt.want {
+				t.Errorf("miniPlotRowsFor(%d, %d) = %d, want %d", tt.rows, tt.height, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMiniColumnDimsBelowTheTop(t *testing.T) {
+	col := miniColumn(stripBucket{max: 70 * ms, has: true}, 80, 4)
+	top := -1
+	for i, c := range col {
+		if c.r != ' ' {
+			top = i
+		}
+	}
+	if top < 1 {
+		t.Fatalf("bar too short to test: %+v", col)
+	}
+	if col[top].color != vividCyan {
+		t.Errorf("top cell color = %v, want bright", col[top].color)
+	}
+	for i := range top {
+		if col[i].color != miniBarFill {
+			t.Errorf("cell %d color = %v, want dimmed fill", i, col[i].color)
+		}
+	}
 }

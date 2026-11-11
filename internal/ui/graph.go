@@ -137,7 +137,7 @@ func (g *GraphView) InputHandler() func(event *tcell.EventKey, setFocus func(p t
 		_, _, width, height := g.GetInnerRect()
 		if g.mini {
 			_, rows := miniLayout(g.seriesCount(), width)
-			g.clampScroll(rows, max((height-1)/miniCellRows, 0))
+			g.clampScroll(rows, max((height-1)/(miniPlotRowsFor(rows, height)+1), 0))
 			return
 		}
 		_, numRowsTotal, visibleRows, _, _ := layoutGraph(g.seriesCount(), width, height)

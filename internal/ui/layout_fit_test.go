@@ -290,3 +290,41 @@ func TestPaneControlsManualFoldOverridesAuto(t *testing.T) {
 		t.Error("graph pane folded again after the user opened it")
 	}
 }
+
+func TestPaneControlsFitSpareRowsGrowMiniCharts(t *testing.T) {
+	// Arrange: two targets with mini charts and a long log.
+	targets := []*stats.TargetStats{stats.NewTargetStats("a"), stats.NewTargetStats("b")}
+	table := tview.NewTable()
+	tablePane := tview.NewFlex().AddItem(table, 0, 1, true)
+	graph := NewGraphView(targets, time.Second)
+	graph.mini = true
+	log := newLogView()
+	vs := newViewState(log)
+	for i := range 40 {
+		vs.appendLog(fmt.Sprintf("message %d", i))
+	}
+	layout := tview.NewFlex().SetDirection(tview.FlexRow)
+	c := newPaneControls(tview.NewApplication(), layout, tview.NewTextView(), tview.NewPages(), table, tablePane,
+		func() int { return 3 }, nil, graph, log)
+	c.rebuild()
+	view := c.view()
+	view.SetRect(0, 0, 120, 40)
+	screen := tcell.NewSimulationScreen("")
+	if err := screen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer screen.Fini()
+
+	// Act
+	view.Draw(screen)
+
+	// Assert: the charts take the spare rows up to their tallest, before the
+	// long Log grows; only what they cannot use goes to the Log.
+	graphMax := graph.miniMaxHeight(118)
+	if got, want := paneHeight(graph), min(40-3-5-fixedLogHeight, graphMax); got != want {
+		t.Errorf("graph height = %d, want %d", got, want)
+	}
+	if got, want := paneHeight(log), 40-3-5-paneHeight(graph); got != want {
+		t.Errorf("log height = %d, want the %d rows the charts cannot use", got, want)
+	}
+}
