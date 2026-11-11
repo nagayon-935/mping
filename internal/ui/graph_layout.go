@@ -4,65 +4,68 @@ import (
 	"time"
 )
 
+// graphColumn is one screen column of an RTT chart: the slowest reply
+// among the samples it shows (value, when has), and whether all of them
+// (lost) or some of them (someLost) were lost probes.
+type graphColumn struct {
+	value    time.Duration
+	has      bool
+	lost     bool
+	someLost bool
+}
+
 // projectDurationsToGraph maps the trailing sample window to graph columns,
-// interpolating gaps and marking columns with no sample as absent.
-func projectDurationsToGraph(data []time.Duration, windowPoints, graphWidth int) ([]time.Duration, []bool) {
+// right-aligned so the newest sample is in the last column. A zero sample is
+// a lost probe. Between two replies that land columns apart the RTT is
+// interpolated; next to a lost probe the gap keeps the previous sample's
+// state instead, so a loss never shows as a slope down to zero.
+func projectDurationsToGraph(data []time.Duration, windowPoints, graphWidth int) []graphColumn {
 	if windowPoints <= 0 || graphWidth <= 0 || len(data) == 0 {
-		return nil, nil
+		return nil
 	}
 	if len(data) > windowPoints {
 		data = data[len(data)-windowPoints:]
 	}
-
-	values := make([]time.Duration, graphWidth)
-	hasValue := make([]bool, graphWidth)
-	if windowPoints == 1 {
-		values[graphWidth-1] = data[len(data)-1]
-		hasValue[graphWidth-1] = true
-		return values, hasValue
+	cols := make([]graphColumn, graphWidth)
+	replies := make([]int, graphWidth)
+	losses := make([]int, graphWidth)
+	put := func(x int, v time.Duration) {
+		cols[x].has = true
+		if v == 0 {
+			losses[x]++
+		} else {
+			replies[x]++
+			cols[x].value = max(cols[x].value, v)
+		}
 	}
-
+	xOf := func(windowIdx int) int {
+		if windowPoints == 1 {
+			return graphWidth - 1
+		}
+		return min(max(int(float64(windowIdx)*float64(graphWidth-1)/float64(windowPoints-1)+0.5), 0), graphWidth-1)
+	}
 	offset := windowPoints - len(data)
-	prevSet := false
-	prevX := 0
-	prevV := time.Duration(0)
-
+	prevX, prevV := -1, time.Duration(0)
 	for i, v := range data {
-		windowIdx := offset + i
-		x := max(int(float64(windowIdx)*float64(graphWidth-1)/float64(windowPoints-1)+0.5), 0)
-		if x >= graphWidth {
-			x = graphWidth - 1
+		x := xOf(offset + i)
+		if prevX >= 0 && x > prevX+1 {
+			for px := prevX + 1; px < x; px++ {
+				if prevV > 0 && v > 0 {
+					ratio := float64(px-prevX) / float64(x-prevX)
+					put(px, prevV+time.Duration(float64(v-prevV)*ratio))
+				} else {
+					put(px, prevV)
+				}
+			}
 		}
-		if !prevSet {
-			values[x] = v
-			hasValue[x] = true
-			prevSet = true
-			prevX = x
-			prevV = v
-			continue
-		}
-
-		if x <= prevX {
-			values[x] = v
-			hasValue[x] = true
-			prevX = x
-			prevV = v
-			continue
-		}
-
-		dx := x - prevX
-		dv := v - prevV
-		for p := 0; p <= dx; p++ {
-			ratio := float64(p) / float64(dx)
-			interp := prevV + time.Duration(float64(dv)*ratio)
-			px := prevX + p
-			values[px] = interp
-			hasValue[px] = true
-		}
-		prevX = x
-		prevV = v
+		put(x, v)
+		prevX, prevV = x, v
 	}
-	return values, hasValue
+	for x := range cols {
+		cols[x].lost = losses[x] > 0 && replies[x] == 0
+		cols[x].someLost = losses[x] > 0 && replies[x] > 0
+	}
+	return cols
 }
 
 func (g *GraphView) clampScroll(numRowsTotal, visibleRows int) {

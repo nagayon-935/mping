@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/mattn/go-runewidth"
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/rivo/tview"
 )
@@ -209,12 +210,16 @@ func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell,
 	headerStr := fmt.Sprintf("% -20s %s", s.label, formatRTT(s.lastRTT))
 	headerStr = truncateToDisplayWidth(headerStr, cell.width-2)
 	tview.Print(screen, headerStr, cell.x, cell.y, cell.width-2, tview.AlignLeft, tcell.ColorYellow)
+	if loss := windowLossText(s.history, windowPoints); loss != "" {
+		lossX := cell.x + runewidth.StringWidth(headerStr) + 2
+		tview.Print(screen, loss, lossX, cell.y, max(cell.x+cell.width-2-lossX, 0), tview.AlignLeft, vividRed)
+	}
 
 	graphX := cell.x
 	graphY := cell.y + 1
 	graphWidth := max(cell.width-graphLabelWidth-2, graphMinWidth)
 
-	data, hasData := projectDurationsToGraph(s.history, windowPoints, graphWidth)
+	columns := projectDurationsToGraph(s.history, windowPoints, graphWidth)
 	plotY, plotHeight := adjustPlotArea(graphY, cell.graphHeight)
 
 	gridSteps := gridStepsForHeight(plotHeight)
@@ -233,9 +238,18 @@ func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell,
 	// 0ms label at bottom
 	tview.Print(screen, "0ms", graphX+graphWidth+1, plotY+plotHeight-1, graphLabelWidth, tview.AlignLeft, tcell.ColorGray)
 
-	for i, val := range data {
-		if hasData[i] {
-			g.drawBar(screen, graphX+i, plotY, plotHeight, min(val, yMax), gridYPos)
+	for i, col := range columns {
+		switch {
+		case col.lost:
+			// Every probe here was lost: a red × on the zero line, the same
+			// mark as the Ping Monitor's sparkline.
+			screen.SetContent(graphX+i, plotY+plotHeight-1, '×', nil, tcell.StyleDefault.Foreground(vividRed))
+		case col.has:
+			color := vividCyan
+			if col.someLost {
+				color = lossPartialColor
+			}
+			g.drawBar(screen, graphX+i, plotY, plotHeight, min(col.value, yMax), gridYPos, color)
 		}
 	}
 
@@ -248,13 +262,31 @@ func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell,
 	}
 }
 
+// windowLossText reports the lost probes among the trailing windowPoints
+// samples ("loss 13% (4/30)"), or "" when none were lost.
+func windowLossText(history []time.Duration, windowPoints int) string {
+	if len(history) > windowPoints {
+		history = history[len(history)-windowPoints:]
+	}
+	lost := 0
+	for _, v := range history {
+		if v == 0 {
+			lost++
+		}
+	}
+	if lost == 0 {
+		return ""
+	}
+	return fmt.Sprintf("loss %.0f%% (%d/%d)", float64(lost)*100/float64(len(history)), lost, len(history))
+}
+
 // barRunes are the eighth-height blocks a bar's top cell is drawn with.
 var barRunes = []rune{' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 
 // drawBar draws one RTT sample (already capped at the scale maximum) as a
 // column of block characters at screen column px, keeping grid dots visible
 // above the bar.
-func (g *GraphView) drawBar(screen tcell.Screen, px, plotY, plotHeight int, v time.Duration, gridYPos map[int]bool) {
+func (g *GraphView) drawBar(screen tcell.Screen, px, plotY, plotHeight int, v time.Duration, gridYPos map[int]bool, color tcell.Color) {
 	ratio := float64(v) / float64(time.Millisecond) / g.currentScale.maxMs
 	if v > 0 && ratio < 0.05 {
 		ratio = 0.05
@@ -268,9 +300,9 @@ func (g *GraphView) drawBar(screen tcell.Screen, px, plotY, plotHeight int, v ti
 		level := totalLevels - (gy * 8)
 		switch {
 		case level >= 8:
-			screen.SetContent(px, py, '█', nil, tcell.StyleDefault.Foreground(vividCyan))
+			screen.SetContent(px, py, '█', nil, tcell.StyleDefault.Foreground(color))
 		case level > 0:
-			screen.SetContent(px, py, barRunes[level], nil, tcell.StyleDefault.Foreground(vividCyan))
+			screen.SetContent(px, py, barRunes[level], nil, tcell.StyleDefault.Foreground(color))
 		case gridYPos[gy]:
 			screen.SetContent(px, py, '·', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
 		}
