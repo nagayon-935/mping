@@ -10,29 +10,27 @@
 </head>
 <body>
 <header class="topbar">
-  <div class="header-row">
-    <h1 class="brand">mping</h1>
-    <nav class="page-nav" aria-label="Pages">
-      <a id="nav-monitor" href="#monitor" aria-current="page">Monitor</a>
-      <a id="nav-log" href="#log">Log</a>
-      <a id="nav-http" href="#http" hidden>HTTP</a>
-    </nav>
-    <span class="spacer"></span>
-    <button id="open-shortcuts" class="btn" type="button" aria-label="Keyboard shortcuts" aria-haspopup="dialog">?</button>
-    <button id="open-auth" class="btn" type="button" aria-haspopup="dialog">Enable controls</button>
-    <span id="measurement-controls" hidden>
-      <button id="open-add" class="btn" type="button" aria-haspopup="dialog">Add host</button>
-      <button id="open-report" class="btn" type="button" aria-haspopup="dialog">Report</button>
-      <button id="measurement-action" class="btn" type="button">Stop all</button>
-      <span id="reset-slot"></span>
-    </span>
+  <h1 class="brand">mping</h1>
+  <nav class="page-nav" aria-label="Pages">
+    <a id="nav-monitor" href="#monitor" aria-current="page">Monitor</a>
+    <a id="nav-log" href="#log">Log</a>
+    <a id="nav-http" href="#http" hidden>HTTP</a>
+  </nav>
+  <ul id="summary" class="fleet" aria-label="Host health; select a count to filter the monitor"></ul>
+  <span class="spacer"></span>
+  <div id="connection" class="conn lvl-pending">
+    <span class="conn-dot" aria-hidden="true"></span>
+    <span id="badge" class="conn-label" role="status">Connecting</span>
+    <span id="updated" class="conn-time"></span>
   </div>
-  <div class="header-row header-status">
-    <span id="badge" class="badge lvl-pending" role="status"><span class="badge-icon" aria-hidden="true">○</span><span class="badge-label">Connecting</span></span>
-    <span id="measurement-state" role="status"></span>
-    <span id="updated" class="muted"></span>
-    <span id="connection-note" class="muted"></span>
-  </div>
+  <button id="open-shortcuts" class="btn btn-icon" type="button" aria-label="Keyboard shortcuts" aria-haspopup="dialog">?</button>
+  <span id="measurement-controls" hidden>
+    <button id="open-add" class="btn" type="button" aria-haspopup="dialog">Add host</button>
+    <button id="open-report" class="btn" type="button" aria-haspopup="dialog">Report</button>
+    <button id="measurement-action" class="btn" type="button">Stop all</button>
+    <span id="reset-slot"></span>
+  </span>
+  <button id="open-auth" class="btn" type="button" aria-haspopup="dialog">Enable controls</button>
 </header>
 <aside id="notice" class="notice" hidden>
   <span id="notice-message" role="status" aria-live="polite"></span>
@@ -76,7 +74,7 @@
   <dl class="shortcut-list">
     <dt>/</dt><dd>Focus host search</dd><dt>j / k or ↓ / ↑</dt><dd>Move focus within the host list</dd>
     <dt>Home / End</dt><dd>First / last host</dd><dt>Enter</dt><dd>Select host and open Summary</dd>
-    <dt>← / →</dt><dd>Inspect graph samples while a graph is focused</dd><dt>w</dt><dd>Open Report (controls enabled)</dd>
+    <dt>← / →</dt><dd>Inspect RTT samples while the Summary chart is focused (Home / End: ends, Esc: clear)</dd><dt>w</dt><dd>Open Report (controls enabled)</dd>
     <dt>Delete</dt><dd>Confirm deletion of the focused host</dd><dt>Esc</dt><dd>Close a dialog or leave search</dd><dt>?</dt><dd>Show this help</dd>
   </dl>
   <p class="dialog-description">Route monitoring is enabled at startup: use -M for MTR or -T for Traceroute.</p>
@@ -113,7 +111,6 @@
       </div>
     </div>
     <div class="monitor-toolbar">
-      <ul id="summary" class="summary" aria-label="Filter by target health"></ul>
       <div class="monitor-filters">
         <input id="filter" class="filter" type="search" placeholder="Filter host, IP, PTR, AS" aria-label="Filter targets">
         <label class="visually-hidden" for="status-filter">Health filter</label><select id="status-filter" aria-label="Health filter"><option value="all">All states</option><option value="crit">Critical</option><option value="warn">Warning</option><option value="pending">Waiting</option><option value="ok">OK</option></select>
@@ -122,6 +119,13 @@
         <button id="clear-filter" class="btn" type="button">Clear</button>
         <span id="shown-count" class="muted"></span>
       </div>
+    </div>
+    <div id="common-cause" class="common-cause" role="note" hidden>
+      <span class="common-cause-icon" aria-hidden="true">▲</span>
+      <strong id="common-cause-headline"></strong>
+      <span id="common-cause-detail" class="common-cause-detail"></span>
+      <span class="spacer"></span>
+      <a href="#log">View log</a>
     </div>
     <div class="pane-scroll">
       <div class="table-wrap">
@@ -137,11 +141,14 @@
 
   <section id="pane-inspect" class="pane" aria-labelledby="inspect-title" hidden>
     <div class="pane-head">
-      <div>
-        <h2 id="inspect-title" class="pane-title">Summary</h2>
+      <div class="inspect-head">
+        <div class="inspect-title-row">
+          <h2 id="inspect-title" class="pane-title"><span class="visually-hidden">Summary: </span><span id="inspect-host"></span></h2>
+          <span id="inspect-pill"></span>
+        </div>
         <p id="inspect-target" class="pane-hint"></p>
       </div>
-      <button id="close-inspect" class="btn" type="button" aria-label="Close details">Close</button>
+      <button id="close-inspect" class="btn btn-icon" type="button" aria-label="Close summary">×</button>
     </div>
     <p id="selection-note" class="pane-hint selection-note" hidden>Selected host is outside the current filters.</p>
     <div id="inspect-body" class="inspect-body"></div>
@@ -178,26 +185,6 @@
     </div>
   </section>
 
-  <section id="pane-graphs" class="pane" aria-labelledby="graphs-title">
-    <div class="pane-head">
-      <div>
-        <h2 id="graphs-title" class="pane-title">RTT graphs</h2>
-        <p id="graphs-cursor" class="pane-hint"></p>
-      </div>
-      <div class="pane-tools">
-        <button id="locate-graphs" class="btn locate-selected" type="button" disabled>Selected host</button>
-        <label class="tool">Window <select id="graph-window" aria-label="Time window"></select></label>
-        <div class="segmented" role="group" aria-label="Y-axis scale">
-          <button id="scale-shared" type="button" aria-pressed="true">Shared</button>
-          <button id="scale-each" type="button" aria-pressed="false">Per target</button>
-        </div>
-      </div>
-    </div>
-    <div class="pane-scroll">
-      <p id="graphs-empty" class="empty" hidden>No targets match the current filters.</p>
-      <div id="graphs" class="graph-grid"></div>
-    </div>
-  </section>
 </div>
 
 <main id="page-log" class="page-view" aria-labelledby="log-title" hidden>

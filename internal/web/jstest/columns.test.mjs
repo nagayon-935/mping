@@ -23,10 +23,12 @@ test("MTR omits the AS column when AS lookup is disabled",()=>{
  assert.ok(!keys(4000,{asn:false}).includes("asn"));
 });
 
-test("overview retains minimum fields, feature flags and current RTT only",()=>{
+test("overview retains minimum fields, feature flags, current RTT and an optional sparkline",()=>{
  const columns=targetColumns({asn:false});
  assert.deepEqual(columns.filter(c=>c.required).map(c=>c.key),["status","host","loss","last"]);
- assert.ok(!columns.some(c=>["asn","avg","min","max","spark"].includes(c.key)));
+ assert.ok(!columns.some(c=>["asn","avg","min","max"].includes(c.key)));
+ const spark=columns.find(c=>c.key==="spark");
+ assert.ok(spark&&!spark.required&&spark.priority<columns.find(c=>c.key==="jitter").priority,"sparkline is the first optional column");
  assert.ok(targetColumns({asn:true}).some(c=>c.key==="asn"));
 });
 

@@ -1,4 +1,5 @@
-// Time-window logic for the RTT graphs pane (no DOM, unit-tested under node).
+// Time-window logic for the RTT sparklines and the Summary chart (no DOM,
+// unit-tested under node).
 //
 // Timestamped samples share a wall-time axis. Missing intervals (including
 // pauses) are undefined; completed probes without a reply are null.

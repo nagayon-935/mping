@@ -105,24 +105,6 @@ export function matchesFilter(t, query, features = {ptr: true, asn: true}) {
     .some((v) => typeof v === "string" && v.toLowerCase().includes(q));
 }
 
-/**
- * Header badge for the server-reported state and the stream connection.
- * A final "stopped" survives the disconnect that follows it.
- */
-export function badgeFor(state, connected) {
-  if (state === "stopped") return { level: "stopped", label: "Session ended" };
-  if (!connected) {
-    return state == null
-      ? { level: "pending", label: "Connecting" }
-      : { level: "warn", label: "Reconnecting" };
-  }
-  switch (state) {
-    case "running": return { level: "ok", label: "Online" };
-    case "reloading": return { level: "warn", label: "Reloading" };
-    default: return { level: "pending", label: "Starting" };
-  }
-}
-
 /** The control token from a "#token=<hex>" fragment, or null. */
 export function tokenFromHash(hash) {
   const m = /^#token=([^&]+)$/.exec(hash ?? "");

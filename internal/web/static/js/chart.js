@@ -5,6 +5,9 @@
 import { cssVar } from "./dom.js";
 import { formatMs } from "./model.js";
 import { agoLabel, sharedMax } from "./timeline.js";
+import { clippedPoints, rttAxis } from "./scale.js";
+
+export { rttAxis };
 
 function setupCanvas(canvas) {
   const dpr = window.devicePixelRatio || 1;
@@ -23,21 +26,6 @@ function setupCanvas(canvas) {
 /** Axis/threshold label: whole numbers stay whole ("50", not "50.0"). */
 function tickLabel(v) {
   return Number.isInteger(v) ? String(v) : formatMs(v);
-}
-
-/** Rounds up to 1/2/5 × 10^k so axis ticks land on clean numbers. */
-function niceCeil(v) {
-  if (!(v > 0)) return 1;
-  const p = 10 ** Math.floor(Math.log10(v));
-  for (const m of [1, 2, 5, 10]) if (v <= m * p) return m * p;
-  return 10 * p;
-}
-
-/** Four equal intervals, rounding the interval itself to a readable value. */
-export function rttAxis(peak) {
-  const step = niceCeil(Math.max(Number.isFinite(peak) ? peak * 1.15 : 0, 1) / 4);
-  const ticks = Array.from({ length: 5 }, (_, i) => Number((step * i).toPrecision(12)));
-  return { max: ticks[4], ticks };
 }
 
 /** Strokes the series as line segments, breaking at nulls; fills a wash under each run. */
@@ -79,6 +67,34 @@ function plotLosses(ctx, series, xAt, baseY, tickH, lost) {
   });
 }
 
+/**
+ * Samples above the axis top are drawn clipped to it; a small triangle marks
+ * each one and the highest is labelled ("▲ 680 ms").
+ */
+function plotClipped(ctx, series, xAt, top, max) {
+  const { indexes, peak } = clippedPoints(series, max);
+  if (!peak) return;
+  ctx.fillStyle = cssVar("--critical-ink");
+  for (const i of indexes) {
+    const x = xAt(i);
+    ctx.beginPath();
+    ctx.moveTo(x, top - 1);
+    ctx.lineTo(x - 4, top + 6);
+    ctx.lineTo(x + 4, top + 6);
+    ctx.closePath();
+    ctx.fill();
+  }
+  const x = xAt(peak.index);
+  const text = `▲ ${formatMs(peak.value)} ms`;
+  ctx.font = `600 11px ${cssVar("--font")}`;
+  const width = ctx.measureText(text).width;
+  const right = ctx.canvas.clientWidth - 12;
+  ctx.textBaseline = "bottom";
+  ctx.textAlign = "left";
+  ctx.fillText(text, Math.max(0, Math.min(x - width / 2, right - width)), top - 3);
+  ctx.font = `11px ${cssVar("--font")}`;
+}
+
 function endDot(ctx, x, y, colour) {
   ctx.beginPath();
   ctx.arc(x, y, 4, 0, Math.PI * 2);
@@ -97,7 +113,8 @@ function endDot(ctx, x, y, colour) {
  */
 export function drawChart(canvas, series, th, intervalMs, opts = {}) {
   const { ctx, w, h } = setupCanvas(canvas);
-  const { max, ticks } = rttAxis(opts.yMax ?? sharedMax([series]));
+  // opts.axis (e.g. a robust p95 scale) wins over opts.yMax / the peak.
+  const { max, ticks } = opts.axis ?? rttAxis(opts.yMax ?? sharedMax([series]));
   ctx.font = `11px ${cssVar("--font")}`;
   const left = Math.max(44, ...ticks.map(v => ctx.measureText(tickLabel(v)).width + 12));
   const right = 12, top = 20, bottom = 24;
@@ -157,6 +174,7 @@ export function drawChart(canvas, series, th, intervalMs, opts = {}) {
     const colour = cssVar("--series");
     plotLine(ctx, series, xAt, yAt, baseY, colour);
     plotLosses(ctx, series, xAt, baseY, 6, opts.lost);
+    plotClipped(ctx, series, xAt, top, max);
   }
   return { left, plotW, top, plotH, xAt, yAt, n, max };
 }

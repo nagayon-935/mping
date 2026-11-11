@@ -1,6 +1,5 @@
 // One SSE stream drives the monitoring workspace and independent global pages.
 import { $, el, fetchJSON, readSession, selectionWithin, writeSession } from "./dom.js";
-import { createGraphs } from "./graphs.js";
 import { createInspect } from "./inspect.js";
 import { createLog } from "./log.js";
 import { httpFor } from "./checks.js";
@@ -31,10 +30,9 @@ const view = {
   connected: false,
   filter: "",
   selectedId: null,
-  series: new Map(), // id -> samples for the graphs window
+  series: new Map(), // id -> samples for the Summary chart window (sparklines use its last minute)
   windows: [],
   window: null,
-  shared: true, // restored by graphTools.install() before the first render
   inspectOpen: false,
   historyNow: null,
   page: "monitor",
@@ -69,12 +67,13 @@ function showMonitorPage() {
   scheduleRender();
 }
 
-const graphs = createGraphs({ grid: $("graphs"), cursorNote: $("graphs-cursor"), onSelect: selectTarget });
-
 const inspect = createInspect({
+  host: $("inspect-host"),
+  pill: $("inspect-pill"),
   target: $("inspect-target"),
   body: $("inspect-body"),
   canControl: () => control.allowed,
+  isStopped: () => view.state === "stopped",
   actionsFor(t) {
     if (!control.allowed) return null;
     const button = el("button", { className: "btn btn-danger", text: `Delete ${t.host}`, attrs: { type: "button" } });
@@ -155,15 +154,13 @@ const toolbar = createMonitorToolbar(view, {
 });
 
 const workspace = createWorkspaceView({
-  graphs, inspect, selectTarget, sortColumn: toolbar.sortColumn,
+  inspect, selectTarget, sortColumn: toolbar.sortColumn,
   canControl: () => control.allowed,
   renderUnlessSelecting: unlessSelecting,
   selectedId: () => view.selectedId,
 });
 
-const graphTools = createGraphTools(view, {
-  window: $("graph-window"), perTarget: $("scale-each"), shared: $("scale-shared"),
-}, { requestRender: scheduleRender, refreshHistory });
+const graphTools = createGraphTools(view, { window: inspect.windowSelect }, { refreshHistory });
 
 // --- Pages and ordering ----------------------------------------------------
 
@@ -335,7 +332,8 @@ async function reloadSnapshot() {
 function renderControls() {
   const on = control.allowed;
   $("measurement-controls").hidden = !on;
-  $("open-auth").textContent = on ? "Controls enabled" : "Enable controls";
+  $("open-auth").textContent = on ? "Controls on" : "Enable controls";
+  $("open-auth").title = on ? "Browser controls are enabled for this tab." : "";
   $("open-auth").disabled = on;
   if (!on) {
     report.close();
@@ -409,7 +407,6 @@ function rerenderOnWidthChange(node) {
 }
 rerenderOnWidthChange($("targets").parentElement);
 rerenderOnWidthChange($("mtr-table-wrap"));
-new ResizeObserver(() => graphs.repaint()).observe($("graphs"));
 
 toolbar.install();
 initShortcuts();

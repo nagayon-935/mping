@@ -1,17 +1,18 @@
 // Monitor workspace rendering. Selection, ordering and fetching live outside
-// this module; table, route and graph panes share one prepared target list.
+// this module; the table and route panes share one prepared target list.
 import { $ } from "./dom.js";
+import { commonCauseText, detectCommonCause } from "./common_cause.js";
+import { prepareSparks } from "./spark_view.js";
 import { renderTargets } from "./table.js";
 import { renderMTR } from "./mtr.js";
 import { renderTraceroutes } from "./traceroute.js";
 import { STATUS_LABELS } from "./toolbar.js";
 
-export function createWorkspaceView({ graphs, inspect, canControl, selectTarget, sortColumn, renderUnlessSelecting, selectedId }) {
+export function createWorkspaceView({ inspect, canControl, selectTarget, sortColumn, renderUnlessSelecting, selectedId }) {
   // Locate scrolls a pane to the selected host without reordering anything.
   const locators = [
     ["locate-mtr", () => $("mtr-table-wrap"), "#mtr tbody", 36], // below the sticky column header
     ["locate-traceroute", () => $("traceroute-scroll"), ".trace-target", 0],
-    ["locate-graphs", () => $("graphs").parentElement, ".graph-card", 0],
   ];
   for (const [button, scroller, selector, offset] of locators) {
     $(button).addEventListener("click", () => {
@@ -33,24 +34,16 @@ export function createWorkspaceView({ graphs, inspect, canControl, selectTarget,
     $("pane-traceroute").hidden = !showTrace;
     $("workspace").classList.toggle("has-route", showMTR || showTrace);
     // Size the monitor for every host, not the filtered ones, so filtering
-    // never moves the route and graph panes.
+    // never moves the route pane.
     setMonitorSize("--monitor-rows", String(total));
     setMonitorSize("--monitor-groups", String(groupHeaders));
 
     if (showMTR) renderMTRPane(view, targets, total);
     if (showTrace) renderTraceroutePane(view, targets);
+    renderCommonCause(view.snapshot.targets);
     renderTargetsPane(view, targets, total);
     measureMonitor();
     renderMonitorChrome(view, targets, total, showMTR || showTrace, orderUpToDate);
-    graphs.render({
-      targets,
-      history: view.series,
-      meta: view.meta,
-      points: view.window?.points ?? 0,
-      shared: view.shared,
-      selectedId: view.selectedId,
-      now: view.historyNow,
-    });
     renderUnlessSelecting($("inspect-body"), () => { if (view.inspectOpen) inspect.render(view); });
   }
 
@@ -68,6 +61,19 @@ export function createWorkspaceView({ graphs, inspect, canControl, selectTarget,
   function setMonitorSize(name, value) {
     const pane = $("pane-monitor");
     if (pane.style.getPropertyValue(name) !== value) pane.style.setProperty(name, value);
+  }
+
+  /** One banner instead of the same red cell on most rows. It considers
+   * every host, not just the filtered ones: the cause is fleet-wide. */
+  function renderCommonCause(allTargets) {
+    const cause = detectCommonCause(allTargets);
+    const banner = $("common-cause");
+    banner.hidden = !cause;
+    if (!cause) return;
+    const text = commonCauseText(cause);
+    $("common-cause-headline").textContent = text.headline;
+    $("common-cause-detail").textContent = text.detail;
+    banner.title = text.title;
   }
 
   const hostCount = (n) => `${n} ${n === 1 ? "host" : "hosts"} · ICMP`;
@@ -100,7 +106,8 @@ export function createWorkspaceView({ graphs, inspect, canControl, selectTarget,
     $("filter").placeholder = `Filter ${fields}`;
     $("filter").setAttribute("aria-label", `Filter ${fields}`);
     renderUnlessSelecting($("targets"), () => {
-      const shown = renderTargets($("targets"), { ...view, visibleTargets: targets }, selectTarget, sortColumn);
+      const sparks = prepareSparks(targets, view.series, view.meta.interval_ms, view.historyNow ?? Date.now());
+      const shown = renderTargets($("targets"), { ...view, visibleTargets: targets, sparks }, selectTarget, sortColumn);
       $("targets-empty").hidden = shown > 0;
       $("targets-empty-message").textContent = emptyTargetsMessage(view, total);
       $("empty-action").hidden = false;
@@ -118,13 +125,11 @@ export function createWorkspaceView({ graphs, inspect, canControl, selectTarget,
 
     const selectedVisible = view.selectedId != null && targets.some((t) => t.id === view.selectedId);
     $("selection-note").hidden = view.selectedId == null || selectedVisible;
-    for (const id of ["locate-mtr", "locate-traceroute", "locate-graphs"]) {
+    for (const id of ["locate-mtr", "locate-traceroute"]) {
       $(id).disabled = !selectedVisible;
       $(id).title = selectedVisible ? "Scroll to the selected host without changing order." : "Select a host visible in the current filters.";
     }
 
-    $("graphs-empty").hidden = targets.length > 0;
-    $("graphs-empty").textContent = total ? "No hosts match the current filters." : "Add a host to start collecting RTT history.";
     const hint = `Loss % is lifetime loss; health uses recent measurements.${routeShown ? "" : " Route monitoring is disabled (start with -M or -T)."}`;
     $("monitor-hint").textContent = hint;
     $("monitor-hint").title = hint;

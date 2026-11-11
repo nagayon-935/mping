@@ -22,6 +22,7 @@ Widths include cell padding. Numeric text uses a 13px monospace font, with
 | RTT / jitter | Positive Go durations up to roughly 9.22e12 ms | At most 10 chars including ` ms`; scientific notation from 1e6 ms | 100px |
 | Counts | Nonnegative Go integer counts, up to int64 maximum | At most 8 chars; grouped below 1M, M/B/T above, scientific from 1e15 | 88px |
 | TTL / hop | 0–255 | 3 digits | 60px |
+| RTT · 60s | Last minute of RTT samples | Fixed-size sparkline (no text); accessible label states the range and losses | 144px |
 | HTTP URL | No new length restriction | One line, ellipsis; full URL remains in the DOM and title | At least 240px; flexible |
 | HTTP code | 3-digit status codes | 3 digits | 64px |
 | Port | `65535/udp` | 9 chars | 104px |
@@ -34,7 +35,7 @@ the complete underlying strings, not their ellipsized presentation.
 
 The overview always keeps **Status, Host, Loss % and latest RTT**. Extra
 columns appear as the viewport or the available pane width grows, in priority
-order: Jitter, Sent, Recv, IP, TTL, AS (when enabled).
+order: RTT · 60s sparkline, Jitter, Sent, Recv, IP, TTL, AS (when enabled).
 Columns retain their normal display order. The current RTT header reads
 **RTT**, with units in each value. If all configured hosts are IP literals,
 the redundant IP column is omitted. This decision uses the full target list,
@@ -52,14 +53,14 @@ panes reserve scrollbar space, so filtering or receiving measurements cannot
 change column widths. Summary and HTTP tables keep all enabled columns and scroll
 horizontally when needed.
 
-The monitor shows current RTT; average/minimum/peak live in Summary. RTT
-history is shown only in the graphs pane. Graph cards show a numeric RTT only
-at the cursor, rather than repeating the monitor's current value.
+The monitor shows current RTT and a one-minute sparkline; average/minimum/peak
+live in Summary. The larger RTT history chart is in Summary only, with a
+numeric RTT at the cursor.
 
 On desktop (1100px and up), a two-row grid fills the space below the header.
-The upper row contains the monitor and, after selection, Summary (7:5 widths).
-The lower row contains the route pane and graphs (7:5), or full-width graphs
-when no route option is enabled. Summary selection does not move the lower row.
+The monitor fills the workspace; after selection, Summary takes the right
+column at full height (7:5 widths). With a route option, the route pane takes
+the lower row under the monitor.
 Every desktop pane takes its grid cell's height and scrolls internally. Narrower
 windows stack the panes. Phone widths are not supported: below 720px the page
 scrolls horizontally instead of compressing the layout. AS is omitted unless
@@ -75,6 +76,7 @@ values use a small tinted badge rather than coloring the whole cell.
 ## Summary and global pages
 
 Summary is the only selected-host detail view; there are no tabs. It contains
+the reason, KPI tiles, the RTT chart, recent events, and (under Details)
 statistics, enabled port checks and authorized target actions. It retains its
 height and action-button state during live measurements. Log is an independent
 `#log` page with the latest 200 events across all targets, unaffected by host

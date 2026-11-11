@@ -310,7 +310,7 @@ func TestDashboardAssetsAreServedWithBrowserTypes(t *testing.T) {
 		{"/js/app.js", "text/javascript"},
 		{"/js/model.js", "text/javascript"},
 		{"/js/table.js", "text/javascript"},
-		{"/js/graphs.js", "text/javascript"},
+		{"/js/summary_chart.js", "text/javascript"},
 		{"/js/inspect.js", "text/javascript"},
 		{"/js/timeline.js", "text/javascript"},
 		{"/js/columns.js", "text/javascript"},

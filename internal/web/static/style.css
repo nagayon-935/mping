@@ -78,7 +78,7 @@ body {
 /* Top bar */
 .topbar {
   position: sticky; top: 0; z-index: 2;
-  display: flex; flex-direction: column; align-items: stretch; gap: 4px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-height: 52px;
   padding: 8px 12px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -86,20 +86,39 @@ body {
 .brand { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: 0.02em; }
 .spacer { flex: 1; }
 
-.badge {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 2px 10px; border-radius: 999px;
-  background: var(--surface-2); color: var(--ink);
-  font-size: 12px; font-weight: 600;
-}
-.badge-icon { font-size: 11px; }
-.badge.lvl-ok .badge-icon { color: var(--series); }
-.badge.lvl-warn .badge-icon { color: var(--warning); }
-.badge.lvl-pending .badge-icon, .badge.lvl-stopped .badge-icon { color: var(--muted); }
+/* Fleet health: shape + count + label, tinted only when there is something
+   to see. Each pill filters the monitor. */
+.fleet { display: inline-flex; align-items: center; gap: 4px; margin: 0; padding: 3px; list-style: none;
+  border: 1px solid var(--border); border-radius: 999px; }
+.fleet-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; white-space: nowrap;
+  border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--ink-2);
+  font: 600 12px var(--font); cursor: pointer; }
+.fleet-pill strong { font-variant-numeric: tabular-nums; }
+.fleet-icon { font-size: 10px; }
+.fleet-pill.health-crit .fleet-icon { color: var(--critical); }
+.fleet-pill.health-warn .fleet-icon { color: var(--warning); }
+.fleet-pill.health-ok .fleet-icon { color: var(--good); }
+.fleet-pill.health-pending .fleet-icon { color: var(--muted); }
+.fleet-pill.health-crit:not(.is-zero) { background: var(--crit-tint); color: var(--critical-ink); }
+.fleet-pill.health-warn:not(.is-zero) { background: var(--warn-tint); color: var(--ink); }
+.fleet-pill.is-zero { font-weight: 400; }
+.fleet-pill:hover { border-color: var(--border); }
+.fleet-pill[aria-pressed=true] { border-color: var(--series); box-shadow: inset 0 0 0 1px var(--series); }
+.fleet-pill:disabled { cursor: default; opacity: .7; }
 
-.summary { display: flex; flex-wrap: nowrap; gap: 5px; overflow-x: auto; margin: 0; padding: 0; list-style: none; font-size: 13px; }
-.summary li { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-2); }
-.summary strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+/* Connection indicator: dot + one label + latest probe time. */
+.conn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.conn-label { color: var(--ink-2); font-weight: 600; }
+.conn.lvl-ok .conn-dot { background: var(--good); }
+.conn.lvl-warn .conn-dot { background: var(--warning); }
+.conn.lvl-warn .conn-label { color: var(--ink); }
+/* Stopped/ended: a hollow square, so the state does not rely on colour. */
+.conn.lvl-stopped .conn-dot { border-radius: 1px; background: transparent; box-shadow: inset 0 0 0 2px var(--ink-2); }
+.conn.lvl-stopped .conn-label { color: var(--ink); font-weight: 700; }
+.conn.lvl-pending .conn-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); }
+.btn-icon { min-width: 32px; padding: 6px 8px; }
 
 .filter {
   width: 240px; max-width: 100%;
@@ -138,16 +157,15 @@ body {
 .workspace {
   display: grid; width: 100%; gap: 12px; padding: 12px;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "monitor" "graphs";
+  grid-template-areas: "monitor";
 }
-.workspace.has-inspect { grid-template-areas: "monitor" "inspect" "graphs"; }
-.workspace.has-route { grid-template-areas: "monitor" "route" "graphs"; }
-.workspace.has-inspect.has-route { grid-template-areas: "monitor" "inspect" "route" "graphs"; }
-#pane-monitor { grid-area: monitor; max-height: clamp(260px, 60dvh, 640px); }
-#pane-inspect { grid-area: inspect; height: clamp(320px, 60dvh, 640px); }
+.workspace.has-inspect { grid-template-areas: "monitor" "inspect"; }
+.workspace.has-route { grid-template-areas: "monitor" "route"; }
+.workspace.has-inspect.has-route { grid-template-areas: "monitor" "inspect" "route"; }
+#pane-monitor { grid-area: monitor; max-height: clamp(320px, 75dvh, 900px); }
+#pane-inspect { grid-area: inspect; height: clamp(420px, 80dvh, 900px); }
 #pane-mtr { grid-area: route; height: 420px; }
 #pane-traceroute { grid-area: route; max-height: 420px; }
-#pane-graphs { grid-area: graphs; height: clamp(360px, 65dvh, 800px); }
 .pane { display: flex; flex-direction: column; min-height: 0; }
 .pane-scroll { flex: 1; min-height: 0; overflow: auto; }
 #pane-monitor .pane-scroll > .table-wrap { overflow: visible; }
@@ -219,7 +237,7 @@ body {
      loss <=5 chars, TTL <=3 chars; identity fields may be arbitrarily long. */
   --col-status: 168px; --col-host: 200px; --col-ip: 196px; --col-asn: 200px;
   --col-loss: 68px; --col-hop-loss: 96px; --col-rtt: 100px; --col-count: 88px;
-  --col-ttl: 60px;
+  --col-ttl: 60px; --col-spark: 144px;
   --col-url: 240px; --col-code: 64px; --col-port: 104px; --col-status-label: 96px;
   width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 14px;
 }
@@ -306,30 +324,59 @@ td.lvl-crit { background: var(--crit-tint); font-weight: 600; }
 .chart-caption { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
 
 
-/* RTT graphs pane: one card per target, all on the same time axis. Cards are
-   wide and tall enough to read a 5-minute trend (about one pixel per sample
-   at 1s), and grow with the window's height. */
-.graph-grid {
-  display: grid; gap: 12px; padding: 12px 16px 16px;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
-}
-.graph-card {
-  position: relative; min-width: 0; padding: 8px 10px 6px;
-  border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
-  cursor: pointer;
-}
-.graph-card:hover { background: var(--surface-2); }
-.graph-card[aria-pressed="true"] { border-color: var(--series); box-shadow: inset 0 0 0 1px var(--series); }
-.graph-head { display: flex; align-items: center; gap: 8px; min-width: 0; height: 20px; margin-bottom: 4px; font-size: 13px; }
-.graph-status .status { font-size: 12px; }
-.graph-host { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.graph-value { flex: none; width: 104px; text-align: right; font: 12px var(--mono); color: var(--ink-2); }
-.graph-value.is-lost { color: var(--critical-ink); font-weight: 600; }
-canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 280px); }
-
 /* Summary has one persistent header and no mode-switching tabs. */
 #pane-inspect > .pane-head { flex-wrap: nowrap; }
-#inspect-target { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 20px; }
+#inspect-target { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 18px; }
+.inspect-head { flex: 1; min-width: 0; }
+.inspect-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+#inspect-title { min-width: 0; font-size: 17px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#inspect-pill { flex: none; }
+.pill { display: inline-flex; padding: 1px 10px; border-radius: 999px; background: var(--surface-2); }
+.pill .status { font-size: 12px; }
+.pill.lvl-crit { background: var(--crit-tint); }
+.pill.lvl-crit .status { color: var(--critical-ink); }
+.pill.lvl-warn { background: var(--warn-tint); }
+.pill.lvl-warn .status { color: var(--ink); }
+
+/* Summary body: reason, KPI tiles, chart, events, details. */
+.reason-banner { display: flex; align-items: flex-start; gap: 10px; margin-top: 12px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); font-size: 13px; }
+.reason-banner > .status { flex: none; line-height: 20px; }
+.reason-lines { display: grid; gap: 2px; min-width: 0; line-height: 20px; color: var(--ink-2); overflow-wrap: anywhere; }
+.reason-lines strong { color: var(--ink); }
+.reason-banner.lvl-crit { background: var(--crit-tint); border-color: var(--critical); }
+.reason-banner.lvl-warn { background: var(--warn-tint); border-color: var(--warning); }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.kpi { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.kpi-label { color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.kpi-value { font: 600 20px/1.2 var(--mono); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kpi-sub { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.kpi.lvl-warn { background: var(--warn-tint); border-color: var(--warning); }
+.kpi.lvl-warn .kpi-sub, .kpi.lvl-crit .kpi-sub { color: var(--ink-2); }
+.kpi.lvl-crit { background: var(--crit-tint); border-color: var(--critical); }
+.kpi.lvl-crit .kpi-value { color: var(--critical-ink); }
+.kpi.lvl-warn .kpi-label::after { content: " ▲"; color: var(--warning); }
+.kpi.lvl-crit .kpi-label::after { content: " ■"; color: var(--critical); }
+.chart-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; }
+.chart-head h3 { margin: 0; }
+.chart-scale { color: var(--muted); font-size: 12px; }
+a.chart-scale { color: var(--series-ink); }
+.chart-head .tool select { padding: 2px 4px; font-size: 12px; }
+.summary-chart { position: relative; border-radius: 6px; }
+canvas.summary-canvas { display: block; width: 100%; height: clamp(180px, 26dvh, 280px); }
+.graph-readout { margin: 4px 0 0; min-height: 16px; color: var(--ink-2); font: 11px/16px var(--mono); overflow-wrap: anywhere; }
+.graph-empty { position: absolute; left: 52px; right: 12px; top: 40%; margin: 0; padding: 6px; background: var(--surface); color: var(--muted); font-size: 12px; }
+.event-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.event-list li { display: grid; grid-template-columns: 64px 92px minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.event-time { color: var(--muted); font: 12px var(--mono); }
+.event-kind { color: var(--ink-2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.event-kind .status { font-size: 12px; }
+.event-kind .status.lvl-crit { color: var(--critical-ink); }
+.event-text { min-width: 0; overflow-wrap: anywhere; }
+.inspect-details { margin-top: 16px; border-top: 1px solid var(--grid); }
+.inspect-details > summary { padding: 8px 0 0; cursor: pointer; color: var(--ink-2); font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .04em; }
 #close-inspect { flex: none; }
 .inspect-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 16px 16px; overflow-anchor: none; }
 .summary-columns { display: grid; gap: 0 32px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
@@ -355,10 +402,11 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
   body { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
   .topbar { flex: none; z-index: 5; }
   .workspace { flex: 1; min-height: 0; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
-    grid-template-rows: minmax(0, 3fr) minmax(0, 2fr);
-    grid-template-areas: "monitor monitor" "graphs graphs"; }
-  .workspace.has-inspect { grid-template-areas: "monitor inspect" "graphs graphs"; }
-  /* A route pane shares the lower row with graphs, so the top row shrinks to
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-areas: "monitor monitor"; }
+  .workspace.has-inspect { grid-template-areas: "monitor inspect"; }
+  /* Summary has the full height on the right. A route pane takes the lower
+     row under the monitor, so the top row shrinks to
      fit every host (up to 3/5) instead of leaving a few rows in empty space.
      workspace_view.js counts every host and group heading the unfiltered
      table draws and measures the header and scrollbar, so filtering never
@@ -368,48 +416,31 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
      spare. 136px fits the empty-state message
      and its button. */
   .workspace.has-route { grid-template-rows: fit-content(60%) minmax(0, 1fr);
-    grid-template-areas: "monitor monitor" "route graphs"; }
+    grid-template-areas: "monitor monitor" "route route"; }
   .workspace.has-route #pane-monitor .pane-scroll { flex: 1 1 auto;
     height: calc(var(--monitor-head, 32px) + var(--monitor-hscroll, 0px) + max(136px,
       var(--monitor-rows, 0) * var(--row-target) + var(--monitor-groups, 0) * var(--row-group))); }
-  .workspace.has-inspect.has-route { grid-template-areas: "monitor inspect" "route graphs"; }
-  /* Summary scrolls inside the monitor's height instead of growing the row
-     past the host table; 320px keeps a few facts in view. */
-  .workspace.has-inspect.has-route #pane-inspect { contain: size; min-height: 320px; }
+  .workspace.has-inspect.has-route { grid-template-areas: "monitor inspect" "route inspect"; }
+  /* Summary scrolls internally instead of sizing the rows. */
+  .workspace.has-inspect #pane-inspect { contain: size; min-height: 320px; }
   #workspace > .pane { height: auto; max-height: none; }
   .page-view { display: flex; flex: 1; min-height: 0; }
   .page-view > .pane { flex: 1; min-height: 0; }
 }
 
 @media (forced-colors: active) {
-  .status-icon, .badge-icon { forced-color-adjust: none; }
+  .status-icon, .fleet-icon { forced-color-adjust: none; }
 }
 
 /* Reserve scrollbar space so arrival of rows never changes column budgets. */
 .pane-scroll, .inspect-body { scrollbar-gutter: stable; }
-#measurement-controls { display: inline-flex; flex-wrap: nowrap; gap: 6px; margin-left: auto; }
-/* On narrow screens the control group moves to its own line as a whole. */
-.topbar > .header-row:first-child { flex-wrap: wrap; row-gap: 6px; }
-
-/* Stable global chrome and compact monitor controls. Live data cannot add rows. */
-.header-row { display: flex; align-items: center; gap: 10px; min-height: 34px; min-width: 0; }
-.header-status { font-size: 12px; white-space: nowrap; overflow: hidden; }
-.header-status > span { flex: none; }
-#updated { min-width: 145px; font-variant-numeric: tabular-nums; }
-#measurement-state { min-width: 152px; }
-#measurement-state.is-stopped { color: var(--ink); font-weight: 700; }
-#connection-note { overflow: hidden; text-overflow: ellipsis; flex: 1; }
-#measurement-action { min-width: 103px; }
-#open-auth { min-width: 132px; }
+#measurement-controls { display: inline-flex; flex-wrap: nowrap; gap: 6px; }
+/* Stable global chrome: live data never changes the header's height. */
+#updated { min-width: 17ch; }
+#measurement-action { min-width: 88px; }
+#open-auth { min-width: 96px; }
 #open-auth:disabled { opacity: 1; cursor: default; color: var(--ink-2); background: transparent; }
 .monitor-toolbar { flex: none; display: grid; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--grid); }
-.health-filter { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; white-space: nowrap;
-  border: 1px solid var(--border); border-radius: 5px; background: transparent; color: var(--ink-2); font: 12px var(--font); cursor: pointer; }
-.health-filter strong { min-width: 2ch; text-align: right; }
-.health-filter[aria-pressed=true] { background: var(--surface-2); border-color: var(--series); box-shadow: inset 0 0 0 1px var(--series); }
-.health-filter.health-crit > span:first-child { color: var(--critical); }
-.health-filter.health-warn > span:first-child { color: var(--warning); }
-.health-filter.health-ok > span:first-child { color: var(--good); }
 .monitor-filters { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .monitor-filters .filter { flex: 1; min-width: 80px; width: 200px; }
 .monitor-filters select { max-width: 160px; padding: 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--page); color: var(--ink); font: 12px var(--font); }
@@ -424,9 +455,7 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
 .trace-target.is-selected .trace-target-head strong::before { content: "SELECTED · "; color: var(--series-ink); font-size: 11px; }
 .locate-selected { min-width: 112px; }
 .selection-note { flex: none; padding: 4px 16px; margin: 0; background: var(--surface-2); }
-#monitor-hint, #graphs-cursor { height: 18px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.graph-readout { margin: 4px 0 0; height: 32px; font: 11px/16px var(--mono); overflow: hidden; }
-.graph-empty { position: absolute; left: 52px; right: 12px; top: 80px; margin: 0; padding: 6px; background: var(--surface); color: var(--muted); font-size: 12px; }
+#monitor-hint { height: 18px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #targets-empty p { margin: 0 0 12px; }
 .dialog-description { white-space: pre-line; margin: 0; color: var(--ink-2); font-size: 13px; overflow-wrap: anywhere; }
 .check-label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
@@ -440,12 +469,25 @@ canvas.graph-canvas { display: block; width: 100%; height: clamp(160px, 22dvh, 2
 #notice-message { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 #dismiss-notice { flex: none; padding: 0 6px; background: transparent; }
 .notice.is-error { border-left: 4px solid var(--critical); color: var(--ink); }
-@media (max-width: 1200px) { #updated { display: none; } .header-row { gap: 6px; } }
+@media (max-width: 1360px) { .topbar { column-gap: 8px; } }
+@media (max-width: 1200px) { #updated { display: none; } }
 .target-row:focus-within { outline: 2px dashed var(--focus); outline-offset: -2px; }
 .target-row:focus-within td { outline: none; }
 #targets .host-open:focus-visible { outline: none; }
 #mtr .mtr-target-row.is-selected .mtr-target-count::before { content: "Selected · "; color: var(--series-ink); }
-#pane-graphs .pane-head { display: grid; grid-template-columns: minmax(0,1fr); gap: 8px; }
-#pane-graphs .pane-tools { min-height: 32px; flex-wrap: nowrap; }
-#pane-graphs .pane-head > div:first-child { flex: 1; min-width: 0; }
-#graphs-cursor { min-width: 0; }
+
+/* One banner when most answering hosts breach the same threshold. */
+.common-cause { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 8px 12px 0;
+  padding: 8px 12px; border: 1px solid var(--warning); border-radius: 8px; background: var(--warn-tint); font-size: 13px; }
+.common-cause-icon { color: var(--warning); font-size: 11px; }
+.common-cause-detail { color: var(--ink-2); }
+.common-cause a { color: var(--series-ink); }
+
+/* Sparkline cell: the SVG keeps a fixed size so rows never change height. */
+.grid td.spark-cell { padding-top: 4px; padding-bottom: 4px; }
+.spark { display: block; overflow: visible; }
+.spark-base { stroke: var(--grid); stroke-width: 1; }
+.spark-line { fill: none; stroke: var(--series); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.spark-loss { stroke: var(--critical); stroke-width: 2; }
+.spark-dead { stroke: var(--critical); stroke-width: 2; stroke-dasharray: 3 3; }
+.spark-clip { fill: var(--critical-ink); }
