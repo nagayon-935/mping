@@ -36,9 +36,9 @@ type GraphView struct {
 	interval     time.Duration
 	scrollRow    int
 	includePorts bool
-	// strips draws one line per series over stripWindowSeconds instead of
-	// the tall chart grid (the main RTT pane; host details keep the grid).
-	strips bool
+	// mini draws a small chart per series over stripWindowSeconds instead
+	// of the tall chart grid (the main RTT pane; host details keep the grid).
+	mini bool
 
 	// Auto-scale state. Accessed from Draw only, which — like the rest of
 	// the ui package's mutable render state (see viewState, tableRenderer)
@@ -96,7 +96,7 @@ func (g *GraphView) windowPoints() int {
 		return 1
 	}
 	window := graphWindowSeconds * time.Second
-	if g.strips {
+	if g.mini {
 		window = stripWindowSeconds * time.Second
 	}
 	return max(int(window/g.interval), 1)
@@ -105,7 +105,7 @@ func (g *GraphView) windowPoints() int {
 // updateScale recalculates the auto-scale, applying hysteresis on shrink.
 func (g *GraphView) updateScale(dataMax time.Duration, now time.Time) {
 	floor := graphScaleFloorMs
-	if g.strips {
+	if g.mini {
 		floor = stripScaleFloorMs
 	}
 	newScale := computeYScale(dataMax, floor)
@@ -135,8 +135,9 @@ func (g *GraphView) InputHandler() func(event *tcell.EventKey, setFocus func(p t
 		// Without series or a drawable area layoutGraph has no visible rows,
 		// so the scroll resets to the top.
 		_, _, width, height := g.GetInnerRect()
-		if g.strips {
-			g.clampScroll(g.seriesCount(), max(height-1, 0))
+		if g.mini {
+			_, rows := miniLayout(g.seriesCount(), width)
+			g.clampScroll(rows, max((height-1)/miniCellRows, 0))
 			return
 		}
 		_, numRowsTotal, visibleRows, _, _ := layoutGraph(g.seriesCount(), width, height)
@@ -176,8 +177,8 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 	// Scale to the window's 95th percentile so one spike does not flatten
 	// every other sample; samples above the scale are marked instead.
 	g.updateScale(percentile95(seriesHistories(series), timeBasedWidth), time.Now())
-	if g.strips {
-		g.drawStrips(screen, series, x, y, width, height, timeBasedWidth)
+	if g.mini {
+		g.drawMiniGrid(screen, series, x, y, width, height, timeBasedWidth)
 		return
 	}
 	yMaxDur := time.Duration(g.currentScale.maxMs * float64(time.Millisecond))

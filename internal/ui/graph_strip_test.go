@@ -115,8 +115,8 @@ func TestStripStats(t *testing.T) {
 	}
 }
 
-func TestGraphViewDrawsOneStripPerTarget(t *testing.T) {
-	// Arrange: three targets, one of them lost.
+func TestGraphViewDrawsAMiniChartPerTarget(t *testing.T) {
+	// Arrange: three targets, one of them lost, in a 100-column pane.
 	var targets []*stats.TargetStats
 	for _, host := range []string{"1.1.1.1", "8.8.8.8", "192.0.2.1"} {
 		s := stats.NewTargetStats(host)
@@ -131,35 +131,80 @@ func TestGraphViewDrawsOneStripPerTarget(t *testing.T) {
 		targets = append(targets, s)
 	}
 	g := NewGraphView(targets, time.Second)
-	g.strips = true
+	g.mini = true
 	g.SetBorder(true)
 	screen := tcell.NewSimulationScreen("UTF-8")
 	if err := screen.Init(); err != nil {
 		t.Fatal(err)
 	}
 	defer screen.Fini()
-	screen.SetSize(100, 10)
-	g.SetRect(0, 0, 100, 10)
+	screen.SetSize(100, 12)
+	g.SetRect(0, 0, 100, 12)
 
 	// Act
 	g.Draw(screen)
 	screen.Show()
 
-	// Assert
-	lines := screenLines(screen, 100, 10)
-	if !strings.Contains(lines[1], "RTT 5m · scale 0–") {
+	// Assert: a legend, then two cells per row, each a header and 3 bar rows.
+	lines := screenLines(screen, 100, 12)
+	if !strings.Contains(lines[1], "RTT 5m · p95 scale per host") {
 		t.Errorf("legend line = %q", lines[1])
 	}
-	for i, host := range []string{"1.1.1.1", "8.8.8.8", "192.0.2.1"} {
-		if !strings.HasPrefix(strings.TrimLeft(lines[2+i], "│ "), host) {
-			t.Errorf("line %d = %q, want strip for %s", 2+i, lines[2+i], host)
+	if !strings.Contains(lines[2], "1.1.1.1") || !strings.Contains(lines[2], "8.8.8.8") {
+		t.Errorf("first cell row header = %q, want 1.1.1.1 and 8.8.8.8 side by side", lines[2])
+	}
+	if !strings.Contains(lines[6], "192.0.2.1") || !strings.Contains(lines[6], "loss 100%") {
+		t.Errorf("lost target header = %q, want loss 100%%", lines[6])
+	}
+	if !strings.Contains(lines[9], "×") {
+		t.Errorf("lost target bottom row = %q, want × marks", lines[9])
+	}
+	if got, want := g.preferredHeight(98), 1+2*miniCellRows+2; got != want {
+		t.Errorf("preferredHeight = %d, want %d", got, want)
+	}
+}
+
+func TestMiniLayout(t *testing.T) {
+	tests := []struct {
+		n, width, wantCols, wantRows int
+	}{
+		{0, 100, 1, 0},
+		{1, 100, 1, 1},
+		{3, 100, 2, 2},
+		{3, 70, 1, 3},
+	}
+	for _, tt := range tests {
+		if cols, rows := miniLayout(tt.n, tt.width); cols != tt.wantCols || rows != tt.wantRows {
+			t.Errorf("miniLayout(%d, %d) = %d, %d, want %d, %d", tt.n, tt.width, cols, rows, tt.wantCols, tt.wantRows)
 		}
 	}
-	if !strings.Contains(lines[4], "×") || !strings.Contains(lines[4], "loss 100%") {
-		t.Errorf("lost target strip = %q, want × marks and loss 100%%", lines[4])
+}
+
+func TestMiniColumn(t *testing.T) {
+	runes := func(col [miniPlotRows]miniCell) string {
+		var b strings.Builder
+		for i := miniPlotRows - 1; i >= 0; i-- {
+			b.WriteRune(col[i].r)
+		}
+		return b.String()
 	}
-	if got := g.preferredHeight(98); got != 3+1+2 {
-		t.Errorf("preferredHeight = %d, want %d", got, 3+1+2)
+	tests := []struct {
+		name   string
+		bucket stripBucket
+		want   string // top to bottom
+	}{
+		{"no samples", stripBucket{}, "   "},
+		{"all lost", stripBucket{lost: true, has: true}, "  ×"},
+		{"above scale", stripBucket{max: 680 * ms, has: true}, "▲██"},
+		{"half scale", stripBucket{max: 40 * ms, has: true}, " ▄█"},
+		{"tiny reply still shows", stripBucket{max: 1 * ms, has: true}, "  ▁"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := runes(miniColumn(tt.bucket, 80)); got != tt.want {
+				t.Errorf("miniColumn = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

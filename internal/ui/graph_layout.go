@@ -112,11 +112,12 @@ func gridStepsForHeight(plotHeight int) [4]int {
 
 // preferredHeight is the pane height (borders included) at which every
 // visible graph row gets graphPreferredRowHeight lines for the given inner
-// width, or, for strips, every series gets its line.
+// width, or, in mini mode, every series gets its cell.
 func (g *GraphView) preferredHeight(width int) int {
-	if g.strips {
-		// A legend line plus one line per series, inside the border.
-		return g.seriesCount() + 1 + 2
+	if g.mini {
+		// A legend line plus every row of cells, inside the border.
+		_, rows := miniLayout(g.seriesCount(), width)
+		return 1 + rows*miniCellRows + 2
 	}
 	_, _, visibleRows, _, _ := layoutGraph(g.seriesCount(), width, graphMaxVisibleRows*graphPreferredRowHeight)
 	return visibleRows*graphPreferredRowHeight + 2

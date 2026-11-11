@@ -55,8 +55,8 @@ func TestColumnGolden_FullLayout(t *testing.T) {
 	}{
 		{
 			name:       "NoDNSNoASN",
-			wantHeader: "║SRC   │DST                                                         │       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│RTT 60s           │    SIZE│     MTU│   TTL│LAST LOSS   ║",
-			wantData:   "║Auto  │example.com (93.184.216.34)                                 │         0│         0│        0.0%│           -│           -│           -│                  │      56│       -│     -│-           ║",
+			wantHeader: "║SRC   │DST                                                         │       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│    SIZE│     MTU│   TTL│LAST LOSS                      ║",
+			wantData:   "║Auto  │example.com (93.184.216.34)                                 │         0│         0│        0.0%│           -│           -│           -│      56│       -│     -│-                              ║",
 		},
 		{
 			// DNS's rendered width comes from the same render func used for
@@ -64,8 +64,8 @@ func TestColumnGolden_FullLayout(t *testing.T) {
 			// its own grow priority.
 			name:       "DNSOnly",
 			dns:        true,
-			wantHeader: "║SRC   │DST                                                │DNS      │       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│RTT 60s           │    SIZE│     MTU│   TTL│LAST LOSS  ║",
-			wantData:   "║Auto  │example.com (93.184.216.34)                        │8.8.8.8  │         0│         0│        0.0%│           -│           -│           -│                  │      56│       -│     -│-          ║",
+			wantHeader: "║SRC   │DST                                                         │DNS      │       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│    SIZE│     MTU│   TTL│LAST LOSS            ║",
+			wantData:   "║Auto  │example.com (93.184.216.34)                                 │8.8.8.8  │         0│         0│        0.0%│           -│           -│           -│      56│       -│     -│-                    ║",
 		},
 		{
 			// ASN's width is measured from the same render func used for the
@@ -74,15 +74,15 @@ func TestColumnGolden_FullLayout(t *testing.T) {
 			// "AS1513...".
 			name:       "ASNOnly",
 			asn:        true,
-			wantHeader: "║SRC   │DST                                       │               ASN│       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│RTT 60s           │    SIZE│     MTU│   TTL│LAST LOSS  ║",
-			wantData:   "║Auto  │example.com (93.184.216.34)               │  AS15133 EdgeCast│         0│         0│        0.0%│           -│           -│           -│                  │      56│       -│     -│-          ║",
+			wantHeader: "║SRC   │DST                                                         │               ASN│       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│    SIZE│     MTU│   TTL│LAST LOSS   ║",
+			wantData:   "║Auto  │example.com (93.184.216.34)                                 │  AS15133 EdgeCast│         0│         0│        0.0%│           -│           -│           -│      56│       -│     -│-           ║",
 		},
 		{
 			name:       "DNSAndASN",
 			dns:        true,
 			asn:        true,
-			wantHeader: "║SRC   │DST                             │DNS      │               ASN│       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│RTT 60s           │    SIZE│     MTU│   TTL│LAST LOSS  ║",
-			wantData:   "║Auto  │example.com (93.184.216.34)     │8.8.8.8  │  AS15133 EdgeCast│         0│         0│        0.0%│           -│           -│           -│                  │      56│       -│     -│-          ║",
+			wantHeader: "║SRC   │DST                                                │DNS      │               ASN│       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│    SIZE│     MTU│   TTL│LAST LOSS  ║",
+			wantData:   "║Auto  │example.com (93.184.216.34)                        │8.8.8.8  │  AS15133 EdgeCast│         0│         0│        0.0%│           -│           -│           -│      56│       -│     -│-          ║",
 		},
 	}
 	for i := range scenarios {
@@ -141,12 +141,12 @@ func TestColumnGolden_NarrowLayout(t *testing.T) {
 
 func TestColumnGolden_Groups(t *testing.T) {
 	const (
-		wantHeader        = "║SRC   │DST                                                         │       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│RTT 60s           │    SIZE│     MTU│   TTL│LAST LOSS   ║"
-		wantUngrouped     = "║Auto  │standalone.example.com (10.0.0.1)                           │         0│         0│        0.0%│           -│           -│           -│                  │      56│       -│     -│-           ║"
-		wantSpacer        = "║      │                                                            │          │          │            │            │            │            │                  │        │        │      │            ║"
-		wantGroupHeader   = "║      │ ▸ core  (1 hosts)                                          │          │          │            │            │            │            │                  │        │        │      │            ║"
+		wantHeader        = "║SRC   │DST                                                         │       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│    SIZE│     MTU│   TTL│LAST LOSS                      ║"
+		wantUngrouped     = "║Auto  │standalone.example.com (10.0.0.1)                           │         0│         0│        0.0%│           -│           -│           -│      56│       -│     -│-                              ║"
+		wantSpacer        = "║      │                                                            │          │          │            │            │            │            │        │        │      │                               ║"
+		wantGroupHeader   = "║      │ ▸ core  (1 hosts)                                          │          │          │            │            │            │            │        │        │      │                               ║"
 		wantSubHeader     = wantHeader
-		wantGroupedTarget = "║Auto  │grouped.example.com (10.0.0.2)                              │         0│         0│        0.0%│           -│           -│           -│                  │      56│       -│     -│-           ║"
+		wantGroupedTarget = "║Auto  │grouped.example.com (10.0.0.2)                              │         0│         0│        0.0%│           -│           -│           -│      56│       -│     -│-                              ║"
 	)
 	ungrouped := stats.NewTargetStats("standalone.example.com")
 	ungrouped.SetIP("10.0.0.1")

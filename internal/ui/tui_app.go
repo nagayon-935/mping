@@ -105,6 +105,10 @@ func (t *tui) buildLayout() {
 	mainLayout.SetBackgroundColor(tcell.ColorBlack)
 	t.controls = newPaneControls(t.app, mainLayout, t.header, t.pages, t.table, t.tablePane, func() int { return t.tr.rowCount }, t.sidePanes, t.graphView, t.vs.errorView)
 	t.controls.onTableResize = t.tr.ensureRenderedForSize
+	t.controls.onGraphShown = func(shown bool) {
+		t.tr.sparkHidden = shown
+		t.tr.update()
+	}
 	t.controls.rebuild()
 	t.root = tview.NewPages().AddPage("main", t.controls.view(), true, true)
 	t.details = newHostDetails(t.opts)

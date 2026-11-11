@@ -83,6 +83,9 @@ type columnOptions struct {
 // sparkWidth is the RTT sparkline column's width in cells.
 const sparkWidth = 16
 
+// sparkColumnName heads the RTT sparkline column.
+const sparkColumnName = "RTT 60s"
+
 // Hide ranks. Supplementary columns (defaults, values derivable from other
 // columns) go first; columns requested by an option go only after all of
 // them, the cheapest to infer first.
@@ -207,7 +210,7 @@ func mainTableColumns(o columnOptions) []column {
 	)
 	if o.SparkPoints > 0 {
 		cols = append(cols, column{
-			name: "RTT 60s", align: tview.AlignLeft, base: sparkWidth, min: sparkWidth, max: sparkWidth,
+			name: sparkColumnName, align: tview.AlignLeft, base: sparkWidth, min: sparkWidth, max: sparkWidth,
 			shrinkPriority: 5, growPriority: 130, hideRank: rankSpark,
 			render: func(ctx columnRowContext) string { return sparkline(ctx.view.History, o.SparkPoints, sparkWidth) },
 			color:  func(columnRowContext, string) (tcell.Color, bool) { return vividCyan, true },

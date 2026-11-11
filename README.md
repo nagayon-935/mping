@@ -28,7 +28,7 @@
 * **Port Monitor pane** — monitor TCP/UDP port reachability in real time with `-p`. Displays the estimated service name, **Last / Min / Avg / Max RTT** (measured from TCP connect or UDP round-trip), cumulative Open/Closed counts, and time since last status change. RTT statistics are collected for `Open` responses only.
 * **PMTU discovery** — IPv4 DF probes and IPv6 OS path-MTU estimates with echo confirmation.
 * **Auto source IP detection** — displays the bound source address or a representative automatically selected source for each address family.
-* **RTT graph** — one line per target covering the last 5 minutes, so every target is visible at once. The scale follows the 95th percentile of the window, so a single spike does not flatten the rest: samples above it are drawn as a red `▲` and lost probes as a red `×`, and each line ends with its p95 and maximum. The host details (Enter) keep a tall chart of the last 30 seconds, including TCP/UDP port series.
+* **RTT graph** — a small chart per target over the last 5 minutes, each on its own 95th-percentile scale so a single spike does not flatten the rest: samples above it are drawn as a red `▲` and lost probes as a red `×`, and each chart is headed by the latest RTT, p95 and maximum. The pane opens only while every target gets its chart; with more targets than fit it folds to one line and the Ping Monitor shows its **RTT 60s** sparkline column instead (the two are never shown together). Press **f** on the pane to open or fold it yourself. The host details (Enter) keep a tall chart of the last 30 seconds, including TCP/UDP port series.
 * **Statistics snapshots** — save an investigation report with current statistics as JSON or CSV from the TUI (`w`) or the Web UI's **Report** button.
 
 ## Supported platforms
@@ -456,7 +456,7 @@ Regenerate saved scripts after upgrading mping to include new flags. To monitor 
   * Override with `--rtt-warn/--rtt-crit`, `--jitter-warn/--jitter-crit`, `--loss-warn/--loss-crit`, or the `thresholds:` YAML block.
 * **SIZE** — Payload size of sent packets.
 * **MTU** — MTU of the specified or initially inferred outbound interface. With `-m` the column is **PMTU** and shows the discovered path MTU.
-* **RTT 60s** — Sparkline of the last 60 seconds of RTT (`▲` above the row's p95 scale, `×` lost).
+* **RTT 60s** — Sparkline of the last 60 seconds of RTT (`▲` above the row's p95 scale, `×` lost), shown while the RTT graph pane is folded.
 * **TTL** — IPv4 TTL or IPv6 Hop Limit of the last reply.
 * **ERR** — Abbreviated latest error message (red), shown only while some target has one. Full details appear in the Log pane.
 * **LAST LOSS** — Time elapsed since the last packet loss.

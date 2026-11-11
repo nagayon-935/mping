@@ -38,8 +38,16 @@ type paneControls struct {
 	table         *tview.Table
 	tablePane     *tview.Flex
 	onTableResize func()
-	panes         []*paneControl
-	maximized     *paneControl
+	// onGraphShown is told whether the RTT graph pane is open, whenever that
+	// changes: the Ping Monitor shows its sparkline column only while the
+	// graphs are folded.
+	onGraphShown func(shown bool)
+	// graphManual is set once the user folds or opens the RTT graph pane;
+	// until then fit opens it only while every series gets its chart.
+	graphManual                   bool
+	graphNotified, graphShownLast bool
+	panes                         []*paneControl
+	maximized                     *paneControl
 	// graph and log get special treatment in fit: the Log keeps a fixed
 	// height and grows only into spare rows, and the graph takes whatever
 	// rows remain after that.
@@ -109,8 +117,8 @@ func (c *paneControls) syncTableRect(width, paneHeight int) {
 
 // fit sizes the unfolded panes for a layout of the given inner size. The
 // Log keeps logLines of content; the other panes share the rest by content
-// and weight (see fitHeights). Rows nobody needs go first to the Log, up to
-// its content, then to the RTT graph. A maximized pane keeps the whole area.
+// and weight (see fitHeights). Rows nobody needs go to the Log. A maximized
+// pane keeps the whole area.
 func (c *paneControls) fit(width, height int) {
 	for _, pane := range c.panes {
 		if pane.titleFn != nil && pane.folded {
@@ -125,6 +133,7 @@ func (c *paneControls) fit(width, height int) {
 		}
 		return
 	}
+	c.autoFoldGraph(width, height)
 	avail := height - headerHeight - footerHeight
 	var others []*paneControl
 	logOpen := false
@@ -156,9 +165,9 @@ func (c *paneControls) fit(width, height int) {
 			spare -= grow
 		}
 		if spare > 0 {
-			switch i := slices.Index(others, c.graph); {
-			case i >= 0:
-				sizes[i] += spare
+			// The graphs never take more than their charts need: rows nobody
+			// needs go to the Log, where a longer history is useful.
+			switch {
 			case logOpen:
 				logSize += spare
 			case len(others) > 0:
@@ -181,6 +190,47 @@ func (c *paneControls) fit(width, height int) {
 	}
 	if logOpen {
 		c.layout.ResizeItem(c.log.content, logSize, 0)
+	}
+}
+
+// autoFoldGraph opens the RTT graph pane only while every series gets its
+// chart in the rows the other panes leave (each at its content height, the
+// Log at its base), and folds it otherwise, until the user folds or opens it
+// with 'f'. The inputs are pane content heights (host count, layout size),
+// not live values, so the state does not flip while data updates.
+func (c *paneControls) autoFoldGraph(width, height int) {
+	if c.graph == nil {
+		return
+	}
+	if !c.graphManual {
+		room := height - headerHeight - footerHeight
+		for _, pane := range c.panes {
+			switch {
+			case pane == c.graph:
+			case pane.folded:
+				room--
+			case pane == c.log:
+				room -= logLines + 2
+			default:
+				room -= max(pane.desired(width), paneMinHeight)
+			}
+		}
+		if fold := room < c.graph.desired(width); fold != c.graph.folded {
+			// fit runs inside Draw, which holds the application lock:
+			// query focus through the primitives, and move it after the draw.
+			focused := c.graph.focus.HasFocus() || c.graph.stub.HasFocus()
+			c.graph.folded = fold
+			c.rebuild()
+			if focused {
+				go c.app.QueueUpdateDraw(func() { c.focus(c.graph) })
+			}
+		}
+	}
+	if shown := !c.graph.folded; !c.graphNotified || shown != c.graphShownLast {
+		c.graphNotified, c.graphShownLast = true, shown
+		if c.onGraphShown != nil {
+			c.onGraphShown(shown)
+		}
 	}
 }
 
@@ -260,6 +310,9 @@ func (c *paneControls) handle(event *tcell.EventKey) bool {
 	}
 	switch event.Rune() {
 	case 'f':
+		if pane == c.graph {
+			c.graphManual = true
+		}
 		c.maximized = nil
 		pane.folded = !pane.folded
 		c.rebuild()

@@ -10,19 +10,24 @@ import (
 	"github.com/rivo/tview"
 )
 
-// The main RTT pane draws one line per series ("strips") so every target is
-// visible at once; the host details pane keeps the tall grid chart.
+// The main RTT pane draws a small chart per series ("mini" mode): a header
+// line and miniPlotRows of bars over the last stripWindowSeconds. It is shown
+// only while every series gets its cell; otherwise the pane folds and the
+// Ping Monitor's sparkline column takes its place (see paneControls.fit).
+// The host details pane keeps the tall grid chart.
 const (
-	stripWindowSeconds = 300  // trailing window of a strip
-	stripLabelMaxWidth = 20   // widest series label
-	stripStatsWidth    = 22   // "p95 48.9ms  max ▲680ms"
-	stripScaleFloorMs  = 10.0 // smallest strip scale top, in ms
+	stripWindowSeconds = 300  // trailing window of a mini chart
+	stripScaleFloorMs  = 10.0 // smallest mini chart / sparkline scale top, in ms
+	miniPlotRows       = 3    // bar rows of a mini chart
+	miniCellRows       = miniPlotRows + 1
+	miniLabelWidth     = 6  // "680ms" scale label at the right
+	miniMinCellWidth   = 40 // narrowest cell for two cells side by side
 )
 
 // stripRunes are the eighth-height blocks a strip sample is drawn with.
 var stripRunes = []rune("▁▂▃▄▅▆▇█")
 
-// stripBucket is one screen column of a strip: the slowest reply among the
+// stripBucket is one screen column of a chart: the slowest reply among the
 // samples it covers, and whether any of them was lost.
 type stripBucket struct {
 	max  time.Duration
@@ -133,44 +138,108 @@ func formatShortMs(d time.Duration) string {
 	return fmt.Sprintf("%.0fms", ms)
 }
 
-// stripLabelWidth is the label column width: the widest label, capped.
-func stripLabelWidth(series []graphSeries) int {
-	w := 0
-	for _, s := range series {
-		w = max(w, runewidth.StringWidth(s.label))
+// miniLayout returns how many mini-chart columns fit in width and how many
+// rows of cells n series need.
+func miniLayout(n, width int) (cols, rows int) {
+	if n <= 0 {
+		return 1, 0
 	}
-	return min(w, stripLabelMaxWidth)
+	cols = 1
+	if n > 1 && width >= 2*miniMinCellWidth {
+		cols = 2
+	}
+	return cols, (n + cols - 1) / cols
 }
 
-// drawStrips draws a legend line and then one strip per series, from the
-// scrolled-to series down, in the rectangle at (x, y).
-func (g *GraphView) drawStrips(screen tcell.Screen, series []graphSeries, x, y, width, height, windowPoints int) {
-	scaleMs := g.currentScale.maxMs
-	legend := fmt.Sprintf("RTT %s · scale 0–%.0fms (p95) · ▲ above scale · × lost", formatWindow(windowPoints, g.interval), scaleMs)
+// miniCell is one screen cell of a mini chart column.
+type miniCell struct {
+	r     rune
+	color tcell.Color
+}
+
+// miniColumn draws one bucket as miniPlotRows cells, bottom first: blank
+// without samples, a red × at the bottom when every sample was lost, a full
+// bar topped by a red ▲ above the scale, otherwise a bar in eighths (red
+// when some samples in it were lost).
+func miniColumn(b stripBucket, scaleMs float64) [miniPlotRows]miniCell {
+	var col [miniPlotRows]miniCell
+	for i := range col {
+		col[i] = miniCell{' ', tcell.ColorDefault}
+	}
+	switch {
+	case !b.has:
+		return col
+	case b.max == 0:
+		col[0] = miniCell{'×', vividRed}
+		return col
+	case float64(b.max)/float64(time.Millisecond) > scaleMs:
+		for i := range col {
+			col[i] = miniCell{'█', vividCyan}
+		}
+		col[miniPlotRows-1] = miniCell{'▲', vividRed}
+		return col
+	}
+	color := vividCyan
+	if b.lost {
+		color = vividRed
+	}
+	levels := max(int(float64(b.max)/float64(time.Millisecond)/scaleMs*miniPlotRows*8), 1)
+	for i := range col {
+		switch lvl := levels - i*8; {
+		case lvl >= 8:
+			col[i] = miniCell{'█', color}
+		case lvl > 0:
+			col[i] = miniCell{stripRunes[lvl-1], color}
+		}
+	}
+	return col
+}
+
+// drawMiniGrid draws a legend line and then one small chart per series
+// (a header line and miniPlotRows of bars over the window, each on its own
+// p95 scale), two to a row when the width allows, from the scrolled-to row.
+func (g *GraphView) drawMiniGrid(screen tcell.Screen, series []graphSeries, x, y, width, height, windowPoints int) {
+	legend := fmt.Sprintf("RTT %s · p95 scale per host · ▲ above scale · × lost", formatWindow(windowPoints, g.interval))
 	tview.Print(screen, legend, x, y, width, tview.AlignLeft, tcell.ColorGray)
 
-	labelW := stripLabelWidth(series)
-	barsW := width - labelW - stripStatsWidth - 2
-	if barsW < graphMinWidth {
-		barsW = max(width-labelW-1, 1)
+	cols, rows := miniLayout(len(series), width)
+	visible := max((height-1)/miniCellRows, 0)
+	g.clampScroll(rows, visible)
+	cellW := width / cols
+	for r := range visible {
+		for c := range cols {
+			idx := (g.scrollRow+r)*cols + c
+			if idx >= len(series) {
+				return
+			}
+			g.drawMiniCell(screen, series[idx], x+c*cellW, y+1+r*miniCellRows, cellW, windowPoints)
+		}
 	}
-	rows := max(height-1, 0)
-	g.clampScroll(len(series), rows)
-	for r := range rows {
-		idx := g.scrollRow + r
-		if idx >= len(series) {
-			break
+}
+
+// drawMiniCell draws one series: its label, latest RTT and window summary,
+// then the bars with the scale top, middle and zero at the right.
+func (g *GraphView) drawMiniCell(screen tcell.Screen, s graphSeries, x, y, width, windowPoints int) {
+	scaleMs := computeYScale(percentile95([][]time.Duration{s.history}, windowPoints), stripScaleFloorMs).maxMs
+	last := "-"
+	if s.lastRTT > 0 {
+		last = formatShortMs(s.lastRTT)
+	}
+	label := truncateToDisplayWidth(s.label, max(width/2, 8))
+	tview.Print(screen, label, x+1, y, width-1, tview.AlignLeft, tcell.ColorYellow)
+	info := fmt.Sprintf("  %s  %s", last, stripStats(s.history, windowPoints, scaleMs))
+	infoX := x + 1 + runewidth.StringWidth(label)
+	tview.Print(screen, info, infoX, y, max(x+width-infoX-1, 0), tview.AlignLeft, tcell.ColorGray)
+
+	plotW := max(width-miniLabelWidth-3, 1)
+	for i, b := range bucketHistory(s.history, windowPoints, plotW) {
+		for row, cell := range miniColumn(b, scaleMs) {
+			screen.SetContent(x+1+i, y+miniPlotRows-row, cell.r, nil, tcell.StyleDefault.Foreground(cell.color).Background(tcell.ColorBlack))
 		}
-		s := series[idx]
-		rowY := y + 1 + r
-		tview.Print(screen, truncateToDisplayWidth(s.label, labelW), x, rowY, labelW, tview.AlignLeft, tcell.ColorYellow)
-		for i, b := range bucketHistory(s.history, windowPoints, barsW) {
-			ch, color := stripCell(b, scaleMs)
-			screen.SetContent(x+labelW+1+i, rowY, ch, nil, tcell.StyleDefault.Foreground(color).Background(tcell.ColorBlack))
-		}
-		if statsX := x + labelW + 1 + barsW + 1; statsX < x+width {
-			tview.Print(screen, stripStats(s.history, windowPoints, scaleMs), statsX, rowY, x+width-statsX, tview.AlignLeft, tcell.ColorGray)
-		}
+	}
+	labels := [miniPlotRows]string{formatShortMs(time.Duration(scaleMs * float64(time.Millisecond))), "", "0"}
+	for row, text := range labels {
+		tview.Print(screen, text, x+2+plotW, y+1+row, miniLabelWidth, tview.AlignLeft, tcell.ColorGray)
 	}
 }
 
