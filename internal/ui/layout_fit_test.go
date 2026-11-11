@@ -198,10 +198,10 @@ func TestPaneControlsFitLogGrowthDoesNotShrinkOtherPanes(t *testing.T) {
 	}
 }
 
-func TestPaneControlsFitSpareRowsGoToOpenGraphThenTable(t *testing.T) {
-	// Every pane fits, so the graphs open at up to their preferred height;
-	// the rows left over go to the Ping Monitor and the log keeps its base
-	// height however long it is.
+func TestPaneControlsFitSpareRowsFillPingMonitorThenGraph(t *testing.T) {
+	// Every pane fits, so the graphs open. Spare rows first let the Ping
+	// Monitor hold pingMonitorHosts hosts, then go to the graphs; the log
+	// keeps its base height however long it is.
 	f := newFitFixture(t, 20)
 	for i := range 12 {
 		f.vs.appendLog(fmt.Sprintf("message %d", i))
@@ -215,15 +215,15 @@ func TestPaneControlsFitSpareRowsGoToOpenGraphThenTable(t *testing.T) {
 	if got := paneHeight(f.log); got != fixedLogHeight {
 		t.Errorf("log pane height = %d, want its base %d", got, fixedLogHeight)
 	}
-	if got, want := paneHeight(f.graph), f.graph.maxHeight(198); got != want {
-		t.Errorf("graph height = %d, want its maximum %d", got, want)
+	if got := paneHeight(f.table); got != pingMonitorHeight {
+		t.Errorf("ping pane height = %d, want %d (room for %d hosts)", got, pingMonitorHeight, pingMonitorHosts)
 	}
-	if got, want := paneHeight(f.table), 150-3-11-22-fixedLogHeight-f.graph.maxHeight(198); got != want {
-		t.Errorf("ping pane height = %d, want the remaining %d rows", got, want)
+	if got, want := paneHeight(f.graph), 150-3-pingMonitorHeight-11-22-fixedLogHeight; got != want {
+		t.Errorf("graph height = %d, want the remaining %d rows", got, want)
 	}
 }
 
-func TestPaneControlsFitCapsGraphAtMaxHeight(t *testing.T) {
+func TestPaneControlsFitReservesPingMonitorRows(t *testing.T) {
 	table := tview.NewTable()
 	tablePane := tview.NewFlex().AddItem(table, 0, 1, true)
 	graph := NewGraphView([]*stats.TargetStats{stats.NewTargetStats("a")}, time.Second)
@@ -240,11 +240,11 @@ func TestPaneControlsFitCapsGraphAtMaxHeight(t *testing.T) {
 	}
 	defer screen.Fini()
 	view.Draw(screen)
-	if got, want := paneHeight(graph), graph.maxHeight(118); got != want {
-		t.Errorf("graph height = %d, want its maximum %d", got, want)
+	if got := paneHeight(tablePane); got != pingMonitorHeight {
+		t.Errorf("ping pane height = %d, want %d", got, pingMonitorHeight)
 	}
-	if got, want := paneHeight(tablePane), 60-3-fixedLogHeight-graph.maxHeight(118); got != want {
-		t.Errorf("ping pane height = %d, want the remaining %d rows", got, want)
+	if got, want := paneHeight(graph), 60-3-pingMonitorHeight-fixedLogHeight; got != want {
+		t.Errorf("graph height = %d, want the remaining %d rows", got, want)
 	}
 }
 
@@ -325,7 +325,7 @@ func TestPaneControlsFitLogStaysSmallWhileGraphOpen(t *testing.T) {
 	if got := paneHeight(log); got != fixedLogHeight {
 		t.Errorf("log height = %d, want its base %d while the graphs are open", got, fixedLogHeight)
 	}
-	if got, want := paneHeight(graph), min(graph.maxHeight(118), 40-3-5-fixedLogHeight); got != want {
+	if got, want := paneHeight(graph), 40-3-pingMonitorHeight-fixedLogHeight; got != want {
 		t.Errorf("graph height = %d, want %d", got, want)
 	}
 }
