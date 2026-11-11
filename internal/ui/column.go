@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/mattn/go-runewidth"
 	"github.com/rivo/tview"
 
 	"github.com/nagayon-935/mping/internal/stats"
@@ -55,6 +56,10 @@ type column struct {
 	// hideWhenEmpty drops the column whenever no row has a value for it
 	// (every cell empty or "-"), however wide the terminal is.
 	hideWhenEmpty bool
+	// styled, when set, returns the cell text with tview color tags; it must
+	// have the same width on screen as render's text, which is what widths
+	// are measured from.
+	styled func(ctx columnRowContext) string
 	// fill marks the column that takes the table's spare width; other text
 	// columns grow only a little past their content.
 	fill bool
@@ -217,7 +222,10 @@ func mainTableColumns(o columnOptions) []column {
 			name: sparkColumnName, align: tview.AlignLeft, base: sparkWidth, min: sparkWidth, max: sparkWidth,
 			shrinkPriority: 5, growPriority: 130, hideRank: rankSpark,
 			render: func(ctx columnRowContext) string { return sparkline(ctx.view.History, o.SparkPoints, sparkWidth) },
-			color:  func(columnRowContext, string) (tcell.Color, bool) { return vividCyan, true },
+			styled: func(ctx columnRowContext) string {
+				return sparklineStyled(ctx.view.History, o.SparkPoints, sparkWidth)
+			},
+			color: func(columnRowContext, string) (tcell.Color, bool) { return vividCyan, true },
 		})
 	}
 	cols = append(cols,
@@ -293,7 +301,12 @@ func renderRowTexts(cols []column, ctx columnRowContext) []string {
 func renderRowCells(cols []column, texts []string, widths, aligns []int, ctx columnRowContext, rowColor tcell.Color) []*tview.TableCell {
 	cells := make([]*tview.TableCell, len(cols))
 	for i, c := range cols {
-		cell := tview.NewTableCell(formatCellText(texts[i], widths[i], aligns[i])).
+		text := formatCellText(texts[i], widths[i], aligns[i])
+		if c.styled != nil && aligns[i] == tview.AlignLeft && widths[i] >= runewidth.StringWidth(texts[i]) {
+			// Not cut: color the cells by loss, padded like formatCellText.
+			text = c.styled(ctx) + strings.Repeat(" ", widths[i]-runewidth.StringWidth(texts[i]))
+		}
+		cell := tview.NewTableCell(text).
 			SetBackgroundColor(tcell.ColorBlack).
 			SetTextColor(rowColor).
 			SetAlign(aligns[i])

@@ -445,7 +445,7 @@ mping completion fish > ~/.config/fish/completions/mping.fish
   * `--rtt-warn/--rtt-crit`、`--jitter-warn/--jitter-crit`、`--loss-warn/--loss-crit`、または YAML の `thresholds:` ブロックで上書きできます。
 * **SIZE**: 送信パケットのペイロードサイズ。
 * **MTU**: 明示指定した、または起動時に推定した送出インターフェイスの MTU。`-m` 指定時は **PMTU** 列になり、調べた経路 MTU を表示します。
-* **RTT 60s**: 直近 60 秒の RTT のスパークライン (`▲` は行ごとの p95 スケール超え、`×` はロス)。
+* **RTT 60s**: 直近 60 秒の RTT のスパークライン (`▲` は行ごとの p95 スケール超え)。ロスのないマスはシアン、一部ロスはオレンジ、全ロスは赤い `×` で表示します。
 * **TTL**: 最後の応答の IPv4 TTL または IPv6 Hop Limit。
 * **ERR**: 最新エラーの短縮メッセージを表示 (赤色)。エラーのあるターゲットがあるときだけ表示します。詳細は Log ペインに表示されます。
 * **LAST LOSS**: 最後にパケットロスが発生してからの経過時間。

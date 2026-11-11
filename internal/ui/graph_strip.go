@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -71,25 +73,31 @@ func percentile95(histories [][]time.Duration, windowPoints int) time.Duration {
 }
 
 // stripCell is the rune and color one bucket is drawn with against a scale
-// top of scaleMs: blank without samples, a red × when every sample was lost,
-// a red ▲ above the scale, otherwise a block whose height follows the RTT
-// (red when some samples in it were lost).
+// top of scaleMs. The color says how much of the bucket was lost: red with
+// a × when every probe was lost (100%), orange when some were, cyan when
+// none were. The rune is blank without samples, ▲ above the scale, and
+// otherwise a block whose height follows the slowest reply.
 func stripCell(b stripBucket, scaleMs float64) (rune, tcell.Color) {
-	switch {
-	case !b.has:
+	if !b.has {
 		return ' ', tcell.ColorDefault
-	case b.max == 0:
+	}
+	if b.max == 0 {
 		return '×', vividRed
-	case float64(b.max)/float64(time.Millisecond) > scaleMs:
-		return '▲', vividRed
+	}
+	color := vividCyan
+	if b.lost {
+		color = lossPartialColor
+	}
+	if float64(b.max)/float64(time.Millisecond) > scaleMs {
+		return '▲', color
 	}
 	ratio := float64(b.max) / float64(time.Millisecond) / scaleMs
-	r := stripRunes[min(int(ratio*float64(len(stripRunes))), len(stripRunes)-1)]
-	if b.lost {
-		return r, vividRed
-	}
-	return r, vividCyan
+	return stripRunes[min(int(ratio*float64(len(stripRunes))), len(stripRunes)-1)], color
 }
+
+// lossPartialColor marks a sparkline cell where some, not all, probes were
+// lost.
+var lossPartialColor = tcell.ColorOrange
 
 // sparkline draws the trailing windowPoints samples of history in width
 // cells against the samples' own p95 scale, with the same marks as a strip
@@ -103,4 +111,24 @@ func sparkline(history []time.Duration, windowPoints, width int) string {
 		runes = append(runes, r)
 	}
 	return string(runes)
+}
+
+// sparklineStyled is sparkline with tview color tags around the cells with
+// loss (orange for some, red for all), for the Ping Monitor cell whose own
+// text color (cyan) draws the rest. It has the same width on screen.
+func sparklineStyled(history []time.Duration, windowPoints, width int) string {
+	scaleMs := computeYScale(percentile95([][]time.Duration{history}, windowPoints), stripScaleFloorMs).maxMs
+	var b strings.Builder
+	for _, bucket := range bucketHistory(history, windowPoints, width) {
+		r, color := stripCell(bucket, scaleMs)
+		switch color {
+		case vividRed:
+			fmt.Fprintf(&b, "[red]%c[-]", r)
+		case lossPartialColor:
+			fmt.Fprintf(&b, "[orange]%c[-]", r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

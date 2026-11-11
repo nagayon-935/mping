@@ -1,10 +1,13 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/mattn/go-runewidth"
+	"github.com/rivo/tview"
 )
 
 const ms = time.Millisecond
@@ -77,10 +80,11 @@ func TestStripCell(t *testing.T) {
 	}{
 		{"no samples", stripBucket{}, ' ', tcell.ColorDefault},
 		{"all lost", stripBucket{lost: true, has: true}, '×', vividRed},
-		{"above scale", stripBucket{max: 680 * ms, has: true}, '▲', vividRed},
+		{"above scale", stripBucket{max: 680 * ms, has: true}, '▲', vividCyan},
+		{"above scale with some loss", stripBucket{max: 680 * ms, lost: true, has: true}, '▲', lossPartialColor},
 		{"low reply", stripBucket{max: 1 * ms, has: true}, '▁', vividCyan},
 		{"top of scale", stripBucket{max: 80 * ms, has: true}, '█', vividCyan},
-		{"reply with some loss", stripBucket{max: 40 * ms, lost: true, has: true}, '▅', vividRed},
+		{"reply with some loss", stripBucket{max: 40 * ms, lost: true, has: true}, '▅', lossPartialColor},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -89,5 +93,21 @@ func TestStripCell(t *testing.T) {
 				t.Errorf("stripCell = %q/%v, want %q/%v", r, c, tt.wantRune, tt.wantColor)
 			}
 		})
+	}
+}
+
+func TestSparklineStyledColorsLoss(t *testing.T) {
+	// Arrange: 4 buckets of 2 samples: no loss, some loss, all lost, empty.
+	history := []time.Duration{10 * ms, 12 * ms, 10 * ms, 0, 0, 0}
+
+	// Act
+	got := sparklineStyled(history, 8, 4)
+
+	// Assert
+	if !strings.Contains(got, "[orange]") || !strings.Contains(got, "[red]×[-]") {
+		t.Errorf("sparklineStyled = %q, want orange for some loss and a red × for all lost", got)
+	}
+	if plain := sparkline(history, 8, 4); tview.TaggedStringWidth(got) != runewidth.StringWidth(plain) {
+		t.Errorf("styled width %d != plain width %d", tview.TaggedStringWidth(got), runewidth.StringWidth(plain))
 	}
 }

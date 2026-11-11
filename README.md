@@ -456,7 +456,7 @@ Regenerate saved scripts after upgrading mping to include new flags. To monitor 
   * Override with `--rtt-warn/--rtt-crit`, `--jitter-warn/--jitter-crit`, `--loss-warn/--loss-crit`, or the `thresholds:` YAML block.
 * **SIZE** — Payload size of sent packets.
 * **MTU** — MTU of the specified or initially inferred outbound interface. With `-m` the column is **PMTU** and shows the discovered path MTU.
-* **RTT 60s** — Sparkline of the last 60 seconds of RTT (`▲` above the row's p95 scale, `×` lost).
+* **RTT 60s** — Sparkline of the last 60 seconds of RTT (`▲` above the row's p95 scale). Cells are cyan without loss, orange when some probes in them were lost, and a red `×` when all were.
 * **TTL** — IPv4 TTL or IPv6 Hop Limit of the last reply.
 * **ERR** — Abbreviated latest error message (red), shown only while some target has one. Full details appear in the Log pane.
 * **LAST LOSS** — Time elapsed since the last packet loss.
