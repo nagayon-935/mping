@@ -311,3 +311,35 @@ func TestPlanColumns_SparklineOutlivesSupplementaryColumns(t *testing.T) {
 		t.Errorf("at the narrowest width the sparkline should hide too: %v", plan.hidden)
 	}
 }
+
+func TestPlanColumns_TableSpansWideTerminals(t *testing.T) {
+	// Arrange
+	tr, texts := newPlanRenderer(t, []*stats.TargetStats{replyingTarget("10.0.0.1", 12*time.Millisecond)}, columnOptions{})
+
+	for _, width := range []int{120, 200, 300} {
+		// Act
+		plan := tr.planColumns(texts, width)
+
+		// Assert: columns plus separators fill the width exactly.
+		sum := len(plan.widths) - 1
+		for _, w := range plan.widths {
+			sum += w
+		}
+		if !plan.ok || sum != width {
+			t.Errorf("width %d: columns span %d (ok %v)", width, sum, plan.ok)
+		}
+	}
+}
+
+func TestStretchToWidth(t *testing.T) {
+	widths := []int{4, 6, 8}
+	stretchToWidth(widths, 25)
+	if want := []int{7, 8, 10}; !slices.Equal(widths, want) {
+		t.Errorf("widths = %v, want %v", widths, want)
+	}
+	unchanged := []int{4, 6}
+	stretchToWidth(unchanged, 5)
+	if want := []int{4, 6}; !slices.Equal(unchanged, want) {
+		t.Errorf("already full: widths = %v, want %v", unchanged, want)
+	}
+}

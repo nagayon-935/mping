@@ -140,7 +140,31 @@ func (tr *tableRenderer) fitColumns(active, desired, minW, maxW []int, available
 		return out
 	}
 	available := max(availableTableWidth-max(len(active)-1, 0), 0)
-	return fitWidthsToAvailable(pick(desired), pick(minW), pick(maxW), pick(tr.shrinkPriorities), pick(tr.growPriorities), available)
+	widths, ok := fitWidthsToAvailable(pick(desired), pick(minW), pick(maxW), pick(tr.shrinkPriorities), pick(tr.growPriorities), available)
+	if ok {
+		stretchToWidth(widths, available)
+	}
+	return widths, ok
+}
+
+// stretchToWidth spreads the width left once every column reached its
+// maximum evenly over all columns, so the table always spans the pane as
+// the terminal widens instead of leaving a gap before the right border.
+func stretchToWidth(widths []int, available int) {
+	sum := 0
+	for _, w := range widths {
+		sum += w
+	}
+	if len(widths) == 0 || sum >= available {
+		return
+	}
+	extra := available - sum
+	for j := range widths {
+		widths[j] += extra / len(widths)
+	}
+	for j := range extra % len(widths) {
+		widths[j]++
+	}
 }
 
 // paneTitle names the Ping Monitor pane and, when columns are hidden for
