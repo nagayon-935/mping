@@ -33,7 +33,7 @@ type column struct {
 	align          int
 	base, min, max int
 	// dynamic marks a column whose width should track the widest rendered
-	// value across all targets (Src/Dst IP, DNS, ASN, PTR), rather than staying
+	// value across all targets (SRC/DST, DNS, ASN, PTR), rather than staying
 	// fixed at base.
 	dynamic bool
 	// shrinkPriority/growPriority order columns when fitting to available
@@ -48,24 +48,82 @@ type column struct {
 	// bold marks a column whose color override (when it fires) should also
 	// set AttrBold.
 	bold bool
+	// hideRank orders the columns dropped when the terminal is too narrow to
+	// show every column at its full content width: lower ranks are hidden
+	// first, and 0 marks a core column that is never hidden.
+	hideRank int
+	// hideWhenEmpty drops the column whenever no row has a value for it
+	// (every cell empty or "-"), however wide the terminal is.
+	hideWhenEmpty bool
+	// fill marks the column that takes the table's spare width; other text
+	// columns grow only a little past their content.
+	fill bool
+	// setting marks a column that shows configuration rather than a
+	// measurement (payload size, source address, interface MTU): hidden, its
+	// value moves to the pane title when every row shares it.
+	setting bool
+}
+
+// columnOptions says which optional columns exist and which columns the user
+// asked for explicitly. A column the user asked for (-s, -S/-I, -d, -a, -r,
+// -m) outlives every supplementary column when columns must be hidden.
+type columnOptions struct {
+	DNS            bool // some target was resolved through a DNS server
+	DNSExplicit    bool // -d
+	ASN            bool // -a
+	PTR            bool // -r
+	SourceExplicit bool // -S or -I
+	SizeExplicit   bool // -s with a non-default payload size
+	MTU            bool // -m: the MTU column shows the discovered path MTU
+}
+
+// Hide ranks. Supplementary columns (defaults, values derivable from other
+// columns) go first; columns requested by an option go only after all of
+// them, the cheapest to infer first.
+const (
+	rankSize = iota + 1
+	rankMTU
+	rankSrc
+	rankDNS
+	rankLastLoss
+	rankLost
+	rankRecv
+	rankTTL
+	rankAvg
+	rankSizeExplicit
+	rankSrcExplicit
+	rankDNSExplicit
+	rankASN
+	rankPTR
+	rankMTUExplicit
+)
+
+// explicitRank returns explicit when the user asked for the column, else
+// supplementary.
+func explicitRank(asked bool, explicit, supplementary int) int {
+	if asked {
+		return explicit
+	}
+	return supplementary
 }
 
 // mainTableColumns returns the Ping Monitor table's column schema in display
-// order. DNS/ASN/PTR are inserted after Dst IP only when enabled; every column
-// carries its own shrink/grow priority, so enabling them cannot desync width
-// adjustment.
-func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled bool) []column {
+// order. DNS/ASN/PTR are inserted after DST only when enabled; every column
+// carries its own shrink/grow priority and hide rank, so enabling them cannot
+// desync width adjustment.
+func mainTableColumns(o columnOptions) []column {
 	cols := []column{
 		{
-			name: "Src IP", align: tview.AlignLeft, base: 6, min: 4, max: 45,
+			name: "SRC", align: tview.AlignLeft, base: 6, min: 4, max: 45,
 			dynamic: true, shrinkPriority: 20, growPriority: 10,
+			hideRank: explicitRank(o.SourceExplicit, rankSrcExplicit, rankSrc), setting: true,
 			render: func(ctx columnRowContext) string {
 				return displaySourceIPForDst(ctx.view.IP, ctx.sourceIPv4, ctx.sourceIPv6)
 			},
 		},
 		{
-			name: "Dst IP", align: tview.AlignLeft, base: 6, min: 8, max: 60,
-			dynamic: true, shrinkPriority: 10, growPriority: 0,
+			name: "DST", align: tview.AlignLeft, base: 6, min: 8, max: 60,
+			dynamic: true, shrinkPriority: 10, growPriority: 0, fill: true,
 			render: func(ctx columnRowContext) string {
 				v := ctx.view
 				if v.Host != v.IP && !strings.Contains(v.Host, " ("+v.IP+")") {
@@ -75,42 +133,43 @@ func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled bool) []column {
 			},
 		},
 	}
-	if dnsEnabled {
+	if o.DNS {
 		cols = append(cols, column{
 			name: "DNS", align: tview.AlignLeft, base: 10, min: 7, max: 15,
 			dynamic: true, shrinkPriority: 25, growPriority: 15,
+			hideRank: explicitRank(o.DNSExplicit, rankDNSExplicit, rankDNS), hideWhenEmpty: true,
 			render: func(ctx columnRowContext) string { return ctx.view.DNSServer },
 		})
 	}
-	if asnEnabled {
+	if o.ASN {
 		cols = append(cols, column{
 			name: "ASN", align: tview.AlignRight, base: 4, min: 4, max: 15,
-			dynamic: true, shrinkPriority: 27, growPriority: 17,
+			dynamic: true, shrinkPriority: 27, growPriority: 17, hideRank: rankASN,
 			render: func(ctx columnRowContext) string {
 				return stats.FormatASN(ctx.view.ASN, ctx.view.Org)
 			},
 		})
 	}
-	if ptrEnabled {
+	if o.PTR {
 		cols = append(cols, column{
 			name: "PTR", align: tview.AlignLeft, base: 12, min: 8, max: 40,
-			dynamic: true, shrinkPriority: 28, growPriority: 18,
+			dynamic: true, shrinkPriority: 28, growPriority: 18, hideRank: rankPTR,
 			render: func(ctx columnRowContext) string { return ctx.view.PTR },
 		})
 	}
 	cols = append(cols,
 		column{
-			name: "Success", align: tview.AlignRight, base: 8, min: 5, max: 10,
-			shrinkPriority: 80, growPriority: 40,
+			name: "RCV", align: tview.AlignRight, base: 8, min: 3, max: 10,
+			shrinkPriority: 80, growPriority: 40, hideRank: rankRecv,
 			render: func(ctx columnRowContext) string { return fmt.Sprintf("%d", ctx.view.Recv) },
 		},
 		column{
-			name: "Loss", align: tview.AlignRight, base: 7, min: 4, max: 10,
-			shrinkPriority: 90, growPriority: 90,
+			name: "LOST", align: tview.AlignRight, base: 7, min: 4, max: 10,
+			shrinkPriority: 90, growPriority: 90, hideRank: rankLost,
 			render: func(ctx columnRowContext) string { return fmt.Sprintf("%d", ctx.view.Loss) },
 		},
 		column{
-			name: "Loss Ratio", align: tview.AlignRight, base: 10, min: 6, max: 12,
+			name: "LOSS%", align: tview.AlignRight, base: 10, min: 6, max: 12,
 			shrinkPriority: 70, growPriority: 80, bold: true,
 			render: func(ctx columnRowContext) string { return fmt.Sprintf("%.1f%%", ctx.lossRate) },
 			color: func(ctx columnRowContext, text string) (tcell.Color, bool) {
@@ -126,12 +185,12 @@ func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled bool) []column {
 			},
 		},
 		column{
-			name: "Avg", align: tview.AlignRight, base: 10, min: 7, max: 12,
-			shrinkPriority: 50, growPriority: 60,
+			name: "AVG", align: tview.AlignRight, base: 10, min: 7, max: 12,
+			shrinkPriority: 50, growPriority: 60, hideRank: rankAvg,
 			render: func(ctx columnRowContext) string { return formatRTT(ctx.view.AvgRTT) },
 		},
 		column{
-			name: "Jitter", align: tview.AlignRight, base: 10, min: 7, max: 12,
+			name: "JIT", align: tview.AlignRight, base: 10, min: 7, max: 12,
 			shrinkPriority: 40, growPriority: 70,
 			render: func(ctx columnRowContext) string { return formatRTT(ctx.view.Jitter) },
 			color: func(ctx columnRowContext, text string) (tcell.Color, bool) {
@@ -139,23 +198,30 @@ func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled bool) []column {
 			},
 		},
 		column{
-			name: "Size", align: tview.AlignRight, base: 6, min: 4, max: 8,
+			name: "SIZE", align: tview.AlignRight, base: 6, min: 4, max: 8,
 			shrinkPriority: 120, growPriority: 100,
+			hideRank: explicitRank(o.SizeExplicit, rankSizeExplicit, rankSize), setting: true,
 			render: func(ctx columnRowContext) string { return fmt.Sprintf("%d", ctx.packetSize) },
 		},
 		column{
-			name: "MTU", align: tview.AlignRight, base: 6, min: 4, max: 8,
+			name: mtuColumnName(o.MTU), align: tview.AlignRight, base: 6, min: 4, max: 8,
 			shrinkPriority: 100, growPriority: 110,
-			render: func(ctx columnRowContext) string { return intOrDash(ctx.view.IfaceMTU) },
+			hideRank: explicitRank(o.MTU, rankMTUExplicit, rankMTU), setting: !o.MTU,
+			render: func(ctx columnRowContext) string {
+				if o.MTU {
+					return intOrDash(ctx.view.PathMTU)
+				}
+				return intOrDash(ctx.view.IfaceMTU)
+			},
 		},
 		column{
 			name: "TTL", align: tview.AlignRight, base: 5, min: 3, max: 6,
-			shrinkPriority: 110, growPriority: 120,
+			shrinkPriority: 110, growPriority: 120, hideRank: rankTTL,
 			render: func(ctx columnRowContext) string { return intOrDash(ctx.view.LastTTL) },
 		},
 		column{
-			name: "Error", align: tview.AlignLeft, base: 30, min: 8, max: 30,
-			shrinkPriority: 0, growPriority: 20,
+			name: "ERR", align: tview.AlignLeft, base: 30, min: 8, max: 30,
+			shrinkPriority: 0, growPriority: 20, hideWhenEmpty: true,
 			render: func(ctx columnRowContext) string { return formatTableError(ctx.view.LastError) },
 			color: func(ctx columnRowContext, text string) (tcell.Color, bool) {
 				if text == "" {
@@ -165,25 +231,21 @@ func mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled bool) []column {
 			},
 		},
 		column{
-			name: "Last Loss", align: tview.AlignLeft, base: 15, min: 8, max: 18,
-			shrinkPriority: 30, growPriority: 30,
+			name: "LAST LOSS", align: tview.AlignLeft, base: 15, min: 9, max: 18,
+			shrinkPriority: 30, growPriority: 30, hideRank: rankLastLoss,
 			render: func(ctx columnRowContext) string { return formatLossAgo(ctx.view.LastLossTime) },
 		},
 	)
 	return cols
 }
 
-// compactTableColumns returns the narrow-terminal fallback table's column
-// schema (Host/Path/Stats/Error), the single source of buildCompactLayout's
-// headers, aligns, min/max widths and priorities. The slice is fresh on every
-// call because the width fitting adjusts max in place.
-func compactTableColumns() []column {
-	return []column{
-		{name: "Host", align: tview.AlignLeft, min: 8, max: 40, shrinkPriority: 1, growPriority: 1},
-		{name: "Path", align: tview.AlignLeft, min: 16, max: 80, shrinkPriority: 0, growPriority: 0},
-		{name: "Stats", align: tview.AlignLeft, min: 18, max: 80, shrinkPriority: 2, growPriority: 2},
-		{name: "Error", align: tview.AlignLeft, min: 8, shrinkPriority: 3, growPriority: 3}, // max set per-run by buildCompactLayout from calcInitialTableErrorWidth
+// mtuColumnName labels the MTU column: the discovered path MTU under -m,
+// otherwise the outgoing interface's MTU.
+func mtuColumnName(pathMTU bool) string {
+	if pathMTU {
+		return "PMTU"
 	}
+	return "MTU"
 }
 
 // columnIndex returns the index of the named column, or -1 if absent.

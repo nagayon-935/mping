@@ -23,9 +23,6 @@ func (tr *tableRenderer) selectedRow() int {
 	if i < 0 {
 		return -1
 	}
-	if tr.compactLayout {
-		return 1 + i*2
-	}
 	if len(tr.groups) > 0 {
 		for r, row := range tr.groupRowMap {
 			if row.targetIdx == i {
@@ -67,7 +64,7 @@ func (tr *tableRenderer) moveSelection(key tcell.Key) {
 		return
 	}
 	order := make([]int, 0, len(tr.targets))
-	if len(tr.groups) > 0 && !tr.compactLayout {
+	if len(tr.groups) > 0 {
 		for _, row := range buildGroupRows(tr.targets, tr.groups) {
 			if row.targetIdx >= 0 {
 				order = append(order, row.targetIdx)
@@ -103,16 +100,10 @@ func (tr *tableRenderer) highlightSelection() {
 	if row < 1 {
 		return
 	}
-	rows := 1
-	if tr.compactLayout {
-		rows = 2
-	}
-	for r := row; r < row+rows; r++ {
-		for c := range tr.activeHeaders {
-			cell := tr.table.GetCell(r, c)
-			if cell.Text != "" {
-				cell.SetBackgroundColor(tcell.NewRGBColor(25, 50, 70))
-			}
+	for c := range tr.activeHeaders {
+		cell := tr.table.GetCell(row, c)
+		if cell.Text != "" {
+			cell.SetBackgroundColor(tcell.NewRGBColor(25, 50, 70))
 		}
 	}
 }

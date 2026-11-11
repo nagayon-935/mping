@@ -1,0 +1,172 @@
+package ui
+
+import (
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/mattn/go-runewidth"
+	"github.com/rivo/tview"
+)
+
+// textColumnSlack is how far a text column other than the fill column may
+// grow past its widest value when the terminal has width to spare.
+const textColumnSlack = 2
+
+// columnPlan is the full layout chosen for one tick: which columns are shown
+// (indices into the schema, in display order), their widths, and which
+// columns were hidden for width, in the order they were hidden. ok is false
+// when even the core columns do not fit.
+type columnPlan struct {
+	active []int
+	widths []int
+	hidden []string
+	ok     bool
+}
+
+// planColumns fits the Ping Monitor's columns into availableTableWidth (the
+// table's inner width, column separators included).
+//
+// Cells are never cut while a column can still be hidden instead: every shown
+// column first gets at least its full content width, and columns are hidden
+// in hideRank order until the rest fit. Only when every hideable column is
+// hidden may text columns shrink below their content (an ellipsis); numeric
+// columns never shrink below their widest value. Columns marked
+// hideWhenEmpty are left out whenever no row has a value for them.
+func (tr *tableRenderer) planColumns(texts [][]string, availableTableWidth int) columnPlan {
+	n := len(tr.cols)
+	content := make([]int, n)
+	desired := make([]int, n)
+	maxW := make([]int, n)
+	fullMin := make([]int, n)
+	hardMin := make([]int, n)
+	var active []int
+	for i, c := range tr.cols {
+		content[i] = runewidth.StringWidth(c.name)
+		empty := true
+		for _, row := range texts {
+			content[i] = max(content[i], runewidth.StringWidth(row[i]))
+			if row[i] != "" && row[i] != "-" {
+				empty = false
+			}
+		}
+		if c.hideWhenEmpty && empty {
+			continue
+		}
+		active = append(active, i)
+		desired[i] = tr.baseWidths[i]
+		if c.dynamic {
+			desired[i] = content[i]
+		}
+		maxW[i] = max(tr.maxWidths[i], content[i])
+		fullMin[i] = content[i]
+		hardMin[i] = max(tr.minWidths[i], content[i])
+		if c.dynamic || c.align == tview.AlignLeft {
+			// Text may be cut with an ellipsis as a last resort; its heading
+			// may not. Only the fill column takes spare width.
+			hardMin[i] = max(tr.minWidths[i], runewidth.StringWidth(c.name))
+			if !c.fill {
+				maxW[i] = content[i] + textColumnSlack
+			}
+		}
+		if !c.dynamic && c.align == tview.AlignLeft {
+			// A free-text column (ERR) claims at most its usual maximum
+			// before other columns are hidden for it.
+			fullMin[i] = min(content[i], max(tr.maxWidths[i], runewidth.StringWidth(c.name)))
+		}
+	}
+
+	hideOrder := slices.Clone(active)
+	hideOrder = slices.DeleteFunc(hideOrder, func(i int) bool { return tr.cols[i].hideRank == 0 })
+	slices.SortStableFunc(hideOrder, func(a, b int) int { return tr.cols[a].hideRank - tr.cols[b].hideRank })
+
+	var hidden []string
+	for next := 0; ; next++ {
+		if widths, ok := tr.fitColumns(active, desired, fullMin, maxW, availableTableWidth); ok {
+			return columnPlan{active: active, widths: widths, hidden: hidden, ok: true}
+		}
+		if next == len(hideOrder) {
+			break
+		}
+		drop := hideOrder[next]
+		active = slices.DeleteFunc(active, func(i int) bool { return i == drop })
+		hidden = append(hidden, tr.cols[drop].name)
+	}
+	widths, ok := tr.fitColumns(active, desired, hardMin, maxW, availableTableWidth)
+	return columnPlan{active: active, widths: widths, hidden: hidden, ok: ok}
+}
+
+// fitColumns fits the active columns' widths to the table width left after
+// their separators and outer borders.
+func (tr *tableRenderer) fitColumns(active, desired, minW, maxW []int, availableTableWidth int) ([]int, bool) {
+	pick := func(all []int) []int {
+		out := make([]int, len(active))
+		for j, i := range active {
+			out[j] = all[i]
+		}
+		return out
+	}
+	available := max(availableTableWidth-(len(active)+1), 0)
+	return fitWidthsToAvailable(pick(desired), pick(minW), pick(maxW), pick(tr.shrinkPriorities), pick(tr.growPriorities), available)
+}
+
+// paneTitle names the Ping Monitor pane and, when columns are hidden for
+// width, says which: a hidden setting column whose value every row shares
+// (the payload size, a pinned source address) is shown with that value, the
+// rest by name. When that does not fit in maxWidth it falls back to the hidden
+// names alone, then to a count.
+func (tr *tableRenderer) paneTitle(texts [][]string, maxWidth int) string {
+	const plain = " Ping Monitor "
+	if len(tr.hidden) == 0 {
+		return plain
+	}
+	var shared, names []string
+	for _, name := range tr.hidden {
+		i := columnIndex(tr.cols, name)
+		if v, ok := sharedValue(texts, i); ok && tr.cols[i].setting {
+			shared = append(shared, fmt.Sprintf("%s %s", name, v))
+		} else {
+			names = append(names, name)
+		}
+	}
+	join := func(parts ...string) string {
+		return " " + strings.Join(append([]string{"Ping Monitor"}, parts...), " · ") + " "
+	}
+	candidates := []string{
+		join(append(shared, hiddenLabel(names)...)...),
+		join("hidden: " + strings.Join(tr.hidden, " ")),
+		join(fmt.Sprintf("%d columns hidden", len(tr.hidden))),
+	}
+	for _, title := range candidates {
+		if runewidth.StringWidth(title) <= maxWidth {
+			return title
+		}
+	}
+	return plain
+}
+
+// hiddenLabel lists hidden column names, or nothing when there are none.
+func hiddenLabel(names []string) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	return []string{"hidden: " + strings.Join(names, " ")}
+}
+
+// sharedValue reports the value every row has in column i, when there is one
+// worth showing (not empty, "-" or the automatic source "Auto").
+func sharedValue(texts [][]string, i int) (string, bool) {
+	if len(texts) == 0 || i < 0 {
+		return "", false
+	}
+	v := texts[0][i]
+	if v == "" || v == "-" || v == "Auto" {
+		return "", false
+	}
+	for _, row := range texts[1:] {
+		if row[i] != v {
+			return "", false
+		}
+	}
+	return v, true
+}

@@ -18,7 +18,7 @@ func TestSelectionKeepsIdentityAndSkipsGroupHeadings(t *testing.T) {
 	pane := tview.NewFlex().AddItem(table, 0, 1, true)
 	pane.SetRect(0, 0, 220, 40)
 	table.SetRect(0, 0, 218, 38)
-	tr := newTableRenderer([]*stats.TargetStats{a, b, c}, "", "", 56, false, false, []TargetGroup{{Name: "group", Indices: []int{0, 1}}}, table, pane, nil, newViewState(tview.NewTextView()))
+	tr := newTableRenderer([]*stats.TargetStats{a, b, c}, "", "", 56, columnOptions{}, []TargetGroup{{Name: "group", Indices: []int{0, 1}}}, table, pane, nil, newViewState(tview.NewTextView()))
 	tr.selectionEnabled = true
 	tr.selectedID = c.ID()
 	tr.update()
@@ -41,15 +41,15 @@ func TestSelectionKeepsIdentityAndSkipsGroupHeadings(t *testing.T) {
 	if tr.selectedTarget() == nil || tr.selectedID == b.ID() {
 		t.Fatal("removed selection remained active")
 	}
-	pane.SetRect(0, 0, 70, 30)
-	table.SetRect(0, 0, 68, 28)
+	pane.SetRect(0, 0, 40, 30)
+	table.SetRect(0, 0, 38, 28)
 	tr.update()
-	if !tr.compactLayout {
-		t.Fatal("fixture did not enter compact layout")
+	if len(tr.hidden) == 0 {
+		t.Fatal("fixture did not hide columns")
 	}
 	tr.moveSelection(tcell.KeyDown)
-	if tr.selectedID != a.ID() || tr.selectedRow() != 3 {
-		t.Fatal("compact two-row selection incorrect")
+	if tr.selectedID != a.ID() || tr.selectedRow() != 2 {
+		t.Fatal("selection with hidden columns incorrect")
 	}
 }
 

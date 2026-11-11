@@ -34,7 +34,7 @@ func registerFlags(fs *pflag.FlagSet, cfg *config, th *thresholdFlags) {
 	fs.BoolVarP(&cfg.ptrEnabled, "ptr", "r", false, "lookup and display PTR (reverse DNS) records for target and hop IPs")
 	fs.StringVarP(&cfg.ifaceName, "interface", "I", "", "interface name to bind to (e.g. eth0)")
 	fs.StringVarP(&cfg.sourceAddr, "source", "S", "", "source IP address to bind to")
-	fs.IntVarP(&cfg.packetSize, "size", "s", 56, "packet size in bytes (payload)")
+	fs.IntVarP(&cfg.packetSize, "size", "s", defaultPacketSize, "packet size in bytes (payload)")
 	fs.IntVarP(&cfg.count, "count", "c", 0, "stop after sending count packets")
 	fs.DurationVar(&cfg.duration, "duration", 0, "stop after this much time has elapsed (e.g. 30s, 5m, 1h30m); 0 disables the limit")
 	fs.BoolVarP(&cfg.ipv4Only, "ipv4", "4", false, "force IPv4 only")
@@ -74,6 +74,9 @@ var removedFlags = map[string]string{
 
 // snapshotInstead points users of the removed continuous outputs to the
 // on-demand snapshot.
+// defaultPacketSize is the ICMP payload size when -s is not given.
+const defaultPacketSize = 56
+
 const snapshotInstead = "save a statistics snapshot with the w key or the Web UI's Report button instead"
 
 // removedShorthands maps the short forms of removed flags to their long names.

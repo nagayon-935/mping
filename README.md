@@ -322,7 +322,7 @@ See [examples/hosts-patterns.yaml](examples/hosts-patterns.yaml) and [examples/b
 | `--loss-warn` | | Loss warn threshold in percent (orange) | `20` |
 | `--loss-crit` | | Loss crit threshold in percent (red) | `80` |
 
-> **Thresholds** — `warn` is the orange boundary and `crit` the red boundary for colour-coding the Loss Ratio, RTT, and Jitter columns (and for triggering alert log entries). For each metric `warn` must be less than `crit`. These can also be set in the `thresholds:` block of the YAML file.
+> **Thresholds** — `warn` is the orange boundary and `crit` the red boundary for colour-coding the LOSS%, RTT, and JIT columns (and for triggering alert log entries). For each metric `warn` must be less than `crit`. These can also be set in the `thresholds:` block of the YAML file.
 
 ### Current health and configuration checks
 
@@ -441,24 +441,33 @@ Regenerate saved scripts after upgrading mping to include new flags. To monitor 
 
 ## TUI columns
 
-* **Src IP** — The bound source address, or the automatically detected source-address hint for the destination's address family.
-* **Dst IP** — Resolved destination IP. Shown as `domain (IP)` when a hostname is given.
+* **SRC** — The bound source address, or the automatically detected source-address hint for the destination's address family.
+* **DST** — Resolved destination IP. Shown as `domain (IP)` when a hostname is given.
+* **DNS** — DNS server used to resolve the target (shown only when some target has one).
 * **ASN** — Autonomous System Number and organization name of the target IP (enabled with `-a`). Example: `AS15169 Google LLC`.
 * **PTR** — Reverse DNS name of the target IP (enabled with `-r`).
-* **Success** — Number of packets received successfully.
-* **Loss** — Number of lost packets.
-* **Loss Ratio** — Packet loss percentage. Colour boundaries are configurable (defaults shown).
+* **RCV** — Number of packets received successfully.
+* **LOST** — Number of lost packets.
+* **LOSS%** — Packet loss percentage. Colour boundaries are configurable (defaults shown).
   * **Green**: 0%–20% &nbsp;|&nbsp; **Orange**: >20% and ≤80% &nbsp;|&nbsp; **Vivid red**: >80%
-* **RTT / Avg / Jitter** — Latest / average / jitter round-trip time. Colour boundaries are configurable (defaults shown).
+* **RTT / AVG / JIT** — Latest / average / jitter round-trip time. Colour boundaries are configurable (defaults shown).
   * **RTT**: Green (≤50 ms) / Orange (≤200 ms) / Red (>200 ms)
-  * **Jitter**: Green (≤10 ms) / Orange (≤50 ms) / Red (>50 ms)
+  * **JIT**: Green (≤10 ms) / Orange (≤50 ms) / Red (>50 ms)
   * Override with `--rtt-warn/--rtt-crit`, `--jitter-warn/--jitter-crit`, `--loss-warn/--loss-crit`, or the `thresholds:` YAML block.
-* **Size** — Payload size of sent packets.
-* **MTU** — MTU of the specified or initially inferred outbound interface.
+* **SIZE** — Payload size of sent packets.
+* **MTU** — MTU of the specified or initially inferred outbound interface. With `-m` the column is **PMTU** and shows the discovered path MTU.
 * **TTL** — IPv4 TTL or IPv6 Hop Limit of the last reply.
-* **Error** — Abbreviated latest error message (red). Full details appear in the Log pane.
-* **Last Loss** — Time elapsed since the last packet loss.
+* **ERR** — Abbreviated latest error message (red), shown only while some target has one. Full details appear in the Log pane.
+* **LAST LOSS** — Time elapsed since the last packet loss.
 
+### Narrow terminals
+
+Cells are not cut short. When the terminal is too narrow for every column, whole columns are hidden instead, in this order:
+
+1. Supplementary columns: SIZE → MTU → SRC → DNS → LAST LOSS → LOST → RCV → TTL → AVG (SIZE, MTU, SRC and DNS only when their option was not given).
+2. Columns requested with an option: SIZE (`-s`) → SRC (`-S` / `-I`) → DNS (`-d`) → ASN (`-a`) → PTR (`-r`) → PMTU (`-m`).
+
+DST, LOSS%, RTT and JIT (and ERR while an error is shown) are never hidden. The pane title lists hidden columns; a hidden setting every row shares, such as the payload size or a pinned source address, appears there with its value (`Ping Monitor · SIZE 56 · hidden: TTL AVG`). Every value stays available in the host details (Enter).
 
 ## Traceroute Monitor pane
 
