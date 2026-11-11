@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/nagayon-935/mping/internal/stats"
 )
 
 // The Ping Monitor's RTT sparkline column draws the trailing samples of
@@ -95,9 +96,9 @@ func stripCell(b stripBucket, scaleMs float64) (rune, tcell.Color) {
 	return stripRunes[min(int(ratio*float64(len(stripRunes))), len(stripRunes)-1)], color
 }
 
-// lossPartialColor marks a sparkline cell where some, not all, probes were
-// lost.
-var lossPartialColor = tcell.ColorOrange
+// lossPartialColor marks a chart column or sparkline cell where some, not
+// all, probes were lost: the Warning color (see levelColor).
+var lossPartialColor = levelColor(stats.LevelWarn)
 
 // sparkline draws the trailing windowPoints samples of history in width
 // cells against the samples' own p95 scale, with the same marks as a strip
@@ -113,6 +114,13 @@ func sparkline(history []time.Duration, windowPoints, width int) string {
 	return string(runes)
 }
 
+// colorTag is the tview tag selecting exactly color, so a sparkline cell
+// uses the same red as Critical values (vividRed, an RGB color) rather than
+// the terminal's own palette "red".
+func colorTag(color tcell.Color) string {
+	return fmt.Sprintf("[#%06x]", color.Hex())
+}
+
 // sparklineStyled is sparkline with tview color tags around the cells with
 // loss (orange for some, red for all), for the Ping Monitor cell whose own
 // text color (cyan) draws the rest. It has the same width on screen.
@@ -122,10 +130,8 @@ func sparklineStyled(history []time.Duration, windowPoints, width int) string {
 	for _, bucket := range bucketHistory(history, windowPoints, width) {
 		r, color := stripCell(bucket, scaleMs)
 		switch color {
-		case vividRed:
-			fmt.Fprintf(&b, "[red]%c[-]", r)
-		case lossPartialColor:
-			fmt.Fprintf(&b, "[orange]%c[-]", r)
+		case vividRed, lossPartialColor:
+			fmt.Fprintf(&b, "%s%c[-]", colorTag(color), r)
 		default:
 			b.WriteRune(r)
 		}

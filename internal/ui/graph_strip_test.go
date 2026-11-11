@@ -7,6 +7,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
+	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/rivo/tview"
 )
 
@@ -104,10 +105,16 @@ func TestSparklineStyledColorsLoss(t *testing.T) {
 	got := sparklineStyled(history, 8, 4)
 
 	// Assert
-	if !strings.Contains(got, "[orange]") || !strings.Contains(got, "[red]×[-]") {
+	if !strings.Contains(got, colorTag(lossPartialColor)) || !strings.Contains(got, colorTag(levelColor(stats.LevelCrit))+"×[-]") {
 		t.Errorf("sparklineStyled = %q, want orange for some loss and a red × for all lost", got)
 	}
 	if plain := sparkline(history, 8, 4); tview.TaggedStringWidth(got) != runewidth.StringWidth(plain) {
 		t.Errorf("styled width %d != plain width %d", tview.TaggedStringWidth(got), runewidth.StringWidth(plain))
+	}
+}
+
+func TestColorTagMatchesLevelColors(t *testing.T) {
+	if got := colorTag(levelColor(stats.LevelCrit)); got != "[#ff0000]" {
+		t.Errorf("Critical tag = %q, want the exact Critical red", got)
 	}
 }
