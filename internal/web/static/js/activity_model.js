@@ -2,17 +2,17 @@
 // long each host has been in its state, which hosts to list and in what
 // order, a summary of the last hour of health events, and the recent events
 // across all hosts.
-import { rowLevel, statusReason } from "./model.js";
-import { parseBreaches, shortReason, withUnit } from "./health_text.js";
+import { LEVEL_SEVERITY, rowLevel, statusReason } from "./model.js";
+import { healthTransition, parseBreaches, shortReason, withUnit } from "./health_text.js";
 
-export const HOUR_MS = 3600 * 1000;
+export { healthTransition };
+
+const HOUR_MS = 3600 * 1000;
 /** Events the server keeps per target (internal/stats maxTargetEvents). */
 export const PER_TARGET_EVENT_CAP = 128;
 /** Transitions within this span count as simultaneous. */
-export const SIMULTANEOUS_MS = 5000;
-export const SIMULTANEOUS_MIN_HOSTS = 3;
-
-const SEVERITY = { crit: 3, warn: 2, pending: 1, ok: 0 };
+const SIMULTANEOUS_MS = 5000;
+const SIMULTANEOUS_MIN_HOSTS = 3;
 
 /** "42s", "3m 12s", "18m", "1h 5m", "2d 3h"; "–" when unknown. */
 export function formatDuration(ms) {
@@ -55,18 +55,9 @@ export function activityItems(targets, { mode = "all", now = Date.now() } = {}) 
   const longest = (a, b) => (b.durationMs ?? -1) - (a.durationMs ?? -1);
   const okCount = rows.filter((r) => r.level === "ok").length;
   const listed = mode === "attention"
-    ? rows.filter((r) => r.level !== "ok").sort((a, b) => longest(a, b) || SEVERITY[b.level] - SEVERITY[a.level] || a.index - b.index)
-    : [...rows].sort((a, b) => SEVERITY[b.level] - SEVERITY[a.level] || longest(a, b) || a.index - b.index);
+    ? rows.filter((r) => r.level !== "ok").sort((a, b) => longest(a, b) || LEVEL_SEVERITY[b.level] - LEVEL_SEVERITY[a.level] || a.index - b.index)
+    : [...rows].sort((a, b) => LEVEL_SEVERITY[b.level] - LEVEL_SEVERITY[a.level] || longest(a, b) || a.index - b.index);
   return { items: listed.map(({ index, ...item }) => item), okCount };
-}
-
-const HEALTH = /^(ok|warn|crit|pending): (.*)$/;
-
-/** A health transition event as {level, reason}, or null for other kinds. */
-export function healthTransition(event) {
-  if (event?.kind !== "health") return null;
-  const m = HEALTH.exec(event.message ?? "");
-  return m ? { level: m[1], reason: m[2] } : null;
 }
 
 /**

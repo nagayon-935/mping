@@ -166,7 +166,6 @@ body {
 #pane-inspect, #pane-activity { grid-area: inspect; height: clamp(420px, 80dvh, 900px); }
 #pane-mtr { grid-area: route; height: 420px; }
 #pane-traceroute { grid-area: route; max-height: 420px; }
-.pane { display: flex; flex-direction: column; min-height: 0; }
 .pane-scroll { flex: 1; min-height: 0; overflow: auto; }
 #pane-monitor .pane-scroll > .table-wrap { overflow: visible; }
 #targets thead th { z-index: 1; }
@@ -207,7 +206,10 @@ body {
 .mtr-target-address { grid-column: 2 / -1; color: var(--ink-2); font: 500 12px/1.4 var(--mono); }
 #mtr .mtr-waiting { color: var(--muted); font-size: 12px; }
 .pane {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;

@@ -9,7 +9,7 @@ import { el } from "./dom.js";
 import { drawChart, drawCrosshair, indexAt } from "./chart.js";
 import { formatRTT } from "./model.js";
 import { formatTime } from "./time.js";
-import { alignSamples, downsample, padTo } from "./timeline.js";
+import { downsample, windowSeries } from "./timeline.js";
 import { robustAxis } from "./scale.js";
 
 export function createSummaryChart() {
@@ -41,9 +41,7 @@ export function createSummaryChart() {
     queued = false;
     if (!state || !node.isConnected || canvas.clientWidth === 0) return;
     const { samples, meta, points, now } = state;
-    const full = samples?.length && typeof samples[0] === "object" && samples[0] !== null
-      ? alignSamples(samples, points, meta.interval_ms, now)
-      : padTo(samples ?? [], points);
+    const full = windowSeries(samples, points, meta.interval_ms, now);
     // The scale comes from every sample in the window, so reducing to one
     // point per pixel (peak per bucket) cannot move it.
     const axis = robustAxis(full);

@@ -1,18 +1,18 @@
 // "Recent events" in Summary: the selected host's latest events (the same
 // records the Log page lists for every host), refreshed while Summary is open.
 import { el, fetchJSON, statusChip } from "./dom.js";
+import { healthTransition } from "./health_text.js";
 import { formatTime } from "./time.js";
 
-export const RECENT_EVENTS = 6;
+const RECENT_EVENTS = 6;
 const REFRESH_MS = 5000;
-const HEALTH = /^(ok|warn|crit|pending): (.*)$/;
 
 /** A health transition ("crit: Jitter 50.5ms > 50.0ms") as level + text. */
 export function describeEvent(event) {
-  const m = event.kind === "health" ? HEALTH.exec(event.message ?? "") : null;
-  const message = m ? m[2] : event.message;
+  const health = healthTransition(event);
+  const message = health ? health.reason : event.message;
   return {
-    level: m ? m[1] : null,
+    level: health ? health.level : null,
     kind: event.kind,
     text: event.count > 1 ? `${message} ×${event.count} (last ${formatTime(event.last_at)})` : message,
   };

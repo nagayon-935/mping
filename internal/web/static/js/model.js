@@ -8,11 +8,12 @@ export function lossRate(t) {
   return done === 0 ? 0 : (t.loss / done) * 100;
 }
 
-const rowLevels = new Set(["pending", "ok", "warn", "crit"]);
+export const STATUS_LABELS = { crit: "Critical", warn: "Warning", pending: "Waiting", ok: "OK" };
+export const LEVEL_SEVERITY = { crit: 4, warn: 3, pending: 2, ok: 1 };
 
 /** Overall status of a target row: the server's current health judgment. */
 export function rowLevel(t) {
-  return rowLevels.has(t.health?.status) ? t.health.status : "pending";
+  return Object.hasOwn(STATUS_LABELS, t.health?.status) ? t.health.status : "pending";
 }
 
 /** Why the target has its rowLevel, as the server explained it. */

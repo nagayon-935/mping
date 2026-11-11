@@ -68,8 +68,8 @@ enabled, including in
 the selected target's details; PTR annotations and PMTU details follow their
 respective options as well.
 
-Target rows are 68px tall, with one-line host/PTR and two reserved explanation
-lines so changing health cannot move the following rows. HTTP/MTR/port rows
+Target rows are 48px tall, with one-line host/PTR and one reserved explanation
+line so changing health cannot move the following rows. HTTP/MTR/port rows
 are 44px. Exceptionally long group headings are ellipsized. Abnormal overview
 values use a small tinted badge rather than coloring the whole cell.
 
@@ -104,20 +104,22 @@ and optional AS/PTR annotations. Empty and `*` hops are unanswered; progress and
 error states are separate from the hop list. A responder matching the target IP
 has a Destination label. Target headings remain visible during vertical scroll.
 
-RTT charts default to a shared vertical scale. The tick interval is rounded to
-1/2/5 × 10^k, with four equal intervals, so all shared charts use identical ticks.
+The Summary RTT chart uses a robust vertical scale (top just above the p95,
+clipping higher peaks with a `▲` marker). The tick interval is rounded to
+1/2/5 × 10^k, with four equal intervals.
 
 ## Live ordering and interaction stability
 
-Health filters and text search apply to the monitor, routes and graph membership.
+Health filters and text search apply to the monitor and routes.
 Sorting uses a snapshot of target IDs across groups; incoming values do not
 reorder existing rows. New targets append, deleted IDs disappear, and Refresh
 order explicitly recomputes ranking. Configured order restores group headings.
 Headers expose sort direction, and keyboard focus survives table rebuilds.
 
-The header reserves two rows for actions and connection/measurement state.
+The header is a single row with health filter pills, connection/measurement
+state and actions.
 Notifications overlay the workspace; chart captions, numeric readouts and
-sample descriptions reserve their height even when idle. Route and graph
+sample descriptions reserve their height even when idle. Route
 Selected host buttons scroll only their own pane. Graph sample inspection
 works with pointer or keyboard and announces only explicit keyboard actions.
 Destructive actions use native modal dialogs with Cancel focused initially.

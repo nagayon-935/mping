@@ -1,9 +1,10 @@
 // Building blocks of the monitor toolbar: header health pills and sort
 // choices, plus their preferences and host-list focus.
 import { el, badgeIcon, readSession, writeSession } from "./dom.js";
+import { STATUS_LABELS } from "./model.js";
 import { SORTS } from "./workspace.js";
 
-export const STATUS_LABELS = { crit: "Critical", warn: "Warning", pending: "Waiting", ok: "OK" };
+export { STATUS_LABELS };
 const STATUSES = ["all", ...Object.keys(STATUS_LABELS)];
 
 /**

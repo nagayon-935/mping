@@ -131,14 +131,11 @@ export function renderTargets(table, view, onOpen, onSort) {
         tr.append(cell);
       }
       tr.addEventListener("click", () => onOpen(t.id));
-      tr.querySelector(".host-open").addEventListener("keydown", e => {
-        if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onOpen(t.id); }
-      });
       tr.addEventListener("keydown", (e) => {
         if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
-        if (e.target === tr && (e.key === "Enter" || e.key === " ")) {
+        if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
+          e.stopPropagation();
           onOpen(t.id);
         }
       });

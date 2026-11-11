@@ -1,13 +1,13 @@
 // Monitor-row sparklines: the last minute of RTT as a small SVG. The
 // geometry is computed by spark.js; this module only builds elements. SVG
 // presentation attributes (not inline styles) keep it within the CSP.
-import { alignSamples, padTo } from "./timeline.js";
+import { windowSeries } from "./timeline.js";
 import { robustAxis } from "./scale.js";
 import { SPARK_SECONDS, sparkGeometry } from "./spark.js";
 
 const NS = "http://www.w3.org/2000/svg";
-export const SPARK_WIDTH = 120;
-export const SPARK_HEIGHT = 26;
+const SPARK_WIDTH = 120;
+const SPARK_HEIGHT = 26;
 
 function svg(tag, attrs) {
   const node = document.createElementNS(NS, tag);
@@ -16,12 +16,9 @@ function svg(tag, attrs) {
 }
 
 /** The last minute of one target's history, on the shared wall-time axis. */
-export function lastMinute(samples, intervalMs, now) {
+function lastMinute(samples, intervalMs, now) {
   const points = Math.max(1, Math.ceil((SPARK_SECONDS * 1000) / intervalMs));
-  if (samples?.length && typeof samples[0] === "object" && samples[0] !== null) {
-    return alignSamples(samples, points, intervalMs, now);
-  }
-  return padTo(samples ?? [], points);
+  return windowSeries(samples, points, intervalMs, now);
 }
 
 /**

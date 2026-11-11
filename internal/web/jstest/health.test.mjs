@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { connectionSummary, explainBreach, parseBreaches, shortReason, ttlHops, withUnit } from "../static/js/health_text.js";
+import { breachLevel, connectionSummary, explainBreach, parseBreaches, shortReason, ttlHops, withUnit } from "../static/js/health_text.js";
 import { commonCauseText, detectCommonCause, formatRange } from "../static/js/common_cause.js";
 import { describeEvent, latestEvents } from "../static/js/inspect_events.js";
 import { latestProbeAt, measurementState } from "../static/js/header.js";
@@ -32,6 +32,8 @@ test("explainBreach names the threshold level from the crit threshold", () => {
   // Group-specific thresholds: levels from the server override global thresholds.
   assert.equal(explainBreach({ metric: "RTT", value: 120, threshold: 100, unit: "ms" }, th, { last_rtt: "crit" }).rest,
     "is over the 100.0 ms critical threshold");
+  assert.equal(breachLevel({ metric: "Loss", value: 15, threshold: 10, unit: "%" }, { loss_crit_pct: 50 }, { last_rtt: "ok", jitter: "ok" }, "crit"), "crit");
+  assert.equal(breachLevel({ metric: "Loss", value: 60, threshold: 50, unit: "%" }, { loss_crit_pct: 20 }, { last_rtt: "ok", jitter: "ok" }, "warn"), "warn");
   assert.equal(withUnit(5, "%"), "5.0%");
 });
 

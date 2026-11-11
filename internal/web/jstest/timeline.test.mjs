@@ -1,4 +1,4 @@
-// Unit tests for the RTT graphs pane's time-window logic. Run with:
+// Unit tests for time-window logic. Run with:
 //   node --test "internal/web/jstest/*.test.mjs"
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -6,13 +6,13 @@ import assert from "node:assert/strict";
 import {
   windowOptions,
   defaultWindow,
-  sharedMax,
   agoLabel,
   padTo,
   tail,
   downsample,
   reconcileWindow,
   alignSamples,
+  windowSeries,
 } from "../static/js/timeline.js";
 
 const labels = (opts) => opts.map((o) => o.label);
@@ -46,12 +46,6 @@ test("defaultWindow prefers 5m, else the widest available", () => {
   assert.equal(defaultWindow(windowOptions(1000, 3000)).label, "5m");
   assert.equal(defaultWindow(windowOptions(10, 3000)).label, "30s");
   assert.equal(defaultWindow([{ label: "1m", seconds: 60, points: 60 }]).label, "1m");
-});
-
-test("sharedMax is the largest sample across every series, ignoring losses", () => {
-  assert.equal(sharedMax([[1, null, 3], [null, 7.5], []]), 7.5);
-  assert.equal(sharedMax([[null], []]), 0);
-  assert.equal(sharedMax([]), 0);
 });
 
 test("agoLabel reads samples-from-the-end as elapsed time", () => {
@@ -125,4 +119,6 @@ test("timestamp alignment preserves pause gaps and never pulls old replies to no
   const samples = [{at: "2026-10-16T00:00:05Z",rtt_ms: 5},{at: "2026-10-16T00:00:08Z",rtt_ms: null}];
   assert.deepEqual(alignSamples(samples,6,1000,now), [5,undefined,undefined,null,undefined,undefined]);
   assert.deepEqual(alignSamples(samples,3,1000,now+10000), [undefined,undefined,undefined]);
+  assert.deepEqual(windowSeries(samples,6,1000,now), [5,undefined,undefined,null,undefined,undefined]);
+  assert.deepEqual(windowSeries([5, null, 7], 5, 1000, now), [undefined, undefined, 5, null, 7]);
 });

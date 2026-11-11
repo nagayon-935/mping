@@ -2,15 +2,14 @@
 // KPI tiles, the RTT chart, recent events and the remaining facts in a
 // collapsible section. Global logs, HTTP checks and routes have their own views.
 import { el, readSession, statusChip, writeSession } from "./dom.js";
-import { formatMs, formatPct, formatRTT, lossRate, rowLevel, statusReason } from "./model.js";
+import { STATUS_LABELS, formatMs, formatPct, formatRTT, lossRate, rowLevel, statusReason } from "./model.js";
 import { formatTime, formatDateTime } from "./time.js";
 import { portsFor } from "./checks.js";
-import { explainBreach, parseBreaches, ttlHops } from "./health_text.js";
+import { breachLevel, explainBreach, parseBreaches, ttlHops } from "./health_text.js";
 import { createSummaryChart } from "./summary_chart.js";
 import { createRecentEvents } from "./inspect_events.js";
 
 const DETAILS_KEY = "mping.summaryDetails";
-const LEVEL_LABELS = { ok: "OK", warn: "Warning", crit: "Critical", pending: "Waiting" };
 
 function facts(pairs) {
   const dl = el("dl", { className: "facts" });
@@ -31,7 +30,7 @@ function subline(t, meta) {
   const asn = meta.features.asn ? [t.asn, t.org].filter(Boolean).join(" ") : "";
   const ptr = meta.features.ptr && t.ptr && t.ptr !== t.host ? t.ptr : "";
   const ip = t.ip && t.ip !== t.host ? t.ip : "";
-  const since = t.health?.since ? `${LEVEL_LABELS[level]} since ${formatTime(t.health.since)}` : "";
+  const since = t.health?.since ? `${STATUS_LABELS[level]} since ${formatTime(t.health.since)}` : "";
   return [ptr || ip, asn, since].filter(Boolean).join(" · ");
 }
 
@@ -41,19 +40,12 @@ function reasonBanner(t, meta) {
   const breaches = parseBreaches(t.health?.reason);
   const lines = breaches.length
     ? breaches.map((b) => {
-      const { lead, rest } = explainBreach(b, meta.thresholds, t.levels);
+      const { lead, rest } = explainBreach(b, meta.thresholds, t.levels, t.health?.status);
       return el("span", {}, el("strong", { text: lead }), ` ${rest}.`);
     })
     : [el("span", { text: statusReason(t) })];
   return el("div", { className: `reason-banner lvl-${level}`, attrs: { role: "note" } },
     statusChip(level), el("div", { className: "reason-lines" }, ...lines));
-}
-
-/** Breach level of one metric from the server's reason ("none" when not breached). */
-function breachLevel(t, metric, crit) {
-  const b = parseBreaches(t.health?.reason).find((x) => x.metric === metric);
-  if (!b) return "none";
-  return crit > 0 && b.value > crit ? "crit" : "warn";
 }
 
 function tile(label, value, sub, level = "none") {
@@ -73,7 +65,8 @@ function kpis(t, meta) {
   const th = meta.thresholds ?? {};
   const rttLevel = t.levels?.last_rtt ?? "none";
   const jitterLevel = t.levels?.jitter ?? "none";
-  const lossLevel = breachLevel(t, "Loss", th.loss_crit_pct);
+  const lossBreach = parseBreaches(t.health?.reason).find((b) => b.metric === "Loss");
+  const lossLevel = lossBreach ? breachLevel(lossBreach, th, t.levels, t.health?.status) : "none";
   const done = t.recv + t.loss;
   const recent = t.health?.configured && t.health.recent_completed > 0;
   const hops = ttlHops(t.last_ttl);

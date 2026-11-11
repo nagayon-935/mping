@@ -4,7 +4,15 @@
 // helpers only reshape that text for compact places.
 
 const BREACH = /^(Recent loss|RTT|Jitter) (\d+(?:\.\d+)?)(ms|%) > (\d+(?:\.\d+)?)(ms|%)$/;
+const HEALTH = /^(ok|warn|crit|pending): (.*)$/;
 const METRIC_NAMES = { "Recent loss": "Loss", RTT: "RTT", Jitter: "Jitter" };
+
+/** A health transition event as {level, reason}, or null for other kinds. */
+export function healthTransition(event) {
+  if (event?.kind !== "health") return null;
+  const m = HEALTH.exec(event.message ?? "");
+  return m ? { level: m[1], reason: m[2] } : null;
+}
 
 /**
  * Threshold breaches named in a server health reason.
@@ -38,17 +46,25 @@ export function shortReason(reason) {
 }
 
 /**
- * One sentence per breach for Summary: "Jitter 50.5 ms is over the 50.0 ms
- * critical threshold". The level uses the server's per-metric judgment when
- * available, falling back to comparing with the configured crit threshold.
+ * Severity ("crit" or "warn") of a parsed breach. Uses the server's
+ * per-metric level (or overall health status when it rules out one side for
+ * recent Loss) before falling back to the global critical threshold.
  */
-export function explainBreach(breach, thresholds = {}, levels = null) {
+export function breachLevel(breach, thresholds = {}, levels = null, status = null) {
   const metricLevel = { Loss: null, RTT: levels?.last_rtt, Jitter: levels?.jitter }[breach.metric];
+  if (metricLevel === "crit" || metricLevel === "warn") return metricLevel;
+  if (status === "warn") return "warn";
+  if (status === "crit" && levels?.last_rtt && levels.last_rtt !== "crit" && levels.jitter !== "crit") return "crit";
   const crit = { Loss: thresholds.loss_crit_pct, RTT: thresholds.rtt_crit_ms, Jitter: thresholds.jitter_crit_ms }[breach.metric];
-  const isCrit = metricLevel === "crit" || metricLevel === "warn"
-    ? metricLevel === "crit"
-    : crit > 0 && breach.value > crit;
-  const level = isCrit ? "critical" : "warning";
+  return crit > 0 && breach.value > crit ? "crit" : "warn";
+}
+
+/**
+ * One sentence per breach for Summary: "Jitter 50.5 ms is over the 50.0 ms
+ * critical threshold".
+ */
+export function explainBreach(breach, thresholds = {}, levels = null, status = null) {
+  const level = breachLevel(breach, thresholds, levels, status) === "crit" ? "critical" : "warning";
   return {
     lead: `${breach.metric} ${withUnit(breach.value, breach.unit)}`,
     rest: `is over the ${withUnit(breach.threshold, breach.unit)} ${level} threshold`,

@@ -4,10 +4,8 @@
 // target added after the window began) and are left blank.
 import { cssVar } from "./dom.js";
 import { formatMs } from "./model.js";
-import { agoLabel, sharedMax } from "./timeline.js";
-import { clippedPoints, rttAxis } from "./scale.js";
-
-export { rttAxis };
+import { agoLabel } from "./timeline.js";
+import { clippedPoints, robustAxis } from "./scale.js";
 
 function setupCanvas(canvas) {
   const dpr = window.devicePixelRatio || 1;
@@ -113,14 +111,12 @@ function endDot(ctx, x, y, colour) {
  */
 export function drawChart(canvas, series, th, intervalMs, opts = {}) {
   const { ctx, w, h } = setupCanvas(canvas);
-  // opts.axis (e.g. a robust p95 scale) wins over opts.yMax / the peak.
-  const { max, ticks } = opts.axis ?? rttAxis(opts.yMax ?? sharedMax([series]));
+  const { max, ticks } = opts.axis ?? robustAxis(series);
   ctx.font = `11px ${cssVar("--font")}`;
   const left = Math.max(44, ...ticks.map(v => ctx.measureText(tickLabel(v)).width + 12));
   const right = 12, top = 20, bottom = 24;
   const plotW = w - left - right;
   const plotH = h - top - bottom;
-  // opts.yMax shares one scale across several charts (e.g. all targets);
   // opts.lost flags lost probes when `series` was downsampled.
   const n = Math.max(series.length - 1, 1);
   const xAt = (i) => left + (i / n) * plotW;

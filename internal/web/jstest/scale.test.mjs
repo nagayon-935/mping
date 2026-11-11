@@ -1,6 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clippedPoints, finiteValues, percentile, robustAxis, ROBUST_MIN_MS } from "../static/js/scale.js";
+import { clippedPoints, finiteValues, percentile, robustAxis, rttAxis, ROBUST_MIN_MS } from "../static/js/scale.js";
+
+test("rttAxis rounds the tick interval to a readable value and avoids decimal artefacts", () => {
+  for (const peak of [0, 0.3, 1.2, 18, 95]) {
+    const { max, ticks } = rttAxis(peak);
+    assert.equal(ticks.length, 5);
+    assert.equal(ticks[0], 0);
+    assert.equal(ticks[4], max);
+    assert.ok(max >= peak, `${max} < ${peak}`);
+    for (const v of ticks) assert.ok(!/\.\d{4,}/.test(String(v)), `imprecise tick: ${v}`);
+  }
+});
 
 test("percentile uses the nearest rank and ignores lost and missing samples", () => {
   const series = [undefined, null, ...Array.from({ length: 100 }, (_, i) => i + 1)];

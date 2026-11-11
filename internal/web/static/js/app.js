@@ -44,6 +44,10 @@ const view = {
 
 const hasTarget = (id) => !!view.snapshot?.targets.some((t) => t.id === id);
 const monitorHash = () => (view.selectedId == null ? "#monitor" : `#target-${view.selectedId}`);
+const targetFromHash = () => {
+  const m = /^#target-(\d+)$/.exec(location.hash);
+  return m ? Number(m[1]) : null;
+};
 
 /** Rows toggle: selecting the selected host again returns to Activity. */
 function toggleTarget(id) {
@@ -189,8 +193,8 @@ const graphTools = createGraphTools(view, { window: inspect.windowSelect }, { re
 
 function readPage() {
   view.page = location.hash === "#log" ? "log" : location.hash === "#http" ? "http" : "monitor";
-  const wanted = /^#target-(\d+)$/.exec(location.hash);
-  if (wanted && view.snapshot) selectTarget(Number(wanted[1]));
+  const wanted = targetFromHash();
+  if (wanted != null && view.snapshot) selectTarget(wanted);
   scheduleRender();
 }
 
@@ -302,10 +306,9 @@ function applySnapshot(body) {
   scheduleRender();
   // Restore a selection from the address (reload or a shared link); a link
   // to a target that no longer exists is dropped rather than kept forever.
-  const wanted = /^#target-(\d+)$/.exec(location.hash);
-  if (wanted && view.selectedId == null) {
-    const id = Number(wanted[1]);
-    if (hasTarget(id)) selectTarget(id);
+  const wanted = targetFromHash();
+  if (wanted != null && view.selectedId == null) {
+    if (hasTarget(wanted)) selectTarget(wanted);
     else history.replaceState(null, "", location.pathname);
   }
 }
@@ -452,3 +455,4 @@ initControls();
 connect();
 scheduleRender();
 setInterval(refreshHistory, HISTORY_EVERY_MS);
+document.addEventListener("visibilitychange", refreshHistory);

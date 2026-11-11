@@ -4,8 +4,8 @@
 // each host, so the monitor states that once instead of in every row.
 import { parseBreaches, withUnit } from "./health_text.js";
 
-export const COMMON_CAUSE_MIN_TARGETS = 3;
-export const COMMON_CAUSE_RATIO = 0.75;
+const COMMON_CAUSE_MIN_TARGETS = 3;
+const COMMON_CAUSE_RATIO = 0.75;
 
 /** Replying to probes now: judged (not waiting) and not marked down. */
 function answering(t) {

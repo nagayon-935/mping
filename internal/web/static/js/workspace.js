@@ -1,15 +1,14 @@
-import { buildSections, lossRate, matchesFilter, rowLevel } from "./model.js";
+import { LEVEL_SEVERITY, buildSections, lossRate, matchesFilter, rowLevel } from "./model.js";
 
 export const SORTS = {
   config: "Configured order", status: "Status", host: "Host", loss: "Loss (lifetime)",
   last: "RTT", jitter: "Jitter", sent: "Sent", recv: "Recv", ip: "IP",
 };
-const severity = { crit: 4, warn: 3, pending: 2, ok: 1 };
 
 // Read only the requested metric. Sorting by a name or count does not need
 // health classification or allocation of an object containing every metric.
 const sortValues = {
-  status: (target) => severity[rowLevel(target)],
+  status: (target) => LEVEL_SEVERITY[rowLevel(target)],
   host: (target) => target.host.toLowerCase(),
   loss: (target) => target.recv + target.loss ? lossRate(target) : null,
   last: (target) => target.last_rtt_ms,
@@ -80,9 +79,9 @@ export function createTargetOrder() {
 }
 
 /** Stacked while the monitor needs at most this share of the workspace height… */
-export const STACK_ENTER = 0.5;
+const STACK_ENTER = 0.5;
 /** …and side by side again only once it needs more than this (hysteresis). */
-export const STACK_LEAVE = 0.6;
+const STACK_LEAVE = 0.6;
 
 /**
  * Desktop layout for the detail area (Activity or Summary). With few hosts

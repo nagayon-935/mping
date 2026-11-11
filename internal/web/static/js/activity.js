@@ -3,16 +3,15 @@
 // newest events across all hosts. No chart: rows carry sparklines and the
 // selected host's Summary has the large chart.
 import { badgeIcon, el, fetchJSON, statusChip } from "./dom.js";
+import { STATUS_LABELS } from "./model.js";
 import { formatTime } from "./time.js";
 import { activityItems, formatDuration, lastHourSummary, recentAcrossHosts } from "./activity_model.js";
-
-const LEVEL_NAMES = { ok: "OK", warn: "Warning", crit: "Critical", pending: "Waiting" };
 
 /** "▲ host" with the level spelled out for screen readers. */
 function whoChip(level, who) {
   return el("span", { className: `status lvl-${level}` },
     el("span", { className: "status-icon", text: badgeIcon(level), attrs: { "aria-hidden": "true" } }),
-    el("span", { className: "visually-hidden", text: `${LEVEL_NAMES[level] ?? level}: ` }),
+    el("span", { className: "visually-hidden", text: `${STATUS_LABELS[level] ?? level}: ` }),
     el("span", { text: who }));
 }
 

@@ -28,15 +28,6 @@ export function defaultWindow(options) {
   return options.find((o) => o.label === "5m") ?? options[options.length - 1];
 }
 
-/** Largest RTT across all series (lost probes are null), for a shared y axis. */
-export function sharedMax(seriesList) {
-  let max = 0;
-  for (const series of seriesList) {
-    for (const v of series) if (v != null && v > max) max = v;
-  }
-  return max;
-}
-
 /** "now", "12s ago", "1m 20s ago" for a cursor `samplesAgo` from the newest. */
 export function agoLabel(samplesAgo, intervalMs) {
   const total = Math.round((samplesAgo * intervalMs) / 1000);
@@ -116,4 +107,15 @@ export function alignSamples(samples, points, intervalMs, now) {
     else if (Number.isFinite(value)) out[i] = Math.max(out[i] ?? 0, value);
   }
   return out;
+}
+
+/**
+ * Aligns timestamped samples onto a `points`-sample window, or right-aligns a
+ * plain numeric series when timestamps are absent.
+ */
+export function windowSeries(samples, points, intervalMs, now) {
+  if (samples?.length && typeof samples[0] === "object" && samples[0] !== null) {
+    return alignSamples(samples, points, intervalMs, now);
+  }
+  return padTo(samples ?? [], points);
 }
