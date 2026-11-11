@@ -1,7 +1,7 @@
 package ui
 
 import (
-	"strings"
+	"fmt"
 	"testing"
 	"time"
 
@@ -95,175 +95,27 @@ func TestStripCell(t *testing.T) {
 	}
 }
 
-func TestStripStats(t *testing.T) {
-	tests := []struct {
-		name    string
-		history []time.Duration
-		want    string
-	}{
-		{"all lost", []time.Duration{0, 0}, "loss 100%"},
-		{"spike above scale is marked", []time.Duration{12 * ms, 15 * ms, 680 * ms}, "p95 680ms  max ▲680ms"},
-		{"within scale", []time.Duration{4 * ms, 6 * ms}, "p95 6.0ms  max  6.0ms"},
-		{"no samples", nil, ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := stripStats(tt.history, 10, 80); got != tt.want {
-				t.Errorf("stripStats = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestGraphViewDrawsAMiniChartPerTarget(t *testing.T) {
-	// Arrange: three targets, one of them lost, in a 100-column pane.
-	var targets []*stats.TargetStats
-	for _, host := range []string{"1.1.1.1", "8.8.8.8", "192.0.2.1"} {
-		s := stats.NewTargetStats(host)
-		for range 5 {
-			s.IncSent()
-			if host == "192.0.2.1" {
-				s.OnFailure("Timeout")
-			} else {
-				s.OnSuccess(15*ms, 57)
-			}
-		}
-		targets = append(targets, s)
-	}
-	g := NewGraphView(targets, time.Second)
-	g.mini = true
-	g.SetBorder(true)
-	screen := tcell.NewSimulationScreen("UTF-8")
-	if err := screen.Init(); err != nil {
-		t.Fatal(err)
-	}
-	defer screen.Fini()
-	screen.SetSize(100, 12)
-	g.SetRect(0, 0, 100, 12)
-
-	// Act
-	g.Draw(screen)
-	screen.Show()
-
-	// Assert: a legend, then two cells per row, each a header and 3 bar rows.
-	lines := screenLines(screen, 100, 12)
-	if !strings.Contains(lines[1], "RTT 5m · p95 scale per host") {
-		t.Errorf("legend line = %q", lines[1])
-	}
-	if !strings.Contains(lines[2], "1.1.1.1") || !strings.Contains(lines[2], "8.8.8.8") {
-		t.Errorf("first cell row header = %q, want 1.1.1.1 and 8.8.8.8 side by side", lines[2])
-	}
-	if !strings.Contains(lines[6], "192.0.2.1") || !strings.Contains(lines[6], "loss 100%") {
-		t.Errorf("lost target header = %q, want loss 100%%", lines[6])
-	}
-	if !strings.Contains(lines[9], "×") {
-		t.Errorf("lost target bottom row = %q, want × marks", lines[9])
-	}
-	if got, want := g.preferredHeight(98), 1+2*miniCellRows+2; got != want {
-		t.Errorf("preferredHeight = %d, want %d", got, want)
-	}
-}
-
-func TestMiniLayout(t *testing.T) {
-	tests := []struct {
-		n, width, wantCols, wantRows int
-	}{
-		{0, 100, 1, 0},
-		{1, 100, 1, 1},
-		{3, 100, 2, 2},
-		{3, 70, 1, 3},
-	}
-	for _, tt := range tests {
-		if cols, rows := miniLayout(tt.n, tt.width); cols != tt.wantCols || rows != tt.wantRows {
-			t.Errorf("miniLayout(%d, %d) = %d, %d, want %d, %d", tt.n, tt.width, cols, rows, tt.wantCols, tt.wantRows)
-		}
-	}
-}
-
-func TestMiniColumn(t *testing.T) {
-	runes := func(col []miniCell) string {
-		var b strings.Builder
-		for i := len(col) - 1; i >= 0; i-- {
-			b.WriteRune(col[i].r)
-		}
-		return b.String()
-	}
+func TestGraphViewFullHeight(t *testing.T) {
 	tests := []struct {
 		name   string
-		bucket stripBucket
-		want   string // top to bottom
+		series int
+		width  int
+		want   int
 	}{
-		{"no samples", stripBucket{}, "   "},
-		{"all lost", stripBucket{lost: true, has: true}, "  ×"},
-		{"above scale", stripBucket{max: 680 * ms, has: true}, "▲██"},
-		{"half scale", stripBucket{max: 40 * ms, has: true}, " ▄█"},
-		{"tiny reply still shows", stripBucket{max: 1 * ms, has: true}, "  ▁"},
+		{"one chart", 1, 118, graphMinRowHeight + 2},
+		{"six charts in three rows of two", 6, 118, 3*graphMinRowHeight + 2},
+		{"seven charts need scrolling", 7, 118, 0},
+		{"narrow: one chart per row", 3, 30, 3*graphMinRowHeight + 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := runes(miniColumn(tt.bucket, 80, miniPlotRows)); got != tt.want {
-				t.Errorf("miniColumn = %q, want %q", got, tt.want)
+			targets := make([]*stats.TargetStats, tt.series)
+			for i := range targets {
+				targets[i] = stats.NewTargetStats(fmt.Sprintf("h%d", i))
+			}
+			if got := NewGraphView(targets, time.Second).fullHeight(tt.width); got != tt.want {
+				t.Errorf("fullHeight = %d, want %d", got, tt.want)
 			}
 		})
-	}
-}
-
-// screenLines returns the simulation screen's rows as text.
-func screenLines(screen tcell.SimulationScreen, width, height int) []string {
-	cells, _, _ := screen.GetContents()
-	lines := make([]string, height)
-	for y := range height {
-		var b strings.Builder
-		for x := range width {
-			c := cells[y*width+x]
-			if len(c.Runes) == 0 {
-				b.WriteRune(' ')
-				continue
-			}
-			b.WriteRune(c.Runes[0])
-		}
-		lines[y] = b.String()
-	}
-	return lines
-}
-
-func TestMiniPlotRowsFor(t *testing.T) {
-	tests := []struct {
-		name         string
-		rows, height int
-		want         int
-	}{
-		{"spare height makes charts taller", 1, 1 + 8, 7},
-		{"never below the minimum", 3, 6, miniPlotRows},
-		{"never above the maximum", 1, 200, miniMaxPlotRows},
-		{"no series", 0, 50, miniPlotRows},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := miniPlotRowsFor(tt.rows, tt.height); got != tt.want {
-				t.Errorf("miniPlotRowsFor(%d, %d) = %d, want %d", tt.rows, tt.height, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestMiniColumnDimsBelowTheTop(t *testing.T) {
-	col := miniColumn(stripBucket{max: 70 * ms, has: true}, 80, 4)
-	top := -1
-	for i, c := range col {
-		if c.r != ' ' {
-			top = i
-		}
-	}
-	if top < 1 {
-		t.Fatalf("bar too short to test: %+v", col)
-	}
-	if col[top].color != vividCyan {
-		t.Errorf("top cell color = %v, want bright", col[top].color)
-	}
-	for i := range top {
-		if col[i].color != miniBarFill {
-			t.Errorf("cell %d color = %v, want dimmed fill", i, col[i].color)
-		}
 	}
 }

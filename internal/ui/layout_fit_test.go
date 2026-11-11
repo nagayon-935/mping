@@ -198,9 +198,9 @@ func TestPaneControlsFitLogGrowthDoesNotShrinkOtherPanes(t *testing.T) {
 	}
 }
 
-func TestPaneControlsFitSpareRowsGoToLog(t *testing.T) {
-	// Every pane fits, so the graphs open at their content height and the
-	// rows left over go to the log.
+func TestPaneControlsFitSpareRowsGoToOpenGraph(t *testing.T) {
+	// Every pane fits, so the graphs open and take every row left over; the
+	// log keeps its base height however long it is.
 	f := newFitFixture(t, 20)
 	for i := range 12 {
 		f.vs.appendLog(fmt.Sprintf("message %d", i))
@@ -211,15 +211,15 @@ func TestPaneControlsFitSpareRowsGoToLog(t *testing.T) {
 	if got := paneHeight(f.mtr.pane); got != 22 {
 		t.Errorf("mtr pane height = %d, want its content height 22", got)
 	}
-	if got, want := paneHeight(f.graph), f.graph.preferredHeight(198); got != want {
-		t.Errorf("graph height = %d, want its content height %d", got, want)
+	if got := paneHeight(f.log); got != fixedLogHeight {
+		t.Errorf("log pane height = %d, want its base %d", got, fixedLogHeight)
 	}
-	if got, want := paneHeight(f.log), 150-3-7-11-22-f.graph.preferredHeight(198); got != want {
-		t.Errorf("log pane height = %d, want the remaining %d rows", got, want)
+	if got, want := paneHeight(f.graph), 150-3-7-11-22-fixedLogHeight; got != want {
+		t.Errorf("graph height = %d, want the remaining %d rows", got, want)
 	}
 }
 
-func TestPaneControlsFitGraphKeepsItsContentHeight(t *testing.T) {
+func TestPaneControlsFitGivesSpareRowsToGraph(t *testing.T) {
 	table := tview.NewTable()
 	tablePane := tview.NewFlex().AddItem(table, 0, 1, true)
 	graph := NewGraphView([]*stats.TargetStats{stats.NewTargetStats("a")}, time.Second)
@@ -236,11 +236,8 @@ func TestPaneControlsFitGraphKeepsItsContentHeight(t *testing.T) {
 	}
 	defer screen.Fini()
 	view.Draw(screen)
-	if got, want := paneHeight(graph), graph.preferredHeight(118); got != want {
-		t.Errorf("graph height = %d, want its content height %d", got, want)
-	}
-	if got, want := paneHeight(log), 60-3-4-graph.preferredHeight(118); got != want {
-		t.Errorf("log height = %d, want the remaining %d rows", got, want)
+	if got, want := paneHeight(graph), 60-3-4-fixedLogHeight; got != want {
+		t.Errorf("graph height = %d, want %d", got, want)
 	}
 }
 
@@ -291,13 +288,12 @@ func TestPaneControlsManualFoldOverridesAuto(t *testing.T) {
 	}
 }
 
-func TestPaneControlsFitSpareRowsGrowMiniCharts(t *testing.T) {
-	// Arrange: two targets with mini charts and a long log.
+func TestPaneControlsFitLogStaysSmallWhileGraphOpen(t *testing.T) {
+	// Arrange: two targets and a long log.
 	targets := []*stats.TargetStats{stats.NewTargetStats("a"), stats.NewTargetStats("b")}
 	table := tview.NewTable()
 	tablePane := tview.NewFlex().AddItem(table, 0, 1, true)
 	graph := NewGraphView(targets, time.Second)
-	graph.mini = true
 	log := newLogView()
 	vs := newViewState(log)
 	for i := range 40 {
@@ -318,13 +314,11 @@ func TestPaneControlsFitSpareRowsGrowMiniCharts(t *testing.T) {
 	// Act
 	view.Draw(screen)
 
-	// Assert: the charts take the spare rows up to their tallest, before the
-	// long Log grows; only what they cannot use goes to the Log.
-	graphMax := graph.miniMaxHeight(118)
-	if got, want := paneHeight(graph), min(40-3-5-fixedLogHeight, graphMax); got != want {
-		t.Errorf("graph height = %d, want %d", got, want)
+	// Assert
+	if got := paneHeight(log); got != fixedLogHeight {
+		t.Errorf("log height = %d, want its base %d while the graphs are open", got, fixedLogHeight)
 	}
-	if got, want := paneHeight(log), 40-3-5-paneHeight(graph); got != want {
-		t.Errorf("log height = %d, want the %d rows the charts cannot use", got, want)
+	if got, want := paneHeight(graph), 40-3-5-fixedLogHeight; got != want {
+		t.Errorf("graph height = %d, want the remaining %d rows", got, want)
 	}
 }

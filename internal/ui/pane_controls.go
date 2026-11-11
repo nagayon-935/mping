@@ -45,9 +45,9 @@ type paneControls struct {
 	// graphManual is set once the user folds or opens the RTT graph pane;
 	// until then fit opens it only while every series gets its chart.
 	graphManual bool
-	// graphMax is the tallest the RTT graph pane is worth (borders
-	// included); fit gives it spare rows up to that before the Log.
-	graphMax                      func(width int) int
+	// graphNeed is the RTT graph pane height (borders included) at which
+	// every series gets its chart, or 0 when they never all fit at once.
+	graphNeed                     func(width int) int
 	graphNotified, graphShownLast bool
 	panes                         []*paneControl
 	maximized                     *paneControl
@@ -94,9 +94,7 @@ func newPaneControls(app *tview.Application, layout *tview.Flex, header *tview.T
 	}
 	c.graph = add("RTT Graphs", graph, graph, 3, vividCyan, func(color tcell.Color) { graph.SetBorderColor(color) },
 		func(width int) int { return graph.preferredHeight(width - 2) })
-	if graph.mini {
-		c.graphMax = func(width int) int { return graph.miniMaxHeight(width - 2) }
-	}
+	c.graphNeed = func(width int) int { return graph.fullHeight(width - 2) }
 	c.log = add("Log", log, log, 2, vividRed, func(color tcell.Color) { log.SetBorderColor(color) },
 		func(int) int { return max(logContentLines(log), logLines) + 2 })
 	return c
@@ -124,8 +122,8 @@ func (c *paneControls) syncTableRect(width, paneHeight int) {
 // fit sizes the unfolded panes for a layout of the given inner size. The
 // Log keeps logLines of content; the other panes share the rest by content
 // and weight (see fitHeights). Rows nobody needs make the open RTT charts
-// taller (up to graphMax), then go to the Log. A maximized pane keeps the
-// whole area.
+// taller; while they are folded the Log grows into them instead. A
+// maximized pane keeps the whole area.
 func (c *paneControls) fit(width, height int) {
 	for _, pane := range c.panes {
 		if pane.titleFn != nil && pane.folded {
@@ -166,22 +164,18 @@ func (c *paneControls) fit(width, height int) {
 			demands[i] = paneDemand{weight: pane.weight, desired: pane.desired(width)}
 		}
 		sizes, spare := fitHeights(avail, demands)
-		// While the RTT charts are open they take the spare rows first; the
-		// Log grows to its content only when they are folded.
-		if logOpen && (c.graph == nil || c.graph.folded || c.graphMax == nil) {
+		// While the RTT charts are open they take every spare row; the Log
+		// grows to its content only when they are folded.
+		graphOpen := slices.Index(others, c.graph) >= 0
+		if logOpen && !graphOpen {
 			grow := min(spare, max(c.log.desired(width)-logSize, 0))
 			logSize += grow
 			spare -= grow
 		}
-		// Rows nobody needs make the RTT charts taller, up to the height
-		// where they stop gaining; only the rest goes to the Log.
-		if i := slices.Index(others, c.graph); i >= 0 && spare > 0 && c.graphMax != nil {
-			grow := min(spare, max(c.graphMax(width)-sizes[i], 0))
-			sizes[i] += grow
-			spare -= grow
-		}
 		if spare > 0 {
-			switch {
+			switch i := slices.Index(others, c.graph); {
+			case i >= 0:
+				sizes[i] += spare
 			case logOpen:
 				logSize += spare
 			case len(others) > 0:
@@ -208,7 +202,7 @@ func (c *paneControls) fit(width, height int) {
 }
 
 // autoFoldGraph opens the RTT graph pane only while every series gets its
-// chart in the rows the other panes leave (each at its content height, the
+// chart (see GraphView.fullHeight) in the rows the other panes leave (each at its content height, the
 // Log at its base), and folds it otherwise, until the user folds or opens it
 // with 'f'. The inputs are pane content heights (host count, layout size),
 // not live values, so the state does not flip while data updates.
@@ -229,7 +223,11 @@ func (c *paneControls) autoFoldGraph(width, height int) {
 				room -= max(pane.desired(width), paneMinHeight)
 			}
 		}
-		if fold := room < c.graph.desired(width); fold != c.graph.folded {
+		need := c.graph.desired(width)
+		if c.graphNeed != nil {
+			need = c.graphNeed(width)
+		}
+		if fold := need == 0 || room < need; fold != c.graph.folded {
 			// fit runs inside Draw, which holds the application lock:
 			// query focus through the primitives, and move it after the draw.
 			focused := c.graph.focus.HasFocus() || c.graph.stub.HasFocus()

@@ -36,9 +36,6 @@ type GraphView struct {
 	interval     time.Duration
 	scrollRow    int
 	includePorts bool
-	// mini draws a small chart per series over stripWindowSeconds instead
-	// of the tall chart grid (the main RTT pane; host details keep the grid).
-	mini bool
 
 	// Auto-scale state. Accessed from Draw only, which — like the rest of
 	// the ui package's mutable render state (see viewState, tableRenderer)
@@ -81,34 +78,24 @@ func (g *GraphView) buildSeries(historyWindow int) []graphSeries {
 	return out
 }
 
-// seriesHistories returns each series' RTT history.
-func seriesHistories(series []graphSeries) [][]time.Duration {
-	out := make([][]time.Duration, len(series))
-	for i, s := range series {
-		out[i] = s.history
+// windowMax returns the largest RTT value across all series within the current window.
+func windowMax(series []graphSeries, windowPoints int) time.Duration {
+	var maxRTT time.Duration
+	for _, s := range series {
+		data := s.history
+		if len(data) > windowPoints {
+			data = data[len(data)-windowPoints:]
+		}
+		for _, v := range data {
+			maxRTT = max(maxRTT, v)
+		}
 	}
-	return out
-}
-
-// windowPoints is how many trailing samples the view plots.
-func (g *GraphView) windowPoints() int {
-	if g.interval <= 0 {
-		return 1
-	}
-	window := graphWindowSeconds * time.Second
-	if g.mini {
-		window = stripWindowSeconds * time.Second
-	}
-	return max(int(window/g.interval), 1)
+	return maxRTT
 }
 
 // updateScale recalculates the auto-scale, applying hysteresis on shrink.
 func (g *GraphView) updateScale(dataMax time.Duration, now time.Time) {
-	floor := graphScaleFloorMs
-	if g.mini {
-		floor = stripScaleFloorMs
-	}
-	newScale := computeYScale(dataMax, floor)
+	newScale := computeYScale(dataMax, graphScaleFloorMs)
 	// Expand immediately; shrink only after the hold period.
 	if newScale.maxMs > g.currentScale.maxMs || (newScale.maxMs < g.currentScale.maxMs && now.After(g.scaleHoldUntil)) {
 		g.currentScale = newScale
@@ -135,11 +122,6 @@ func (g *GraphView) InputHandler() func(event *tcell.EventKey, setFocus func(p t
 		// Without series or a drawable area layoutGraph has no visible rows,
 		// so the scroll resets to the top.
 		_, _, width, height := g.GetInnerRect()
-		if g.mini {
-			_, rows := miniLayout(g.seriesCount(), width)
-			g.clampScroll(rows, max((height-1)/(miniPlotRowsFor(rows, height)+1), 0))
-			return
-		}
 		_, numRowsTotal, visibleRows, _, _ := layoutGraph(g.seriesCount(), width, height)
 		if visibleRows == 0 {
 			g.scrollRow = 0
@@ -167,20 +149,18 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 	// Compute time-based window width first so buildSeries can fetch
 	// exactly this many trailing history points per target via
 	// GetViewWindow, instead of the full history ring.
-	timeBasedWidth := g.windowPoints()
+	timeBasedWidth := 1
+	if g.interval > 0 {
+		timeBasedWidth = max(int(graphWindowSeconds*time.Second/g.interval), 1)
+	}
 
 	series := g.buildSeries(timeBasedWidth)
 	if len(series) == 0 {
 		return
 	}
 
-	// Scale to the window's 95th percentile so one spike does not flatten
-	// every other sample; samples above the scale are marked instead.
-	g.updateScale(percentile95(seriesHistories(series), timeBasedWidth), time.Now())
-	if g.mini {
-		g.drawMiniGrid(screen, series, x, y, width, height, timeBasedWidth)
-		return
-	}
+	// Update auto-scale from current window maximum across all series.
+	g.updateScale(windowMax(series, timeBasedWidth), time.Now())
 	yMaxDur := time.Duration(g.currentScale.maxMs * float64(time.Millisecond))
 
 	numCols, numRowsTotal, visibleRows, colWidth, rowHeight := layoutGraph(len(series), width, height)
@@ -256,10 +236,6 @@ func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell,
 	for i, val := range data {
 		if hasData[i] {
 			g.drawBar(screen, graphX+i, plotY, plotHeight, min(val, yMax), gridYPos)
-			if val > yMax {
-				// Above the p95 scale: mark the clipped spike.
-				screen.SetContent(graphX+i, plotY, '▲', nil, tcell.StyleDefault.Foreground(vividRed))
-			}
 		}
 	}
 

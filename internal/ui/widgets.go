@@ -33,7 +33,6 @@ func newTablePane(table *tview.Table) *tview.Flex {
 
 func newGraphPane(targets []*stats.TargetStats, interval time.Duration) *GraphView {
 	graphView := NewGraphView(targets, interval)
-	graphView.mini = true
 	graphView.SetBorder(true).SetTitle(" RTT Graphs ").SetTitleColor(vividCyan).SetBorderColor(vividCyan)
 	graphView.SetBackgroundColor(tcell.ColorBlack)
 	return graphView
