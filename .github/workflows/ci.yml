@@ -5,6 +5,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -76,6 +77,8 @@ jobs:
   test-macos:
     name: Run Tests (macOS)
     runs-on: macos-latest
+    # Run on main push, manual trigger, or if PR has 'full-ci' label
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'full-ci')
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
