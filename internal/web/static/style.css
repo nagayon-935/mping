@@ -163,7 +163,7 @@ body {
 .workspace.has-route { grid-template-areas: "monitor" "route"; }
 .workspace.has-inspect.has-route { grid-template-areas: "monitor" "inspect" "route"; }
 #pane-monitor { grid-area: monitor; max-height: clamp(320px, 75dvh, 900px); }
-#pane-inspect { grid-area: inspect; height: clamp(420px, 80dvh, 900px); }
+#pane-inspect, #pane-activity { grid-area: inspect; height: clamp(420px, 80dvh, 900px); }
 #pane-mtr { grid-area: route; height: 420px; }
 #pane-traceroute { grid-area: route; max-height: 420px; }
 .pane { display: flex; flex-direction: column; min-height: 0; }
@@ -411,12 +411,18 @@ canvas.summary-canvas { display: block; width: 100%; height: clamp(180px, 26dvh,
      and its button. */
   .workspace.has-route { grid-template-rows: fit-content(60%) minmax(0, 1fr);
     grid-template-areas: "monitor monitor" "route route"; }
-  .workspace.has-route #pane-monitor .pane-scroll { flex: 1 1 auto;
+  .workspace.has-route #pane-monitor .pane-scroll,
+  .workspace.is-stacked #pane-monitor .pane-scroll { flex: 1 1 auto;
     height: calc(var(--monitor-head, 32px) + var(--monitor-hscroll, 0px) + max(136px,
       var(--monitor-rows, 0) * var(--row-target) + var(--monitor-groups, 0) * var(--row-group))); }
   .workspace.has-inspect.has-route { grid-template-areas: "monitor inspect" "route inspect"; }
-  /* Summary scrolls internally instead of sizing the rows. */
-  .workspace.has-inspect #pane-inspect { contain: size; min-height: 320px; }
+  /* Few hosts (workspace_view.js decides, with hysteresis): the table is as
+     tall as its rows and the detail area takes the full width below it; a
+     route pane shares that lower row. */
+  .workspace.is-stacked { grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "monitor monitor" "inspect inspect"; }
+  .workspace.is-stacked.has-route { grid-template-areas: "monitor monitor" "route inspect"; }
+  /* The detail area scrolls internally instead of sizing the rows. */
+  .workspace.has-inspect #pane-inspect, .workspace.has-inspect #pane-activity { contain: size; min-height: 240px; }
   #workspace > .pane { height: auto; max-height: none; }
   .page-view { display: flex; flex: 1; min-height: 0; }
   .page-view > .pane { flex: 1; min-height: 0; }
@@ -485,3 +491,25 @@ canvas.summary-canvas { display: block; width: 100%; height: clamp(180px, 26dvh,
 .spark-loss { stroke: var(--critical); stroke-width: 2; }
 .spark-dead { stroke: var(--critical); stroke-width: 2; stroke-dasharray: 3 3; }
 .spark-clip { fill: var(--critical-ink); }
+
+/* Activity: what is happening while no host is selected. */
+.activity-grid { display: grid; gap: 0 32px; grid-template-columns: minmax(0, 1fr); }
+.activity-grid.is-wide { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.activity-states { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.activity-item { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; }
+.activity-item .status { font-size: 13px; }
+.activity-item.lvl-crit .status { color: var(--critical-ink); }
+.activity-item.lvl-warn .status { color: var(--ink); }
+.activity-host { min-width: 0; overflow-wrap: anywhere; }
+.activity-reason { color: var(--ink-2); }
+.activity-duration { color: var(--muted); font: 12px var(--mono); white-space: nowrap; }
+.link-button { padding: 0; border: 0; background: transparent; color: var(--series-ink); font: inherit; font-weight: 600;
+  text-align: left; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; }
+.link-button:hover { text-decoration-thickness: 2px; }
+.activity-events { margin-bottom: 8px; }
+.activity-events li { grid-template-columns: 64px minmax(0, 1fr); row-gap: 0; }
+.activity-events .event-who { grid-column: 2; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-events .event-who .status { font-size: 12px; }
+.activity-events .event-who .lvl-crit { color: var(--critical-ink); }
+.activity-events .event-text { grid-column: 2; }
+.event-kind-label { color: var(--ink-2); }

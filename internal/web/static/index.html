@@ -73,9 +73,9 @@
   <label class="check-label"><input id="shortcuts-enabled" type="checkbox" checked> Enable character shortcuts</label>
   <dl class="shortcut-list">
     <dt>/</dt><dd>Focus host search</dd><dt>j / k or ↓ / ↑</dt><dd>Move focus within the host list</dd>
-    <dt>Home / End</dt><dd>First / last host</dd><dt>Enter</dt><dd>Select host and open Summary</dd>
+    <dt>Home / End</dt><dd>First / last host</dd><dt>Enter</dt><dd>Select host and open Summary; on the selected host, close it</dd>
     <dt>← / →</dt><dd>Inspect RTT samples while the Summary chart is focused (Home / End: ends, Esc: clear)</dd><dt>w</dt><dd>Open Report (controls enabled)</dd>
-    <dt>Delete</dt><dd>Confirm deletion of the focused host</dd><dt>Esc</dt><dd>Close a dialog or leave search</dd><dt>?</dt><dd>Show this help</dd>
+    <dt>Delete</dt><dd>Confirm deletion of the focused host</dd><dt>Esc</dt><dd>Close a dialog, leave search, or close Summary (back to Activity)</dd><dt>?</dt><dd>Show this help</dd>
   </dl>
   <p class="dialog-description">Route monitoring is enabled at startup: use -M for MTR or -T for Traceroute.</p>
   <button class="btn" type="button" data-close="shortcuts-dialog">Close</button>
@@ -154,7 +154,17 @@
     <div id="inspect-body" class="inspect-body"></div>
   </section>
 
-  <section id="pane-traceroute" class="pane" aria-labelledby="traceroute-title" hidden>
+  <section id="pane-activity" class="pane" aria-labelledby="activity-title" hidden>
+    <div class="pane-head">
+      <div>
+        <h2 id="activity-title" class="pane-title">Activity</h2>
+        <p class="pane-hint">Select a host for its Summary; select it again or press Esc to come back here.</p>
+      </div>
+    </div>
+    <div id="activity-body" class="inspect-body"></div>
+  </section>
+
+  <section id="pane-traceroute"class="pane" aria-labelledby="traceroute-title" hidden>
     <div class="pane-head">
       <div>
         <h2 id="traceroute-title" class="pane-title">Traceroute</h2>

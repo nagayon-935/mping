@@ -8,7 +8,7 @@ import { editableTarget } from "./workspace.js";
  *   table: HTMLTableElement, filter: HTMLInputElement,
  *   charactersEnabled: () => boolean, canControl: () => boolean,
  *   focusFilter: () => void, openHelp: () => void, openReport: () => void,
- *   deleteTarget: (id: number) => void,
+ *   deleteTarget: (id: number) => void, deselect: () => boolean,
  * }} deps
  */
 export function installShortcuts(deps) {
@@ -22,6 +22,12 @@ export function installShortcuts(deps) {
         event.preventDefault();
         deps.table.querySelector(".host-open[tabindex='0']")?.focus();
       }
+      return;
+    }
+
+    // Esc anywhere outside a dialog or search closes Summary (back to Activity).
+    if (event.key === "Escape" && deps.deselect()) {
+      event.preventDefault();
       return;
     }
 

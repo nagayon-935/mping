@@ -106,7 +106,7 @@ export function renderTargets(table, view, onOpen, onSort) {
     button.addEventListener("click", () => onSort(key));
     th.replaceChildren(button);
   }
-  const groupsById = new Map(meta.groups?.flatMap(g => g.target_ids.map(id => [id, g.name])) ?? []);
+  const groupsById = new Map(meta.groups?.flatMap(g => (g.target_ids ?? []).map(id => [id, g.name])) ?? []);
   const sortedFlat = view.sort?.key && view.sort.key !== "config";
   const rows = [];
   for (const section of buildSections(visible, sortedFlat ? [] : meta.groups)) {

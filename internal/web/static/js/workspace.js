@@ -78,3 +78,27 @@ export function createTargetOrder() {
     },
   };
 }
+
+/** Stacked while the monitor needs at most this share of the workspace height… */
+export const STACK_ENTER = 0.5;
+/** …and side by side again only once it needs more than this (hysteresis). */
+export const STACK_LEAVE = 0.6;
+
+/**
+ * Desktop layout for the detail area (Activity or Summary). With few hosts
+ * the table shrinks to its rows and the detail area goes full-width below
+ * it ("stacked"); once the table would fill the height it sits beside it
+ * ("side"). `needed` comes from the configured host and group counts, not
+ * from filters or live values, and the two thresholds differ, so data
+ * updates cannot flip the layout back and forth.
+ * @param {"stacked"|"side"|null} current
+ * @param {number} needed monitor height in px that shows every row
+ * @param {number} available workspace height in px
+ * @returns {"stacked"|"side"}
+ */
+export function chooseLayout(current, needed, available) {
+  if (!(available > 0) || !(needed > 0)) return current ?? "side";
+  const share = needed / available;
+  if (current === "stacked") return share > STACK_LEAVE ? "side" : "stacked";
+  return share <= STACK_ENTER ? "stacked" : "side";
+}

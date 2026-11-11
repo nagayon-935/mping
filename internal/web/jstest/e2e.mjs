@@ -515,12 +515,11 @@ try {
     assert.ok(result.times.length>0 && result.times.every(t=>/^\d{2}:\d{2}:\d{2}$/.test(t)),`times: ${result.times}`);
   });
 
-  await check("closing details restores the overview width", async () => {
+  await check("closing details returns the detail area to Activity", async () => {
     await page.click("#close-inspect");
-    await page.waitForFunction(() => document.querySelector("#pane-inspect").hidden && !document.querySelector("#workspace").classList.contains("has-inspect"));
+    await page.waitForFunction(() => document.querySelector("#pane-inspect").hidden && !document.querySelector("#pane-activity").hidden);
     assert.ok(await page.isVisible("#pane-mtr"));
     assert.equal(await page.locator("#table-zoom").count(),0);
-    assert.equal(await page.$eval("#workspace",n=>n.classList.contains("has-inspect")),false);
     assert.equal(await page.evaluate(()=>location.hash),"");
     assert.ok(await page.isVisible("#targets th.col-asn"));
     assert.ok(await page.isVisible("#targets th.col-spark"));

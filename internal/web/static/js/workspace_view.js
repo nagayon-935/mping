@@ -7,8 +7,15 @@ import { renderTargets } from "./table.js";
 import { renderMTR } from "./mtr.js";
 import { renderTraceroutes } from "./traceroute.js";
 import { STATUS_LABELS } from "./toolbar.js";
+import { chooseLayout } from "./workspace.js";
 
-export function createWorkspaceView({ inspect, canControl, selectTarget, sortColumn, renderUnlessSelecting, selectedId }) {
+// Desktop breakpoint in style.css: below it the panes simply stack.
+const DESKTOP = "(min-width: 1100px)";
+const ROW_TARGET = 53; // --row-target
+const ROW_GROUP = 36; // --row-group
+const EMPTY_MIN = 136; // the empty-state message and its button
+
+export function createWorkspaceView({ inspect, activity, canControl, selectTarget, sortColumn, renderUnlessSelecting, selectedId }) {
   // Locate scrolls a pane to the selected host without reordering anything.
   const locators = [
     ["locate-mtr", () => $("mtr-table-wrap"), "#mtr tbody", 36], // below the sticky column header
@@ -28,8 +35,12 @@ export function createWorkspaceView({ inspect, canControl, selectTarget, sortCol
     const showMTR = !!features.mtr;
     const showTrace = !!features.traceroute && !showMTR;
 
+    // The detail area always shows something: Summary for the selected
+    // host, otherwise Activity.
     $("pane-inspect").hidden = !view.inspectOpen;
-    $("workspace").classList.toggle("has-inspect", view.inspectOpen);
+    $("pane-activity").hidden = view.inspectOpen;
+    activity.activate(!view.inspectOpen && view.page === "monitor");
+    $("workspace").classList.toggle("has-inspect", true);
     $("pane-mtr").hidden = !showMTR;
     $("pane-traceroute").hidden = !showTrace;
     $("workspace").classList.toggle("has-route", showMTR || showTrace);
@@ -43,8 +54,33 @@ export function createWorkspaceView({ inspect, canControl, selectTarget, sortCol
     renderCommonCause(view.snapshot.targets);
     renderTargetsPane(view, targets, total);
     measureMonitor();
+    const stacked = updateLayout(total, groupHeaders);
     renderMonitorChrome(view, targets, total, showMTR || showTrace, orderUpToDate);
-    renderUnlessSelecting($("inspect-body"), () => { if (view.inspectOpen) inspect.render(view); });
+    if (view.inspectOpen) renderUnlessSelecting($("inspect-body"), () => inspect.render(view));
+    else renderUnlessSelecting($("activity-body"), () =>
+      activity.render(view.snapshot.targets, stacked ? "all" : "attention", stacked && !(showMTR || showTrace)));
+  }
+
+  let layout = null;
+  /** Few hosts: the table shrinks to its rows and the detail area goes
+   * full-width below. Many: side by side. Decided from configured host and
+   * group counts against the workspace height, with hysteresis. */
+  function updateLayout(total, groupHeaders) {
+    const workspace = $("workspace");
+    if (!matchMedia(DESKTOP).matches) {
+      layout = null;
+      workspace.classList.remove("is-stacked");
+      return false;
+    }
+    const pane = $("pane-monitor");
+    const chrome = pane.querySelector(".pane-head").offsetHeight + pane.querySelector(".monitor-toolbar").offsetHeight;
+    const head = parseFloat(pane.style.getPropertyValue("--monitor-head")) || 32;
+    const hscroll = parseFloat(pane.style.getPropertyValue("--monitor-hscroll")) || 0;
+    const rows = Math.max(EMPTY_MIN, total * ROW_TARGET + groupHeaders * ROW_GROUP);
+    const needed = chrome + head + hscroll + rows + 2;
+    layout = chooseLayout(layout, needed, workspace.clientHeight);
+    workspace.classList.toggle("is-stacked", layout === "stacked");
+    return layout === "stacked";
   }
 
   /** Host and group rows have fixed heights in style.css; the column header

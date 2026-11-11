@@ -2,6 +2,7 @@
 import { $, el, fetchJSON, readSession, selectionWithin, writeSession } from "./dom.js";
 import { createInspect } from "./inspect.js";
 import { createLog } from "./log.js";
+import { createActivity } from "./activity.js";
 import { httpFor } from "./checks.js";
 import { createControl } from "./control.js";
 import { createReportDialog } from "./report.js";
@@ -44,6 +45,21 @@ const view = {
 const hasTarget = (id) => !!view.snapshot?.targets.some((t) => t.id === id);
 const monitorHash = () => (view.selectedId == null ? "#monitor" : `#target-${view.selectedId}`);
 
+/** Rows toggle: selecting the selected host again returns to Activity. */
+function toggleTarget(id) {
+  if (view.selectedId === id && view.inspectOpen) {
+    clearSelection();
+    focusRow(id);
+  } else {
+    selectTarget(id);
+  }
+}
+
+/** Keep keyboard users on the host they just closed. */
+function focusRow(id) {
+  requestAnimationFrame(() => $("targets").querySelector(`.host-open[data-target-id="${id}"]`)?.focus({ preventScroll: true }));
+}
+
 function selectTarget(id) {
   if (!hasTarget(id)) return;
   view.selectedId = id;
@@ -80,6 +96,13 @@ const inspect = createInspect({
     button.addEventListener("click", () => actions.deleteTarget(t.id));
     return button;
   },
+});
+
+const activity = createActivity({
+  body: $("activity-body"),
+  onSelect: selectTarget,
+  isStopped: () => view.state === "stopped",
+  requestRender: scheduleRender,
 });
 
 const log = createLog({
@@ -154,7 +177,7 @@ const toolbar = createMonitorToolbar(view, {
 });
 
 const workspace = createWorkspaceView({
-  inspect, selectTarget, sortColumn: toolbar.sortColumn,
+  inspect, activity, selectTarget: toggleTarget, sortColumn: toolbar.sortColumn,
   canControl: () => control.allowed,
   renderUnlessSelecting: unlessSelecting,
   selectedId: () => view.selectedId,
@@ -185,6 +208,7 @@ function renderPages() {
   $("nav-monitor").href = monitorHash();
   $("nav-http").hidden = !view.meta?.features.http;
   log.activate(view.page === "log");
+  if (view.page !== "monitor") activity.activate(false);
 }
 
 const targetOrder = createTargetOrder();
@@ -390,6 +414,13 @@ function initShortcuts() {
     },
     openHelp: () => $("shortcuts-dialog").showModal(),
     openReport: report.open,
+    deselect() {
+      if (view.selectedId == null || view.page !== "monitor") return false;
+      const id = view.selectedId;
+      clearSelection();
+      focusRow(id);
+      return true;
+    },
     deleteTarget: actions.deleteTarget,
   });
 }

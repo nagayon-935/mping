@@ -78,7 +78,7 @@ export function buildSections(targets, groups) {
   const sections = [];
   for (const g of groups) {
     const members = [];
-    for (const id of g.target_ids) {
+    for (const id of g.target_ids ?? []) {
       const t = byId.get(id);
       if (t && !placed.has(id)) {
         members.push(t);
