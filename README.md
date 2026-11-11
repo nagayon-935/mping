@@ -465,7 +465,7 @@ Regenerate saved scripts after upgrading mping to include new flags. To monitor 
 
 Cells are not cut short. When the terminal is too narrow for every column, whole columns are hidden instead, in this order:
 
-1. Supplementary columns: SIZE → MTU → SRC → DNS → RTT 60s → LAST LOSS → LOST → RCV → TTL → AVG (SIZE, MTU, SRC and DNS only when their option was not given).
+1. Supplementary columns: SIZE → MTU → SRC → DNS → LAST LOSS → LOST → RCV → TTL → AVG → RTT 60s (the sparkline goes last: it is the only RTT trend while the graph pane is folded) (SIZE, MTU, SRC and DNS only when their option was not given).
 2. Columns requested with an option: SIZE (`-s`) → SRC (`-S` / `-I`) → DNS (`-d`) → ASN (`-a`) → PTR (`-r`) → PMTU (`-m`).
 
 DST, LOSS%, RTT and JIT (and ERR while an error is shown) are never hidden. The pane title lists hidden columns; a hidden setting every row shares, such as the payload size or a pinned source address, appears there with its value (`Ping Monitor · SIZE 56 · hidden: TTL AVG`). Every value stays available in the host details (Enter).

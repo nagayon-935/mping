@@ -282,3 +282,32 @@ func TestSparklineWidth_SingleCellGlyphs(t *testing.T) {
 		t.Errorf("RTT 60s content width = %d, want %d", got, sparkWidth)
 	}
 }
+
+func TestPlanColumns_SparklineOutlivesSupplementaryColumns(t *testing.T) {
+	// Arrange: the graph pane is folded, so the sparkline stands in for it.
+	tr, texts := newPlanRenderer(t, []*stats.TargetStats{replyingTarget("10.0.0.1", 12*time.Millisecond)}, columnOptions{SparkPoints: 60})
+
+	// Act: the narrowest table that still fits.
+	var plan columnPlan
+	for width := 20; width <= 200 && !plan.ok; width++ {
+		plan = tr.planColumns(texts, width)
+	}
+	var withSpark columnPlan
+	for width := 20; width <= 200; width++ {
+		if p := tr.planColumns(texts, width); slices.Contains(shownNames(tr, p), sparkColumnName) {
+			withSpark = p
+			break
+		}
+	}
+
+	// Assert: when the sparkline first appears, every supplementary column
+	// is still hidden; it is the last of them to go.
+	for _, name := range []string{"SIZE", "MTU", "SRC", "LAST LOSS", "LOST", "RCV", "TTL", "AVG"} {
+		if !slices.Contains(withSpark.hidden, name) {
+			t.Errorf("%s shown before the sparkline: hidden %v", name, withSpark.hidden)
+		}
+	}
+	if !slices.Contains(plan.hidden, sparkColumnName) {
+		t.Errorf("at the narrowest width the sparkline should hide too: %v", plan.hidden)
+	}
+}

@@ -94,12 +94,15 @@ const (
 	rankMTU
 	rankSrc
 	rankDNS
-	rankSpark
 	rankLastLoss
 	rankLost
 	rankRecv
 	rankTTL
 	rankAvg
+	// rankSpark: the sparkline shows only while the RTT graph pane is
+	// folded, when it is the only RTT trend on screen, so it outlives every
+	// supplementary column.
+	rankSpark
 	rankSizeExplicit
 	rankSrcExplicit
 	rankDNSExplicit

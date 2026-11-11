@@ -454,7 +454,7 @@ mping completion fish > ~/.config/fish/completions/mping.fish
 
 セルの中身は切り詰めません。全カラムが収まらないときは、次の順にカラムごと隠します。
 
-1. 補助的なカラム: SIZE → MTU → SRC → DNS → RTT 60s → LAST LOSS → LOST → RCV → TTL → AVG (SIZE・MTU・SRC・DNS は対応するオプションを指定していない場合)
+1. 補助的なカラム: SIZE → MTU → SRC → DNS → LAST LOSS → LOST → RCV → TTL → AVG → RTT 60s (グラフのペインを畳んでいる間は唯一の RTT の推移なので、スパークラインは最後に隠します) (SIZE・MTU・SRC・DNS は対応するオプションを指定していない場合)
 2. オプションで指定したカラム: SIZE (`-s`) → SRC (`-S` / `-I`) → DNS (`-d`) → ASN (`-a`) → PTR (`-r`) → PMTU (`-m`)
 
 DST・LOSS%・RTT・JIT (エラー表示中は ERR も) は隠しません。隠したカラムはペインのタイトルに表示し、ペイロードサイズや固定した送信元のように全行で同じ設定値はその値も表示します (`Ping Monitor · SIZE 56 · hidden: TTL AVG`)。すべての値はホスト詳細 (Enter) で確認できます。
