@@ -4,7 +4,7 @@
 
 # mping
 
-**mping** は Go言語で書かれたターミナルベースのマルチターゲット Ping ツールです。複数のホストに対して同時に Ping を実行し、パケットロス率、RTT、TTL などの統計情報をリアルタイムで見やすい TUI (テキストユーザーインターフェース) で監視できます。
+**mping** は Go言語で書かれたターミナルベースのマルチターゲット Ping ツールです。複数のホストに対して同時に Ping を実行し、パケットロス率、RTT、ジッタ、TTL などの統計情報をリアルタイムで見やすい TUI (テキストユーザーインターフェース) で監視できます。`--web` でループバック限定の Web UI も使えます。
 
 ![Go Version1.26](https://img.shields.io/badge/go-v1.26-blue "Go Version1.26")![MIT License](https://img.shields.io/badge/license-MIT-blue "MIT License")[![Coverage Status](https://coveralls.io/repos/github/nagayon-935/mping/badge.svg?branch=main)](https://coveralls.io/github/nagayon-935/mping?branch=main)
 
@@ -14,20 +14,31 @@
 
 ## 特徴
 
-* **複数ターゲットへの Ping**: 複数のホストを並行して監視できます。
-* **リアルタイム統計**: パケットロス、RTT、TTL、エラーメッセージをリアルタイムで更新します。
-* **TUI ダッシュボード**: 黒背景固定の視認性の高いテーブル表示を採用。ウィンドウ幅に応じて列幅を自動再配分し、幅が足りない場合は 1 ターゲット 1 行を維持したまま優先度順に列を自動で隠します。
-* **色分けによる警告**: パケットロス率/RTT/Jitter に応じて直感的に状況を把握できます。閾値を超えると Log ペインにアラートが記録されます。同じ秒に同じ状態変化が複数ターゲットで起きた場合は、対象ターゲットをまとめて 1 行で記録します (例: `[12:09:03] crit: Jitter > 50.0ms ×3 — 1.1.1.1, 8.8.8.8, 9.9.9.9`)。
-* **詳細な設定**: インターフェイス、ソースIP、パケットサイズ、送信回数などの柔軟な指定が可能です。
-* **YAML ホストリスト**: ホスト一覧をファイルで管理できます。
-* **ホストグループ**: YAML ファイルで名前付きグループを定義できます。グループごとにホスト数つきのヘッダ行を表示し、ターゲットを視覚的にまとめて確認できます。
-* **2 つのモードの経路監視**: `-T` は各ターゲットへの経路を Host/Route のテーブルで表示し、10 分ごとに少ないプローブで調べ直します。`-M` はさらに全ホップへ毎秒プローブを送り、`mtr` コマンドと同様の Hop / Host / Loss% / Snt / Recv / Last / Avg / Min / Max / Jitter カラムを表示します。どちらのモードでも経路の変化を検知します。どちらか一方を選んでください。
-* **HTTP(S) ヘルスチェックペイン**: `-H` オプション指定時に HTTP/HTTPS エンドポイントへ GET リクエストを送信し、ステータスコードとレスポンスタイム (Last/Min/Avg/Max) および Up/Down 累計回数をリアルタイムで監視します。
-* **Port Monitor ペイン**: `-p` オプション指定時に TCP/UDP ポートの疎通状況をリアルタイムで監視します。ポート番号から推定されるサービス名、**Last / Min / Avg / Max RTT**（TCP 接続確立または UDP 応答までの往復時間）、Open/Closed の累計回数、最終ステータス変化時刻を表示します。RTT 統計は `Open` 応答時のみ記録されます。
-* **PMTU 探索**: IPv4 の DF プローブと、IPv6 の OS 推定値取得・Echo による確認に対応します。
-* **自動ソースIP検出**: 固定した送信元、またはアドレスファミリーごとの代表的な送信元アドレスを表示します。
-* **RTT グラフ**: 縦軸は自動スケール（スパイク時に即拡大、一定期間後に縮小）、横軸は設定間隔で約 30 秒分の直近サンプル。ICMP と TCP/UDP ポートの両系列を表示できます。ロスしたサンプルは 0ms の行に赤い `×`、一部だけロスした列はオレンジのバーで描き (**RTT 60s** のスパークラインと同じ色)、グラフの見出しに区間のロス率 (例 `loss 20% (6/30)`) を表示します。Ping Monitor に 12 台ぶんの高さを確保した残りの行を使い (Log は基本の高さのまま)、一度に 6 台までのグラフを表示してそれ以上はスクロールします。ペイン上で **f** を押すと畳む / 開くを切り替えられます。
-* **統計のスナップショット**: 現在の統計を含む調査レポートを、TUI (`w`) か Web UI の **Report** ボタンから JSON または CSV で保存できます。
+* **複数ターゲットへの Ping** — 複数のホストを並行して監視。実行中のホスト追加・削除も可能です。
+* **リアルタイム統計** — パケットロス、RTT (Last / Avg / ジッタ)、TTL、エラーを、設定可能な閾値で色分け表示し、Log ペインにアラートを記録します。
+* **幅に追従する TUI** — 端末の幅に合わせて列幅を配分し、足りない場合は優先度順に列ごと隠します。ホストごとの RTT スパークライン (**RTT 60s**) と、縦軸が自動スケールする **RTT Graphs** ペインを備え、どちらもロスを赤/オレンジで描き分けます。
+* **YAML ホストリスト** — グループ、表示名、アドレス/範囲/CIDR のパターン、NetBox IP アドレス CSV の `include:`、ファイル変更時のホットリロードに対応します。
+* **経路監視** — `-T` (traceroute) または `-M` (MTR 風の全ホップのロス/遅延監視)。どちらも経路フラップを検知します。
+* **HTTP(S) ヘルスチェック** (`-H`) と **TCP/UDP ポート疎通チェック** (`-p`) のペイン。
+* **PMTU 探索** (`-m`) — IPv4 / IPv6 に対応。
+* **状態判定** — N 回連続失敗で到達不能、M 回連続応答で復旧とみなします (`--health-failures` / `--health-recoveries`)。
+* **レポート** — 統計スナップショットを TUI (`w`) か Web UI の **Report** ボタンから JSON / CSV で保存できます。
+* **Web UI** (`--web`) — フィルタ、ホスト別 Summary、アクティビティ、読み取り/操作用 JSON API を備えたブラウザダッシュボード。
+
+## クイックスタート
+
+```bash
+# ソースからインストール (ビルド済みバイナリは下の「インストール」を参照)
+make install
+
+# 複数ホストを Ping (install.sh 実行後は sudo 不要)
+mping google.com 1.1.1.1 8.8.8.8
+
+# YAML からホストを読み込み、MTR 風の経路監視と Web UI を併用
+mping -f hosts.yaml -M --web
+```
+
+**q** で終了、行を選んで **Enter** でホスト詳細を開きます。全オプションは [使い方とオプション](./guide/ja/usage.md)、キー操作は [TUI リファレンス](./guide/ja/tui.md) を参照してください。
 
 ## 対応プラットフォーム
 
@@ -39,548 +50,45 @@
 
 > **Windows について** — リリースには Windows 版も含まれますが、CI で確認しているのはビルドが通ることだけで、Windows 上での動作テストは行っていません。Raw ICMP ソケットを使うため、管理者として起動したシェルから実行してください。TTL と物理インターフェイスへのソケット固定は未対応ですが、`-I` は宛先ファミリーに応じたインターフェイスの送信元アドレスへ固定し、明示的な `-S` があればそちらを優先します。IPv4 の PMTU 探索は動作未確認、IPv6 の PMTU 探索は未対応です。
 
-> **権限について** — mping は正確な TTL を取得するために Raw ICMP ソケットを使用します。Linux では `setcap cap_net_raw+ep` での権限付与を推奨します (`install.sh` が自動で処理します)。macOS では `setuid` を使用します。setuid 起動の計測プロセスはソケット操作に必要な権限を保持し、ユーザーファイル（`-f`・`include:`・保存するレポート）へのアクセス時に一時的に権限を下げます。そのため、これらのファイルは起動したユーザーの権限でアクセスします。Web UI のブラウザ向けの部分は、権限を恒久的に捨てた別プロセスで動きます（[Web UI](#web-ui-実験的機能) 参照）。
+> **権限について** — mping は正確な TTL を取得するために Raw ICMP ソケットを使用します。Linux では `setcap cap_net_raw+ep` での権限付与を推奨します (`install.sh` が自動で処理します)。macOS では `setuid` を使用します。setuid 起動の計測プロセスはソケット操作に必要な権限を保持し、ユーザーファイル（`-f`・`include:`・保存するレポート）へのアクセス時に一時的に権限を下げます。そのため、これらのファイルは起動したユーザーの権限でアクセスします。Web UI のブラウザ向けの部分は、権限を恒久的に捨てた別プロセスで動きます（[Web UI](./guide/ja/web-ui.md) 参照）。
 
 > **ターミナルの互換性** — Linux や macOS の標準ターミナルでは、色が正しく描画されないことがあります。色が正しく表示されない場合は、モダンなターミナルエミュレータ（iTerm2, Alacritty, kitty など）の使用を検討してください。
 
 ## インストール
 
-### リリース済みバイナリ (推奨)
-
-Linux/macOS では、[Releases](https://github.com/nagayon-935/mping/releases) ページから対応プラットフォームのアーカイブをダウンロードして展開し、同梱の `install.sh` を実行します。Windows のアーカイブには `mping.exe` が含まれるため、管理者のシェルから実行してください。
-
-この README は現在のソースツリーの機能を説明しています。リリース済みバイナリはバージョンによって機能が異なるため、記載内容と同じ実装を使う場合は、このソースツリーからビルドしてください。以下の `v0.4.5` はアーカイブ名の例なので、インストールするリリースのバージョンに置き換えてください。
-
-#### Linux (amd64)
-
-```bash
-# ダウンロードと展開 (v0.4.5 は例です。最新バージョンは Releases ページで確認してください)
-curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-linux-amd64.tar.gz
-tar -xzf mping-v0.4.5-linux-amd64.tar.gz
-
-# インストール (setcap で CAP_NET_RAW を付与。setcap が無い場合は setuid にフォールバック)
-sudo ./install.sh
-```
-
-#### Linux (arm64 — Raspberry Pi, AWS Graviton など)
-
-```bash
-curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-linux-arm64.tar.gz
-tar -xzf mping-v0.4.5-linux-arm64.tar.gz
-sudo ./install.sh
-```
-
-#### macOS (Intel)
-
-```bash
-curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-darwin-amd64.tar.gz
-tar -xzf mping-v0.4.5-darwin-amd64.tar.gz
-sudo ./install.sh
-```
-
-#### macOS (Apple Silicon)
-
-```bash
-curl -LO https://github.com/nagayon-935/mping/releases/download/v0.4.5/mping-v0.4.5-darwin-arm64.tar.gz
-tar -xzf mping-v0.4.5-darwin-arm64.tar.gz
-sudo ./install.sh
-```
-
-`install.sh` はバイナリを `INSTALL_DIR` (デフォルト: `/usr/local/bin`) にコピーし、OS に応じて権限を設定します:
-
-* **Linux**: `setcap cap_net_raw+ep` を付与 (未インストールの場合は setuid にフォールバック)
-* **macOS**: `chown root` + `chmod u+s` で setuid を付与
-
-インストール先を変更する場合:
-
-```bash
-sudo mkdir -p /opt/mping/bin
-sudo INSTALL_DIR=/opt/mping/bin ./install.sh
-export PATH="/opt/mping/bin:$PATH"
-```
-
-インストール後は `sudo` なしで実行できます:
-
-```bash
-mping google.com 1.1.1.1
-```
-
----
-
-### ソースコードからビルド
-
-**必須要件:** Go 1.26.10 以上
+[Releases](https://github.com/nagayon-935/mping/releases) からプラットフォームに合うアーカイブをダウンロードして展開し、`sudo ./install.sh` を実行します。ソースからビルドする場合:
 
 ```bash
 git clone https://github.com/nagayon-935/mping.git
 cd mping
+make install      # ビルド + sudo ./install.sh
 ```
 
-#### make を使ったビルド
+インストール後は `sudo` **なし**で実行できます。プラットフォーム別のコマンド、`INSTALL_DIR`、`go build` は [インストール](./guide/ja/installation.md) を参照してください。
 
-```bash
-# ビルドのみ
-make build
+## Web UI
 
-# ビルド + インストール (macOS は setuid、Linux は利用可能なら setcap)
-make install
-```
-
-`make install` はバイナリを再ビルドし、`sudo ./install.sh` を実行します。デフォルトの配置先は `/usr/local/bin/mping` で、上記のOS別の権限を設定します。PATH内で別の `mping` が先に見つかる場合は、そのバイナリが起動するため、`type -a mping` で確認してください。古いバイナリを移動・削除した後は、`hash -r` でシェルのコマンドキャッシュを消します。
-
-#### go build を使ったビルド
-
-```bash
-go build -o mping ./cmd/main
-sudo ./install.sh
-```
-
-## 使い方
-
-`-4` / `-6` を省略すると、ホスト名は OS と Go のダイヤラーによるアドレス順序・経路・送信元選択に従います。宛先ごとに OS が送信できる IPv4 / IPv6 を選び、IPv4 の固定優先や、無関係な外部ホストを使う IPv6 全体判定は行いません。UDP ソケットを接続してローカルの経路を確認し、データグラムは送りません。Ping の応答確認ではないため、その後の Ping ロスで別のバージョンに切り替えません。定期的な DNS 再解決では選択を見直します。
-
-IP アドレスの直接指定では、そのバージョンと IPv6 の zone を維持します。`-S` は送信元と同じファミリーに制限し、`-I` 単独ではそのインターフェイス上の両ファミリーを利用できます。Windows/FreeBSD では物理インターフェイスへの固定の代わりに、ファミリーごとの送信元アドレスへ固定します。`-4` / `-6` は明示的に固定したい場合に使えます。`--resolve-all` は、現在経路のないものも含め、指定ファミリーの全 DNS アドレスを意図的に監視します。
-
-このファミリー選択は Ping の対象と、その経路・ポート監視に適用します。HTTP の URL は独立して確認するため、`-4` / `-6` だけでは HTTP のアドレスファミリーを固定しません。送信元・インターフェイス指定（`-S` / `-I`）は HTTP 接続にも適用します。
-
-`-c` は指定回数で ICMP 計測を終えますが、TUI は開いたままです。一定時間でアプリケーションを終了するには `--duration 30s`、手動で終了するには **q** を使います。
-
-```bash
-# 基本的な使い方 (install.sh 実行後は sudo 不要)
-mping google.com 1.1.1.1 8.8.8.8
-
-# インターフェイスを指定して実行
-mping -I eth0 google.com
-
-# パケットサイズ (100バイト) と送信回数 (10回) を指定
-mping -s 100 -c 10 google.com
-
-# 30秒後にアプリケーションを終了する
-mping --duration 30s google.com
-
-# YAML からホストを読み込み
-mping -f hosts.yaml
-
-# IPv4 のみを強制
-mping -4 google.com
-
-# IPv6 のみを強制
-mping -6 google.com
-
-# Traceroute ペインを表示
-mping -T google.com
-
-# PMTU 探索 (自動選択したアドレスのバージョンで実行)
-mping -m google.com
-
-# 宛先 IP に応じて切り替えるため、IPv4・IPv6 混在でも共通の -m だけ
-mping -m 1.1.1.1 2606:4700:4700::1111
-
-# ポート疎通確認 (443/tcp)
-mping -p 443/tcp google.com
-
-# 複数ポートをカンマ区切りで指定
-mping -p 443/tcp,53/udp google.com 8.8.8.8
-
-# MTR 風の経路別ロス/レイテンシ監視
-mping -M google.com
-
-# Traceroute と Port Monitor を同時に表示
-mping -T -p 443/tcp google.com
-
-# 色分けの閾値をカスタマイズする (warn = オレンジ, crit = 赤)
-mping --rtt-warn 30 --rtt-crit 100 --loss-warn 10 --loss-crit 50 google.com
-
-# ターゲット IP の AS 番号を表示する
-mping -a google.com 1.1.1.1
-```
-
-> インストールせずに実行する場合 (`setcap`/`setuid` なし) は `sudo` を付けてください:
-> ```bash
-> sudo ./mping google.com
-> ```
-
-### hosts.yaml の例
-
-`hosts:` キーでホストを列挙します。CLI で明示的に指定したオプションは YAML の値より優先されます。
-
-```yaml
-hosts:
-  - google.com
-  - 1.1.1.1
-interval: 500
-timeout: 2000
-mtr: true
-asn: true
-port:
-  - 443/tcp
-  - 53/udp
-dns-server: 8.8.8.8
-resolve-all: true
-web: true
-web-port: 8080
-thresholds:
-  rtt-warn: 50      # ミリ秒 (オレンジ)
-  rtt-crit: 200     # ミリ秒 (赤)
-  jitter-warn: 10   # ミリ秒 (オレンジ)
-  jitter-crit: 50   # ミリ秒 (赤)
-  loss-warn: 20     # パーセント (オレンジ)
-  loss-crit: 80     # パーセント (赤)
-```
-
-### YAML でのホストグループ定義
-
-`groups:` キーで名前付きグループを定義できます。グループはヘッダ行と最悪値集計行つきで表示されます。`hosts:` に列挙したホストと共存でき、グループ外ホストは表の上部に表示されます。
-
-```yaml
-hosts:
-  - 8.8.8.8        # グループ外 — 全グループより上に表示
-
-groups:
-  - name: US DNS
-    hosts:
-      - 1.1.1.1
-      - 8.8.4.4
-  - name: Japan
-    hosts:
-      - dns.google
-      - dns.cloudflare.com
-```
-
-実行可能なサンプルは [examples/hosts-groups.yaml](examples/hosts-groups.yaml) を参照（`mping -f examples/hosts-groups.yaml`）。
-
-### 大量のホストを追加する: パターン・表示名・include
-
-ホストの指定（`hosts:`・`groups[].hosts:`）には、複数ホストに展開されるパターンを書けます。
-
-| パターン | 展開結果 |
-|---|---|
-| `10.0.0.1-20` | `10.0.0.1` 〜 `10.0.0.20`（最終オクテットの範囲） |
-| `10.0.0.250-10.0.1.5` | 範囲内のすべての IPv4 アドレス |
-| `192.0.2.0/28` | `192.0.2.1` 〜 `192.0.2.14`（IPv4 の /30 以上はネットワーク・ブロードキャストアドレスを除外。IPv6 の CIDR は全アドレス） |
-| `core-sw{01..12}.lab` | `core-sw01.lab` 〜 `core-sw12.lab`（ゼロ埋めを維持。`{N..M}` を複数書くと全組み合わせ） |
-
-1パターンの展開は最大 1024 ホスト、hosts ファイル全体（include を含む）は最大 4096 ターゲットです。IPv6 の範囲指定は非対応のため、CIDR で指定してください。
-
-`name` を付けると、アドレスの代わりにその名前を表示します（IP は名前の横に表示されます）。名前は重複不可で、他のエントリのホストと同じ文字列にもできません。複数ホストに展開されるパターンには名前を付けられません。レポートでも、ホストの代わりに名前が記録されます（解決した IP は引き続き記録されます）。
-
-```yaml
-hosts:
-  - {host: 10.0.0.1, name: core-sw01}
-```
-
-`include:`（トップレベルまたはグループごと）で、NetBox の IP Addresses CSV エクスポート（`IP Address` 列を含む CSV）からホストを追加できます。パスは YAML ファイルからの相対パスです。エクスポート1つだけなら `mping -f netbox.csv` のように `-f` で直接指定することもできます。単純なホスト一覧（1行1ホストや `host,name` 形式の CSV）には対応しておらず、エラーになります。そうしたホストは YAML ファイルに書いてください。プレフィックス長（`/23` など）は自動的に除去され、`Status` が `Active`（または空）の行が対象になります。表示名には `DNS name`（空なら `Parent`）が使用され、同名になる場合は `Interface` や IP アドレスを付与して自動的に一意化されます。ファイルは mping を実行するユーザーが読める必要があります。include ファイルも YAML と同様に変更が監視され、自動で反映されます（まだ存在しないファイルを YAML に追加した場合も、作成した時点で反映されます）。
-
-```yaml
-groups:
-  - name: Core
-    hosts: ["core-sw{01..04}.lab"]
-  - name: Branches
-    include: [tokyo-netbox.csv, osaka-netbox.csv]
-```
-
-サンプルは [examples/hosts-patterns.yaml](examples/hosts-patterns.yaml) と [examples/branches.csv](examples/branches.csv) を参照。
-
-
-### オプション
-
-| フラグ | 短縮形 | 説明 | デフォルト |
-| :--- | :--- | :--- | :--- |
-| `--interval` | `-i` | Ping の送信間隔 (ミリ秒) | `1000` |
-| `--timeout` | `-t` | Ping のタイムアウト (ミリ秒) | `1000` |
-| `--file` | `-f` | ホスト一覧の YAML ファイル、または NetBox の IP Addresses CSV エクスポートのパス | `""` |
-| `--traceroute` | `-T` | 各ターゲットへの経路を表示し、10 分ごとに調べ直す (`-M` とは併用不可) | `false` |
-| `--mtr` | `-M` | さらに全ホップへ毎秒プローブを送る MTR 方式 (`-T` とは併用不可) | `false` |
-| `--dns-server` | `-d` | 名前解決に使用するカスタム DNS サーバー IP アドレス | `""` (OSデフォルト) |
-| `--resolve-all` | | 宛先のホスト名を解決して得られたすべての IP を個別のターゲットとして並行監視する | `false` |
-| `--discovery-mtu` | `-m` | IPv4 の DF プローブ、IPv6 の OS 推定値と Echo 確認で PMTU を調べる | `false` |
-| `--interface` | `-I` | 使用するネットワークインターフェイス名 (例: `eth0`, `en0`)、送信元は宛先ファミリーごとに選択 | `""` |
-| `--source` | `-S` | 送信元 IP アドレスの指定（IPv6 の zone 付きアドレスも可） | `""` (自動検出) |
-| `--size` | `-s` | パケットのペイロードサイズ (バイト) | `56` |
-| `--count` | `-c` | 各ターゲットに送信する回数 (0 は無制限) | `0` |
-| `--duration` | | 指定時間後にアプリケーションを終了する（例: `30s`、`5m`、`1h30m`。0 は無制限） | `0s` |
-| `--ipv4` | `-4` | IPv4 のみを使用する | `false` |
-| `--ipv6` | `-6` | IPv6 のみを使用する | `false` |
-| `--port` | `-p` | 疎通確認するポート (例: `443/tcp`, `53/udp`, `443`)。カンマ区切りで複数指定可 | `""` |
-| `--web` | | Web UI を `http://127.0.0.1:<web-port>/` で提供する (このマシンからのみ接続可。[Web UI](#web-ui-実験的機能) 参照) | `false` |
-| `--web-port` | | `--web` の待ち受けポート (1–65535) | `8080` |
-| `--asn` | `-a` | ターゲット IP の AS 番号を検索して表示する | `false` |
-| `--ptr` | `-r` | ターゲット・ホップ IP の逆引き名を検索して表示する | `false` |
-| `--http` | `-H` | ヘルスチェックする URL (例: `https://example.com/health`)。カンマ区切りまたは繰り返し指定で複数可 | `""` |
-| `--check-config` | | 計測を始めずに有効な設定を検証・表示する（CLIのみ） | `false` |
-| `--rtt-warn` | | RTT の warn 閾値 (ミリ秒・オレンジ) | `50` |
-| `--rtt-crit` | | RTT の crit 閾値 (ミリ秒・赤) | `200` |
-| `--jitter-warn` | | Jitter の warn 閾値 (ミリ秒・オレンジ) | `10` |
-| `--jitter-crit` | | Jitter の crit 閾値 (ミリ秒・赤) | `50` |
-| `--loss-warn` | | ロス率の warn 閾値 (パーセント・オレンジ) | `20` |
-| `--loss-crit` | | ロス率の crit 閾値 (パーセント・赤) | `80` |
-
-> **閾値 (Thresholds)** — `warn` がオレンジ、`crit` が赤の境界値で、LOSS% / RTT / JIT カラムの色分け (および Log ペインのアラート記録) に使われます。各メトリクスで `warn` は `crit` より小さい必要があります。YAML の `thresholds:` ブロックでも設定できます。
-
-### 現在の状態判定と設定チェック
-
-現在の状態と累積統計は分けて扱います。既定では **3回連続失敗で応答不能**、**2回連続応答で応答不能を解除**します。復旧後も直近のロス率・最新RTT・ジッターが閾値を超えていれば警告や異常を表示します。過去の平均・ピークRTTは現在の状態に影響しません。起動直後の1回のタイムアウトで異常にしないよう、直近ロス率の判定は `health-failures` 回以上の計測完了後に行います。一覧のLoss %は従来どおり、完了した計測に対する累積値です。
-
-| オプション (YAMLでも同名のトップレベルキー) | 既定値 | 内容 |
-|---|---|---|
-| `--health-failures` | `3` | 応答不能と判定する連続失敗回数 (1–10000) |
-| `--health-recoveries` | `2` | 応答不能を解除する連続応答回数 (1–10000) |
-| `--health-window` | `1m` | 直近ロス率の集計期間 (1秒–1時間、1秒単位で集計)。期間を変更すると直近の集計窓を新しく開始 |
-| `--http-follow-redirects` | `true` | 最大10回までリダイレクトを追う。falseなら最初の応答を判定 |
-
-JSONの `health` には状態・理由・応答不能判定・連続回数・直近ロス率・最終計測時刻・最終応答時刻を含みます。直近の集計値は `evaluated_at` (最後の計測完了または判定ルールの変更時点) の窓を表し、一時停止中も判定理由と集計値をそろえて保持します。`measurement_state` (`running` / `finished` / `stopped`) はICMP計測の状態で、Webサーバーの `state` とは別です。TUIでは送信回数の上限到達後も補助監視を継続できます。Web の RTT グラフは実際の計測時刻を使い、一時停止中は空白として表示します。
-
-JSONの各ターゲットには `levels` (`loss` / `last_rtt` / `jitter`) も含まれ、設定された閾値に対する判定を `none` / `ok` / `warn` / `crit` で表します。MTR の各ホップには `loss_level`、ポート・HTTP チェックには `level` (最初の結果が出るまでは `pending`) が付きます。TUI と Web UI はこの値で色分けします。
-
-```bash
-mping --check-config -f examples/monitoring.yaml --interval 500
-```
-
-`--check-config` (CLIのみ) は有効な設定、展開後の対象・対象数・グループとCLIで上書きした項目を出力します。計測・待ち受け・UI・出力ファイル作成は行わず、raw socketの権限も不要です。`--resolve-all` 指定時はDNS検索を行うことがあります。CLI指定はYAMLより優先されます。
-
-HTTP チェックは 2xx / 3xx の応答を Up、それ以外を Down と判定します。URLは認証情報・フラグメントを含まないHTTP(S)のみ対応します。
-
-状態変化はTUI・Webで共通の判定結果を使います。同一エラーの連続失敗は `count` と `last_at` を持つ1件のイベントに集約します。Web設定とセッションの終了期限は起動時の設定を維持し、変更時は再起動の案内を出します。ポート・ネットワーク設定の変更は測定を再構築して反映します。[設定例](examples/monitoring.yaml)も参照してください。
-
-### キー操作
-
-| キー | 動作 |
-| :--- | :--- |
-| **q** | アプリケーションを終了する |
-| **s** | 全ての測定を停止し、最後の統計情報を保持する |
-| **S** | 統計情報を保持して、新しいワーカーで測定を再開する (**s** の後に有効) |
-| **R** | 統計情報とUIログをリセットする。停止中は測定を再開しない |
-| **a** | 「ホスト追加」ダイアログを開く — ホスト名または IP を入力して Enter で実行時に追加 |
-| **d** | 一覧で選択したホスト、または詳細表示中のホストの削除確認を開く |
-| **Tab** | フォーカスを切り替える: Ping Monitor → Traceroute または MTR Monitor → Port Monitor → HTTP Monitor → RTT Graphs → Log |
-| **↑ / ↓ / PgUp / PgDn** | Ping 一覧ではホストを選択。他のペインや詳細ではスクロール |
-| **Enter** | 選択ホストの詳細を開く（統計・経路・MTR・ポート・RTT グラフ・対象別イベント） |
-| **Esc** | 詳細から一覧へ戻る。最大化中は元の配置へ戻る |
-| **f** | フォーカス中のペインを折りたたみ／展開する |
-| **z** | フォーカス中のペインを最大化／元の配置へ戻す |
-| **w** | 一覧では全体、詳細では選択対象の調査結果を保存する |
-| **b** | Web UIのtoken付きURLを表示・コピー (`--web` 指定時) |
-
-> ホストの追加・削除では、既存ターゲットの統計・グラフ・経路・ポート結果と HTTP 監視を保持します。停止中の編集では測定を再開しません。削除後の再追加は新しい測定です。`--count` の既存対象の残り回数と `--duration` の終了期限は維持します。削除・停止で中断した送信済みプローブは JSON の `cancelled` に記録し、パケットロスには加算しません。YAML のグループ・表示名・判定閾値・対象の追加削除でも既存対象を保持します。計測方法やネットワーク設定の変更では、変更理由をログに出して測定を再構築します。
->
-> ホストの選択・削除は対象 ID で行うため、同一表示名の対象も個別に扱えます。セッション内の安全な ICMP ID を使い切った場合（初期起動・追加・再開の合計で最大32,768対象 worker）、再起動が必要です。
-
-削除確認にはホスト名・対象 ID・IP を表示します。最初は「キャンセル」が選択され、Enter だけでは削除されません。Tab または左右キーで「削除」を選び、Enter で確定します。Esc でキャンセルでき、`d` の連打では確定しません。確認中も測定を継続し、キャンセル時は元のフォーカスとスクロール位置へ戻ります。最後のホストでは「終了するには q キーを押してください」と案内します。その画面で `q` を押すと通常の終了処理を行い、Enter / Esc なら測定画面へ戻ります。
-
-折りたたみ・最大化は一覧画面で利用できます。折りたたんだペインも Tab で選択でき、`f` で再展開できます。非表示中も測定は継続し、展開後は最新結果を表示します。最大化中の Tab はそのペインに留まります。
-
-停止・再開・リセットはキー入力の順に処理します。実行中のリセットでは、リセット前に送ったプローブの結果を統計に加えず、有効な経路・ポート・HTTP監視を作り直します。`--count` の残り回数は維持し、再開時には新しい送信回数枠を開始します。停止中のリセットではPingとMTRのカウンターをクリアし、最後の経路とポート・HTTP結果は保持します。終了時は測定ワーカーの完了を待ち、端末に集計を表示します。レポートの保存は **w** または Web UI の **Report** ボタンで明示的に行います。
-
-### 調査結果の保存
-
-`w` で保存画面を開き、ファイル名を入力して Enter または「Save」で保存します。末尾が `.json` なら JSON、`.csv` なら CSV と判定し、入力欄の下に形式を表示します。拡張子がなければ `.json` を補います。それ以外の拡張子では保存せず、修正を案内します。Tab で入力欄とボタンを切り替え、Esc で戻れます。
-
-一覧からは全体と保持している削除対象・HTTP 結果、詳細からは選択対象だけを保存します。保存中も測定は継続し、既存ファイルは上書きしません。
-
-CSV は表計算ソフト向けの、1 ターゲット 1 行の表です。稼働中のターゲットのあとに、削除済みのターゲットが `removed_at` 付きで続きます。列は `captured_at`・`target_id`・`host`・`ip`・`group`・`removed_at`・`measurement_state`・`health_status`・`health_reason`・`sent`・`received`・`lost`・`loss_pct`・`recent_loss_pct`・`duplicates`・`late_replies`・`last_rtt_ms`・`min_rtt_ms`・`avg_rtt_ms`・`max_rtt_ms`・`jitter_ms`・`last_ttl`・`last_error`・`last_loss_at`・`last_reply_at`・`started_at`・`statistics_since`・`asn`・`org`・`ptr`・`route_changes`・`path_mtu`・`pmtu_payload`・`pmtu_status`・`pmtu_source` です。応答がまだないターゲットの RTT と TTL は空欄です。ポート・HTTP・ホップ・イベントは JSON にだけ含まれます。日本語の名前が文字化けしないよう BOM 付きの UTF-8 で書き出し、`=`・`+`・`-`・`@` で始まる文字列には数式として扱われないよう先頭に `'` を付けます。
-
-レポートの権限は所有者だけが読み書きできる `0600` です。sudo 起動でも、保存完了前に sudo を起動したユーザーの所有者・グループへ変更します。setuid 起動では起動したユーザーとしてレポートを作成します。所有者の設定に失敗した場合、保存先の完成ファイルは作りません。
-
-## シェル補完
-
-mping は `mping --help` と同じフラグ定義から bash/zsh/fish 用の補完スクリプトを生成します。フラグ名、`-f` のファイルパス、`-I` のネットワークインターフェース名、`mping completion bash|zsh|fish` を補完できます。ファイルパスとインターフェース名は `--file=...` / `--interface=...` 形式や `-Ien` のような短縮フラグに続けて入力する形式にも対応します。スクリプト生成とインターフェース一覧取得に `sudo` は不要です。
-
-対応シェルは `mping completion --help` でも確認できます。ソースコードから試す場合は、先に `make build` を実行し、以下の `mping` を `./mping` に置き換えてください。
-
-### Bash
-
-```bash
-# 現在のシェルで有効化。次回以降も使う場合は ~/.bashrc に追記
-source <(mping completion bash)
-```
-
-### Zsh
-
-現在のシェルで有効化します（補完が初期化されていない場合は先に `compinit` を実行）:
-
-```zsh
-autoload -Uz compinit
-compinit
-source <(mping completion zsh)
-```
-
-次回以降も使う場合は、自分が書き込めるディレクトリにスクリプトを保存します:
-
-```zsh
-mkdir -p ~/.zsh/completions
-mping completion zsh > ~/.zsh/completions/_mping
-```
-
-以下を `~/.zshrc` に追記し、新しいシェルを起動してください。既に `compinit` を実行している場合（シェルフレームワークによる実行を含む）、`fpath` の設定をその前に置きます:
-
-```zsh
-fpath=(~/.zsh/completions $fpath)
-autoload -Uz compinit
-compinit
-```
-
-### Fish
-
-```fish
-mkdir -p ~/.config/fish/completions
-mping completion fish > ~/.config/fish/completions/mping.fish
-```
-
-保存したスクリプトは mping の更新後に再生成すると、新しいフラグも補完できます。`completion` というホスト名を監視する場合は `mping -- completion` と指定してください。
-
-## 表示項目 (TUI カラム)
-
-* **SRC**: 固定した送信元、または宛先のアドレスファミリーに対応する自動検出値。
-* **DST**: 名前解決された宛先 IP アドレス。ドメイン名で指定した場合は `domain (IP)` の形式で表示。
-* **DNS**: 名前解決に使った DNS サーバー (いずれかのターゲットにある場合のみ表示)。
-* **ASN**: ターゲット IP の AS 番号・組織名 (`-a` 指定時のみ表示)。例: `AS15169 Google LLC`。
-* **PTR**: ターゲット IP の逆引き名 (`-r` 指定時のみ表示)。
-* **RCV**: 受信に成功したパケット数。
-* **LOST**: 損失したパケット数。
-* **LOSS%**: パケット損失率。色の境界値は設定可能 (以下はデフォルト)。
-  * **緑**: 0%〜20% &nbsp;|&nbsp; **オレンジ**: 20%超〜80% &nbsp;|&nbsp; **鮮やかな赤**: >80%
-* **RTT / AVG / JIT**: 往復時間 (Round Trip Time) の最新/平均/ジッタ値。色の境界値は設定可能 (以下はデフォルト)。
-  * **RTT**: 緑 (≤50ms) / オレンジ (≤200ms) / 赤 (>200ms)
-  * **JIT**: 緑 (≤10ms) / オレンジ (≤50ms) / 赤 (>50ms)
-  * `--rtt-warn/--rtt-crit`、`--jitter-warn/--jitter-crit`、`--loss-warn/--loss-crit`、または YAML の `thresholds:` ブロックで上書きできます。
-* **SIZE**: 送信パケットのペイロードサイズ。
-* **MTU**: 明示指定した、または起動時に推定した送出インターフェイスの MTU。`-m` 指定時は **PMTU** 列になり、調べた経路 MTU を表示します。
-* **RTT 60s**: 直近 60 秒の RTT のスパークライン (`▲` は行ごとの p95 スケール超え)。ロスのないマスはシアン、一部ロスはオレンジ、全ロスは赤い `×` で表示します。
-* **TTL**: 最後の応答の IPv4 TTL または IPv6 Hop Limit。
-* **ERR**: 最新エラーの短縮メッセージを表示 (赤色)。エラーのあるターゲットがあるときだけ表示します。詳細は Log ペインに表示されます。
-* **LAST LOSS**: 最後にパケットロスが発生してからの経過時間。
-
-### 端末の幅が足りないとき
-
-セルの中身は切り詰めません。全カラムが収まらないときは、次の順にカラムごと隠します。
-
-1. 補助的なカラム: SIZE → MTU → SRC → DNS → LAST LOSS → LOST → RCV → TTL → AVG → RTT 60s (グラフのペインに一度に出せない 7 台目以降の RTT の推移はここでしか見られないので、スパークラインは最後に隠します) (SIZE・MTU・SRC・DNS は対応するオプションを指定していない場合)
-2. オプションで指定したカラム: SIZE (`-s`) → SRC (`-S` / `-I`) → DNS (`-d`) → ASN (`-a`) → PTR (`-r`) → PMTU (`-m`)
-
-DST・LOSS%・RTT・JIT (エラー表示中は ERR も) は隠しません。隠したカラムはペインのタイトルに表示し、ペイロードサイズや固定した送信元のように全行で同じ設定値はその値も表示します (`Ping Monitor · SIZE 56 · hidden: TTL AVG`)。すべての値はホスト詳細 (Enter) で確認できます。
-
-## Traceroute Monitor ペイン
-
-* `-T` / `--traceroute` 指定時のみ表示されます。`-T` と `-M` は併用できません。`-T` は経路を調べるだけ、`-M` はさらに各ホップを計測します。
-* hosts ファイルで `traceroute: true` と `mtr: true` を切り替えると、リロード時に測定を止めずに反映します。ping のカウンタ・グラフ・履歴はそのまま残り、ペインがその場で切り替わります。経路監視そのものを有効 / 無効にする変更では測定をやり直します。
-* 経路 (最大 30 ホップ) は起動時に調べ、その後 10 分ごとに調べ直します。その間にホップごとのプローブは送らないため、1 ターゲットあたり 10 分に約 30 回のプローブで済みます。
-* 結果は 1 ターゲット 1 行の Host / Hops / Init TTL / Route のテーブルで表示します。ホップには、有効なら AS (`-a`) と PTR 名 (`-r`) を付けます。`*` は応答のなかったホップです。
-* **経路変化の検知** は MTR ペインと同じです。経路が変わると経路の下に `[FLAP ×N HH:MM:SS]` の行を表示し、Log ペインに黄色いアラートを記録します。
-* 経路を調べられない場合 (ターゲットの名前解決に失敗した場合など) は理由を表示し、次の調べ直しで再試行します。
-
-## MTR Monitor ペイン
-
-* `-M` / `--mtr` 指定時のみ表示されます。
-* 各ターゲットへの経路を発見した後、全ホップに対して毎秒 TTL-limited ICMP プローブを送り続け、ホップ単位のロス率・レイテンシを集計します。
-* ホップ発見は起動時に行い、10 分ごとに自動再発見してルート変化に追従します。初回に応答しなかったホップも毎回計測し、応答が得られた時点で表示します。経路の調査は監視中のIPに対して行い、別のDNS応答先との比較を避けます。
-* 応答のないホップ (`*`) は 100% ロスとしてカウントされます。
-* ヘッダ行には `SrcIP -> DstIP`（ホスト名指定時は `hostname (SrcIP -> DstIP)`）を表示します。
-* 表示カラム:
-  * **Hop** — TTL ホップ番号
-  * **Host** — ホップの IP アドレス。`-r` 指定時は PTR 名、`-a` 指定時は AS も続けて表示します (例: `8.8.8.8 dns.google (AS15169 Google LLC)`)。応答なし時は `*`
-  * **Loss%** — このホップのパケットロス率 (緑 / オレンジ / 赤)
-  * **Snt** — 送信プローブ数の累計
-  * **Recv** — 受信成功数の累計
-  * **Last** — 直近プローブの RTT
-  * **Avg** — RTT の平均値
-  * **Min** — RTT の最小値
-  * **Max** — RTT の最大値
-  * **Jitter** — パケット遅延変動 (RFC 1889 スムージング)
-* 端末幅が狭い場合、**Recv** / **Min** / **Max** / **Jitter** カラムは自動的に省略されます (コンパクトモード)。
-* ホップはどちらのモードでも統計のスナップショットに `mtr_hops` フィールドとして含まれます (`-T` ではカウンタは 0 のまま)。経路を調べられなかった理由は `mtr_error` に入ります。
-* **経路変化 (Route Flap) 検知** — 再発見時に経路が変化した場合、対象ターゲットのヘッダに `[FLAP ×N HH:MM:SS]` バッジを表示し、Log ペインに黄色いアラート (例: `[route flap google.com: hop 3: 10.0.0.2 → 10.0.0.9]`) を記録します。
-
-## HTTP Monitor ペイン
-
-* `-H` / `--http` 指定時のみ表示されます。
-* Ping 間隔と同じ頻度で HTTP/HTTPS GET リクエストを送信し、ステータスコードとレスポンスタイムを記録します。
-* カンマ区切りまたはフラグの繰り返しで複数 URL を指定できます (例: `-H https://a.example.com,https://b.example.com`)。
-* YAML ホストファイルの `http:` リストにも指定可能です。
-* 表示カラム:
-  * **URL** — 監視対象のエンドポイント
-  * **Status** — `Up` (緑: 2xx–3xx) / `Down` (赤: 4xx–5xx) / `Error` (赤: 接続エラー) / `Checking...` (グレー: 初期状態)
-  * **Code** — HTTP ステータスコード (例: `200`, `503`)、エラー時は `-`
-  * **Last** — 直近リクエストのレスポンスタイム
-  * **Min** — 最小レスポンスタイム (Up 応答のみ)
-  * **Avg** — 平均レスポンスタイム (Up 応答のみ)
-  * **Max** — 最大レスポンスタイム (Up 応答のみ)
-  * **Up** — Up 判定の累計回数
-  * **Down** — Down + Error 判定の累計回数
-  * **Since** — 最終ステータス変化からの経過時間
-* 端末幅が狭い場合、**Min** / **Avg** / **Max** / **Since** カラムは自動的に省略されます (コンパクトモード)。
-* ステータス変化は Log ペインに記録されます (例: `HTTP https://example.com: Up → Down`)。
-* HTTP チェック結果は統計のスナップショットに `http_checks` フィールドとして含まれます。
-
-## Port Monitor ペイン
-
-* `-p` / `--port` 指定時のみ表示されます。
-* 指定したポートへの TCP/UDP 疎通確認を Ping と同じ間隔でリアルタイムに実行します。
-* カンマ区切りで複数のポートを一度に指定できます (例: `-p 443/tcp,53/udp`)。
-* プロトコルを省略した場合は TCP とみなします (例: `-p 443` → `443/tcp`)。
-* UDP は空のデータグラムを送信します。応答があれば `Open`、ICMP Port Unreachable 等のエラーを受ければ `Closed`、応答がなければ `Open|Filtered` です。DNS など個別プロトコルの正常動作を判定するものではありません。
-* 表示カラム:
-  * **Target**: 対象ホスト名
-  * **Port**: ポート番号とプロトコル (例: `443/tcp`)
-  * **Service**: ポート番号から推定されるサービス名 (不明な場合は `Unknown`)
-  * **Status**: 疎通結果 — 緑 `Open` / 赤 `Closed` / 黄 `Filtered` または `Open|Filtered`
-  * **Last / Min / Avg / Max**: 直近・最小・平均・最大 RTT。Min / Avg / Max は Open の結果だけを集計します。
-  * **Open/Closed**: Open 判定回数 / Closed・Filtered・Open|Filtered 判定回数の累計
-  * **Last Change**: ステータスが最後に変化してからの経過時間
-
-## PMTU 探索
-
-* PMTU の有効化は共通の `--discovery-mtu` / `-m` だけです。宛先ごとに名前解決し、解決された実際の IP に応じて IPv4 / IPv6 の実装を自動で切り替えます。PMTU 探索に `-4` / `-6` の指定は不要です。
-* IPv4 は起動時に DF プローブで並列探索します（最大 8 宛先）。payload の探索上限は検出したインターフェイスの MTU から 28 バイトを引いた値で、MTU が不明な場合は 9872 バイトです。解決できた全宛先が IPv4 の場合、探索に成功した宛先の最小の payload 上限を **Size** に反映します。到達不能・ICMP が遮断された宛先や名前解決に失敗した宛先は除外し、PMTU を記録しません。
-* IPv6 は Ping 開始後にバックグラウンドで探索します。Path MTU は最初 **Unknown** と表示され、探索完了後に値が入ります。macOS/Linux では OS の PMTU 推定値を取得します。送信元の断片化を禁止して、そのサイズの Echo を送り、OS が推定値を下げた場合だけ再送します。同じサイズの応答を確認できれば **confirmed**、確認できなければ **estimated** と表示します。タイムアウトだけでは推定値を下げません。OS の初期推定値は送出インターフェイスの MTU の場合があります。
-* TUI の詳細と Web の Summary に、IP パケット全体の **PMTU**、ICMP **payload** 上限、確認状態を表示します。IPv6・IPv4/IPv6 混在時の通常の Ping サイズは設定値を維持します。宛先 IP が変わった場合は古い経路の値を消し、計測設定の再構築時に調べ直します。
-* JSON の既存の `pmtu` は payload 上限のまま維持し、`path_mtu`（IP パケット全体）、`pmtu_source`（`os` / `probe`）、`pmtu_status`（IPv6 は `estimated` / `confirmed`、IPv4 は `probed`）を追加します。CSV も同じ情報を含み、payload 列は `pmtu_payload` です。拡張ヘッダーなしの IPv6 では PMTU 1450 に対して ICMP データは 1402 バイトです。
-* その他の OS では IPv6 PMTU 探索は未対応のため、探索エラーを出して通常の Ping を継続します。通常の IPv6 Ping も、受信した `Packet Too Big` と通知 MTU をエラー・イベントに記録します。
-
-## Web UI (実験的機能)
-
-`--web` を付けると TUI と並行して Web サーバーが起動し、mping を実行しているマシンのブラウザから同じ統計を確認できます。
-
-```bash
-mping --web google.com 1.1.1.1      # http://127.0.0.1:8080/ を開く
-```
+`mping --web google.com 1.1.1.1` で `http://127.0.0.1:8080/` にダッシュボードを提供します (このマシンからのみ接続可):
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./assets/mping-web-dark.png">
   <img src="./assets/mping-web-light.png" alt="mping の Web UI: ヘルス別フィルタ付きの Ping monitor、選択ホストの Summary、RTT グラフ">
 </picture>
 
-- 待ち受けは loopback のみ (`127.0.0.1`、利用可能なら `[::1]` も) で、他のマシンからは接続できません。`Host` / `Origin` ヘッダがこのサーバー以外のリクエストは拒否します (DNS rebinding・クロスサイト対策)。
-- ブラウザとやり取りする部分は別プロセスで動き、mping と一緒に起動・終了します。このプロセスは何かを配信する前に権限をすべて恒久的に捨てます。起動したユーザー（`sudo` の場合は呼び出したユーザー、root が直接起動した場合は `nobody`）として動き、Linux ではインストール時に付けた `CAP_NET_RAW` や setuid root も得られません。計測データには、そのユーザーだけが開ける専用ディレクトリ内の UNIX ソケット経由でアクセスし、操作用 token の確認は mping 本体が行います。OS によっては非特権プロセスが低いポートを利用できないため、`--web-port` は 1024 以上を推奨します。
-- TUI の Log に表示される操作用リンクには秘密の token が含まれます。token を自分で決める場合は、環境変数 `MPING_WEB_TOKEN` で指定し (英数字と `-._~` で 16 文字以上。コマンドラインやシェル履歴に残さないでください)、`http://127.0.0.1:8080/#token=<指定した token>` を開いてください。
-- `--web` / `--web-port` は起動時にのみ読み込まれます。hosts ファイルのリロードではサーバーは再起動しません (hosts ファイルで変更すると「再起動が必要」という警告を Log ペインに表示します)。
-- PCのダッシュボードはブラウザの横幅・高さ全体を使います。上段にPing monitorと選択ホストの **Summary**、下段に経路監視と **RTT graphs** を配置し、各ペイン内でスクロールします。幅の狭いウィンドウでは縦に並べます。スマートフォンの画面幅には対応しておらず、幅 720px 未満ではページ全体が横スクロールになります。Summaryはタブを設けず、統計・有効なポート監視・対象操作をまとめます。
-- 経路表示はオプションに従います: **`-T` → Tracerouteペイン**、**`-M` → MTRペイン**。どちらもホスト選択なしで全対象を表示し、一覧のフィルターに連動します。Tracerouteは番号付きの縦経路にAS／PTRをオプションに応じて表示します。MTRは対象ホストと列の見出しを固定し、ペイン内を縦横にスクロールできます。MTRはTTL／Hop Limitを制限したICMP Echo方式で、UDPモードはありません。
-- **Log** は上部ナビゲーションから開く独立画面で、全ホストの最新200件のイベントを表示します。選択ホストや一覧のフィルターには連動しません。有効な **HTTP** 監視も独立画面にまとめます。Monitorに戻ると選択中のSummaryと各ペインのスクロール位置を復元します。
-- RTTグラフは共通の時間軸と、読みやすい等間隔4区間の共通縦軸を初期設定にし、ms単位を表示します。Per targetで個別スケールにも切り替えられます。どれかのグラフにカーソルを合わせると全対象の同じ時刻を比較できます。
-- 一覧は画面の幅に収まる限りの列を表示し、狭いときは重要度の低い列から隠します (状態・ホスト・ロス率・最新RTTは常に表示)。状態の理由は各行に表示し、判定には連続失敗・連続応答・直近ロス率・最新 RTT・ジッターを使います。平均・最小・ピークRTTはSummaryにまとめます。履歴はRTT graphsに集約し、グラフの数値はカーソル位置の値だけ表示します。広い画面では一覧と詳細を並べて表示します。閲覧専用の場合は **Enable controls** からtokenまたはTUIでコピーしたURL全体を貼り付け、再読み込みせずに操作を有効にできます。入力したtokenは検証成功後に保存し、接続失敗とtokenの拒否は別のメッセージで案内します。
-- 列幅・行高は計測値の更新で変わらないレイアウトです。表示幅に応じて列数を調整し、Status・Host・Loss %・最新RTTを残します。倍率の選択は不要です。Inspectの横スクロール位置も更新時に保持します。長い名前や IPv6 は省略表示し、全文はツールチップや詳細で確認できます。大きなカウントは M/B/T、非常に大きな RTT は指数表記にし、元の値はツールチップに残します。[列幅と表示桁数の仕様](internal/web/COLUMNS.md)を参照してください。
-- **ブラウザからの操作**: `--web` 指定時はTUIヘッダーに接続先と **b** キーの案内を常設します。一覧・ホスト詳細で **b** を押すと、現在のtoken付きURLをいつでも表示できます。**Copy URL**（Enter）で端末にクリップボードへのコピーを依頼し、**Esc** で元の画面に戻ります。端末がコピーに対応していない場合は表示されたURLを選択してください。Logの保持件数やスクロール位置には依存しません。起動時には従来どおりLogにも表示します。表示されるリンク (例: `Web UI: http://localhost:8080/#token=…`) を開くと、ホストの追加・確認ダイアログを経たターゲットの削除・統計のリセットができます。token は起動ごとに生成され、操作内容は TUI の Log ペインにも記録されます。token なし (または以前の起動時の token) で開いた場合は閲覧のみです。同じ token でTUIと共通の Stop / Restart、レポート保存も利用できます。**Report** ボタンを押すと、**JSON／CSV** と保存するファイル名を指定できます。拡張子は選択した形式に合わせ、CancelやEscでダウンロードせずに閉じられます。
-- 状態別の件数ボタンから一覧・経路・グラフを絞り込めます。検索と状態を組み合わせ、表示件数／全件数を確認できます。列見出しや選択欄からグループをまたいで並べ替えでき、ホストの下にはグループ名を残します。計測値が変わっても順序は固定し、**Refresh order** で順位を更新します。**Configured order** で元のグループ順に戻り、固定中に追加したホストは末尾に表示します。
-- 選択ホストは一覧・経路・グラフで強調します。**Selected host** を押すと各ペイン内の対象へ移動します。選択や計測更新で他のペインを自動スクロールしません。選択対象が絞り込みから外れてもSummaryを維持し、その旨を表示します。Summaryは現在・直近の状態、開始／リセット以降の統計、ネットワーク詳細の順です。
-- ブラウザの接続・測定の稼働状態・ホストの健全性を分け、**Last probe** に実際の最終プローブ時刻を表示します。再接続中は以前の値であることを案内します。通知はレイアウトを動かさずに重ね、エラーは閉じるまで残します。**Stop all / Restart all** は統計を維持します。削除・リセットは対象範囲を明示し、Cancelに初期フォーカスを置いた期限のない確認ダイアログで実行します。狭い画面では操作を **Actions** にまとめます。
-- **?** でキー操作の説明と文字ショートカットの無効化設定を開きます。**/** で検索、一覧内の **j/k** または **↓/↑** でフォーカス移動、**Home/End** で先頭／末尾、**Enter** で選択、**Delete** で削除確認、**w** でReport、**Esc** で検索を離れる／ダイアログを閉じる操作ができます。入力欄・IME変換・ブラウザの修飾キー操作は妨げません。グラフにフォーカスして **←/→**・**Home/End** を使うと、時刻とRTT／欠測／無応答をテキストでも確認でき、**Esc** でカーソルを消せます。
-- 時刻はシステムのタイムゾーン・24時間表記です。AS・PTR・PMTUの表示は、SummaryやMTR内も含めて各オプションに連動します。
-- 同じデータを JSON でも取得できます:
+詳細・操作・JSON API は [Web UI](./guide/ja/web-ui.md) を参照してください。
 
-| エンドポイント | 内容 |
-|---|---|
-| `GET /api/v1/snapshot` | 現在の統計 (`snapshot` 配下)、`meta` (有効な機能・閾値・グループ)、`state` (`starting` / `running` / `reloading` / `stopped`) |
-| `GET /api/v1/events?limit=200` | 全ターゲットのイベントを新しい順に 1 つのリストで返す (ホスト名付き、`limit` は 1–1000) |
-| `GET /api/v1/history?n=60` | 全ターゲットの直近 RTT を 1 回のレスポンスで返す (`n` は 1–3000) |
-| `GET /api/v1/stream` | Server-Sent Events。接続時と、統計が変化している間は最大 1 秒に 1 回 `snapshot` イベントを送信 |
-| `GET /api/v1/targets/{id}/history?n=300` | 互換用 `rtt_ms`、時刻付き `samples` (`at`, `rtt_ms`)、取得時刻 `captured_at`。古い順で `null` は応答なし (`n` は 1–3000) |
-| `GET /api/v1/targets/{id}/events` | ターゲットの記録済みイベント (DNS 変化・経路フラップ・ロス) |
-| `GET /api/v1/session` | 有効な `X-Mping-Token` ヘッダ付きなら `{"control": true}` |
-| `POST /api/v1/targets` | ホスト追加。JSON `{"host": "example.com"}`、`X-Mping-Token` が必要 |
-| `DELETE /api/v1/targets/{id}` | ターゲット削除。`X-Mping-Token` が必要 |
-| `POST /api/v1/reset` | 統計リセット。`X-Mping-Token` が必要 |
-| `POST /api/v1/stop`, `POST /api/v1/restart` | 統計を保持して一時停止・再開。`X-Mping-Token` が必要 |
-| `GET /api/v1/report?format=json` (`csv` も可) | サーバーにファイルを作らずレポートをダウンロード。`X-Mping-Token` が必要 |
+## ドキュメント
+
+| ガイド | 内容 |
+| :--- | :--- |
+| [インストール](./guide/ja/installation.md) | ビルド済みバイナリ、`install.sh`、ソースからのビルド |
+| [使い方とオプション](./guide/ja/usage.md) | 実行例、全オプション、状態判定、`--check-config`、シェル補完 |
+| [ホストファイル](./guide/ja/hosts-file.md) | YAML 形式、閾値、グループ、パターン、表示名、NetBox CSV の `include:` |
+| [TUI リファレンス](./guide/ja/tui.md) | キー操作、レポート保存 (JSON/CSV)、表示カラム、狭い端末での表示 |
+| [監視ペイン](./guide/ja/monitors.md) | Traceroute / MTR / HTTP / Port ペインと PMTU 探索 |
+| [Web UI](./guide/ja/web-ui.md) | ブラウザダッシュボード、操作、JSON API |
+
+実行できるサンプルは [examples/](./examples) にあります。スクリーンショットの再生成手順は [assets/demo](./assets/demo/README.md) にあります。
 
 ## ライセンス
 
