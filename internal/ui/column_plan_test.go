@@ -202,3 +202,64 @@ func TestPaneTitle_ShortensToFit(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanColumns_ErrorColumnStaysAfterRecovery(t *testing.T) {
+	// Arrange: a target fails once, then answers again.
+	target := replyingTarget("10.0.0.1", 12*time.Millisecond)
+	target.IncSent()
+	target.OnFailure("Timeout")
+	tr, texts := newPlanRenderer(t, []*stats.TargetStats{target}, columnOptions{})
+	tr.planColumns(texts, 200)
+	target.IncSent()
+	target.OnSuccess(12*time.Millisecond, 64)
+	_, recovered := tr.renderTexts(fetchViews(tr.targets))
+
+	// Act
+	plan := tr.planColumns(recovered, 200)
+
+	// Assert
+	if !slices.Contains(shownNames(tr, plan), "ERR") {
+		t.Errorf("ERR column vanished after recovery: %v", shownNames(tr, plan))
+	}
+}
+
+func TestPlanColumns_StableWhenValuesShrink(t *testing.T) {
+	// Arrange: a width where the long RTT value forces columns to hide.
+	target := replyingTarget("10.0.0.1", 679842*time.Microsecond)
+	tr, texts := newPlanRenderer(t, []*stats.TargetStats{target}, columnOptions{})
+	width := 60
+	longPlan := tr.planColumns(texts, width)
+	if len(longPlan.hidden) == 0 {
+		t.Fatal("fixture hides nothing")
+	}
+	short := replyingTarget("10.0.0.1", 9*time.Millisecond)
+	_, shortTexts := tr.renderTexts(fetchViews([]*stats.TargetStats{short}))
+
+	// Act: the next tick's values are narrower.
+	shortPlan := tr.planColumns(shortTexts, width)
+
+	// Assert: hidden columns do not come back for one tick.
+	if !slices.Equal(shortPlan.hidden, longPlan.hidden) {
+		t.Errorf("hidden changed: %v -> %v", longPlan.hidden, shortPlan.hidden)
+	}
+}
+
+func TestPlanColumns_LongHostKeepsColumnsThatStillFit(t *testing.T) {
+	// Arrange: one very long host name in a 120-column terminal.
+	long := stats.NewTargetStats(strings.Repeat("very-long-label.", 8) + "example.com")
+	long.SetIP("10.0.0.9")
+	long.IncSent()
+	long.OnSuccess(12*time.Millisecond, 64)
+	tr, texts := newPlanRenderer(t, []*stats.TargetStats{long}, columnOptions{})
+
+	// Act
+	plan := tr.planColumns(texts, 120)
+
+	// Assert: the host is cut, but AVG (the last column to go) is back.
+	if !plan.ok {
+		t.Fatal("plan did not fit")
+	}
+	if !slices.Contains(shownNames(tr, plan), "AVG") {
+		t.Errorf("AVG hidden although it fits: shown %v hidden %v", shownNames(tr, plan), plan.hidden)
+	}
+}

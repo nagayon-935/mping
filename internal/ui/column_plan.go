@@ -50,10 +50,20 @@ func (tr *tableRenderer) planColumns(texts [][]string, availableTableWidth int) 
 				empty = false
 			}
 		}
-		if c.hideWhenEmpty && empty {
+		if !empty {
+			tr.everShown[i] = true
+		}
+		if c.hideWhenEmpty && !tr.everShown[i] {
 			continue
 		}
 		active = append(active, i)
+		text := c.dynamic || c.align == tview.AlignLeft
+		if !c.dynamic {
+			// Measured values change width from tick to tick; planning from
+			// the widest seen keeps a column from flickering in and out.
+			tr.widthSeen[i] = max(tr.widthSeen[i], content[i])
+			content[i] = tr.widthSeen[i]
+		}
 		desired[i] = tr.baseWidths[i]
 		if c.dynamic {
 			desired[i] = content[i]
@@ -61,7 +71,7 @@ func (tr *tableRenderer) planColumns(texts [][]string, availableTableWidth int) 
 		maxW[i] = max(tr.maxWidths[i], content[i])
 		fullMin[i] = content[i]
 		hardMin[i] = max(tr.minWidths[i], content[i])
-		if c.dynamic || c.align == tview.AlignLeft {
+		if text {
 			// Text may be cut with an ellipsis as a last resort; its heading
 			// may not. Only the fill column takes spare width.
 			hardMin[i] = max(tr.minWidths[i], runewidth.StringWidth(c.name))
@@ -92,8 +102,28 @@ func (tr *tableRenderer) planColumns(texts [][]string, availableTableWidth int) 
 		active = slices.DeleteFunc(active, func(i int) bool { return i == drop })
 		hidden = append(hidden, tr.cols[drop].name)
 	}
+	// Every hideable column is gone and text still has to be cut. Spare width
+	// may remain (one long host name forced the cut), so bring back the
+	// hidden columns that fit without cutting the shown text any further,
+	// most important first.
 	widths, ok := tr.fitColumns(active, desired, hardMin, maxW, availableTableWidth)
-	return columnPlan{active: active, widths: widths, hidden: hidden, ok: ok}
+	if !ok {
+		return columnPlan{active: active, widths: widths, hidden: hidden, ok: false}
+	}
+	for k := len(hidden) - 1; k >= 0; k-- {
+		keep := slices.Clone(hardMin)
+		for j, i := range active {
+			keep[i] = min(widths[j], fullMin[i])
+		}
+		back := columnIndex(tr.cols, hidden[k])
+		trial := append(slices.Clone(active), back)
+		slices.Sort(trial)
+		if w, fits := tr.fitColumns(trial, desired, keep, maxW, availableTableWidth); fits {
+			active, widths = trial, w
+			hidden = slices.Delete(hidden, k, k+1)
+		}
+	}
+	return columnPlan{active: active, widths: widths, hidden: hidden, ok: true}
 }
 
 // fitColumns fits the active columns' widths to the table width left after

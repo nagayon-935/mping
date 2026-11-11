@@ -49,9 +49,15 @@ type tableRenderer struct {
 	// into cols shown in the full layout (activeCols the columns themselves);
 	// widths, activeHeaders and activeAligns are parallel to it. hidden names
 	// the columns dropped for width, in the order they were dropped.
-	active        []int
-	activeCols    []column
-	hidden        []string
+	active     []int
+	activeCols []column
+	hidden     []string
+	// widthSeen is each column's widest content so far and everShown marks
+	// hideWhenEmpty columns that have had a value: planColumns uses them so
+	// a value shrinking back (9.8ms after 10.3ms) or an error clearing does
+	// not make columns appear and disappear from one tick to the next.
+	widthSeen     []int
+	everShown     []bool
 	widths        []int
 	activeHeaders []string
 	activeAligns  []int
@@ -117,6 +123,8 @@ func newTableRenderer(
 	tr.baseWidths[errorIdx] = calcInitialTableErrorWidth(targets, tr.fullHeaders[errorIdx], tr.baseWidths[errorIdx])
 	tr.maxWidths[errorIdx] = tr.baseWidths[errorIdx]
 
+	tr.widthSeen = make([]int, len(cols))
+	tr.everShown = make([]bool, len(cols))
 	tr.widths = tr.calcColumnWidths(fetchViews(targets))
 	tr.active = make([]int, len(cols))
 	for i := range cols {
@@ -134,15 +142,10 @@ func newTableRenderer(
 	return tr
 }
 
-// calcColumnWidths recalculates dynamic column widths based on current
-// output text (SRC/DST, DNS, ASN, PTR). views must be the same length as
-// tr.targets, in the same order (one GetView() snapshot per target, taken
-// once per tick by the caller rather than re-fetched here).
-//
-// Recomputed every tick on purpose: ASN and DST content arrives after the
-// first tick (Cymru lookup, DNS resolution), so widths cached until the next
-// resize would keep those columns truncated. See BenchmarkCalcColumnWidths
-// for the cost this trades against.
+// calcColumnWidths computes the initial column widths from the dynamic
+// columns' current text (SRC/DST, DNS, ASN, PTR), before the first tick
+// plans the layout; every tick after that sizes columns in planColumns.
+// views must be the same length as tr.targets, in the same order.
 func (tr *tableRenderer) calcColumnWidths(views []stats.TargetView) []int {
 	widths := append([]int(nil), tr.baseWidths...)
 	for i, c := range tr.cols {
