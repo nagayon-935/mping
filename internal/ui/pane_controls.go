@@ -47,13 +47,16 @@ type paneControls struct {
 	graphManual bool
 	// graphNeed is the RTT graph pane height (borders included) at which
 	// every series gets its chart, or 0 when they never all fit at once.
-	graphNeed                     func(width int) int
+	graphNeed func(width int) int
+	// graphMax is the tallest the open RTT graph pane grows to (borders
+	// included); fit leaves rows past it to the Ping Monitor.
+	graphMax                      func(width int) int
 	graphNotified, graphShownLast bool
 	panes                         []*paneControl
 	maximized                     *paneControl
 	// graph and log get special treatment in fit: the Log keeps a fixed
-	// height and grows only into spare rows, and the graph takes whatever
-	// rows remain after that.
+	// height, the open graph takes spare rows up to graphMax, and the Log
+	// grows into spare rows only while the graph is folded.
 	graph *paneControl
 	log   *paneControl
 }
@@ -95,6 +98,7 @@ func newPaneControls(app *tview.Application, layout *tview.Flex, header *tview.T
 	c.graph = add("RTT Graphs", graph, graph, 3, vividCyan, func(color tcell.Color) { graph.SetBorderColor(color) },
 		func(width int) int { return graph.preferredHeight(width - 2) })
 	c.graphNeed = func(width int) int { return graph.fullHeight(width - 2) }
+	c.graphMax = func(width int) int { return graph.maxHeight(width - 2) }
 	c.log = add("Log", log, log, 2, vividRed, func(color tcell.Color) { log.SetBorderColor(color) },
 		func(int) int { return max(logContentLines(log), logLines) + 2 })
 	return c
@@ -122,7 +126,7 @@ func (c *paneControls) syncTableRect(width, paneHeight int) {
 // fit sizes the unfolded panes for a layout of the given inner size. The
 // Log keeps logLines of content; the other panes share the rest by content
 // and weight (see fitHeights). Rows nobody needs make the open RTT charts
-// taller up to their preferred height, then go to the Ping Monitor; while
+// taller up to graphMax, then go to the Ping Monitor; while
 // the charts are folded the Log grows into them instead. A maximized pane
 // keeps the whole area.
 func (c *paneControls) fit(width, height int) {
@@ -175,11 +179,14 @@ func (c *paneControls) fit(width, height int) {
 			spare -= grow
 		}
 		if i := slices.Index(others, c.graph); i >= 0 && spare > 0 {
-			// The open graphs grow up to their preferred height; rows past
-			// that go to the Ping Monitor (blank rows below the hosts), so
-			// the charts do not dominate a tall terminal and the Log stays
-			// at its base height.
-			grow := min(spare, max(c.graph.desired(width)-sizes[i], 0))
+			// The open graphs grow up to graphMax; rows past that go to the
+			// Ping Monitor (blank rows below the hosts), so the charts do not
+			// dominate a tall terminal and the Log stays at its base height.
+			limit := c.graph.desired(width)
+			if c.graphMax != nil {
+				limit = c.graphMax(width)
+			}
+			grow := min(spare, max(limit-sizes[i], 0))
 			sizes[i] += grow
 			spare -= grow
 			if spare > 0 && len(c.panes) > 0 && others[0] == c.panes[0] {

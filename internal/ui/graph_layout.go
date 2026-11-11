@@ -121,6 +121,18 @@ func (g *GraphView) preferredHeight(width int) int {
 // seriesCount is len(g.buildSeries(...)) without fetching any history or
 // label data: one series per target, plus one per port check when
 // includePorts is set (Host Details).
+// graphMaxRowHeight is the tallest row of charts the main RTT pane grows
+// to: a header, 17 plot lines (16 grid steps) and a separator.
+const graphMaxRowHeight = 19
+
+// maxHeight is the tallest the RTT pane is worth (borders included): every
+// visible row of charts at graphMaxRowHeight. Spare rows past it are left to
+// the Ping Monitor.
+func (g *GraphView) maxHeight(width int) int {
+	_, _, visibleRows, _, _ := layoutGraph(g.seriesCount(), width, graphMaxVisibleRows*graphMaxRowHeight)
+	return visibleRows*graphMaxRowHeight + 2
+}
+
 // graphMinRowHeight is the smallest row of charts layoutGraph keeps: a
 // header, five plot lines and a separator.
 const graphMinRowHeight = 7

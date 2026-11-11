@@ -215,15 +215,15 @@ func TestPaneControlsFitSpareRowsGoToOpenGraphThenTable(t *testing.T) {
 	if got := paneHeight(f.log); got != fixedLogHeight {
 		t.Errorf("log pane height = %d, want its base %d", got, fixedLogHeight)
 	}
-	if got, want := paneHeight(f.graph), f.graph.preferredHeight(198); got != want {
-		t.Errorf("graph height = %d, want its preferred %d", got, want)
+	if got, want := paneHeight(f.graph), f.graph.maxHeight(198); got != want {
+		t.Errorf("graph height = %d, want its maximum %d", got, want)
 	}
-	if got, want := paneHeight(f.table), 150-3-11-22-fixedLogHeight-f.graph.preferredHeight(198); got != want {
+	if got, want := paneHeight(f.table), 150-3-11-22-fixedLogHeight-f.graph.maxHeight(198); got != want {
 		t.Errorf("ping pane height = %d, want the remaining %d rows", got, want)
 	}
 }
 
-func TestPaneControlsFitCapsGraphAtPreferredHeight(t *testing.T) {
+func TestPaneControlsFitCapsGraphAtMaxHeight(t *testing.T) {
 	table := tview.NewTable()
 	tablePane := tview.NewFlex().AddItem(table, 0, 1, true)
 	graph := NewGraphView([]*stats.TargetStats{stats.NewTargetStats("a")}, time.Second)
@@ -240,10 +240,10 @@ func TestPaneControlsFitCapsGraphAtPreferredHeight(t *testing.T) {
 	}
 	defer screen.Fini()
 	view.Draw(screen)
-	if got, want := paneHeight(graph), graph.preferredHeight(118); got != want {
-		t.Errorf("graph height = %d, want its preferred %d", got, want)
+	if got, want := paneHeight(graph), graph.maxHeight(118); got != want {
+		t.Errorf("graph height = %d, want its maximum %d", got, want)
 	}
-	if got, want := paneHeight(tablePane), 60-3-fixedLogHeight-graph.preferredHeight(118); got != want {
+	if got, want := paneHeight(tablePane), 60-3-fixedLogHeight-graph.maxHeight(118); got != want {
 		t.Errorf("ping pane height = %d, want the remaining %d rows", got, want)
 	}
 }
@@ -325,7 +325,7 @@ func TestPaneControlsFitLogStaysSmallWhileGraphOpen(t *testing.T) {
 	if got := paneHeight(log); got != fixedLogHeight {
 		t.Errorf("log height = %d, want its base %d while the graphs are open", got, fixedLogHeight)
 	}
-	if got, want := paneHeight(graph), min(graph.preferredHeight(118), 40-3-5-fixedLogHeight); got != want {
+	if got, want := paneHeight(graph), min(graph.maxHeight(118), 40-3-5-fixedLogHeight); got != want {
 		t.Errorf("graph height = %d, want %d", got, want)
 	}
 }

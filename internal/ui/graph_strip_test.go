@@ -119,3 +119,23 @@ func TestGraphViewFullHeight(t *testing.T) {
 		})
 	}
 }
+
+func TestGraphViewMaxHeight(t *testing.T) {
+	tests := []struct {
+		series, want int
+	}{
+		{1, graphMaxRowHeight + 2},
+		{4, 2*graphMaxRowHeight + 2},
+		{6, 3*graphMaxRowHeight + 2},
+		{8, 3*graphMaxRowHeight + 2}, // at most graphMaxVisibleRows rows show
+	}
+	for _, tt := range tests {
+		targets := make([]*stats.TargetStats, tt.series)
+		for i := range targets {
+			targets[i] = stats.NewTargetStats(fmt.Sprintf("h%d", i))
+		}
+		if got := NewGraphView(targets, time.Second).maxHeight(118); got != tt.want {
+			t.Errorf("%d series: maxHeight = %d, want %d", tt.series, got, tt.want)
+		}
+	}
+}
