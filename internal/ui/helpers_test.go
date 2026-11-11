@@ -13,6 +13,12 @@ import (
 	"github.com/rivo/tview"
 )
 
+// Tests draw to the screen they give newApplication and must never take
+// over the terminal `go test` runs in.
+func init() {
+	openScreen = func() (tcell.Screen, error) { return nil, nil }
+}
+
 // testTimeout bounds every wait in the simulation-screen tests. It is only a
 // failure deadline: the waits below return as soon as their condition holds.
 const testTimeout = 3 * time.Second
