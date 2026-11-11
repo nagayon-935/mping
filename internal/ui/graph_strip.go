@@ -7,9 +7,8 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
-// The Ping Monitor's RTT sparkline column (shown while the RTT graph pane
-// is folded) draws the trailing samples of each target in one row of
-// eighth-height blocks.
+// The Ping Monitor's RTT sparkline column draws the trailing samples of
+// each target in one row of eighth-height blocks.
 
 // stripScaleFloorMs is the smallest sparkline scale top, in ms.
 const stripScaleFloorMs = 10.0

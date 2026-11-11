@@ -56,9 +56,6 @@ func (tr *tableRenderer) planColumns(texts [][]string, availableTableWidth int) 
 		if c.hideWhenEmpty && !tr.everShown[i] {
 			continue
 		}
-		if tr.sparkHidden && c.name == sparkColumnName {
-			continue
-		}
 		active = append(active, i)
 		text := c.dynamic || c.align == tview.AlignLeft
 		if !c.dynamic {

@@ -56,11 +56,8 @@ type tableRenderer struct {
 	// hideWhenEmpty columns that have had a value: planColumns uses them so
 	// a value shrinking back (9.8ms after 10.3ms) or an error clearing does
 	// not make columns appear and disappear from one tick to the next.
-	widthSeen []int
-	everShown []bool
-	// sparkHidden leaves out the sparkline column while the RTT graph pane
-	// shows every host's chart (see paneControls.onGraphShown).
-	sparkHidden   bool
+	widthSeen     []int
+	everShown     []bool
 	widths        []int
 	activeHeaders []string
 	activeAligns  []int

@@ -167,12 +167,7 @@ func TestPaneControlsFitLeavesNoBlankRows(t *testing.T) {
 	if got := paneHeight(f.log); got != fixedLogHeight {
 		t.Errorf("log pane height = %d, want %d", got, fixedLogHeight)
 	}
-	// The MTR pane needs more rows than there are, so no row is left for
-	// every graph: the graph pane folds to its one-line stub.
-	if !f.controls.graph.folded {
-		t.Error("graph pane open, want it folded when its charts do not fit")
-	}
-	if got, want := paneHeight(f.mtr.pane), 150-3-7-11-fixedLogHeight-1; got != want {
+	if got, want := paneHeight(f.mtr.pane), 150-3-7-11-fixedLogHeight-f.graph.preferredHeight(198); got != want {
 		t.Errorf("mtr pane height = %d, want %d (all space the others leave)", got, want)
 	}
 }
@@ -245,53 +240,6 @@ func TestPaneControlsFitReservesPingMonitorRows(t *testing.T) {
 	}
 	if got, want := paneHeight(graph), 60-3-pingMonitorHeight-fixedLogHeight; got != want {
 		t.Errorf("graph height = %d, want the remaining %d rows", got, want)
-	}
-}
-
-func TestPaneControlsAutoFoldsGraphAndReportsIt(t *testing.T) {
-	tests := []struct {
-		name     string
-		mtrLines int
-		wantOpen bool
-	}{
-		{"room for every chart: open", 20, true},
-		{"no room for every chart: folded", 200, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Arrange
-			f := newFitFixture(t, tt.mtrLines)
-			var reported []bool
-			f.controls.onGraphShown = func(shown bool) { reported = append(reported, shown) }
-
-			// Act: two draws report the state once.
-			f.draw(t)
-			f.draw(t)
-
-			// Assert
-			if f.controls.graph.folded == tt.wantOpen {
-				t.Errorf("graph folded = %v, want open %v", f.controls.graph.folded, tt.wantOpen)
-			}
-			if len(reported) != 1 || reported[0] != tt.wantOpen {
-				t.Errorf("onGraphShown calls = %v, want [%v]", reported, tt.wantOpen)
-			}
-		})
-	}
-}
-
-func TestPaneControlsManualFoldOverridesAuto(t *testing.T) {
-	// Arrange: the charts do not fit, so the graph pane starts folded.
-	f := newFitFixture(t, 200)
-	f.draw(t)
-	f.controls.app.SetFocus(f.controls.graph.stub)
-
-	// Act: the user opens it with f.
-	f.controls.handle(tcell.NewEventKey(tcell.KeyRune, 'f', tcell.ModNone))
-	f.draw(t)
-
-	// Assert
-	if f.controls.graph.folded {
-		t.Error("graph pane folded again after the user opened it")
 	}
 }
 

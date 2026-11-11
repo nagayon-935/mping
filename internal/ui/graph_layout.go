@@ -121,22 +121,6 @@ func (g *GraphView) preferredHeight(width int) int {
 // seriesCount is len(g.buildSeries(...)) without fetching any history or
 // label data: one series per target, plus one per port check when
 // includePorts is set (Host Details).
-// graphMinRowHeight is the smallest row of charts layoutGraph keeps: a
-// header, five plot lines and a separator.
-const graphMinRowHeight = 7
-
-// fullHeight is the pane height (borders included) at which every series
-// gets its chart at graphMinRowHeight for the given inner width, or 0 when
-// there are more rows of charts than the pane ever shows at once
-// (graphMaxVisibleRows) and some would only be reachable by scrolling.
-func (g *GraphView) fullHeight(width int) int {
-	_, rows, _, _, _ := layoutGraph(g.seriesCount(), width, graphMaxVisibleRows*graphMinRowHeight)
-	if rows == 0 || rows > graphMaxVisibleRows {
-		return 0
-	}
-	return rows*graphMinRowHeight + 2
-}
-
 func (g *GraphView) seriesCount() int {
 	n := len(g.targets)
 	if g.includePorts {

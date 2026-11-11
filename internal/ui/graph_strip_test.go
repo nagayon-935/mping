@@ -1,13 +1,10 @@
 package ui
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
-
-	"github.com/nagayon-935/mping/internal/stats"
 )
 
 const ms = time.Millisecond
@@ -90,31 +87,6 @@ func TestStripCell(t *testing.T) {
 			r, c := stripCell(tt.bucket, 80)
 			if r != tt.wantRune || c != tt.wantColor {
 				t.Errorf("stripCell = %q/%v, want %q/%v", r, c, tt.wantRune, tt.wantColor)
-			}
-		})
-	}
-}
-
-func TestGraphViewFullHeight(t *testing.T) {
-	tests := []struct {
-		name   string
-		series int
-		width  int
-		want   int
-	}{
-		{"one chart", 1, 118, graphMinRowHeight + 2},
-		{"six charts in three rows of two", 6, 118, 3*graphMinRowHeight + 2},
-		{"seven charts need scrolling", 7, 118, 0},
-		{"narrow: one chart per row", 3, 30, 3*graphMinRowHeight + 2},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			targets := make([]*stats.TargetStats, tt.series)
-			for i := range targets {
-				targets[i] = stats.NewTargetStats(fmt.Sprintf("h%d", i))
-			}
-			if got := NewGraphView(targets, time.Second).fullHeight(tt.width); got != tt.want {
-				t.Errorf("fullHeight = %d, want %d", got, tt.want)
 			}
 		})
 	}

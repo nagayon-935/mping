@@ -99,8 +99,8 @@ const (
 	rankRecv
 	rankTTL
 	rankAvg
-	// rankSpark: the sparkline shows only while the RTT graph pane is
-	// folded, when it is the only RTT trend on screen, so it outlives every
+	// rankSpark: the sparkline is each host's RTT trend right in its row
+	// (the graph pane shows at most six hosts at once), so it outlives every
 	// supplementary column.
 	rankSpark
 	rankSizeExplicit
