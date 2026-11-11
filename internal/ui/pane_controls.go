@@ -8,6 +8,20 @@ import (
 	"github.com/rivo/tview"
 )
 
+// graphMinPaneHeight is the RTT graph pane height (borders included) that
+// holds one row of charts at the smallest size layoutGraph draws: a
+// header, five plot lines and a separator.
+const graphMinPaneHeight = 7 + 2
+
+// pingMonitorHosts is how many hosts the Ping Monitor is sized to show at
+// once while the RTT graphs are open: spare rows fill it to this before the
+// graphs grow, so the charts never squeeze the host list on a tall screen.
+const pingMonitorHosts = 12
+
+// pingMonitorHeight is the Ping Monitor pane height holding
+// pingMonitorHosts hosts: their rows, the header and the pane border.
+const pingMonitorHeight = pingMonitorHosts + 1 + 2
+
 // Fixed rows of the main layout around the panes.
 const (
 	headerHeight = 2
@@ -41,8 +55,9 @@ type paneControls struct {
 	panes         []*paneControl
 	maximized     *paneControl
 	// graph and log get special treatment in fit: the Log keeps a fixed
-	// height and grows only into spare rows, and the graph takes whatever
-	// rows remain after that.
+	// height, the open graph takes the spare rows left after the Ping
+	// Monitor holds pingMonitorHosts hosts, and the Log grows into spare
+	// rows only while the graph is folded.
 	graph *paneControl
 	log   *paneControl
 }
@@ -60,10 +75,9 @@ func newPaneControls(app *tview.Application, layout *tview.Flex, header *tview.T
 		c.panes = append(c.panes, pane)
 		return pane
 	}
-	// Bordered table: a top border plus each row and the rule below it,
-	// inside the pane's own border.
+	// One line per table row (header included) inside the pane's border.
 	add("Ping Monitor", tablePane, table, 3, tcell.ColorWhite, func(color tcell.Color) { tablePane.SetBorderColor(color) },
-		func(int) int { return 2*max(tableRows(), 1) + 3 })
+		func(int) int { return max(tableRows(), 1) + 2 })
 	active := 0
 	for _, pane := range monitors {
 		if pane.enabled {
@@ -110,8 +124,11 @@ func (c *paneControls) syncTableRect(width, paneHeight int) {
 
 // fit sizes the unfolded panes for a layout of the given inner size. The
 // Log keeps logLines of content; the other panes share the rest by content
-// and weight (see fitHeights). Rows nobody needs go first to the Log, up to
-// its content, then to the RTT graph. A maximized pane keeps the whole area.
+// and weight (see fitHeights). While the RTT charts are open, rows nobody
+// needs first let the Ping Monitor hold pingMonitorHosts hosts, then make
+// the charts taller; while
+// the charts are folded the Log grows into them instead. A maximized pane
+// keeps the whole area.
 func (c *paneControls) fit(width, height int) {
 	for _, pane := range c.panes {
 		if pane.titleFn != nil && pane.folded {
@@ -148,18 +165,38 @@ func (c *paneControls) fit(width, height int) {
 		logSize := logBase
 		demands := make([]paneDemand, len(others))
 		for i, pane := range others {
-			demands[i] = paneDemand{weight: pane.weight, desired: pane.desired(width)}
+			desired := pane.desired(width)
+			if pane == c.graph {
+				// The graphs only ask for one row of charts here: they take
+				// the spare rows afterwards, so every host row fits first.
+				desired = min(desired, graphMinPaneHeight)
+			}
+			demands[i] = paneDemand{weight: pane.weight, desired: desired}
 		}
 		sizes, spare := fitHeights(avail, demands)
-		if logOpen {
+		// While the RTT charts are open the spare rows go to them and the
+		// Ping Monitor; the Log grows to its content only when they are
+		// folded.
+		graphOpen := slices.Index(others, c.graph) >= 0
+		if logOpen && !graphOpen {
 			grow := min(spare, max(c.log.desired(width)-logSize, 0))
 			logSize += grow
 			spare -= grow
 		}
+		if i := slices.Index(others, c.graph); i >= 0 && spare > 0 {
+			// The Ping Monitor first grows to hold pingMonitorHosts hosts
+			// (blank rows below fewer hosts), then the open graphs take the
+			// rest; the Log stays at its base height.
+			if len(c.panes) > 0 && others[0] == c.panes[0] {
+				grow := min(spare, max(pingMonitorHeight-sizes[0], 0))
+				sizes[0] += grow
+				spare -= grow
+			}
+			sizes[i] += spare
+			spare = 0
+		}
 		if spare > 0 {
-			switch i := slices.Index(others, c.graph); {
-			case i >= 0:
-				sizes[i] += spare
+			switch {
 			case logOpen:
 				logSize += spare
 			case len(others) > 0:

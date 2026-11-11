@@ -14,7 +14,8 @@ import (
 
 func newPingTable() *tview.Table {
 	table := tview.NewTable().
-		SetBorders(true).
+		SetBorders(false).
+		SetSeparator(tview.Borders.Vertical).
 		SetSelectable(false, false).
 		SetFixed(1, 1)
 	table.SetBackgroundColor(tcell.ColorBlack)

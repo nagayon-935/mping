@@ -38,7 +38,11 @@ func TestProjectDurationsToGraph(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			values, has := projectDurationsToGraph(tt.data, tt.window, tt.width)
+			cols := projectDurationsToGraph(tt.data, tt.window, tt.width)
+			values, has := make([]time.Duration, len(cols)), make([]bool, len(cols))
+			for i, c := range cols {
+				values[i], has[i] = c.value, c.has
+			}
 			if len(values) != tt.width || len(has) != tt.width {
 				t.Fatalf("projection size: got values=%d has=%d, want %d", len(values), len(has), tt.width)
 			}
@@ -52,6 +56,70 @@ func TestProjectDurationsToGraph(t *testing.T) {
 				t.Errorf("expected a continuous span: has=%v", has)
 			}
 		})
+	}
+}
+
+func TestProjectDurationsToGraphMarksLoss(t *testing.T) {
+	ms := time.Millisecond
+	tests := []struct {
+		name         string
+		data         []time.Duration
+		window       int
+		width        int
+		wantLost     []bool
+		wantSomeLost []bool
+		wantHas      []bool
+	}{
+		{
+			name:   "a lost probe is not interpolated down to zero",
+			data:   []time.Duration{10 * ms, 0, 10 * ms},
+			window: 3, width: 5,
+			// samples at x=0, 2, 4; the gaps keep the previous sample's state
+			wantHas:      []bool{true, true, true, true, true},
+			wantLost:     []bool{false, false, true, true, false},
+			wantSomeLost: []bool{false, false, false, false, false},
+		},
+		{
+			name:   "replies and losses sharing a column mark it partly lost",
+			data:   []time.Duration{10 * ms, 0, 12 * ms, 0},
+			window: 4, width: 2,
+			wantHas:      []bool{true, true},
+			wantLost:     []bool{false, false},
+			wantSomeLost: []bool{true, true},
+		},
+		{
+			name:   "all lost",
+			data:   []time.Duration{0, 0},
+			window: 2, width: 2,
+			wantHas:      []bool{true, true},
+			wantLost:     []bool{true, true},
+			wantSomeLost: []bool{false, false},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cols := projectDurationsToGraph(tt.data, tt.window, tt.width)
+			for i, c := range cols {
+				if c.has != tt.wantHas[i] || c.lost != tt.wantLost[i] || c.someLost != tt.wantSomeLost[i] {
+					t.Errorf("column %d = %+v, want has=%v lost=%v someLost=%v", i, c, tt.wantHas[i], tt.wantLost[i], tt.wantSomeLost[i])
+				}
+			}
+			for i, c := range cols {
+				if c.has && !c.lost && c.value == 0 {
+					t.Errorf("column %d drawn as a zero-height reply: %+v", i, c)
+				}
+			}
+		})
+	}
+}
+
+func TestWindowLossText(t *testing.T) {
+	ms := time.Millisecond
+	if got := windowLossText([]time.Duration{10 * ms, 10 * ms}, 30); got != "" {
+		t.Errorf("no loss: %q, want empty", got)
+	}
+	if got, want := windowLossText([]time.Duration{0, 10 * ms, 0, 0, 10 * ms}, 4), "loss 50% (2/4)"; got != want {
+		t.Errorf("windowLossText = %q, want %q", got, want)
 	}
 }
 

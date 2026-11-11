@@ -20,15 +20,15 @@ func TestMainTableColumns_DynamicFlags(t *testing.T) {
 		ptrEnabled bool
 		want       []string // names of columns expected to be dynamic, in order
 	}{
-		{"neither enabled", false, false, false, []string{"Src IP", "Dst IP"}},
-		{"dns only", true, false, false, []string{"Src IP", "Dst IP", "DNS"}},
-		{"asn only", false, true, false, []string{"Src IP", "Dst IP", "ASN"}},
-		{"ptr only", false, false, true, []string{"Src IP", "Dst IP", "PTR"}},
-		{"all enabled", true, true, true, []string{"Src IP", "Dst IP", "DNS", "ASN", "PTR"}},
+		{"neither enabled", false, false, false, []string{"SRC", "DST"}},
+		{"dns only", true, false, false, []string{"SRC", "DST", "DNS"}},
+		{"asn only", false, true, false, []string{"SRC", "DST", "ASN"}},
+		{"ptr only", false, false, true, []string{"SRC", "DST", "PTR"}},
+		{"all enabled", true, true, true, []string{"SRC", "DST", "DNS", "ASN", "PTR"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cols := mainTableColumns(tt.dnsEnabled, tt.asnEnabled, tt.ptrEnabled)
+			cols := mainTableColumns(columnOptions{DNS: tt.dnsEnabled, ASN: tt.asnEnabled, PTR: tt.ptrEnabled})
 			var got []string
 			for _, c := range cols {
 				if c.dynamic {
@@ -97,7 +97,7 @@ func TestRenderRowTexts(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := columnRowContext{view: tt.view, sourceIPv4: "10.0.0.2", packetSize: 56, lossRate: calcLossRate(tt.view)}
-			texts := renderRowTexts(mainTableColumns(tt.dns, tt.asn, tt.ptr), ctx)
+			texts := renderRowTexts(mainTableColumns(columnOptions{DNS: tt.dns, ASN: tt.asn, PTR: tt.ptr}), ctx)
 			if len(texts) != tt.wantLen {
 				t.Fatalf("texts len = %d, want %d", len(texts), tt.wantLen)
 			}
@@ -136,7 +136,7 @@ func TestRenderRowCells(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cols := mainTableColumns(tt.dns, tt.asn, tt.ptr)
+			cols := mainTableColumns(columnOptions{DNS: tt.dns, ASN: tt.asn, PTR: tt.ptr})
 			widths := make([]int, len(cols))
 			for i := range widths {
 				widths[i] = 5
@@ -148,11 +148,11 @@ func TestRenderRowCells(t *testing.T) {
 			// Columns that own a color override the row color; the others
 			// keep it.
 			wantColor := map[string]tcell.Color{
-				"Error":      vividRed,
-				"Loss Ratio": vividRed,
-				"RTT":        vividRed,
-				"Jitter":     vividRed,
-				"Size":       tcell.ColorWhite,
+				"ERR":   vividRed,
+				"LOSS%": vividRed,
+				"RTT":   vividRed,
+				"JIT":   vividRed,
+				"SIZE":  tcell.ColorWhite,
 			}
 			for name, want := range wantColor {
 				idx := columnIndex(cols, name)
@@ -164,5 +164,14 @@ func TestRenderRowCells(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDSTBeforeTheNameResolves(t *testing.T) {
+	target := stats.NewTargetStats("lax-ca-us-ping.vultr.com")
+	cols := mainTableColumns(columnOptions{})
+	got := cols[columnIndex(cols, "DST")].render(columnRowContext{view: target.GetView()})
+	if got != "lax-ca-us-ping.vultr.com" {
+		t.Errorf("DST = %q, want the bare host name without empty parentheses", got)
 	}
 }

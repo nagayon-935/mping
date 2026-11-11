@@ -34,7 +34,7 @@ func TestTableColorsFollowTheTargetsThresholds(t *testing.T) {
 	tr := newTestTableRenderer([]*stats.TargetStats{target}, 200)
 	tr.update()
 
-	want := map[string]tcell.Color{"Loss Ratio": vividRed, "RTT": vividRed, "Jitter": tcell.ColorGreen}
+	want := map[string]tcell.Color{"LOSS%": vividRed, "RTT": vividRed, "JIT": tcell.ColorGreen}
 	for name, color := range want {
 		idx := columnIndex(tr.cols, name)
 		if idx < 0 {

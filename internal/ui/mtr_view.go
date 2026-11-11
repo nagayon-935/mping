@@ -85,7 +85,7 @@ func renderMTRTable(targets []*stats.TargetStats, availW int, srcIPv4, srcIPv6 s
 
 // renderMTRTargetTable renders one target's hop table.
 func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, compact bool, srcIPv4, srcIPv6 string) {
-	view := t.GetView()
+	view := t.GetViewWindow(0)
 	hops := view.MTRHops
 
 	// Target label: "SrcIP -> DstIP" (with hostname prefix when applicable)

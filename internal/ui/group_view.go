@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/mattn/go-runewidth"
 	"github.com/rivo/tview"
 
 	"github.com/nagayon-935/mping/internal/stats"
@@ -97,27 +98,35 @@ func buildGroupRows(
 // setGroupHeaderRow fills a table row with a group banner: a colored band
 // spanning every column so the group boundary is visually strong even
 // though the table keeps a single set of borders/rules. The label (group
-// name + member count) lives in column 0; the last column carries the
-// expansion so the band fills any remaining width.
-func setGroupHeaderRow(table *tview.Table, tableRow int, colCount int,
+// name + member count) lives in column 0 when it fits; the last column
+// carries the expansion so the band fills any remaining width.
+func setGroupHeaderRow(table *tview.Table, tableRow int, widths []int,
 	groupName string, memberCount int,
 ) {
 	label := fmt.Sprintf(" ▸ %s  (%d hosts)", groupName, memberCount)
-
-	first := tview.NewTableCell(label).
-		SetTextColor(groupBannerFg).
-		SetBackgroundColor(groupBannerBg).
-		SetAttributes(tcell.AttrBold).
-		SetSelectable(false)
-	if colCount == 1 {
-		first.SetExpansion(1)
+	// The banner must not widen a column (that pushes the last columns off
+	// the table), so the label goes in the first column when it fits there,
+	// else in the widest one, cut to that column's width.
+	labelCol := 0
+	if runewidth.StringWidth(label) > widths[0] {
+		for c, w := range widths {
+			if w > widths[labelCol] {
+				labelCol = c
+			}
+		}
 	}
-	table.SetCell(tableRow, 0, first)
-	for c := 1; c < colCount; c++ {
-		cell := tview.NewTableCell("").
+	for c, w := range widths {
+		text := ""
+		if c == labelCol {
+			text = truncateToDisplayWidth(label, w)
+		}
+		cell := tview.NewTableCell(text).
+			SetTextColor(groupBannerFg).
 			SetBackgroundColor(groupBannerBg).
-			SetSelectable(false)
-		if c == colCount-1 {
+			SetAttributes(tcell.AttrBold).
+			SetSelectable(false).
+			SetMaxWidth(w)
+		if c == len(widths)-1 {
 			cell.SetExpansion(1)
 		}
 		table.SetCell(tableRow, c, cell)
@@ -149,7 +158,7 @@ func setHeaderRow(table *tview.Table, tableRow int, headers []string, widths []i
 		cell := tview.NewTableCell(text).
 			SetBackgroundColor(tcell.ColorBlack).
 			SetTextColor(color).
-			SetAttributes(tcell.AttrBold).
+			SetAttributes(tcell.AttrBold | tcell.AttrUnderline).
 			SetSelectable(false).
 			SetAlign(aligns[i])
 		if i == len(headers)-1 {

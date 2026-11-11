@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -24,26 +25,24 @@ func newTestTableRenderer(targets []*stats.TargetStats, width int) *tableRendere
 	errorView := tview.NewTextView()
 	vs := newViewState(errorView)
 
-	return newTableRenderer(targets, "10.0.0.1", "", 56, false, false, nil, table, tablePane, nil, vs)
+	return newTableRenderer(targets, "10.0.0.1", "", 56, columnOptions{}, nil, table, tablePane, nil, vs)
 }
 
-// TestTableRendererUpdate_LayoutByWidth checks that update() builds the
-// compact layout (and its per-target GetView() work) only as a fallback, so a
-// terminal wide enough for the full layout must resolve to it — width 200
-// matches the wide screens used by the Run tests — while a narrow one (70)
-// falls back to compact.
+// TestTableRendererUpdate_LayoutByWidth checks that a terminal wide enough
+// for every column hides none, while a narrow one hides supplementary
+// columns but keeps the core ones and one row per target.
 func TestTableRendererUpdate_LayoutByWidth(t *testing.T) {
 	tests := []struct {
-		name        string
-		width       int
-		wantCompact bool
-		wantRows    int // -1: not asserted
+		name       string
+		width      int
+		wantHidden bool
 	}{
-		{"wide terminal keeps the full layout", 200, false, 4}, // header + one row per target
-		{"narrow terminal falls back to compact", 70, true, -1},
+		{"wide terminal shows every column", 200, false},
+		{"narrow terminal hides supplementary columns", 70, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
 			targets := make([]*stats.TargetStats, 3)
 			for i := range targets {
 				targets[i] = stats.NewTargetStats("host")
@@ -52,13 +51,21 @@ func TestTableRendererUpdate_LayoutByWidth(t *testing.T) {
 				targets[i].OnSuccess(10*time.Millisecond, 64)
 			}
 			tr := newTestTableRenderer(targets, tt.width)
+
+			// Act
 			tr.update()
 
-			if tr.compactLayout != tt.wantCompact {
-				t.Errorf("compactLayout = %v, want %v", tr.compactLayout, tt.wantCompact)
+			// Assert
+			if got := len(tr.hidden) > 0; got != tt.wantHidden {
+				t.Errorf("hidden = %v, want hidden: %v", tr.hidden, tt.wantHidden)
 			}
-			if tt.wantRows >= 0 && tr.rowCount != tt.wantRows {
-				t.Errorf("rowCount = %d, want %d", tr.rowCount, tt.wantRows)
+			for _, core := range []string{"DST", "LOSS%", "RTT", "JIT"} {
+				if !slices.Contains(tr.activeHeaders, core) {
+					t.Errorf("core column %s missing from %v", core, tr.activeHeaders)
+				}
+			}
+			if tr.rowCount != len(targets)+1 {
+				t.Errorf("rowCount = %d, want %d", tr.rowCount, len(targets)+1)
 			}
 		})
 	}
@@ -121,7 +128,7 @@ func TestTableRendererUpdate_TallPaneRendersAllVisibleRows(t *testing.T) {
 	table := newPingTable()
 	tablePane := newTablePane(table)
 	vs := newViewState(newLogView())
-	tr := newTableRenderer(targets, "10.0.0.1", "", 56, false, false, nil, table, tablePane, nil, vs)
+	tr := newTableRenderer(targets, "10.0.0.1", "", 56, columnOptions{}, nil, table, tablePane, nil, vs)
 	tr.selectionEnabled = true
 
 	graph := newGraphPane(targets, time.Second)
@@ -165,7 +172,7 @@ func TestTableRendererUpdate_TallPaneRendersAllVisibleRows(t *testing.T) {
 	if maxVisible <= visible {
 		t.Fatalf("maximized visibleDataRows() = %d, want > %d", maxVisible, visible)
 	}
-	for row := 1; row <= maxVisible; row++ {
+	for row := 1; row <= min(maxVisible, len(tr.targets)); row++ {
 		if got := tr.table.GetCell(row, 1).Text; got == "" {
 			t.Fatalf("maximized row %d (within visible %d rows) was not rendered", row, maxVisible)
 		}

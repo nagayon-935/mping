@@ -18,8 +18,8 @@
 
 * **Multi-target ping** — monitor multiple hosts concurrently in a single view.
 * **Real-time statistics** — packet loss, RTT, TTL, and error messages updated live.
-* **TUI dashboard** — high-visibility table on a black background. Column widths are distributed automatically based on terminal width; switches to a compact 2-row-per-target layout when the window is narrow.
-* **Color-coded alerts** — loss ratio, RTT, and Jitter are color-coded for instant status recognition. Alerts are recorded in the Log pane when thresholds are exceeded.
+* **TUI dashboard** — high-visibility table on a black background. Column widths are distributed automatically based on terminal width; whole columns are hidden in priority order on narrow screens while keeping one row per target.
+* **Color-coded alerts** — loss ratio, RTT, and Jitter are color-coded for instant status recognition. Alerts are recorded in the Log pane when thresholds are exceeded; the same status change hitting several targets in the same second is logged once with the targets it hit (e.g. `[12:09:03] crit: Jitter > 50.0ms ×3 — 1.1.1.1, 8.8.8.8, 9.9.9.9`).
 * **Flexible configuration** — specify interface, source IP, packet size, send count, and more.
 * **YAML host list** — manage target hosts in a file.
 * **Host groups** — define named groups in the YAML file. Each group shows a header row with a member count, making it easy to visually separate sets of targets.
@@ -28,7 +28,7 @@
 * **Port Monitor pane** — monitor TCP/UDP port reachability in real time with `-p`. Displays the estimated service name, **Last / Min / Avg / Max RTT** (measured from TCP connect or UDP round-trip), cumulative Open/Closed counts, and time since last status change. RTT statistics are collected for `Open` responses only.
 * **PMTU discovery** — IPv4 DF probes and IPv6 OS path-MTU estimates with echo confirmation.
 * **Auto source IP detection** — displays the bound source address or a representative automatically selected source for each address family.
-* **RTT graph** — auto-scaling Y-axis (expands immediately on spike, shrinks after a hold period) and roughly 30 seconds of recent samples at the configured interval (X-axis) per target. Supports both ICMP and TCP/UDP port series.
+* **RTT graph** — auto-scaling Y-axis (expands immediately on spike, shrinks after a hold period) and roughly 30 seconds of recent samples at the configured interval (X-axis) per target. Supports both ICMP and TCP/UDP port series. Lost probes are drawn as a red `×` on the zero line and columns where only some probes were lost as orange bars (the same colors as the **RTT 60s** sparkline), and a chart header shows the window's loss, e.g. `loss 20% (6/30)`. The pane takes the spare rows left once the Ping Monitor has room for 12 hosts, the Log keeping its base height; it shows up to six charts at once and scrolls for more. Press **f** on the pane to fold or open it.
 * **Statistics snapshots** — save an investigation report with current statistics as JSON or CSV from the TUI (`w`) or the Web UI's **Report** button.
 
 ## Supported platforms
@@ -322,7 +322,7 @@ See [examples/hosts-patterns.yaml](examples/hosts-patterns.yaml) and [examples/b
 | `--loss-warn` | | Loss warn threshold in percent (orange) | `20` |
 | `--loss-crit` | | Loss crit threshold in percent (red) | `80` |
 
-> **Thresholds** — `warn` is the orange boundary and `crit` the red boundary for colour-coding the Loss Ratio, RTT, and Jitter columns (and for triggering alert log entries). For each metric `warn` must be less than `crit`. These can also be set in the `thresholds:` block of the YAML file.
+> **Thresholds** — `warn` is the orange boundary and `crit` the red boundary for colour-coding the LOSS%, RTT, and JIT columns (and for triggering alert log entries). For each metric `warn` must be less than `crit`. These can also be set in the `thresholds:` block of the YAML file.
 
 ### Current health and configuration checks
 
@@ -441,24 +441,34 @@ Regenerate saved scripts after upgrading mping to include new flags. To monitor 
 
 ## TUI columns
 
-* **Src IP** — The bound source address, or the automatically detected source-address hint for the destination's address family.
-* **Dst IP** — Resolved destination IP. Shown as `domain (IP)` when a hostname is given.
+* **SRC** — The bound source address, or the automatically detected source-address hint for the destination's address family.
+* **DST** — Resolved destination IP. Shown as `domain (IP)` when a hostname is given.
+* **DNS** — DNS server used to resolve the target (shown only when some target has one).
 * **ASN** — Autonomous System Number and organization name of the target IP (enabled with `-a`). Example: `AS15169 Google LLC`.
 * **PTR** — Reverse DNS name of the target IP (enabled with `-r`).
-* **Success** — Number of packets received successfully.
-* **Loss** — Number of lost packets.
-* **Loss Ratio** — Packet loss percentage. Colour boundaries are configurable (defaults shown).
+* **RCV** — Number of packets received successfully.
+* **LOST** — Number of lost packets.
+* **LOSS%** — Packet loss percentage. Colour boundaries are configurable (defaults shown).
   * **Green**: 0%–20% &nbsp;|&nbsp; **Orange**: >20% and ≤80% &nbsp;|&nbsp; **Vivid red**: >80%
-* **RTT / Avg / Jitter** — Latest / average / jitter round-trip time. Colour boundaries are configurable (defaults shown).
+* **RTT / AVG / JIT** — Latest / average / jitter round-trip time. Colour boundaries are configurable (defaults shown).
   * **RTT**: Green (≤50 ms) / Orange (≤200 ms) / Red (>200 ms)
-  * **Jitter**: Green (≤10 ms) / Orange (≤50 ms) / Red (>50 ms)
+  * **JIT**: Green (≤10 ms) / Orange (≤50 ms) / Red (>50 ms)
   * Override with `--rtt-warn/--rtt-crit`, `--jitter-warn/--jitter-crit`, `--loss-warn/--loss-crit`, or the `thresholds:` YAML block.
-* **Size** — Payload size of sent packets.
-* **MTU** — MTU of the specified or initially inferred outbound interface.
+* **SIZE** — Payload size of sent packets.
+* **MTU** — MTU of the specified or initially inferred outbound interface. With `-m` the column is **PMTU** and shows the discovered path MTU.
+* **RTT 60s** — Sparkline of the last 60 seconds of RTT (`▲` above the row's p95 scale). Cells are cyan without loss, orange when some probes in them were lost, and a red `×` when all were.
 * **TTL** — IPv4 TTL or IPv6 Hop Limit of the last reply.
-* **Error** — Abbreviated latest error message (red). Full details appear in the Log pane.
-* **Last Loss** — Time elapsed since the last packet loss.
+* **ERR** — Abbreviated latest error message (red), shown only while some target has one. Full details appear in the Log pane.
+* **LAST LOSS** — Time elapsed since the last packet loss.
 
+### Narrow terminals
+
+Cells are not cut short. When the terminal is too narrow for every column, whole columns are hidden instead, in this order:
+
+1. Supplementary columns: SIZE → MTU → SRC → DNS → LAST LOSS → LOST → RCV → TTL → AVG → RTT 60s (the sparkline goes last: it is the only RTT trend for hosts past the six the graph pane shows at once) (SIZE, MTU, SRC and DNS only when their option was not given).
+2. Columns requested with an option: SIZE (`-s`) → SRC (`-S` / `-I`) → DNS (`-d`) → ASN (`-a`) → PTR (`-r`) → PMTU (`-m`).
+
+DST, LOSS%, RTT and JIT (and ERR while an error is shown) are never hidden. The pane title lists hidden columns; a hidden setting every row shares, such as the payload size or a pinned source address, appears there with its value (`Ping Monitor · SIZE 56 · hidden: TTL AVG`). Every value stays available in the host details (Enter).
 
 ## Traceroute Monitor pane
 

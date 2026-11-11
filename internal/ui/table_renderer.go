@@ -23,11 +23,12 @@ import (
 // the uiSession mailbox); no mutex guards them and background goroutines
 // must post updates through that mailbox.
 type tableRenderer struct {
-	targets    []*stats.TargetStats
-	sourceIPv4 string
-	sourceIPv6 string
-	packetSize int
-	groups     []TargetGroup
+	targets     []*stats.TargetStats
+	sourceIPv4  string
+	sourceIPv6  string
+	packetSize  int
+	sparkPoints int
+	groups      []TargetGroup
 
 	cols             []column
 	fullHeaders      []string
@@ -37,7 +38,6 @@ type tableRenderer struct {
 	maxWidths        []int
 	shrinkPriorities []int
 	growPriorities   []int
-	lastLossBase     int
 
 	headerColor tcell.Color
 	rowColor    tcell.Color
@@ -46,12 +46,23 @@ type tableRenderer struct {
 	tablePane *tview.Flex
 	sidePanes []*monitorPane
 
-	// Mutable render state, recomputed every tick.
+	// Mutable render state, recomputed every tick. active holds the indices
+	// into cols shown in the full layout (activeCols the columns themselves);
+	// widths, activeHeaders and activeAligns are parallel to it. hidden names
+	// the columns dropped for width, in the order they were dropped.
+	active     []int
+	activeCols []column
+	hidden     []string
+	// widthSeen is each column's widest content so far and everShown marks
+	// hideWhenEmpty columns that have had a value: planColumns uses them so
+	// a value shrinking back (9.8ms after 10.3ms) or an error clearing does
+	// not make columns appear and disappear from one tick to the next.
+	widthSeen     []int
+	everShown     []bool
 	widths        []int
 	activeHeaders []string
 	activeAligns  []int
 	rowCount      int
-	compactLayout bool
 	groupRowMap   []groupTableRow
 
 	selectionEnabled  bool
@@ -69,21 +80,23 @@ type tableRenderer struct {
 // headers/aligns/widths/priorities, seeds the Error column's data-derived
 // max width, and primes the initial column widths and log lines.
 func newTableRenderer(
-	targets []*stats.TargetStats, sourceIPv4, sourceIPv6 string, packetSize int, asnEnabled, ptrEnabled bool, groups []TargetGroup,
+	targets []*stats.TargetStats, sourceIPv4, sourceIPv6 string, packetSize int, colOpts columnOptions, groups []TargetGroup,
 	table *tview.Table, tablePane *tview.Flex, initialLogs []string, vs *viewState,
 ) *tableRenderer {
-	dnsEnabled := false
-	for _, t := range targets {
-		v := t.GetView()
+	views := fetchViews(targets, max(colOpts.SparkPoints, 0))
+	colOpts.DNS = false
+	for _, v := range views {
 		if v.DNSServer != "" && v.DNSServer != "-" {
-			dnsEnabled = true
+			colOpts.DNS = true
 			break
 		}
 	}
 
-	cols := mainTableColumns(dnsEnabled, asnEnabled, ptrEnabled)
+	cols := mainTableColumns(colOpts)
 	tr := &tableRenderer{
-		targets: targets, sourceIPv4: sourceIPv4, sourceIPv6: sourceIPv6, packetSize: packetSize, groups: groups,
+		targets: targets, sourceIPv4: sourceIPv4, sourceIPv6: sourceIPv6, packetSize: packetSize,
+		sparkPoints:      max(colOpts.SparkPoints, 0),
+		groups:           groups,
 		cols:             cols,
 		fullHeaders:      make([]string, len(cols)),
 		fullAligns:       make([]int, len(cols)),
@@ -109,12 +122,18 @@ func newTableRenderer(
 
 	// The Error column's max grows to fit the widest known error string
 	// rather than staying at its static base.
-	errorIdx := columnIndex(cols, "Error")
+	errorIdx := columnIndex(cols, "ERR")
 	tr.baseWidths[errorIdx] = calcInitialTableErrorWidth(targets, tr.fullHeaders[errorIdx], tr.baseWidths[errorIdx])
 	tr.maxWidths[errorIdx] = tr.baseWidths[errorIdx]
-	tr.lastLossBase = cols[columnIndex(cols, "Last Loss")].base
 
-	tr.widths = tr.calcColumnWidths(fetchViews(targets))
+	tr.widthSeen = make([]int, len(cols))
+	tr.everShown = make([]bool, len(cols))
+	tr.widths = tr.calcColumnWidths(views)
+	tr.active = make([]int, len(cols))
+	for i := range cols {
+		tr.active[i] = i
+	}
+	tr.activeCols = append([]column(nil), cols...)
 	tr.activeHeaders = append([]string(nil), tr.fullHeaders...)
 	tr.activeAligns = append([]int(nil), tr.fullAligns...)
 	tr.rowCount = len(targets) + 1
@@ -126,15 +145,10 @@ func newTableRenderer(
 	return tr
 }
 
-// calcColumnWidths recalculates dynamic column widths based on current
-// output text (Src/Dst IP, DNS, ASN, PTR). views must be the same length as
-// tr.targets, in the same order (one GetView() snapshot per target, taken
-// once per tick by the caller rather than re-fetched here).
-//
-// Recomputed every tick on purpose: ASN and Dst IP content arrives after the
-// first tick (Cymru lookup, DNS resolution), so widths cached until the next
-// resize would keep those columns truncated. See BenchmarkCalcColumnWidths
-// for the cost this trades against.
+// calcColumnWidths computes the initial column widths from the dynamic
+// columns' current text (SRC/DST, DNS, ASN, PTR), before the first tick
+// plans the layout; every tick after that sizes columns in planColumns.
+// views must be the same length as tr.targets, in the same order.
 func (tr *tableRenderer) calcColumnWidths(views []stats.TargetView) []int {
 	widths := append([]int(nil), tr.baseWidths...)
 	for i, c := range tr.cols {
@@ -175,12 +189,12 @@ func (tr *tableRenderer) tableInnerHeight() int {
 // current inner height, floored at tableMinVisibleRows when the widget has not been
 // sized past the default minimum yet.
 func (tr *tableRenderer) visibleDataRows() int {
-	return max(tableMinVisibleRows, (tr.tableInnerHeight()-2)/2)
+	return max(tableMinVisibleRows, tr.tableInnerHeight()-1) // one line per row below the header
 }
 
 // visibleRowWindow returns the [start, end) range of data-row indices
-// (0-based — matching indices into tr.targets, tr.groupRowMap, or
-// compactRows depending on layout) that should actually be rendered this
+// (0-based — matching indices into tr.targets or tr.groupRowMap, depending
+// on whether groups are shown) that should actually be rendered this
 // tick, given the table's current scroll offset. offsetRow is the table's
 // GetOffset() row (0-based, counting from the first data row below the
 // fixed header). totalDataRows is the logical total row count for whichever
@@ -203,20 +217,20 @@ func (tr *tableRenderer) ensureRenderedForSize() {
 	}
 }
 
-// fetchViews takes one GetView() snapshot per target, in order. Called once
-// per tick (or once at construction) so every consumer within that tick —
-// width calculation, compact layout, row rendering — shares the same
-// snapshot instead of each re-fetching it independently.
-func fetchViews(targets []*stats.TargetStats) []stats.TargetView {
+// fetchViews takes one GetViewWindow(historyWindow) snapshot per target, in
+// order. Called once per tick (or once at construction) so every consumer
+// within that tick — width calculation, layout planning, row rendering —
+// shares the same snapshot instead of each re-fetching it independently, and
+// only the trailing RTT samples needed by the sparkline are copied.
+func fetchViews(targets []*stats.TargetStats, historyWindow int) []stats.TargetView {
 	views := make([]stats.TargetView, len(targets))
 	for i, t := range targets {
-		views[i] = t.GetView()
+		views[i] = t.GetViewWindow(historyWindow)
 	}
 	return views
 }
 
-// update re-renders the Ping Monitor table (full or compact layout, flat or
-// grouped) and every side pane, for one refresh tick.
+// update re-renders the Ping Monitor table (flat or grouped) and every side pane, for one refresh tick.
 func (tr *tableRenderer) update() {
 	if tr.beforeUpdate != nil {
 		tr.beforeUpdate()
@@ -224,12 +238,12 @@ func (tr *tableRenderer) update() {
 	_, _, tr.lastRenderWidth, tr.lastRenderHeight = tr.tablePane.GetInnerRect()
 	tr.table.Clear()
 
-	// One GetView() snapshot per target for this whole tick — width calc,
-	// compact layout, and row rendering all read from this same slice
-	// instead of each calling GetView() independently: GetView() copies the
-	// full RTT history ring, so one call per target per tick is the budget.
-	views := fetchViews(tr.targets)
-	compactRows := tr.chooseLayout(views)
+	// One GetViewWindow snapshot per target for this whole tick — width calc,
+	// layout planning, and row rendering all read from this same slice
+	// instead of each calling GetView() independently.
+	views := fetchViews(tr.targets, tr.sparkPoints)
+	rowCtx, texts := tr.renderTexts(views)
+	tr.chooseLayout(texts)
 	if tr.selectionEnabled {
 		tr.reconcileSelection()
 	}
@@ -239,12 +253,10 @@ func (tr *tableRenderer) update() {
 	offsetRow, _ := tr.table.GetOffset()
 
 	setHeaderRow(tr.table, 0, tr.activeHeaders, tr.widths, tr.activeAligns, tr.headerColor)
-	rowCtx, texts := tr.scanTargets(views)
-	if tr.compactLayout {
-		tr.renderCompactRows(compactRows, offsetRow)
-	} else {
-		tr.renderFullRows(rowCtx, texts, offsetRow)
-	}
+	// The title sits on the top border between its corners and padding.
+	tr.tablePane.SetTitle(tr.paneTitle(texts, max(tr.lastRenderWidth-2, 0)))
+	tr.scanTargets(views, rowCtx)
+	tr.renderRows(rowCtx, texts, offsetRow)
 
 	if tr.selectionEnabled {
 		tr.highlightSelection()
@@ -257,64 +269,49 @@ func (tr *tableRenderer) update() {
 	}
 }
 
-// chooseLayout fits the full layout to the pane, falling back to the compact
-// one when it does not fit, and sets the active headers, widths and row
-// count. When neither fits the previous tick's layout stays. It returns the
-// compact rows whenever the full layout did not fit.
-func (tr *tableRenderer) chooseLayout(views []stats.TargetView) []compactRow {
+// chooseLayout fits the columns to the pane (see planColumns) and sets the
+// active columns, headers, widths and row count. When not even the core
+// columns fit, the previous tick's layout stays.
+func (tr *tableRenderer) chooseLayout(texts [][]string) {
 	_, _, availableTableWidth, _ := tr.tablePane.GetInnerRect()
-	availableColumnsWidth := max(availableTableWidth-(len(tr.fullHeaders)+1), 0)
-
-	updatedWidths := tr.calcColumnWidths(views)
-	dynamicMaxWidths := append([]int(nil), tr.maxWidths...)
-	for i, c := range tr.cols {
-		if c.dynamic && updatedWidths[i] > dynamicMaxWidths[i] {
-			dynamicMaxWidths[i] = updatedWidths[i]
+	if plan := tr.planColumns(texts, availableTableWidth); plan.ok {
+		tr.active = plan.active
+		tr.hidden = plan.hidden
+		tr.widths = plan.widths
+		tr.activeCols = make([]column, len(plan.active))
+		tr.activeHeaders = make([]string, len(plan.active))
+		tr.activeAligns = make([]int, len(plan.active))
+		for j, i := range plan.active {
+			tr.activeCols[j] = tr.cols[i]
+			tr.activeHeaders[j] = tr.fullHeaders[i]
+			tr.activeAligns[j] = tr.fullAligns[i]
 		}
 	}
-	fitted, ok := fitWidthsToAvailable(updatedWidths, tr.minWidths, dynamicMaxWidths, tr.shrinkPriorities, tr.growPriorities, availableColumnsWidth)
-
-	// The compact layout is only a fallback for when the full layout
-	// doesn't fit; skip computing it entirely in the common case.
-	var compactRows []compactRow
-	if ok {
-		tr.compactLayout = false
-		tr.widths = fitted
-		tr.activeHeaders = append([]string(nil), tr.fullHeaders...)
-		tr.activeAligns = append([]int(nil), tr.fullAligns...)
-		tr.rowCount = len(tr.targets) + 1
-	} else {
-		compact := buildCompactLayout(views, tr.packetSize, tr.sourceIPv4, tr.sourceIPv6, tr.lastLossBase)
-		compactRows = compact.rows
-		compactAvailableColumnsWidth := max(availableTableWidth-(len(compact.headers)+1), 0)
-		if widths, fits := fitWidthsToAvailable(compact.desired, compact.min, compact.max, compact.shrink, compact.grow, compactAvailableColumnsWidth); fits {
-			tr.compactLayout = true
-			tr.widths = widths
-			tr.activeHeaders = append([]string(nil), compact.headers...)
-			tr.activeAligns = append([]int(nil), compact.aligns...)
-			tr.rowCount = len(compactRows) + 1
-		}
-	}
-
-	// When groups are active, override rowCount with the group layout.
-	if len(tr.groups) > 0 && !tr.compactLayout {
+	tr.rowCount = len(tr.targets) + 1
+	if len(tr.groups) > 0 {
 		tr.groupRowMap = buildGroupRows(tr.targets, tr.groups)
 		tr.rowCount = len(tr.groupRowMap) + 1
 	}
-	return compactRows
 }
 
-// scanTargets logs new losses and alert transitions for every target and,
-// in the full layout, renders each target's cell texts once so rows can
-// reuse them (nil slices in the compact layout).
-func (tr *tableRenderer) scanTargets(views []stats.TargetView) ([]columnRowContext, [][]string) {
-	now := time.Now()
-	var rowCtx []columnRowContext
-	var texts [][]string
-	if !tr.compactLayout {
-		rowCtx = make([]columnRowContext, len(tr.targets))
-		texts = make([][]string, len(tr.targets))
+// renderTexts renders every target's cell texts for all columns once per
+// tick, so layout planning and row rendering share them.
+func (tr *tableRenderer) renderTexts(views []stats.TargetView) ([]columnRowContext, [][]string) {
+	rowCtx := make([]columnRowContext, len(views))
+	texts := make([][]string, len(views))
+	for i, view := range views {
+		rowCtx[i] = columnRowContext{
+			view: view, sourceIPv4: tr.sourceIPv4, sourceIPv6: tr.sourceIPv6,
+			packetSize: tr.packetSize, lossRate: calcLossRate(view),
+		}
+		texts[i] = renderRowTexts(tr.cols, rowCtx[i])
 	}
+	return rowCtx, texts
+}
+
+// scanTargets logs new losses and alert transitions for every target.
+func (tr *tableRenderer) scanTargets(views []stats.TargetView, rowCtx []columnRowContext) {
+	now := time.Now()
 	for i := range tr.targets {
 		view := views[i]
 		rowSourceIP := displaySourceIPForDst(view.IP, tr.sourceIPv4, tr.sourceIPv6)
@@ -325,40 +322,32 @@ func (tr *tableRenderer) scanTargets(views []stats.TargetView) ([]columnRowConte
 				tr.vs.appendLog(buildErrorLogMessage(view, rowSourceIP, view.LastError, view.LastLossTime))
 			}
 		}
-		if tr.compactLayout {
-			continue
-		}
-		ctx := columnRowContext{
-			view: view, sourceIPv4: tr.sourceIPv4, sourceIPv6: tr.sourceIPv6,
-			packetSize: tr.packetSize, lossRate: calcLossRate(view),
-		}
-		rowCtx[i] = ctx
-		texts[i] = renderRowTexts(tr.cols, ctx)
-		state, msgs := updateAlertState(view, rowSourceIP, ctx.lossRate, now, tr.vs.alertState[targetViewKey(view)])
+		state, msgs := updateAlertState(view, rowSourceIP, rowCtx[i].lossRate, now, tr.vs.alertState[targetViewKey(view)])
 		for _, msg := range msgs {
 			tr.vs.appendLog(msg)
 		}
 		tr.vs.alertState[targetViewKey(view)] = state
 	}
-	return rowCtx, texts
 }
 
-func (tr *tableRenderer) renderCompactRows(rows []compactRow, offsetRow int) {
-	start, end := tr.visibleRowWindow(offsetRow, len(rows))
-	for i := start; i < end; i++ {
-		tr.setRow(i+1, buildCompactRowCells(rows[i][:], tr.widths, tr.activeAligns, tr.rowColor))
+// activeTexts picks the shown columns' texts out of one row's full texts.
+func (tr *tableRenderer) activeTexts(row []string) []string {
+	out := make([]string, len(tr.active))
+	for j, i := range tr.active {
+		out[j] = row[i]
 	}
+	return out
 }
 
-// renderFullRows renders the full layout, flat or grouped. Grouped rows are
+// renderRows renders the table rows, flat or grouped. Grouped rows are
 // windowed by table-row index (tr.groupRowMap), not target index, since
 // group header rows don't correspond to a target — a header inside the
 // window must render even if its members don't.
-func (tr *tableRenderer) renderFullRows(rowCtx []columnRowContext, texts [][]string, offsetRow int) {
+func (tr *tableRenderer) renderRows(rowCtx []columnRowContext, texts [][]string, offsetRow int) {
 	if len(tr.groups) == 0 {
 		start, end := tr.visibleRowWindow(offsetRow, len(tr.targets))
 		for i := start; i < end; i++ {
-			tr.setRow(i+1, renderRowCells(tr.cols, texts[i], tr.widths, tr.fullAligns, rowCtx[i], tr.rowColor))
+			tr.setRow(i+1, renderRowCells(tr.activeCols, tr.activeTexts(texts[i]), tr.widths, tr.activeAligns, rowCtx[i], tr.rowColor))
 		}
 		return
 	}
@@ -370,11 +359,11 @@ func (tr *tableRenderer) renderFullRows(rowCtx []columnRowContext, texts [][]str
 		case groupRowSpacer:
 			setGroupSpacerRow(tr.table, tableRow, len(tr.activeHeaders))
 		case groupRowHeader:
-			setGroupHeaderRow(tr.table, tableRow, len(tr.activeHeaders), row.groupName, len(tr.groups[row.groupIdx].Indices))
+			setGroupHeaderRow(tr.table, tableRow, tr.widths, row.groupName, len(tr.groups[row.groupIdx].Indices))
 		case groupRowSubHeader:
 			setHeaderRow(tr.table, tableRow, tr.activeHeaders, tr.widths, tr.activeAligns, tr.headerColor)
 		case groupRowUngrouped, groupRowTarget:
-			tr.setRow(tableRow, renderRowCells(tr.cols, texts[row.targetIdx], tr.widths, tr.fullAligns, rowCtx[row.targetIdx], tr.rowColor))
+			tr.setRow(tableRow, renderRowCells(tr.activeCols, tr.activeTexts(texts[row.targetIdx]), tr.widths, tr.activeAligns, rowCtx[row.targetIdx], tr.rowColor))
 		}
 	}
 }

@@ -6,8 +6,16 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/mattn/go-runewidth"
 	"github.com/rivo/tview"
 )
+
+func init() {
+	// Keep ambiguous-width box-drawing, block and marker glyphs (▁..█, ×, ▲, ·, ▸)
+	// at width 1 even under East Asian locales (e.g. ja_JP.UTF-8), matching
+	// sparkWidth and strip column calculations.
+	runewidth.DefaultCondition.EastAsianWidth = false
+}
 
 const (
 	tableMinVisibleRows = 10                     // floor for the visible Ping Monitor rows and the PgUp/PgDn page step; taller panes show more
@@ -60,6 +68,12 @@ type RunOptions struct {
 	HTTPEnabled   bool
 	ASNEnabled    bool
 	PTREnabled    bool
+	// DNSExplicit, SourceExplicit and SizeExplicit report -d, -S/-I and a
+	// non-default -s: the Ping Monitor keeps columns the user asked for
+	// longer when the terminal is too narrow for every column.
+	DNSExplicit    bool
+	SourceExplicit bool
+	SizeExplicit   bool
 	// HTTPResults returns live HTTP health-check results for the HTTP Monitor
 	// pane. Called on every render tick (rather than once at startup) so it
 	// reflects a checker swapped in by OnResetHTTP after Run has started.
@@ -118,4 +132,29 @@ func Run(opts RunOptions) error {
 	err := t.app.SetRoot(t.root, true).Run()
 	t.session.Stop() // also covers Ctrl-C, terminal failure, and external app.Stop
 	return err
+}
+
+// columnOptions derives the Ping Monitor's column options from the run
+// options; whether a DNS column exists is decided from the targets.
+func (o RunOptions) columnOptions() columnOptions {
+	return columnOptions{
+		DNSExplicit:    o.DNSExplicit,
+		ASN:            o.ASNEnabled,
+		PTR:            o.PTREnabled,
+		SourceExplicit: o.SourceExplicit,
+		SizeExplicit:   o.SizeExplicit,
+		MTU:            o.MTUEnabled,
+		SparkPoints:    sparkPoints(o.Interval),
+	}
+}
+
+// sparkSeconds is the window of the Ping Monitor's RTT sparkline.
+const sparkSeconds = 60
+
+// sparkPoints is how many samples taken every interval span sparkSeconds.
+func sparkPoints(interval time.Duration) int {
+	if interval <= 0 {
+		return 0
+	}
+	return max(int(sparkSeconds*time.Second/interval), 1)
 }

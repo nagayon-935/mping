@@ -148,9 +148,9 @@ func TestTableRendererUpdate_GroupHeaderRendersEvenWhenMembersOffWindow(t *testi
 	table := tview.NewTable().SetBorders(true).SetSelectable(false, false).SetFixed(1, 1)
 	tablePane := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(table, 0, 1, true)
 	tablePane.SetBorder(true)
-	tablePane.SetRect(0, 0, 200, 30)
+	tablePane.SetRect(0, 0, 200, 12) // inner height 10: the minimum visible window
 	vs := newViewState(tview.NewTextView())
-	tr := newTableRenderer(targets, "10.0.0.1", "", 56, false, false, groups, table, tablePane, nil, vs)
+	tr := newTableRenderer(targets, "10.0.0.1", "", 56, columnOptions{}, groups, table, tablePane, nil, vs)
 
 	// groupRowMap layout (no ungrouped targets, each group section is now
 	// header + repeated column subheader + members, joined by spacer rows):
@@ -171,7 +171,12 @@ func TestTableRendererUpdate_GroupHeaderRendersEvenWhenMembersOffWindow(t *testi
 	tr.update()
 
 	headerTableRow := 24 // rowIdx 23 -> table row rowIdx+1
-	if got := tr.table.GetCell(headerTableRow, 0).Text; got == "" {
+	// The banner label sits in the first column that can hold it.
+	var got string
+	for c := range tr.table.GetColumnCount() {
+		got += tr.table.GetCell(headerTableRow, c).Text
+	}
+	if got == "" {
 		t.Fatalf("G1 header row (table row %d) expected populated cell, got empty", headerTableRow)
 	}
 
