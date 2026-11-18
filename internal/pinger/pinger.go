@@ -3,7 +3,6 @@ package pinger
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math/rand"
 	"net"
 	"os"
@@ -12,11 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nagayon-935/mping/internal/privilege"
 	"github.com/nagayon-935/mping/internal/stats"
 	"golang.org/x/net/icmp"
-	"golang.org/x/net/ipv4"
-	"golang.org/x/net/ipv6"
 )
 
 const (
@@ -42,23 +38,6 @@ const (
 	// exceeds 65535, replies (correctly wrapped by the peer) never compare
 	// equal to it again and every subsequent probe times out permanently.
 	seqMask = 0xffff
-
-	// recentSeqHistoryCap bounds recentSeqHistory, the FIFO runTargetWorker keeps
-	// of recently-resolved wire seqs (see recentSeqHistory's doc) so it can
-	// classify a reply that no longer matches `unacked` as a duplicate or a
-	// late arrival instead of silently discarding it.
-	//
-	// It must stay far below seqMask+1 (65536, the full 16-bit wraparound
-	// period a wire seq value cycles through): once a wire seq value is
-	// reused by a brand-new logical probe (a fresh unacked[wireSeq] entry),
-	// any history this cache still held from that value's *previous*
-	// generation must already have been evicted -- otherwise a reply for
-	// the *new* generation could be misclassified against *stale* history.
-	// 512 gives a generous multi-thousand-probe margin below one full
-	// wraparound while comfortably covering the realistic dup/late window
-	// (network duplicates and late arrivals show up within a handful of
-	// probes of the original, not thousands later).
-	recentSeqHistoryCap = 512
 
 	asnJitterMax = 2 * time.Second // spreads concurrent targets' ASN lookups to avoid bursting Cymru's public server
 	ptrJitterMax = 2 * time.Second // spreads concurrent targets' PTR lookups to avoid bursting the configured resolver
@@ -86,25 +65,6 @@ const (
 // "we are shutting down" from a genuine DNS failure, so shutdown doesn't
 // record a spurious loss against the target.
 var errPingerStopped = errors.New("pinger stopped")
-
-// PacketConnV4 interface matches *ipv4.PacketConn methods we use
-type PacketConnV4 interface {
-	ReadFrom(b []byte) (int, *ipv4.ControlMessage, net.Addr, error)
-	WriteTo(b []byte, cm *ipv4.ControlMessage, dst net.Addr) (int, error)
-	SetReadDeadline(t time.Time) error
-	Close() error
-	SetControlMessage(cf ipv4.ControlFlags, on bool) error
-}
-
-// PacketConnV6 interface matches *ipv6.PacketConn methods we use
-type PacketConnV6 interface {
-	ReadFrom(b []byte) (int, *ipv6.ControlMessage, net.Addr, error)
-	WriteTo(b []byte, cm *ipv6.ControlMessage, dst net.Addr) (int, error)
-	SetReadDeadline(t time.Time) error
-	Close() error
-	SetControlMessage(cf ipv6.ControlFlags, on bool) error
-	SetICMPFilter(f *ipv6.ICMPFilter) error
-}
 
 // Reply represents a single received ICMP echo reply or error from the receiver loop.
 type Reply struct {
@@ -213,41 +173,6 @@ type Pinger struct {
 }
 
 type resolveIPAddrFunc func(network, address string) (*net.IPAddr, error)
-
-type listenPacketFunc func(network, address string) (net.PacketConn, error)
-
-// runPrivileged is the single entry point this package uses for
-// privilege.Privileged. It is a seam so tests can observe every privileged
-// section, in particular reentry: privilege's RWMutex is not reentrant, and a
-// nested section deadlocks once an AsRealUser section waits in between.
-var runPrivileged = privilege.Privileged
-
-// privilegedListenPacket is the default listenPacketFunc: raw ICMP sockets
-// need root (or CAP_NET_RAW), so they are opened inside privilege.Privileged,
-// never while a setuid-root run has dropped to the invoking user for file I/O.
-func privilegedListenPacket(network, address string) (net.PacketConn, error) {
-	var c net.PacketConn
-	err := runPrivileged(func() error {
-		var err error
-		c, err = net.ListenPacket(network, address)
-		return err
-	})
-	return c, err
-}
-
-// bindToInterfaceFn is a seam over the platform-specific bindToInterface
-// implementation (bindif_linux.go / bindif_darwin.go / bindif_other.go),
-// letting tests verify that Start(), openHopSocketAddr(), and canSendPayload()
-// dispatch to it with the correct interface name and address family without
-// requiring root privileges, real sockets, or real network interfaces.
-var bindToInterfaceFn = func(c net.PacketConn, ifaceName string, isIPv6 bool) {
-	// SO_BINDTODEVICE needs CAP_NET_RAW on Linux, which a setuid-root run
-	// only has while not inside privilege.AsRealUser.
-	_ = runPrivileged(func() error {
-		bindToInterface(c, ifaceName, isIPv6)
-		return nil
-	})
-}
 
 // Options configures pinger dependencies and optional metadata lookups.
 type Options struct {
@@ -366,82 +291,14 @@ func (p *Pinger) Stop() {
 	})
 }
 
-// listenICMP opens a raw ICMP (v4) or ICMPv6 (v6) socket bound to the
-// configured Source address, or to the wildcard address when none is set.
-// Interface binding is left to the caller via bindToInterfaceFn.
-func (p *Pinger) listenICMP(v6 bool) (net.PacketConn, error) {
-	source := p.Source
-	if source == "" && p.Interface != "" && !interfaceBindingSupported {
-		var err error
-		source, err = p.interfaceSource(v6)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return p.listenICMPSource(v6, source)
-}
-
-func (p *Pinger) listenICMPSource(v6 bool, source string) (net.PacketConn, error) {
-	network, bindAddr := "ip4:icmp", "0.0.0.0"
-	if v6 {
-		network, bindAddr = "ip6:ipv6-icmp", "::"
-	}
-	if source != "" {
-		bindAddr = source
-	}
-	c, err := p.listenPacket(network, bindAddr)
-	if err != nil {
-		return nil, err
-	}
-	if err := configureICMPBuffers(c); err != nil {
-		c.Close()
-		return nil, err
-	}
-	return c, nil
-}
-
 // Start opens ICMP sockets and launches target workers and receivers. Call once.
 // interval paces probes; timeout bounds the wait for each reply.
 func (p *Pinger) Start(interval, timeout time.Duration) error {
 	p.probeTimeout = timeout
 	p.interval = interval
 
-	var errV4, errV6 error
-
-	// Initialize IPv4
-	if p.Source == "" || isIPv4(p.Source) {
-		c, err := p.listenICMP(false)
-		if err == nil {
-			// Non-fatal: true interface binding may be unsupported on this
-			// platform, or fail (e.g. missing privileges); the source-IP
-			// bind above still applies regardless.
-			bindToInterfaceFn(c, p.Interface, false)
-			p.connV4 = ipv4.NewPacketConn(c)
-			// Non-fatal: TTL control message may not be available on all platforms.
-			_ = p.connV4.SetControlMessage(ipv4.FlagTTL, true)
-		} else {
-			errV4 = err
-		}
-	}
-
-	// Initialize IPv6
-	if p.Source == "" || !isIPv4(p.Source) {
-		c, err := p.listenICMP(true)
-		if err == nil {
-			// Non-fatal, same rationale as the IPv4 block above.
-			bindToInterfaceFn(c, p.Interface, true)
-			p.connV6 = ipv6.NewPacketConn(c)
-			// Non-fatal: the hop limit control message may not be available
-			// on all platforms.
-			_ = p.connV6.SetControlMessage(ipv6.FlagHopLimit, true)
-			applyICMPv6Filter(p.connV6)
-		} else {
-			errV6 = err
-		}
-	}
-
-	if p.connV4 == nil && p.connV6 == nil {
-		return fmt.Errorf("failed to initialize pinger: v4=%v, v6=%v", errV4, errV6)
+	if err := p.openProbeSockets(); err != nil {
+		return err
 	}
 
 	// Allocate the entire initial set before starting any workers.
