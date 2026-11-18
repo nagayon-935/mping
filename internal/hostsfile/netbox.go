@@ -146,11 +146,9 @@ func parseNetBoxCSV(path, kind string, data []byte) ([]Entry, error) {
 		recLine, _ := r.FieldPos(0)
 		lineNo := lineOffset + recLine
 
-		if cols.statusIdx >= 0 {
-			status := csvCol(rec, cols.statusIdx)
-			if status != "" && !strings.EqualFold(status, "active") {
-				continue
-			}
+		status := csvCol(rec, cols.statusIdx)
+		if status != "" && !strings.EqualFold(status, "active") {
+			continue
 		}
 
 		rawIP := csvCol(rec, cols.ipIdx)
@@ -165,24 +163,10 @@ func parseNetBoxCSV(path, kind string, data []byte) ([]Entry, error) {
 			return nil, fmt.Errorf("%s %q: expands to more than %d targets", kind, path, maxHostsFileTargets)
 		}
 
-		dnsName := csvCol(rec, cols.dnsIdx)
-		var parent string
-		for _, idx := range cols.parentIdxs {
-			if v := csvCol(rec, idx); v != "" {
-				parent = v
-				break
-			}
-		}
-		baseName := dnsName
-		if baseName == "" {
-			baseName = parent
-		}
-		iface := csvCol(rec, cols.ifaceIdx)
-
 		rows = append(rows, netBoxRow{
 			host:     host,
-			baseName: baseName,
-			iface:    iface,
+			baseName: cols.baseName(rec),
+			iface:    csvCol(rec, cols.ifaceIdx),
 		})
 	}
 	out := resolveNetBoxNames(rows, nil)
@@ -190,6 +174,20 @@ func parseNetBoxCSV(path, kind string, data []byte) ([]Entry, error) {
 		out[i].netBox = &rows[i]
 	}
 	return out, nil
+}
+
+// baseName prefers the DNS name, followed by the first populated parent
+// column in the priority order established by parseNetBoxHeader.
+func (cols netBoxColumns) baseName(rec []string) string {
+	if name := csvCol(rec, cols.dnsIdx); name != "" {
+		return name
+	}
+	for _, idx := range cols.parentIdxs {
+		if parent := csvCol(rec, idx); parent != "" {
+			return parent
+		}
+	}
+	return ""
 }
 
 func csvCol(rec []string, idx int) string {
