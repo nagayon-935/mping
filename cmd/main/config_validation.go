@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 
 	"github.com/nagayon-935/mping/internal/hostsfile"
@@ -161,9 +162,11 @@ func validateHostsDoc(doc hostsfile.Document) error {
 		return fmt.Errorf("ipv4 and ipv6 cannot both be true")
 	}
 	if doc.DNSServer != nil && *doc.DNSServer != "" {
-		host, _, err := net.SplitHostPort(*doc.DNSServer)
+		host, port, err := net.SplitHostPort(*doc.DNSServer)
 		if err != nil {
 			host = *doc.DNSServer
+		} else if n, err := strconv.ParseUint(port, 10, 16); err != nil || n == 0 {
+			return fmt.Errorf("dns-server: port must be a number from 1 to 65535, got %q", port)
 		}
 		if net.ParseIP(host) == nil {
 			return fmt.Errorf("dns-server: invalid IP address %q", *doc.DNSServer)

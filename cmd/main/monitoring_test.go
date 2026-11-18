@@ -186,3 +186,30 @@ func TestReloadAfterCountCompletionPublishesRunningAndClearsOldNotification(t *t
 		t.Fatal("web state not synchronized")
 	}
 }
+
+func TestCheckConfigDNSServerPort(t *testing.T) {
+	for _, tt := range []struct {
+		server string
+		valid  bool
+	}{
+		{"127.0.0.1", true}, {"::1", true},
+		{"127.0.0.1:1", true}, {"[::1]:65535", true},
+		{"127.0.0.1:99999", false}, {"[::1]:65536", false},
+		{"127.0.0.1:0", false}, {"[::1]:domain", false},
+		{"127.0.0.1:", false}, {"127.0.0.1:+53", false},
+	} {
+		path := writeHostsYAML(t, "hosts: [localhost]\ndns-server: '"+tt.server+"'\n")
+		for source, args := range map[string][]string{
+			"CLI":  {"--dns-server", tt.server, "localhost"},
+			"YAML": {"-f", path},
+		} {
+			t.Run(source+"/"+tt.server, func(t *testing.T) {
+				var out, errOut bytes.Buffer
+				code := run(append([]string{"--check-config"}, args...), &out, &errOut)
+				if (code == 0) != tt.valid || (!tt.valid && !strings.Contains(errOut.String(), "dns-server")) {
+					t.Errorf("exit %d, stderr %q", code, errOut.String())
+				}
+			})
+		}
+	}
+}
