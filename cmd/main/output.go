@@ -25,9 +25,12 @@ func printExitSummary(out io.Writer, targets []*stats.TargetStats) {
 	fmt.Fprintln(out, "\n--- mping statistics ---")
 	for _, t := range targets {
 		v := t.GetView()
+		// Recv counts unique, on-time replies. Duplicates add no receipt,
+		// and late replies belong to probes already counted in Loss.
+		unanswered := max(0, v.Sent-v.Recv)
 		lossRate := 0.0
 		if v.Sent > 0 {
-			lossRate = (float64(v.Loss) / float64(v.Sent)) * 100
+			lossRate = (float64(min(unanswered, v.Sent)) / float64(v.Sent)) * 100
 		}
 		fmt.Fprintf(out, "%s (%s): %d packets transmitted, %d received", v.Host, v.IP, v.Sent, v.Recv)
 		// Mirrors ping.c's "+N duplicates" / "N packets out of wait time":
@@ -38,6 +41,9 @@ func printExitSummary(out io.Writer, targets []*stats.TargetStats) {
 		fmt.Fprintf(out, ", %.1f%% packet loss", lossRate)
 		if v.LateReplies > 0 {
 			fmt.Fprintf(out, ", %d packets out of wait time", v.LateReplies)
+		}
+		if inFlight := unanswered - v.Loss; inFlight > 0 {
+			fmt.Fprintf(out, ", %d in flight at exit counted as lost", inFlight)
 		}
 		fmt.Fprintln(out)
 		if v.Recv > 0 {
