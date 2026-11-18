@@ -246,15 +246,18 @@ func writeJSON(w http.ResponseWriter, v any) {
 	writeBody(w, body)
 }
 
-func writeBody(w http.ResponseWriter, body []byte) {
+func setJSONHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
+}
+
+func writeBody(w http.ResponseWriter, body []byte) {
+	setJSONHeaders(w)
 	_, _ = w.Write(body)
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
+	setJSONHeaders(w)
 	w.WriteHeader(status)
 	body, _ := json.Marshal(map[string]string{"error": msg})
 	_, _ = w.Write(body)
