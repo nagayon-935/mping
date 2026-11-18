@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -73,8 +74,7 @@ func TestHTTPChecker_ClassifiesResponses(t *testing.T) {
 		{"401 is Down", statusServer(t, http.StatusUnauthorized).URL, "Down", http.StatusUnauthorized, false},
 		{"503 is Down", statusServer(t, http.StatusServiceUnavailable).URL, "Down", http.StatusServiceUnavailable, false},
 		{"redirects are followed", redirect.URL, "Up", http.StatusOK, true},
-		// The last redirect response is reported once maxRedirects is exceeded.
-		{"redirect loop stops at the last redirect", endless.URL, "Up", http.StatusFound, true},
+		{"redirect limit is an Error", endless.URL, "Error", 0, false},
 		// Port 1 is privileged and not listening: the connection fails.
 		{"connection failure is an Error", "http://127.0.0.1:1", "Error", 0, false},
 		{"invalid URL is an Error", "http://[::1", "Error", 0, false},
@@ -85,6 +85,9 @@ func TestHTTPChecker_ClassifiesResponses(t *testing.T) {
 
 			if v.Status != tt.wantStatus || v.StatusCode != tt.wantCode {
 				t.Fatalf("Status=%q StatusCode=%d, want %q / %d", v.Status, v.StatusCode, tt.wantStatus, tt.wantCode)
+			}
+			if tt.url == endless.URL && !strings.Contains(v.Reason, "redirect limit") {
+				t.Errorf("Reason = %q, want redirect limit", v.Reason)
 			}
 			if tt.wantUp && (v.UpCount < 1 || v.RTT <= 0) {
 				t.Errorf("UpCount=%d RTT=%v, want a counted success with a positive RTT", v.UpCount, v.RTT)
@@ -208,5 +211,23 @@ func TestHTTPChecker_CheckAfterStopRecordsNothing(t *testing.T) {
 
 	if v := r.GetView(); v.UpCount+v.DownCount != 0 || v.Status != "Checking..." {
 		t.Fatalf("a check after Stop changed the result: %+v", v)
+	}
+}
+
+func TestHTTPRedirectLimit(t *testing.T) {
+	for _, tt := range []struct {
+		follow bool
+		via    int
+		want   error
+	}{
+		{false, 1, http.ErrUseLastResponse},
+		{false, maxRedirects, http.ErrUseLastResponse},
+		{true, maxRedirects - 1, nil},
+		{true, maxRedirects, errRedirectLimit},
+	} {
+		hc := HTTPChecker{options: HTTPOptions{FollowRedirects: tt.follow}}
+		if got := hc.checkRedirect(nil, make([]*http.Request, tt.via)); got != tt.want {
+			t.Errorf("follow=%v, via=%d: got %v, want %v", tt.follow, tt.via, got, tt.want)
+		}
 	}
 }

@@ -104,3 +104,53 @@ func TestPrintExitSummary(t *testing.T) {
 		})
 	}
 }
+
+func TestPrintExitSummaryPacketLoss(t *testing.T) {
+	tests := []struct {
+		name                                   string
+		sent, received, lost, duplicates, late int
+		want                                   string
+	}{
+		{name: "all probes replied", sent: 3, received: 3,
+			want: "3 packets transmitted, 3 received, 0.0% packet loss"},
+		{name: "partial loss with probes in flight", sent: 6, received: 4, lost: 1,
+			want: "6 packets transmitted, 4 received, 33.3% packet loss, 1 in flight at exit counted as lost"},
+		{name: "total outage with probes in flight", sent: 100, lost: 90,
+			want: "100 packets transmitted, 0 received, 100.0% packet loss, 10 in flight at exit counted as lost"},
+		{name: "zero probes sent",
+			want: "0 packets transmitted, 0 received, 0.0% packet loss"},
+		{name: "duplicates and late replies counted separately", sent: 2, received: 1, lost: 1, duplicates: 2, late: 1,
+			want: "2 packets transmitted, 1 received, +2 duplicates, 50.0% packet loss, 1 packets out of wait time"},
+		{name: "excess replies clamp loss to zero", sent: 1, received: 2,
+			want: "1 packets transmitted, 2 received, 0.0% packet loss"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tgt := stats.NewTargetStats("example.com")
+			tgt.SetIP("1.2.3.4")
+			for range tt.sent {
+				tgt.IncSent()
+			}
+			for range tt.received {
+				tgt.OnSuccess(time.Millisecond, 64)
+			}
+			for range tt.lost {
+				tgt.OnFailure("Timeout")
+			}
+			for range tt.duplicates {
+				tgt.OnDuplicate()
+			}
+			for range tt.late {
+				tgt.OnLateReply()
+			}
+
+			var out bytes.Buffer
+			printExitSummary(&out, []*stats.TargetStats{tgt})
+
+			want := "example.com (1.2.3.4): " + tt.want + "\n"
+			if !strings.Contains(out.String(), want) {
+				t.Errorf("want line %q in summary %q", want, out.String())
+			}
+		})
+	}
+}

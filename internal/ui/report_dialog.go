@@ -46,27 +46,7 @@ func (d *saveDialog) show(selectedID uint64) {
 		SetButtonStyle(tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlack)).
 		SetButtonActivatedStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorWhite))
 	d.form.SetBackgroundColor(tcell.ColorBlack)
-	d.path = tview.NewInputField().SetText("mping-" + time.Now().Format("20060102-150405.000") + ".json").SetChangedFunc(func(path string) {
-		_, format, err := report.PathFormat(path)
-		if err != nil {
-			d.formatPreview.SetText("Format: Use a .json or .csv file name")
-		} else if format == "csv" {
-			d.formatPreview.SetText("Format: CSV (.csv), one row per target")
-		} else {
-			d.formatPreview.SetText("Format: JSON (.json)")
-		}
-	})
-	d.path.SetBackgroundColor(tcell.ColorBlack)
-	d.path.SetBorder(true).SetTitle(" 保存先 (Path) ").SetTitleColor(tcell.ColorWhite).SetBorderColor(tcell.ColorWhite)
-	d.path.SetFocusFunc(func() {
-		d.path.SetTitle(" 保存先 (Path) / 入力中 ")
-		d.path.SetFieldStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorWhite))
-	})
-	d.path.SetBlurFunc(func() {
-		d.path.SetTitle(" 保存先 (Path) ")
-		d.path.SetFieldStyle(tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlack))
-	})
-	d.formatPreview.SetText("Format: JSON (.json)")
+	d.configurePathField()
 	d.form.AddButton("Save", d.submit).AddButton("Cancel", d.close)
 	d.form.SetCancelFunc(d.close)
 	title := " Save session report "
@@ -83,6 +63,32 @@ func (d *saveDialog) show(selectedID uint64) {
 	pane := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(content, 0, 1, true).AddItem(d.status, 2, 0, false)
 	d.root.AddPage("saveReport", pane, true, true).SwitchToPage("saveReport")
 	d.app.SetFocus(d.path)
+}
+
+// configurePathField keeps the format preview and focus styling in sync with the input.
+func (d *saveDialog) configurePathField() {
+	const jsonPreview = "Format: JSON (.json)"
+	d.path = tview.NewInputField().SetText("mping-" + time.Now().Format("20060102-150405.000") + ".json").SetChangedFunc(func(path string) {
+		_, format, err := report.PathFormat(path)
+		if err != nil {
+			d.formatPreview.SetText("Format: Use a .json or .csv file name")
+		} else if format == "csv" {
+			d.formatPreview.SetText("Format: CSV (.csv), one row per target")
+		} else {
+			d.formatPreview.SetText(jsonPreview)
+		}
+	})
+	d.path.SetBackgroundColor(tcell.ColorBlack)
+	d.path.SetBorder(true).SetTitle(" 保存先 (Path) ").SetTitleColor(tcell.ColorWhite).SetBorderColor(tcell.ColorWhite)
+	d.path.SetFocusFunc(func() {
+		d.path.SetTitle(" 保存先 (Path) / 入力中 ")
+		d.path.SetFieldStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorWhite))
+	})
+	d.path.SetBlurFunc(func() {
+		d.path.SetTitle(" 保存先 (Path) ")
+		d.path.SetFieldStyle(tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlack))
+	})
+	d.formatPreview.SetText(jsonPreview)
 }
 
 func (d *saveDialog) close() {

@@ -214,8 +214,7 @@ func handleAddHost(w http.ResponseWriter, r *http.Request, c Controller) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
+	setJSONHeaders(w)
 	w.WriteHeader(http.StatusCreated)
 	body.Host = host
 	_ = json.NewEncoder(w).Encode(body)

@@ -8,7 +8,7 @@ type IPChange struct {
 	IP string    `json:"ip"`
 }
 
-// SetMeasurementState is independent of the HTTP server/session state.
+// SetMeasurementState records the measurement lifecycle state for this target.
 func (t *TargetStats) SetMeasurementState(state string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

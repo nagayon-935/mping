@@ -17,7 +17,7 @@ These guides describe the current source tree. Release binaries can differ by ve
 curl -LO https://github.com/nagayon-935/mping/releases/download/v0.7.2/mping-v0.7.2-linux-amd64.tar.gz
 tar -xzf mping-v0.7.2-linux-amd64.tar.gz
 
-# Install (grants CAP_NET_RAW via setcap; falls back to setuid if setcap is unavailable)
+# Install (grants CAP_NET_RAW via setcap)
 sudo ./install.sh
 ```
 
@@ -47,7 +47,7 @@ sudo ./install.sh
 
 `install.sh` copies the binary to `INSTALL_DIR` (default: `/usr/local/bin`) and sets the appropriate privilege:
 
-* **Linux** — `setcap cap_net_raw+ep` (falls back to `setuid` if `setcap` is not available)
+* **Linux** — `setcap cap_net_raw+ep`. If `setcap` is missing, install `libcap2-bin` (Debian/Ubuntu) or `libcap` (Fedora/Arch) and rerun `sudo ./install.sh`. To explicitly allow setuid, run `sudo ./install.sh --allow-setuid` or `sudo MPING_ALLOW_SETUID=1 ./install.sh`.
 * **macOS** — `chown root` + `chmod u+s` (setuid)
 
 To install to a different directory:
@@ -79,7 +79,7 @@ cd mping
 # Build only
 make build
 
-# Build + install (setuid on macOS; setcap on Linux when available)
+# Build + install (setuid on macOS; setcap on Linux)
 make install
 ```
 

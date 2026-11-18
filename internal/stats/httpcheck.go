@@ -9,6 +9,7 @@ import (
 // fields are guarded by mu; read them through GetView.
 type HTTPCheckResult struct {
 	url        string
+	reason     string
 	statusCode int
 	status     string // "Up", "Down", "Error", "Checking..."
 	lastRTT    time.Duration
@@ -23,6 +24,7 @@ type HTTPCheckResult struct {
 
 // HTTPCheckView is a read-only snapshot of HTTPCheckResult.
 type HTTPCheckView struct {
+	Reason     string
 	URL        string
 	StatusCode int
 	Status     string
@@ -44,18 +46,19 @@ func NewHTTPCheckResult(url string) *HTTPCheckResult {
 // URL returns the checked URL, which never changes after construction.
 func (r *HTTPCheckResult) URL() string { return r.url }
 
-// SetResult records the outcome of one HTTP health check: a 2xx or 3xx
-// response is Up, any other response Down. statusCode is 0 when err is
-// non-nil.
+// SetResult records Error when err is non-nil. Otherwise a 2xx or 3xx
+// status is Up and any other status is Down. It stores statusCode as supplied.
 func (r *HTTPCheckResult) SetResult(statusCode int, rtt time.Duration, err error) {
 	defer bumpGeneration()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	r.reason = ""
 	var status string
 	switch {
 	case err != nil:
 		status = "Error"
+		r.reason = err.Error()
 	case statusCode >= 200 && statusCode < 400:
 		status = "Up"
 	default:
@@ -83,6 +86,7 @@ func (r *HTTPCheckResult) GetView() HTTPCheckView {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return HTTPCheckView{
+		Reason:     r.reason,
 		URL:        r.url,
 		StatusCode: r.statusCode,
 		Status:     r.status,

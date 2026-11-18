@@ -31,6 +31,8 @@ Pane folding and maximization are available in the overview. Folded title rows r
 
 Stop, restart and reset operations execute in keypress order. A running reset discards results from probes sent before the reset and recreates enabled route/port/HTTP monitors. It keeps the remaining `--count` budget; restarting starts a fresh budget. When stopped, reset clears ping and MTR counters while preserving the last route and port/HTTP results. Quitting waits for measurement workers and prints a terminal summary. Reports are saved explicitly with **w** or the Web UI's **Report** button.
 
+Like `ping(8)`, the exit summary reports packet loss as the percentage of transmitted probes without an on-time reply (0% if none were sent). It includes probes still in flight and shows their count when nonzero.
+
 ## Saving investigation results
 
 Press **w**, enter a new file path ending in **.json** or **.csv**, and press **Enter** or activate **Save**. The format is inferred from the extension and displayed below the input; no format selector is needed. A missing extension defaults to `.json`; other extensions are rejected. **Tab** moves between fields and buttons; **Esc** cancels. Saving from the overview includes all active targets, retained final results of removed targets, and independent HTTP checks. Saving from host details includes only that target. Measurements continue during capture and writing; completion or errors appear in the footer and Log.

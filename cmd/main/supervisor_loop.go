@@ -89,3 +89,41 @@ func (s *supervisor) publish() {
 	}
 	s.stateSnap.Store(int32(s.state))
 }
+
+func (s *supervisor) startCountObserver(next pingerController) {
+	s.observers.Go(func() {
+		notify := func() bool {
+			// Never enqueue once shut down: with room in cmds, the send and
+			// the closed done channel would both be ready and select would
+			// pick either one.
+			select {
+			case <-s.done:
+				return false
+			default:
+			}
+			select {
+			case s.cmds <- command{kind: cmdProbesFinished, pinger: next}:
+				return true
+			case <-s.done:
+				return false
+			}
+		}
+		if dynamic, ok := next.(dynamicPinger); ok {
+			for {
+				select {
+				case <-dynamic.WorkerEvents():
+					if !notify() {
+						return
+					}
+				case <-s.done:
+					return
+				case <-dynamic.Done():
+					return
+				}
+			}
+		} else {
+			next.WaitWorkers()
+			notify()
+		}
+	})
+}
