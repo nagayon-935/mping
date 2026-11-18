@@ -29,8 +29,10 @@ func (r Report) CSV() ([]byte, error) {
 	w := csv.NewWriter(&b)
 	// Writes retain a sticky error, checked with w.Error after Flush below.
 	_ = w.Write(csvHeader)
-	for _, t := range append(append([]Target(nil), r.Targets...), r.RemovedTargets...) {
-		_ = w.Write(csvRow(r.CapturedAt, t))
+	for _, targets := range [][]Target{r.Targets, r.RemovedTargets} {
+		for _, t := range targets {
+			_ = w.Write(csvRow(r.CapturedAt, t))
+		}
 	}
 	w.Flush()
 	return b.Bytes(), w.Error()
