@@ -2,6 +2,7 @@ package hostsfile
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -64,6 +65,23 @@ func TestParseHostsFile_RejectsInvalidDocuments(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if _, err := Parse(writeHostsYAML(t, tt.content)); err == nil {
 				t.Fatal("Parse: expected an error, got nil")
+			}
+		})
+	}
+}
+
+func TestParseHostsFile_AmbiguousYAML(t *testing.T) {
+	for _, tt := range []struct{ name, content, reason string }{
+		{"second document", "hosts: [a]\n---\nhosts: [b]", "line 2: hosts file must contain a single YAML document"},
+		{"empty second document", "hosts: [a]\n---\n", "line 2: hosts file must contain a single YAML document"},
+		{"malformed second document", "hosts: [a]\n---\n[", "hosts file must contain a single YAML document"},
+		{"duplicate host", "hosts:\n  - host: a\n    host: b", "line 3: duplicate key \"host\""},
+		{"duplicate group host name", "groups:\n- name: g\n  hosts:\n  - host: a\n    name: x\n    name: y", "line 6: duplicate key \"name\""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse(writeHostsYAML(t, tt.content))
+			if err == nil || !strings.Contains(err.Error(), tt.reason) {
+				t.Errorf("Parse error = %v, want %q", err, tt.reason)
 			}
 		})
 	}

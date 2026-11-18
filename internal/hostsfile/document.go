@@ -43,8 +43,13 @@ func (h *Entry) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind != yaml.MappingNode {
 		return fmt.Errorf("host entry: expected a string or a mapping with 'host'/'name' keys, got %v", value.Kind)
 	}
+	seen := make(map[string]bool)
 	for i := 0; i+1 < len(value.Content); i += 2 {
 		key, val := value.Content[i].Value, value.Content[i+1]
+		if seen[key] {
+			return fmt.Errorf("line %d: duplicate key %q in host entry", value.Content[i].Line, key)
+		}
+		seen[key] = true
 		switch key {
 		case "host":
 			h.Host = val.Value
@@ -178,6 +183,14 @@ func Parse(path string) (Document, error) {
 	dec.KnownFields(true) // reject typos/unknown keys instead of silently dropping them
 	if err := dec.Decode(&doc); err != nil && err != io.EOF {
 		return Document{}, fmt.Errorf("parse hosts file %q: %w", path, err)
+	}
+	var extra yaml.Node
+	if err := dec.Decode(&extra); err != io.EOF {
+		const reason = "hosts file must contain a single YAML document"
+		if err != nil {
+			return Document{}, fmt.Errorf("parse hosts file %q: %s: %w", path, reason, err)
+		}
+		return Document{}, fmt.Errorf("parse hosts file %q: line %d: %s", path, extra.Line, reason)
 	}
 	expanded, err := expandHostsDoc(doc, filepath.Dir(path))
 	if err != nil {
