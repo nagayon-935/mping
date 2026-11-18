@@ -83,6 +83,7 @@ type PortSummary struct {
 
 // HTTPCheckSummary is a JSON-serialisable summary for a single HTTP health check.
 type HTTPCheckSummary struct {
+	Reason     string  `json:"reason,omitempty"`
 	URL        string  `json:"url"`
 	Status     string  `json:"status"`
 	Level      Level   `json:"level"`
@@ -225,6 +226,7 @@ func HTTPCheckSummaries(httpResults []HTTPCheckView) []HTTPCheckSummary {
 			URL:        v.URL,
 			Status:     v.Status,
 			Level:      HTTPStatusLevel(v.Status),
+			Reason:     v.Reason,
 			StatusCode: v.StatusCode,
 			LastRTTMs:  durationMs(v.RTT),
 			MinRTTMs:   durationMs(v.MinRTT),

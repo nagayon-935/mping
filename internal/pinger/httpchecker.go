@@ -2,6 +2,8 @@ package pinger
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -11,6 +13,8 @@ import (
 )
 
 const maxRedirects = 10
+
+var errRedirectLimit = fmt.Errorf("redirect limit (%d) reached", maxRedirects)
 
 // HTTPOptions configures how an HTTPChecker treats responses.
 type HTTPOptions struct {
@@ -79,8 +83,11 @@ func NewHTTPCheckerWithOptions(urls []string, interval, timeout time.Duration, b
 
 // checkRedirect is the client's redirect policy.
 func (hc *HTTPChecker) checkRedirect(_ *http.Request, via []*http.Request) error {
-	if !hc.options.FollowRedirects || len(via) >= maxRedirects {
+	if !hc.options.FollowRedirects {
 		return http.ErrUseLastResponse
+	}
+	if len(via) >= maxRedirects {
+		return errRedirectLimit
 	}
 	return nil
 }
@@ -130,6 +137,9 @@ func (hc *HTTPChecker) check(r *stats.HTTPCheckResult) {
 	if err != nil {
 		if hc.ctx.Err() != nil {
 			return // preserve the last measurement when shutting down
+		}
+		if errors.Is(err, errRedirectLimit) {
+			err = errRedirectLimit
 		}
 		r.SetResult(0, rtt, err)
 		return

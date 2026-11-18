@@ -34,7 +34,7 @@ export function httpFor(checks) {
       ["Min", true, "min"], ["Max", true, "max"], ["Up", true, "sent"], ["Down", true, "recv"]],
     checks.map((c) => [
       el("td", {}, statusChip(c.level ?? "pending", c.status || "Waiting")),
-      textCell(c.url, "mono"),
+      textCell(c.reason ? `${c.url} — ${c.reason}` : c.url, "mono"),
       numCell(c.status_code > 0 ? String(c.status_code) : "–", c.level === "ok" ? "none" : c.level ?? "none"),
       rttCell(c.last_rtt_ms), rttCell(c.avg_rtt_ms), rttCell(c.min_rtt_ms), rttCell(c.max_rtt_ms),
       countCell(c.up_count), countCell(c.down_count),

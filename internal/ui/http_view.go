@@ -145,5 +145,10 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, th stats.Threshold
 
 	var sb strings.Builder
 	writeLabelledBoxTable(&sb, boxCols, "", groups, " Waiting for results...")
+	for _, v := range views {
+		if v.Reason != "" {
+			fmt.Fprintf(&sb, "\n%s: %s", tview.Escape(v.URL), tview.Escape(v.Reason))
+		}
+	}
 	return sb.String()
 }
