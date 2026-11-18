@@ -1,7 +1,7 @@
 // Package hostsfile reads mping's hosts file (-f): the YAML document with
 // its settings, hosts and groups, the host patterns it may use (ranges,
-// CIDRs, {N..M}), and the host lists it includes (plain lists or NetBox IP
-// address exports). Every file is read with the invoking user's
+// CIDRs, {N..M}), and any NetBox IP address CSV exports it includes.
+// Every file is read with the invoking user's
 // permissions, since mping may run setuid root.
 //
 // It only decodes and expands the document; cmd/main applies the settings
@@ -25,7 +25,7 @@ import (
 type Entry struct {
 	Host string
 	// Name is an optional display name shown instead of Host (from the
-	// mapping form's 'name' key, or an include file's second column).
+	// mapping form's 'name' key or derived from a NetBox CSV row).
 	Name string
 	// netBox retains source naming data until all includes have been loaded.
 	netBox *netBoxRow

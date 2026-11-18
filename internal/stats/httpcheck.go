@@ -46,9 +46,8 @@ func NewHTTPCheckResult(url string) *HTTPCheckResult {
 // URL returns the checked URL, which never changes after construction.
 func (r *HTTPCheckResult) URL() string { return r.url }
 
-// SetResult records the outcome of one HTTP health check: a 2xx or 3xx
-// response is Up, any other response Down. statusCode is 0 when err is
-// non-nil.
+// SetResult records Error when err is non-nil. Otherwise a 2xx or 3xx
+// status is Up and any other status is Down. It stores statusCode as supplied.
 func (r *HTTPCheckResult) SetResult(statusCode int, rtt time.Duration, err error) {
 	defer bumpGeneration()
 	r.mu.Lock()
