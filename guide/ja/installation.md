@@ -17,7 +17,7 @@ Linux/macOS では、[Releases](https://github.com/nagayon-935/mping/releases) �
 curl -LO https://github.com/nagayon-935/mping/releases/download/v0.7.2/mping-v0.7.2-linux-amd64.tar.gz
 tar -xzf mping-v0.7.2-linux-amd64.tar.gz
 
-# インストール (setcap で CAP_NET_RAW を付与。setcap が無い場合は setuid にフォールバック)
+# インストール (setcap で CAP_NET_RAW を付与)
 sudo ./install.sh
 ```
 
@@ -47,7 +47,7 @@ sudo ./install.sh
 
 `install.sh` はバイナリを `INSTALL_DIR` (デフォルト: `/usr/local/bin`) にコピーし、OS に応じて権限を設定します:
 
-* **Linux**: `setcap cap_net_raw+ep` を付与 (未インストールの場合は setuid にフォールバック)
+* **Linux**: `setcap cap_net_raw+ep` を付与。`setcap` が無い場合は `libcap2-bin` (Debian/Ubuntu) または `libcap` (Fedora/Arch) をインストールし、`sudo ./install.sh` を再実行してください。setuid を明示的に許可するには `sudo ./install.sh --allow-setuid` または `sudo MPING_ALLOW_SETUID=1 ./install.sh` を実行します。
 * **macOS**: `chown root` + `chmod u+s` で setuid を付与
 
 インストール先を変更する場合:
@@ -79,7 +79,7 @@ cd mping
 # ビルドのみ
 make build
 
-# ビルド + インストール (macOS は setuid、Linux は利用可能なら setcap)
+# ビルド + インストール (macOS は setuid、Linux は setcap)
 make install
 ```
 
