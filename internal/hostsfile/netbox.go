@@ -73,32 +73,28 @@ func parseNetBoxHeader(header []string) (netBoxColumns, bool) {
 	}
 	var fallbackParents []int
 	hasMarker := false
+	// setFirst records the first column seen for a name; later duplicates are ignored.
+	setFirst := func(dst *int, i int) {
+		if *dst < 0 {
+			*dst = i
+		}
+	}
 	for i, raw := range header {
 		name := strings.ToLower(strings.TrimSpace(raw))
 		switch name {
 		case "ip address":
-			if cols.ipIdx < 0 {
-				cols.ipIdx = i
-			}
+			setFirst(&cols.ipIdx, i)
 			hasMarker = true
 		case "address":
-			if cols.ipIdx < 0 {
-				cols.ipIdx = i
-			}
+			setFirst(&cols.ipIdx, i)
 		case "status":
-			if cols.statusIdx < 0 {
-				cols.statusIdx = i
-			}
+			setFirst(&cols.statusIdx, i)
 			hasMarker = true
 		case "dns name", "dns_name":
-			if cols.dnsIdx < 0 {
-				cols.dnsIdx = i
-			}
+			setFirst(&cols.dnsIdx, i)
 			hasMarker = true
 		case "interface":
-			if cols.ifaceIdx < 0 {
-				cols.ifaceIdx = i
-			}
+			setFirst(&cols.ifaceIdx, i)
 			hasMarker = true
 		case "parent":
 			cols.parentIdxs = append(cols.parentIdxs, i)
