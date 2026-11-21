@@ -106,27 +106,12 @@ func durationMs(d time.Duration) float64 {
 // If targets is nil or empty, Targets in the returned snapshot is a non-nil,
 // empty slice (JSON encodes as [] rather than null).
 func BuildSnapshot(targets []*TargetStats, httpResults []*HTTPCheckResult) ExportSnapshot {
-	views := make([]TargetView, len(targets))
+	snap := ExportSnapshot{Targets: make([]TargetSummary, len(targets))}
 	for i, t := range targets {
-		views[i] = t.GetViewWindow(0)
-	}
-	httpViews := make([]HTTPCheckView, len(httpResults))
-	for i, r := range httpResults {
-		httpViews[i] = r.GetView()
-	}
-	return BuildSnapshotFromViews(views, httpViews)
-}
-
-// BuildSnapshotFromViews converts immutable measurements without reading live state again.
-func BuildSnapshotFromViews(targets []TargetView, httpResults []HTTPCheckView) ExportSnapshot {
-	snap := ExportSnapshot{
-		Timestamp: time.Now().UTC(),
-		Targets:   make([]TargetSummary, 0, len(targets)),
-	}
-	for _, v := range targets {
-		snap.Targets = append(snap.Targets, TargetSummaryFromView(v))
+		snap.Targets[i] = TargetSummaryFromView(t.GetViewWindow(0))
 	}
 	snap.HTTPChecks = HTTPCheckSummaries(httpResults)
+	snap.Timestamp = time.Now().UTC()
 	return snap
 }
 
@@ -217,12 +202,15 @@ func hopSummaries(hops []HopView, thresholds Thresholds) []HopSummary {
 	return mtrHops
 }
 
-// HTTPCheckSummaries converts immutable HTTP check views, preserving a nil result
-// when there are no checks.
-func HTTPCheckSummaries(httpResults []HTTPCheckView) []HTTPCheckSummary {
-	var summaries []HTTPCheckSummary
-	for _, v := range httpResults {
-		summaries = append(summaries, HTTPCheckSummary{
+// HTTPCheckSummaries snapshots each check once and returns nil for an empty set.
+func HTTPCheckSummaries(httpResults []*HTTPCheckResult) []HTTPCheckSummary {
+	if len(httpResults) == 0 {
+		return nil
+	}
+	summaries := make([]HTTPCheckSummary, len(httpResults))
+	for i, r := range httpResults {
+		v := r.GetView()
+		summaries[i] = HTTPCheckSummary{
 			URL:        v.URL,
 			Status:     v.Status,
 			Level:      HTTPStatusLevel(v.Status),
@@ -234,7 +222,7 @@ func HTTPCheckSummaries(httpResults []HTTPCheckView) []HTTPCheckSummary {
 			MaxRTTMs:   durationMs(v.MaxRTT),
 			UpCount:    v.UpCount,
 			DownCount:  v.DownCount,
-		})
+		}
 	}
 
 	return summaries

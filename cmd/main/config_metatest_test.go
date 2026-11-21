@@ -39,7 +39,7 @@ func TestApplyDocToCfg_EveryFieldHasEffect(t *testing.T) {
 
 			fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 			zero := config{}
-			_, _, got, err := applyDocToCfg(zero, fs, doc)
+			got, err := applyDocToCfg(zero, fs, doc)
 			if err != nil {
 				t.Fatalf("applyDocToCfg: %v", err)
 			}

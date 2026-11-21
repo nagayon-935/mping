@@ -66,20 +66,11 @@ func parseAndLoadHosts(args []string, out, errOut io.Writer) (p startupParams, e
 		fmt.Fprintf(errOut, "%s: %v\n", prefix, err)
 		return startupParams{}, 1, false
 	}
-	hosts, groups, err = expandTargets(hosts, groups, cfg)
-	if err != nil {
-		fmt.Fprintf(errOut, "Error expanding targets: %v\n", err)
-		return startupParams{}, 1, false
-	}
+	hosts, groups = expandTargets(hosts, groups, cfg)
 	if len(hosts) == 0 {
 		fmt.Fprint(errOut, usage)
 		return startupParams{}, 1, false
 	}
-	if err := cfg.thresholds.Validate(); err != nil {
-		fmt.Fprintf(errOut, "Invalid thresholds: %v\n", err)
-		return startupParams{}, 1, false
-	}
-
 	return startupParams{cfg: cfg, hosts: hosts, fs: fs, cliCfg: cliCfg, cliHosts: cliHosts, groups: groups}, 0, true
 }
 
@@ -159,7 +150,7 @@ func checkerBindConfig(cfg config, bindIP string) pinger.BindConfig {
 // resolverBindConfig is checkerBindConfig for expandTargets' --resolve-all DNS
 // lookups. expandTargets runs at startup (parseAndLoadHosts, before
 // prepareRunEnv has resolved bindIP via determineSourceIPs), on every
-// hosts-file reload (requestFileReload and apply) and when a host is added
+// hosts-file reload (requestFileReload) and when a host is added
 // live, so it resolves bindIP itself instead of receiving it as a parameter.
 // An unknown -I interface never gets this far: validateBinding, reached
 // through mergeHosts' validateMergedHosts, rejects it before expandTargets
@@ -174,29 +165,6 @@ func resolverBindConfig(cfg config, specs []targetSpec) pinger.BindConfig {
 		return pinger.BindConfig{}
 	}
 	return checkerBindConfig(cfg, bindIP)
-}
-
-// buildTargetsForIteration creates TargetStats for hosts and tags each with
-// its display DNS server (used by the UI's DNS column).
-func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetStats {
-	targets := initTargets(specs)
-	for i, t := range targets {
-		t.SetResolveAddress(specs[i].resolveAddr())
-		// Health is available during startup PMTU work, before the supervisor
-		// reapplies the policy and attaches the event sink.
-		t.ConfigureHealth(healthPolicy(cfg))
-		hostName := specs[i].Host
-		if net.ParseIP(hostName) == nil {
-			if cfg.dnsServer != "" {
-				t.SetDNSServer(cfg.dnsServer)
-			} else {
-				t.SetDNSServer("Default")
-			}
-		} else {
-			t.SetDNSServer("-")
-		}
-	}
-	return targets
 }
 
 // buildPingerOptions constructs the pinger.Options for one loop iteration,
@@ -263,7 +231,7 @@ func startWatcher(hostsFile string, onFileChange func(), logCh chan<- string) (c
 // watchDurationLimit arms sig to fire once durationCtx's deadline elapses,
 // converging --duration onto the same ExternalCloseCh shutdown path a YAML
 // reload already uses (see reload_coordinator.go): this function never calls
-// rc.requestFileReload, so rc.apply() finds no pending
+// rc.requestFileReload, so prepareReload finds no pending
 // reload afterwards and run()'s main loop breaks out to printExitSummary
 // instead of re-entering — the same outcome as the user pressing 'q'.
 //

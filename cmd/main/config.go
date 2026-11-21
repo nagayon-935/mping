@@ -50,9 +50,7 @@ type config struct {
 
 // applyDocToCfg applies YAML document fields to cfg, respecting CLI flag
 // overrides (a field is only applied when the CLI flag was not explicitly set).
-// Returns the ungrouped hosts listed in the document, the raw group definitions,
-// and the updated cfg.
-func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsfile.Document) ([]hostsfile.Entry, []hostsfile.Group, config, error) {
+func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsfile.Document) (config, error) {
 	syncField(fs, "interval", doc.IntervalMs, &cfg.intervalMs)
 	syncField(fs, "timeout", doc.TimeoutMs, &cfg.timeoutMs)
 	syncField(fs, "interface", doc.IfaceName, &cfg.ifaceName)
@@ -76,16 +74,16 @@ func applyDocToCfg(cfg config, fs *pflag.FlagSet, doc hostsfile.Document) ([]hos
 	syncField(fs, "health-recoveries", doc.HealthRecoveries, &cfg.healthRecoveries)
 	syncField(fs, "http-follow-redirects", doc.HTTPFollowRedirects, &cfg.httpFollowRedirects)
 	if err := syncDuration(fs, "health-window", doc.HealthWindow, &cfg.healthWindow); err != nil {
-		return nil, nil, cfg, err
+		return cfg, err
 	}
 	if err := syncDuration(fs, "duration", doc.Duration, &cfg.duration); err != nil {
-		return nil, nil, cfg, err
+		return cfg, err
 	}
 	cfg.thresholds = overlayThresholdsDoc(cfg.thresholds, fs, doc.Thresholds)
 	if cfg.ipv4Only && cfg.ipv6Only {
-		return nil, nil, cfg, fmt.Errorf("cannot use both -4 and -6")
+		return cfg, fmt.Errorf("cannot use both -4 and -6")
 	}
-	return doc.Hosts, doc.Groups, cfg, nil
+	return cfg, nil
 }
 
 // syncField applies *docVal into *cfgField when non-nil and its CLI flag

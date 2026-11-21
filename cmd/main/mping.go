@@ -92,8 +92,8 @@ func run(args []string, out io.Writer, errOut io.Writer) int {
 		case iterationFailed:
 			return 1
 		case iterationExit:
-			printExitSummary(out, s.targets)
-			if s.cfg.count > 0 && allTargetsUnresponsive(s.targets) {
+			anyReply := printExitSummary(out, s.targets)
+			if s.cfg.count > 0 && !anyReply {
 				return exitCodeNoResponse
 			}
 			return 0

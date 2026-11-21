@@ -1,8 +1,6 @@
 package stats
 
-import (
-	"time"
-)
+import "time"
 
 // TargetView represents a read-only snapshot of the stats for UI rendering.
 type TargetView struct {
@@ -56,20 +54,17 @@ type TargetView struct {
 	LastError        string
 }
 
-// viewLocked builds a TargetView, obtaining the History field from
-// historyFn. Caller must already hold t.mu (a read lock is sufficient).
-// Shared by GetView (full history), GetViewWindow (trailing window only) and
-// ReportData (full history plus events) so they stay in sync automatically.
-func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
+// viewLocked captures the target and its monitors with up to n RTT samples
+// per series. The caller holds t.mu for reading.
+func (t *TargetStats) viewLocked(n int) TargetView {
 	var avg time.Duration
 	if t.recv > 0 {
 		avg = t.rtt.sum / time.Duration(t.recv)
 	}
 
-	histCopy := historyFn()
 	portCopy := make([]PortCheckView, len(t.portResults))
 	for i, r := range t.portResults {
-		portCopy[i] = r.GetView()
+		portCopy[i] = r.getViewWindow(n)
 	}
 
 	// MTRStats carries its own lock; snapshot it while the target reference
@@ -123,7 +118,7 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 		AvgRTT:           avg,
 		StdDev:           t.rtt.stddev(),
 		Jitter:           time.Duration(t.jitter),
-		History:          histCopy,
+		History:          t.rtt.historySnapshotWindow(n),
 		LastTTL:          t.lastTTL,
 		LastLossTime:     t.lastLossTime,
 		LastError:        t.lastError,
@@ -133,20 +128,13 @@ func (t *TargetStats) viewLocked(historyFn func() []time.Duration) TargetView {
 // GetView returns a thread-safe snapshot of the current statistics,
 // including the full RTT history ring (up to historySize entries).
 func (t *TargetStats) GetView() TargetView {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.viewLocked(t.rtt.historySnapshot)
+	return t.GetViewWindow(historySize)
 }
 
-// GetViewWindow is like GetView, but History only contains the trailing n
-// entries instead of the full ring (see rttAccumulator.historySnapshotWindow).
-// Prefer this over GetView for callers that only ever display a fixed
-// trailing window regardless of how large historySize is — e.g. the RTT
-// graph, which only ever plots a ~30s window of points.
+// GetViewWindow copies at most n trailing RTT samples for the target and
+// each port. Use zero for consumers that only need statistics.
 func (t *TargetStats) GetViewWindow(n int) TargetView {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	return t.viewLocked(func() []time.Duration {
-		return t.rtt.historySnapshotWindow(n)
-	})
+	return t.viewLocked(n)
 }

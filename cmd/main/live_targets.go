@@ -154,10 +154,7 @@ func (s *supervisor) addHost(host string) error {
 				return fmt.Errorf("host %q is already in the list", host)
 			}
 		}
-		specs, _, err := expandTargets([]targetSpec{{Host: host}}, nil, s.cfg.config)
-		if err != nil {
-			return err
-		}
+		specs, _ := expandTargets([]targetSpec{{Host: host}}, nil, s.cfg.config)
 		added := s.newLiveTargets(s.cfg.config, specs)
 		if s.state == stateRunning {
 			p, ok := s.livePinger()

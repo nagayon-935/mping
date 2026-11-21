@@ -7,24 +7,13 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
-// allTargetsUnresponsive reports whether every target finished with zero
-// replies. Mirrors the nreceived == 0 check Apple's ping.c/ping6.c use to
-// decide their exit code; only consulted when --count bounds the run (see
-// exitCodeNoResponse) — the always-on TUI mode has no notion of "finished".
-func allTargetsUnresponsive(targets []*stats.TargetStats) bool {
-	for _, t := range targets {
-		if t.GetView().Recv > 0 {
-			return false
-		}
-	}
-	return true
-}
-
 // printExitSummary writes the per-target ping statistics shown after the TUI exits.
-func printExitSummary(out io.Writer, targets []*stats.TargetStats) {
+// It reports whether any target received a reply for the count-limited exit code.
+func printExitSummary(out io.Writer, targets []*stats.TargetStats) bool {
+	anyReply := false
 	fmt.Fprintln(out, "\n--- mping statistics ---")
 	for _, t := range targets {
-		v := t.GetView()
+		v := t.GetViewWindow(0)
 		// Recv counts unique, on-time replies. Duplicates add no receipt,
 		// and late replies belong to probes already counted in Loss.
 		unanswered := max(0, v.Sent-v.Recv)
@@ -47,6 +36,7 @@ func printExitSummary(out io.Writer, targets []*stats.TargetStats) {
 		}
 		fmt.Fprintln(out)
 		if v.Recv > 0 {
+			anyReply = true
 			fmt.Fprintf(out, "rtt min/avg/max/stddev = %.3f/%.3f/%.3f/%.3f ms\n",
 				float64(v.MinRTT.Microseconds())/1000.0,
 				float64(v.AvgRTT.Microseconds())/1000.0,
@@ -55,4 +45,5 @@ func printExitSummary(out io.Writer, targets []*stats.TargetStats) {
 		}
 		fmt.Fprintln(out)
 	}
+	return anyReply
 }

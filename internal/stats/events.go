@@ -68,9 +68,9 @@ func (t *TargetStats) Events() ([]Event, int) {
 	return append([]Event(nil), t.events...), t.eventsDropped
 }
 
-// ReportData captures counters and their events under the same target lock.
+// ReportData captures counters and events under the same lock. Reports omit RTT samples.
 func (t *TargetStats) ReportData() (TargetView, []Event, int) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	return t.viewLocked(t.rtt.historySnapshot), append([]Event(nil), t.events...), t.eventsDropped
+	return t.viewLocked(0), append([]Event(nil), t.events...), t.eventsDropped
 }

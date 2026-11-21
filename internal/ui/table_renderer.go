@@ -123,7 +123,7 @@ func newTableRenderer(
 	// The Error column's max grows to fit the widest known error string
 	// rather than staying at its static base.
 	errorIdx := columnIndex(cols, "ERR")
-	tr.baseWidths[errorIdx] = calcInitialTableErrorWidth(targets, tr.fullHeaders[errorIdx], tr.baseWidths[errorIdx])
+	tr.baseWidths[errorIdx] = calcInitialTableErrorWidth(views, tr.fullHeaders[errorIdx], tr.baseWidths[errorIdx])
 	tr.maxWidths[errorIdx] = tr.baseWidths[errorIdx]
 
 	tr.widthSeen = make([]int, len(cols))

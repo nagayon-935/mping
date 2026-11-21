@@ -322,3 +322,56 @@ func renderRowCells(cols []column, texts []string, widths, aligns []int, ctx col
 	}
 	return cells
 }
+
+var tableErrorCandidates = []string{
+	"DNS Error",
+	"No Conn",
+	"No IPv4 Conn",
+	"No IPv6 Conn",
+	"Timeout",
+	"ICMP Error",
+	"Destination Network Unreachable",
+	"Destination Host Unreachable",
+	"Destination Protocol Unreachable",
+	"Destination Port Unreachable",
+	"Fragmentation Needed",
+	"Source Route Failed",
+	"Destination Network Unknown",
+	"Destination Host Unknown",
+	"Source Host Isolated",
+	"Network Administratively Prohibited",
+	"Host Administratively Prohibited",
+	"Network Unreachable for ToS",
+	"Host Unreachable for ToS",
+	"Communication Administratively Prohibited",
+	"Host Precedence Violation",
+	"Precedence Cutoff in Effect",
+	"Destination Unreachable",
+	"Time Exceeded",
+	"Fragment Reassembly Time Exceeded",
+	"Parameter Problem",
+	"Missing Required Option",
+	"Bad Length",
+}
+
+func formatTableError(err string) string {
+	if idx := strings.LastIndex(err, ": "); idx >= 0 {
+		return err[idx+2:]
+	}
+	return err
+}
+
+func calcInitialTableErrorWidth(views []stats.TargetView, header string, minWidth int) int {
+	maxWidth := max(minWidth, runewidth.StringWidth(header))
+	for _, s := range tableErrorCandidates {
+		if w := runewidth.StringWidth(s); w > maxWidth {
+			maxWidth = w
+		}
+	}
+	for _, v := range views {
+		if w := runewidth.StringWidth(formatTableError(v.LastError)); w > maxWidth {
+			maxWidth = w
+		}
+	}
+	return maxWidth
+}

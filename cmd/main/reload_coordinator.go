@@ -28,10 +28,7 @@ func (s *reloadSignal) fire() {
 	s.once.Do(func() { close(s.ch) })
 }
 
-// pendingReload is a hosts-file reload that already passed validation: the
-// merged config and the (not yet --resolve-all expanded) targets it yields.
-// requestFileReload derives it from rc.cliCfg, rc.fs and the parsed document,
-// all fixed by then, so apply never has to repeat that work.
+// pendingReload holds the validated configuration and its expanded membership.
 type pendingReload struct {
 	cfg    config
 	specs  []targetSpec
@@ -66,22 +63,14 @@ func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile stri
 		postLog(logCh, fmt.Sprintf("[red][%s] Reload error: %v[-]", clock(), err))
 		return
 	}
-	docHosts, docGroups, cfg, err := applyDocToCfg(rc.cliCfg, rc.fs, doc)
-	if err == nil {
-		err = validateMergedHosts(cfg, docHosts, docGroups, rc.cliHosts)
-	}
+	specs, groups, cfg, err := mergeHostsDocument(rc.cliCfg, rc.fs, doc, rc.cliHosts)
 	if err != nil {
 		postLog(logCh, fmt.Sprintf("[red][%s] Reload validation error: %v[-]", clock(), err))
 		return
 	}
-	specs, groups := buildHostsAndGroups(docHosts, docGroups, rc.cliHosts)
+	specs, groups = expandTargets(specs, groups, cfg)
 	if rc.tryLive != nil {
-		expanded, expandedGroups, expandErr := expandTargets(specs, groups, cfg)
-		if expandErr != nil {
-			reloadNotice(logCh, "Reload expansion error: "+expandErr.Error())
-			return
-		}
-		applied, reason, err := rc.tryLive(cfg, expanded, expandedGroups)
+		applied, reason, err := rc.tryLive(cfg, specs, groups)
 		if err != nil {
 			reloadNotice(logCh, "Reload error: "+err.Error())
 			return
@@ -98,53 +87,21 @@ func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile stri
 	sig.fire()
 }
 
-// apply consumes any pending reload request and returns the updated hosts,
-// groups, and cfg, plus whether the main loop should re-enter (true) or exit
-// (false), plus a non-empty TUI Log warning when the reload succeeded but
-// with a caveat the user should know about (currently: --resolve-all
-// re-expansion failure). Must be called only after the previous
-// iteration's pinger, port checker, HTTP checker, and watcher have all been
-// stopped and joined.
-func (rc *reloadCoordinator) apply(currentCfg config, currentHosts []targetSpec, currentGroups []ui.TargetGroup) ([]targetSpec, []ui.TargetGroup, config, bool, string) {
+// takePending transfers the accepted reload to the next iteration.
+func (rc *reloadCoordinator) takePending() *pendingReload {
 	rc.mu.Lock()
+	defer rc.mu.Unlock()
 	pending := rc.pending
-	rc.mu.Unlock()
-
-	if pending == nil {
-		return currentHosts, currentGroups, currentCfg, false, ""
-	}
-
-	currentHosts, currentGroups, currentCfg = pending.specs, pending.groups, pending.cfg
-
-	var warning string
-	if expandedHosts, expandedGroups, expandErr := expandTargets(currentHosts, currentGroups, currentCfg); expandErr == nil {
-		currentHosts = expandedHosts
-		currentGroups = expandedGroups
-	} else if currentCfg.resolveAll {
-		// expandTargets only does work (and can fail) when resolve-all is
-		// set; otherwise it's a passthrough. Keeping the pre-expansion
-		// host list here means resolve-all silently shrinks to one entry
-		// per host unless the user is told.
-		warning = fmt.Sprintf("[yellow][%s] resolve-all: failed to re-expand hosts after reload (%v) — keeping previous resolution[-]",
-			clock(), expandErr)
-	}
-
-	rc.mu.Lock()
 	rc.pending = nil
-	rc.mu.Unlock()
-
-	return currentHosts, currentGroups, currentCfg, true, warning
+	return pending
 }
 
-// reloadWarnings collects the Log notices for a reload: settings that only
-// require a process restart (web), rebuilt port checks and a failed --resolve-all
-// re-expansion. startup is the config mping was started with.
-func reloadWarnings(startup, reloaded config, activePortSpecs []string, expandWarning string) []string {
+// reloadWarnings collects notices for settings affected by a full reload.
+func reloadWarnings(startup, reloaded config, activePortSpecs []string) []string {
 	var warnings []string
 	for _, w := range []string{
 		checkWebReloadDrift(startup, reloaded),
 		checkPortReloadDrift(activePortSpecs, reloaded.portSpecs),
-		expandWarning,
 	} {
 		if w != "" {
 			warnings = append(warnings, w)

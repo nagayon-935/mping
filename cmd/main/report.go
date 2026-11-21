@@ -93,13 +93,9 @@ func (s *supervisor) captureReport(selectedID uint64) (report.Report, error) {
 	} else {
 		r.RemovedTargets = append([]report.Target(nil), s.removed...)
 		r.RemovedTargetsDropped = s.removedDropped
-		var views []stats.HTTPCheckView
 		if s.httpChecker != nil {
-			for _, check := range s.httpChecker.Results() {
-				views = append(views, check.GetView())
-			}
+			r.HTTPChecks = stats.HTTPCheckSummaries(s.httpChecker.Results())
 		}
-		r.HTTPChecks = stats.HTTPCheckSummaries(views)
 	}
 	r.CaptureCompletedAt = time.Now().UTC()
 	return r, nil

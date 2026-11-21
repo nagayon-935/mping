@@ -32,7 +32,7 @@ func TestApplyDocToCfg_Duration(t *testing.T) {
 				t.Fatalf("parseArgs: %v", err)
 			}
 			v := tt.yaml
-			_, _, gotCfg, err := applyDocToCfg(cfg, fs, hostsfile.Document{Hosts: hostEntries("example.com"), Duration: &v})
+			gotCfg, err := applyDocToCfg(cfg, fs, hostsfile.Document{Hosts: hostEntries("example.com"), Duration: &v})
 			if tt.wantFail {
 				if err == nil {
 					t.Fatal("expected error for malformed duration in YAML doc")
