@@ -1,6 +1,5 @@
 import { el, statusChip } from "./dom.js";
-import { countCell, numCell, rttCell, textCell } from "./cells.js";
-import { setColumns } from "./columns.js";
+import { countCell, numCell, rttCell, setColumns, textCell } from "./columns.js";
 
 /** headers: [label, numeric, column key]; flexibleKey: the column that takes spare width. */
 function simpleTable(headers, rows, flexibleKey) {
