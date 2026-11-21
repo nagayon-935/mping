@@ -74,7 +74,7 @@ func startWebUI(cfg config, src *web.Source, errOut io.Writer) (srv webServer, o
 // webAnnouncement is the Log line offering the web UI. The control link
 // carries the token; the TUI's Log never leaves the terminal.
 func webAnnouncement(srv webServer) string {
-	return fmt.Sprintf("[blue][%s] %s[-]", clock(), tview.Escape("Web UI: "+srv.ControlURL()))
+	return logLine("blue", tview.Escape("Web UI: "+srv.ControlURL()))
 }
 
 // closeWebUI stops srv (nil-safe). A shutdown error only means a stream
@@ -167,7 +167,7 @@ func (c webController) CaptureReport() (report.Report, error) {
 // busy terminal; a dropped line only loses the notice, not the edit. Values
 // are escaped so a host like "[red]x" cannot inject tview colour tags.
 func (c webController) logf(format string, args ...any) {
-	postLog(c.logCh, fmt.Sprintf("[blue][%s] web: %s[-]", clock(), tview.Escape(fmt.Sprintf(format, args...))))
+	postLog(c.logCh, logLine("blue", "web: "+tview.Escape(fmt.Sprintf(format, args...))))
 }
 
 func (p webProvider) Targets() []*stats.TargetStats         { return p.snapshot().targetSet().Targets }

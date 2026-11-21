@@ -61,7 +61,7 @@ func runPMTUWorkers(ctx context.Context, count int, work func(int)) {
 }
 
 func pmtuLog(line string) string {
-	return fmt.Sprintf("[%s] %s", clock(), tview.Escape(line))
+	return logLine("", tview.Escape(line))
 }
 
 // setupPMTU resolves targets and discovers IPv4 paths before choosing Size.

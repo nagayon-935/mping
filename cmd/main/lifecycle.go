@@ -221,8 +221,7 @@ func startWatcher(hostsFile string, onFileChange func(), logCh chan<- string) (c
 		defer close(innerDone)
 		paths := func() []string { return hostsfile.WatchPaths(hostsFile) }
 		if err := watcher.WatchPaths(watchCtx, paths, onFileChange); err != nil {
-			postLog(logCh, fmt.Sprintf("[red][%s] Watcher error: %v — auto-reload disabled, restart mping to re-enable[-]",
-				clock(), err))
+			postLog(logCh, logLine("red", fmt.Sprintf("Watcher error: %v — auto-reload disabled, restart mping to re-enable", err)))
 		}
 	}()
 	return cancelFn, innerDone
@@ -252,7 +251,7 @@ func watchDurationLimit(durationCtx context.Context, sig *reloadSignal, logCh ch
 		defer close(exited)
 		select {
 		case <-durationCtx.Done():
-			postLog(logCh, fmt.Sprintf("[green][%s] Duration limit reached, shutting down...[-]", clock()))
+			postLog(logCh, logLine("green", "Duration limit reached, shutting down..."))
 			sig.fire()
 		case <-done:
 		}
@@ -351,4 +350,33 @@ func finishIteration(sup *supervisor, watchCancel func(), watchDone chan struct{
 	sup.Shutdown()
 	watchCancel()
 	<-watchDone
+}
+
+// logTimeLayout is the HH:MM:SS timestamp that starts every TUI Log line.
+const logTimeLayout = "15:04:05"
+
+// clock returns the current wall-clock time in logTimeLayout.
+func clock() string {
+	return time.Now().Format(logTimeLayout)
+}
+
+// logLine formats one TUI Log line as "[HH:MM:SS] msg", wrapped in the tview
+// colour tag color when one is given. msg is used verbatim: escape any
+// user-controlled text in it first.
+func logLine(color, msg string) string {
+	line := "[" + clock() + "] " + msg
+	if color == "" {
+		return line
+	}
+	return "[" + color + "]" + line + "[-]"
+}
+
+// postLog sends line to ch without ever blocking: when the channel is full (or
+// nil) the line is dropped. Log notices are best-effort, and a stalled TUI must
+// never wedge the goroutine posting them.
+func postLog(ch chan<- string, line string) {
+	select {
+	case ch <- line:
+	default:
+	}
 }

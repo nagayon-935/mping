@@ -60,12 +60,12 @@ func newReloadCoordinator(fs *pflag.FlagSet, cliCfg config, cliHosts []string) *
 func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile string, logCh chan<- string) {
 	doc, err := hostsfile.Parse(hostsFile)
 	if err != nil {
-		postLog(logCh, fmt.Sprintf("[red][%s] Reload error: %v[-]", clock(), err))
+		postLog(logCh, logLine("red", fmt.Sprintf("Reload error: %v", err)))
 		return
 	}
 	specs, groups, cfg, err := mergeHostsDocument(rc.cliCfg, rc.fs, doc, rc.cliHosts)
 	if err != nil {
-		postLog(logCh, fmt.Sprintf("[red][%s] Reload validation error: %v[-]", clock(), err))
+		postLog(logCh, logLine("red", fmt.Sprintf("Reload validation error: %v", err)))
 		return
 	}
 	specs, groups = expandTargets(specs, groups, cfg)
@@ -117,8 +117,7 @@ func checkPortReloadDrift(activeRaw, reloadedRaw []string) string {
 	if slices.Equal(activeRaw, reloadedRaw) {
 		return ""
 	}
-	return fmt.Sprintf("[yellow][%s] port: change detected in the reloaded config — port checks restarted with updated configuration[-]",
-		clock())
+	return logLine("yellow", "port: change detected in the reloaded config — port checks restarted with updated configuration")
 }
 
 // checkWebReloadDrift warns when a reload changes web:/web-port:. The web
@@ -129,6 +128,5 @@ func checkWebReloadDrift(active, reloaded config) string {
 		(!active.webEnabled || active.webPort == reloaded.webPort) {
 		return ""
 	}
-	return fmt.Sprintf("[yellow][%s] web: change detected in the reloaded config — the web UI requires a full restart of mping to take effect[-]",
-		clock())
+	return logLine("yellow", "web: change detected in the reloaded config — the web UI requires a full restart of mping to take effect")
 }

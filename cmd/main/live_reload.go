@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"reflect"
 	"strings"
 
@@ -164,7 +163,7 @@ func routeModeNotice(cfg config) string {
 }
 
 func reloadNotice(logCh chan<- string, message string) {
-	postLog(logCh, fmt.Sprintf("[%s] %s", clock(), message))
+	postLog(logCh, logLine("", message))
 }
 
 var settingNames = map[string]string{
