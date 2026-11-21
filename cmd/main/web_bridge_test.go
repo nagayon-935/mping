@@ -183,38 +183,54 @@ func TestWebGroupsMapsIndicesToTargetIDs(t *testing.T) {
 	}
 }
 
-func TestWebProviderFrameBuildsGroupsFromTheReturnedTargets(t *testing.T) {
+func TestWebProviderFrameUsesOneSnapshotForMetaAndTargets(t *testing.T) {
 	a, b := stats.NewTargetStats("a"), stats.NewTargetStats("b")
-	// Each read sees one host fewer, as if a delete lands between reads.
-	sets := []ui.TargetSet{
-		{Targets: []*stats.TargetStats{a, b}, Groups: []ui.TargetGroup{{Name: "g", Indices: []int{0, 1}}}},
-		{Targets: []*stats.TargetStats{a}, Groups: []ui.TargetGroup{{Name: "g", Indices: []int{0}}}},
-	}
-	reads := 0
-	p := webProvider{
-		webController: webController{sup: &supervisor{}},
-		targets: func() ui.TargetSet {
-			set := sets[min(reads, len(sets)-1)]
-			reads++
-			return set
+	// Each read sees a newer state, as if a delete and a stop land between
+	// reads: one host fewer, a different state and different features.
+	snaps := []*targetSnapshot{
+		{
+			targets:          []*stats.TargetStats{a, b},
+			groups:           []ui.TargetGroup{{Name: "g", Indices: []int{0, 1}}},
+			config:           config{intervalMs: 1000, trace: true},
+			measurementState: "running",
+		},
+		{
+			targets:          []*stats.TargetStats{a},
+			groups:           []ui.TargetGroup{{Name: "g", Indices: []int{0}}},
+			config:           config{intervalMs: 500},
+			measurementState: "stopped",
 		},
 	}
+	reads := 0
+	p := webProvider{snapshot: func() *targetSnapshot {
+		snap := snaps[min(reads, len(snaps)-1)]
+		reads++
+		return snap
+	}}
 
 	meta, targets := p.Frame()
 
 	if reads != 1 {
-		t.Fatalf("Frame read the live targets %d times, want 1", reads)
+		t.Fatalf("Frame read the live snapshot %d times, want 1", reads)
 	}
-	present := make(map[uint64]bool, len(targets))
-	for _, tgt := range targets {
-		present[tgt.ID()] = true
+	if meta.MeasurementState != "running" || meta.IntervalMs != 1000 || !meta.Features.Traceroute {
+		t.Errorf("meta = %+v, want the state and settings of the snapshot that supplied the targets", meta)
 	}
-	for _, g := range meta.Groups {
-		for _, id := range g.TargetIDs {
-			if !present[id] {
-				t.Errorf("group %q references target %d missing from the same frame", g.Name, id)
-			}
-		}
+	if len(targets) != 2 || len(meta.Groups) != 1 || len(meta.Groups[0].TargetIDs) != 2 {
+		t.Fatalf("targets = %d, groups = %+v, want both from the first snapshot", len(targets), meta.Groups)
+	}
+}
+
+func TestWebProviderFrameFallsBackToBaseMetaBeforePublish(t *testing.T) {
+	p := webProvider{
+		snapshot: func() *targetSnapshot { return nil },
+		base:     web.Meta{IntervalMs: 250},
+	}
+
+	meta, targets := p.Frame()
+
+	if meta.IntervalMs != 250 || len(meta.Groups) != 0 || len(targets) != 0 {
+		t.Fatalf("Frame() = %+v, %d targets, want the base meta and no targets", meta, len(targets))
 	}
 }
 

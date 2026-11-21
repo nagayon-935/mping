@@ -61,6 +61,16 @@ func (s *supervisor) currentMeasurementState() string {
 	return "finished"
 }
 
+// targetSet is the UI view of one published snapshot; a nil snapshot (nothing
+// published yet) yields an empty set.
+func (v *targetSnapshot) targetSet() ui.TargetSet {
+	if v == nil {
+		return ui.TargetSet{}
+	}
+	th := v.config.thresholds
+	return ui.TargetSet{Targets: v.targets, Groups: v.groups, Thresholds: &th, Route: uiRouteMode(v.config)}
+}
+
 func (s *supervisor) measurementState() string {
 	if snap := s.targetSnap.Load(); snap != nil {
 		return snap.measurementState
@@ -69,12 +79,7 @@ func (s *supervisor) measurementState() string {
 }
 
 func (s *supervisor) liveTargets() ui.TargetSet {
-	v := s.targetSnap.Load()
-	if v == nil {
-		return ui.TargetSet{}
-	}
-	th := v.config.thresholds
-	return ui.TargetSet{Targets: v.targets, Groups: v.groups, Thresholds: &th, Route: uiRouteMode(v.config)}
+	return s.targetSnap.Load().targetSet()
 }
 
 func (s *supervisor) editTargets(edit func(*supervisor) error) error {

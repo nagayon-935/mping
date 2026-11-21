@@ -92,7 +92,9 @@ func closeWebUI(srv webServer, errOut io.Writer) {
 // and, through webController, to web.Controller.
 type webProvider struct {
 	webController
-	targets     func() ui.TargetSet
+	// snapshot returns the supervisor's latest published targetSnapshot (nil
+	// before the first publish). Each Frame reads it exactly once.
+	snapshot    func() *targetSnapshot
 	httpResults func() []*stats.HTTPCheckResult
 	base        web.Meta
 }
@@ -100,7 +102,7 @@ type webProvider struct {
 func newWebProvider(sup *supervisor, cfg config, hosts []targetSpec, portCount int, logCh chan<- string) webProvider {
 	return webProvider{
 		webController: webController{sup: sup, logCh: logCh},
-		targets:       sup.liveTargets,
+		snapshot:      sup.targetSnap.Load,
 		httpResults:   sup.httpResults,
 		base:          webMeta(cfg, hosts, portCount),
 	}
@@ -168,19 +170,21 @@ func (c webController) logf(format string, args ...any) {
 	postLog(c.logCh, fmt.Sprintf("[blue][%s] web: %s[-]", clock(), tview.Escape(fmt.Sprintf(format, args...))))
 }
 
-func (p webProvider) Targets() []*stats.TargetStats         { return p.targets().Targets }
+func (p webProvider) Targets() []*stats.TargetStats         { return p.snapshot().targetSet().Targets }
 func (p webProvider) HTTPResults() []*stats.HTTPCheckResult { return p.httpResults() }
 
 // Frame re-derives groups on every call: hosts added or deleted at runtime
-// change which target IDs each group holds. Groups and targets come from a
-// single live read so they never disagree about which hosts exist.
+// change which target IDs each group holds. Settings, measurement state,
+// groups and targets all come from one snapshot read, so a concurrent edit
+// or reload can never mix two versions in one frame.
 func (p webProvider) Frame() (web.Meta, []*stats.TargetStats) {
+	snap := p.snapshot()
 	m := p.base
-	if snap := p.sup.targetSnap.Load(); snap != nil {
+	if snap != nil {
 		m = webMeta(snap.config, snap.specs, len(snap.config.portSpecs))
 		m.MeasurementState = snap.measurementState
 	}
-	set := p.targets()
+	set := snap.targetSet()
 	m.Groups = webGroups(set)
 	return m, set.Targets
 }
