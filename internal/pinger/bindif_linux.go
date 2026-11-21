@@ -22,7 +22,7 @@ var interfaceBindingSupported = true
 // The RawConn form is what net.Dialer.Control hands us, used by the port and
 // HTTP checkers (see dialbind.go) so their TCP/UDP connections leave via the
 // same physical interface as the ICMP sockets (see bindToInterface in
-// bindif.go). SO_BINDTODEVICE is family-agnostic so isIPv6 is unused here, and
+// probe_socket.go). SO_BINDTODEVICE is family-agnostic so isIPv6 is unused here, and
 // failures are deliberately non-fatal.
 func bindRawConnToInterface(rawConn syscall.RawConn, ifaceName string, _ bool) {
 	if ifaceName == "" || rawConn == nil {

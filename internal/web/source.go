@@ -19,7 +19,10 @@ import (
 type Provider interface {
 	Targets() []*stats.TargetStats
 	HTTPResults() []*stats.HTTPCheckResult
-	Meta() Meta
+	// Frame returns the run metadata together with the targets it describes,
+	// read once so every Meta.Groups ID is present in the returned targets
+	// even while hosts are added or deleted concurrently.
+	Frame() (Meta, []*stats.TargetStats)
 }
 
 // Meta is the run configuration the browser needs to render a snapshot the

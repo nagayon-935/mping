@@ -44,7 +44,7 @@ type rawBindCall struct {
 
 // spyBindRawConnToInterface installs a bindRawConnToInterfaceFn seam that
 // records every call instead of touching a real socket, and restores the
-// original on t.Cleanup. This mirrors spyBindToInterface in bindif_test.go so
+// original on t.Cleanup. This mirrors spyBindToInterface in probe_socket_test.go so
 // the dialer-side dispatch can be verified without privileges, real network
 // interfaces, or an actual connection.
 func spyBindRawConnToInterface(t *testing.T) *[]rawBindCall {

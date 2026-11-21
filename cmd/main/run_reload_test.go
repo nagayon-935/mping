@@ -3,12 +3,17 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"net"
 	"os"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/ui"
+	"github.com/nagayon-935/mping/internal/web"
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 // rewriteHostsUntil keeps rewriting the watched hosts file with content until
@@ -66,6 +71,77 @@ func TestRunYAMLReload(t *testing.T) {
 	// after the reload picked up the added host.
 	if len(targetCounts) < 2 || targetCounts[0] != 1 || targetCounts[len(targetCounts)-1] != 2 {
 		t.Errorf("targets per uiRun call = %v, want it to start at 1 and end at 2 (reload applied)", targetCounts)
+	}
+}
+
+func TestFullReloadReusesResolvedTargets(t *testing.T) {
+	dns, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var queries atomic.Uint32
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 512)
+		for {
+			n, from, err := dns.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			var query dnsmessage.Message
+			if query.Unpack(buf[:n]) != nil || len(query.Questions) != 1 {
+				continue
+			}
+			name := query.Questions[0].Name
+			address := [4]byte{192, 0, 2, byte(queries.Add(1))}
+			response := dnsmessage.Message{
+				Header:    dnsmessage.Header{ID: query.ID, Response: true},
+				Questions: query.Questions,
+				Answers: []dnsmessage.Resource{{
+					Header: dnsmessage.ResourceHeader{Name: name, Class: dnsmessage.ClassINET},
+					Body:   &dnsmessage.AResource{A: address},
+				}},
+			}
+			if packet, err := response.Pack(); err == nil {
+				_, _ = dns.WriteTo(packet, from)
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		_ = dns.Close()
+		<-done
+	})
+
+	path := writeHostsYAML(t, "groups: [{name: lab, hosts: [router.example.]}]\ninterval: 200\n")
+	cfg, hosts, fs, _, err := parseArgs([]string{"-4", "-f", path, "--resolve-all", "--dns-server", dns.LocalAddr().String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := newReloadCoordinator(fs, cfg, hosts)
+	var considered []targetSpec
+	var consideredGroups []ui.TargetGroup
+	rc.tryLive = func(_ config, specs []targetSpec, groups []ui.TargetGroup) (bool, string, error) {
+		considered, consideredGroups = specs, groups
+		return false, "probe settings changed: interval", nil
+	}
+	s := &session{rc: rc, cfg: cfg, webSrc: web.NewSource()}
+	sig := newReloadSignal()
+	rc.requestFileReload(sig, path, nil)
+	if !closed(sig.ch) || !s.prepareReload() {
+		t.Fatal("full reload was not prepared")
+	}
+	if len(s.hosts) != 1 || s.hosts[0].PinnedIP != "192.0.2.1" || s.cfg.intervalMs != 200 {
+		t.Fatalf("reloaded hosts = %+v, interval = %d", s.hosts, s.cfg.intervalMs)
+	}
+	if !reflect.DeepEqual(s.hosts, considered) || !reflect.DeepEqual(s.groups, consideredGroups) {
+		t.Fatalf("restart used different hosts or groups: %+v, %+v", s.hosts, s.groups)
+	}
+	if got := queries.Load(); got != 1 {
+		t.Fatalf("DNS requests = %d, want 1", got)
+	}
+	if s.prepareReload() {
+		t.Fatal("reload was applied twice")
 	}
 }
 

@@ -104,20 +104,6 @@ func prepareSparkBuckets(history []time.Duration, windowPoints, width int) ([]st
 	return bucketHistory(history, windowPoints, width), scaleMs
 }
 
-// sparkline draws the trailing windowPoints samples of history in width
-// cells against the samples' own p95 scale, with the same marks as a strip
-// (▲ above the scale, × lost). It is always width cells wide, blank where
-// there are no samples yet, so the column keeps its width from the start.
-func sparkline(history []time.Duration, windowPoints, width int) string {
-	buckets, scaleMs := prepareSparkBuckets(history, windowPoints, width)
-	runes := make([]rune, 0, width)
-	for _, b := range buckets {
-		r, _ := stripCell(b, scaleMs)
-		runes = append(runes, r)
-	}
-	return string(runes)
-}
-
 // colorTag is the tview tag selecting exactly color, so a sparkline cell
 // uses the same red as Critical values (vividRed, an RGB color) rather than
 // the terminal's own palette "red".
@@ -125,14 +111,20 @@ func colorTag(color tcell.Color) string {
 	return fmt.Sprintf("[#%06x]", color.Hex())
 }
 
-// sparklineStyled is sparkline with tview color tags around the cells with
+// sparklines draws the trailing windowPoints samples of history in width
+// cells against the samples' own p95 scale, with the same marks as a strip
+// (▲ above the scale, × lost). Both results are always width cells wide on
+// screen, blank where there are no samples yet, so the column keeps its
+// width from the start. styled adds tview color tags around the cells with
 // loss (orange for some, red for all), for the Ping Monitor cell whose own
-// text color (cyan) draws the rest. It has the same width on screen.
-func sparklineStyled(history []time.Duration, windowPoints, width int) string {
+// text color (cyan) draws the rest; one bucket pass serves both.
+func sparklines(history []time.Duration, windowPoints, width int) (plain, styled string) {
 	buckets, scaleMs := prepareSparkBuckets(history, windowPoints, width)
+	runes := make([]rune, 0, width)
 	var b strings.Builder
 	for _, bucket := range buckets {
 		r, color := stripCell(bucket, scaleMs)
+		runes = append(runes, r)
 		switch color {
 		case vividRed, lossPartialColor:
 			fmt.Fprintf(&b, "%s%c[-]", colorTag(color), r)
@@ -140,5 +132,5 @@ func sparklineStyled(history []time.Duration, windowPoints, width int) string {
 			b.WriteRune(r)
 		}
 	}
-	return b.String()
+	return string(runes), b.String()
 }

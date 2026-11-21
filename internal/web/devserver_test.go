@@ -178,6 +178,10 @@ func (s *simulation) step(n int) {
 func (s *simulation) Targets() []*stats.TargetStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.targetsLocked()
+}
+
+func (s *simulation) targetsLocked() []*stats.TargetStats {
 	out := make([]*stats.TargetStats, len(s.targets))
 	for i, st := range s.targets {
 		out[i] = st.ts
@@ -228,7 +232,7 @@ func (s *simulation) ResetStats() {
 	}
 }
 
-func (s *simulation) Meta() Meta {
+func (s *simulation) Frame() (Meta, []*stats.TargetStats) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Groups hold the first five simulated hosts while they still exist;
@@ -250,7 +254,7 @@ func (s *simulation) Meta() Meta {
 			{Name: "core", TargetIDs: ids("core-rtr1.example", "core-rtr2.example")},
 			{Name: "internet", TargetIDs: ids("cdn.example", "flaky.example", "down.example")},
 		},
-	}
+	}, s.targetsLocked()
 }
 
 func (s *simulation) setStopped(stopped bool) error {

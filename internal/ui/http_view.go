@@ -54,14 +54,7 @@ func httpURLColW(views []stats.HTTPCheckView, availW int, compact bool) int {
 
 // httpStatusColorTag returns a tview color tag for an HTTP check status.
 func httpStatusColorTag(status string) string {
-	switch stats.HTTPStatusLevel(status) {
-	case stats.LevelOK:
-		return "[green]"
-	case stats.LevelCrit:
-		return "[red::b]"
-	default:
-		return "[darkgray]"
-	}
+	return levelTags{crit: "[red::b]", warn: "[darkgray]", ok: "[green]", other: "[darkgray]"}.of(stats.HTTPStatusLevel(status))
 }
 
 // httpCodeStr formats a status code for display.
@@ -110,7 +103,7 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, th stats.Threshold
 	// Detect status changes and log them.
 	if lastStatuses != nil && log != nil {
 		for _, v := range views {
-			subject := fmt.Sprintf("[white]HTTP %s:[white]", tview.Escape(v.URL))
+			subject := func() string { return fmt.Sprintf("[white]HTTP %s:[white]", tview.Escape(v.URL)) }
 			logStatusChangeIfNeeded(lastStatuses, v.URL, v.Status, "Up", subject, log)
 		}
 	}

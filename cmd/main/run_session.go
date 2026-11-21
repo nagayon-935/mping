@@ -236,13 +236,13 @@ func (s *session) runUIUntilDone(it *iteration) bool {
 // prepareReload applies a pending reload request, if any, and queues the Log
 // notices the next iteration shows. It reports whether the loop re-enters.
 func (s *session) prepareReload() bool {
-	hosts, groups, cfg, reload, expandWarning := s.rc.apply(s.cfg, s.hosts, s.groups)
-	s.hosts, s.groups, s.cfg = hosts, groups, cfg
-	if !reload {
+	pending := s.rc.takePending()
+	if pending == nil {
 		return false
 	}
+	s.hosts, s.groups, s.cfg = pending.specs, pending.groups, pending.cfg
 	s.webSrc.MarkReloading()
-	s.pendingWarnings = reloadWarnings(s.startup, s.cfg, s.activePortSpecsRaw, expandWarning)
+	s.pendingWarnings = reloadWarnings(s.startup, s.cfg, s.activePortSpecsRaw)
 	s.activePortSpecsRaw = append([]string(nil), s.cfg.portSpecs...)
 	return true
 }

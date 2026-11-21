@@ -29,7 +29,9 @@ func (f *fakeProvider) Targets() []*stats.TargetStats {
 	return f.targets
 }
 func (f *fakeProvider) HTTPResults() []*stats.HTTPCheckResult { return f.http }
-func (f *fakeProvider) Meta() Meta                            { return f.meta }
+func (f *fakeProvider) Frame() (Meta, []*stats.TargetStats) {
+	return f.meta, f.Targets()
+}
 
 // newTestServer serves newHandler over httptest, cancelling the handler's
 // lifetime context when the test ends.

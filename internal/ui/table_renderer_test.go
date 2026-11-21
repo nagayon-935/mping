@@ -15,7 +15,7 @@ import (
 // newTestTableRenderer builds a tableRenderer wired up the same way Run()
 // does, sized directly via SetRect so update() can be driven without a full
 // Application/Screen (mirroring the pattern already used for GraphView in
-// graph_view_test.go).
+// graph_test.go).
 func newTestTableRenderer(targets []*stats.TargetStats, width int) *tableRenderer {
 	table := tview.NewTable().SetBorders(true).SetSelectable(false, false).SetFixed(1, 1)
 	tablePane := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(table, 0, 1, true)

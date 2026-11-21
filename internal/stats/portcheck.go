@@ -81,6 +81,10 @@ func (r *PortCheckResult) CurrentStatus() string {
 
 // GetView returns a thread-safe snapshot including RTT statistics and history.
 func (r *PortCheckResult) GetView() PortCheckView {
+	return r.getViewWindow(historySize)
+}
+
+func (r *PortCheckResult) getViewWindow(n int) PortCheckView {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return PortCheckView{
@@ -92,7 +96,7 @@ func (r *PortCheckResult) GetView() PortCheckView {
 		AvgRTT:      r.rtt.avg(),
 		MaxRTT:      r.rtt.max,
 		StdDev:      r.rtt.stddev(),
-		History:     r.rtt.historySnapshot(),
+		History:     r.rtt.historySnapshotWindow(n),
 		OpenCount:   r.openCount,
 		ClosedCount: r.closedCount,
 		LastChange:  r.lastChange,

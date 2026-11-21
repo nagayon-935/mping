@@ -14,7 +14,7 @@ import (
 // regardless of address family. Actually verifying that IP_BOUND_IF /
 // IPV6_BOUND_IF took effect would require a privileged raw socket and
 // packets on the wire, which this suite deliberately avoids (see
-// bindif_test.go's dispatch-seam tests for the privilege-free coverage of
+// probe_socket_test.go's dispatch-seam tests for the privilege-free coverage of
 // call sites); this test instead covers the non-fatal error-handling
 // contract Start()/OpenHopSocket() rely on.
 func TestBindToInterface_Darwin(t *testing.T) {

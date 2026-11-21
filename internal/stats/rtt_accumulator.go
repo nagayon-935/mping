@@ -28,7 +28,7 @@ type rttAccumulator struct {
 
 	// history is nil for accumulators that don't track a ring buffer
 	// (HTTPCheckResult has no History field in its view). historyIdx/
-	// historyLen follow the layout reconstructHistory expects.
+	// historyLen track total writes and the number of retained samples.
 	history    []time.Duration
 	historyIdx int
 	historyLen int
@@ -91,18 +91,19 @@ func (a *rttAccumulator) appendHistory(rtt time.Duration, capacity int) {
 	}
 }
 
-// historySnapshot returns an ordered copy of the ring buffer for UI/export.
-func (a *rttAccumulator) historySnapshot() []time.Duration {
-	return reconstructHistory(a.history, a.historyIdx, a.historyLen)
-}
-
-// historySnapshotWindow returns only the trailing n entries (or fewer, if
-// fewer than n have been recorded), avoiding the full-buffer copy
-// historySnapshot always does. Intended for callers like the RTT graph that
-// only ever display a fixed trailing window regardless of how large the
-// underlying ring buffer is.
+// historySnapshotWindow copies up to n trailing samples in chronological order.
+// historyIdx counts writes, so the tail starts n slots before the next write
+// and spans at most two contiguous parts of the buffer.
 func (a *rttAccumulator) historySnapshotWindow(n int) []time.Duration {
-	return reconstructHistoryWindow(a.history, a.historyIdx, a.historyLen, n)
+	n = min(n, a.historyLen)
+	if n <= 0 {
+		return nil
+	}
+	start := (a.historyIdx - n) % len(a.history)
+	out := make([]time.Duration, n)
+	copied := copy(out, a.history[start:])
+	copy(out[copied:], a.history)
+	return out
 }
 
 // updateJitter applies one RFC 1889 §A.8 smoothing step and returns the new
@@ -116,56 +117,4 @@ func updateJitter(jitter int64, rtt, lastRTT time.Duration) int64 {
 		delta = -delta
 	}
 	return jitter + (delta-jitter)/jitterDivisor
-}
-
-// reconstructHistory rebuilds an ordered slice from a ring buffer.
-// buf is the raw buffer, idx is the write pointer, length is the count of valid entries.
-func reconstructHistory(buf []time.Duration, idx, length int) []time.Duration {
-	if length == 0 || buf == nil {
-		return nil
-	}
-	size := len(buf)
-	if length < size {
-		out := make([]time.Duration, length)
-		copy(out, buf[:length])
-		return out
-	}
-	start := idx % size
-	out := make([]time.Duration, size)
-	copy(out, buf[start:])
-	copy(out[size-start:], buf[:start])
-	return out
-}
-
-// reconstructHistoryWindow returns only the trailing min(n, length) entries
-// (oldest-to-newest order, same convention as reconstructHistory), without
-// allocating or copying the full ring first. Used by callers (e.g. the RTT
-// graph) that only ever need a fixed trailing window rather than the whole
-// multi-thousand-entry history — historySize is sized for the longest
-// possible display window, but most callers need far fewer points.
-func reconstructHistoryWindow(buf []time.Duration, idx, length, n int) []time.Duration {
-	if length == 0 || buf == nil || n <= 0 {
-		return nil
-	}
-	size := len(buf)
-	effLen := min(n, length)
-	if length < size {
-		// No wraparound yet: buf[:length] is already chronological order.
-		out := make([]time.Duration, effLen)
-		copy(out, buf[length-effLen:length])
-		return out
-	}
-	// Full ring buffer: idx%size is both the next-write position and the
-	// oldest entry's position. The trailing effLen entries occupy the
-	// effLen slots immediately before idx%size, wrapping at most once.
-	windowStart := ((idx-effLen)%size + size) % size
-	out := make([]time.Duration, effLen)
-	if windowStart+effLen <= size {
-		copy(out, buf[windowStart:windowStart+effLen])
-	} else {
-		first := size - windowStart
-		copy(out, buf[windowStart:size])
-		copy(out[first:], buf[:effLen-first])
-	}
-	return out
 }

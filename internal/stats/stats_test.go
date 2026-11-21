@@ -16,7 +16,10 @@ func TestTargetStats_GetViewWindow_MatchesGetViewExceptHistory(t *testing.T) {
 	tgt.SetIP("1.1.1.1")
 	tgt.SetASNInfo("AS15169", "US", "Google LLC")
 	tgt.SetPTR("one.one.one.one")
+	port := NewPortCheckResult(443, "tcp")
+	tgt.SetPortResults([]*PortCheckResult{port})
 	for i := 1; i <= 50; i++ {
+		port.SetResult("Open", time.Duration(i*2)*time.Millisecond)
 		tgt.IncSent()
 		tgt.OnSuccess(time.Duration(i)*time.Millisecond, 64)
 	}
@@ -34,9 +37,13 @@ func TestTargetStats_GetViewWindow_MatchesGetViewExceptHistory(t *testing.T) {
 		}
 	}
 
-	// Every other field must be identical; neutralize History (already
-	// checked above) before comparing the rest via reflect.DeepEqual, since
-	// TargetView contains slice fields and can't use ==/!=.
+	assertDurationsEqual(t, windowed.PortResults[0].History, full.PortResults[0].History[40:])
+	summary := tgt.GetViewWindow(0)
+	if len(summary.History) != 0 || len(summary.PortResults[0].History) != 0 {
+		t.Fatal("summary copied RTT samples")
+	}
+	// Compare the remaining statistics independently of their sample windows.
+	windowed.PortResults[0].History = full.PortResults[0].History
 	windowed.History = full.History
 	if !reflect.DeepEqual(windowed, full) {
 		t.Fatalf("GetViewWindow diverged from GetView on a field other than History:\n got:  %+v\n want: %+v", windowed, full)
