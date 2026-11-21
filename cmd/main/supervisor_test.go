@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -210,5 +211,253 @@ func TestSupervisorStopResetRestartPreservesStateAndOwnership(t *testing.T) {
 		if !p.isReleased() {
 			t.Fatal("Shutdown leaked a pinger")
 		}
+	}
+}
+
+// TestSupervisorSerializesConcurrentRestarts verifies that concurrent restarts
+// queue on the command loop (supervisor_loop.go) instead of racing: exactly one
+// pinger is live and every earlier one was released. (The old
+// TestStartPingerReleasesSupersededPinger asserted that the loser of two
+// concurrent startPinger() calls was cleaned up; the command queue now makes
+// that race impossible, and TestHandle_RestartReleasesPreviousPinger covers
+// the sequential release path.)
+func TestSupervisorSerializesConcurrentRestarts(t *testing.T) {
+	sup, created := newStateTestSupervisor(t)
+	sup.Start()
+	defer sup.Shutdown()
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			if err := sup.sendCmd(command{kind: cmdRestart}); err != nil {
+				t.Errorf("cmdRestart: %v", err)
+			}
+		})
+	}
+	wg.Wait()
+
+	live := sup.pingerSnap.Load()
+	if live == nil {
+		t.Fatal("no live pinger after restarts")
+	}
+
+	liveCount := 0
+	for i, fp := range *created {
+		if pingerController(fp) == *live {
+			liveCount++
+			continue
+		}
+		if !fp.isReleased() {
+			t.Errorf("superseded pinger #%d leaked (stop and close were not both called)", i)
+		}
+	}
+	if liveCount != 1 {
+		t.Errorf("expected exactly 1 live pinger, got %d of %d", liveCount, len(*created))
+	}
+}
+
+// newCompletingPinger returns a fakePinger whose probes complete only when
+// finish() is called or the pinger is stopped, like a count-limited run.
+func newCompletingPinger() *fakePinger {
+	p := &fakePinger{workersDone: make(chan struct{})}
+	p.onStop = p.finish
+	return p
+}
+
+func TestSupervisorNotifiesEachCountCompletion(t *testing.T) {
+	var created []*fakePinger
+	sup := newSupervisor(supervisorConfig{countLimited: true, makePinger: func(int) pingerController {
+		p := newCompletingPinger()
+		created = append(created, p)
+		return p
+	}})
+	sup.Start()
+	t.Cleanup(func() { _ = sup.sendCmd(command{kind: cmdTerminate}); sup.Shutdown() })
+	if err := sup.startPinger(); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 2 {
+		if i > 0 {
+			if err := sup.sendCmd(command{kind: cmdRestart}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		created[i].finish()
+		select {
+		case <-sup.finished:
+		case <-time.After(time.Second):
+			t.Fatal("no count completion notification")
+		}
+		if sup.stateSnapshot() != stateRunning {
+			t.Fatal("count completion must preserve other monitors")
+		}
+	}
+	// A stale completion from the first pinger must not complete a new run.
+	if err := sup.sendCmd(command{kind: cmdRestart}); err != nil {
+		t.Fatal(err)
+	}
+	reply := make(chan error, 1)
+	sup.cmds <- command{kind: cmdProbesFinished, pinger: created[0], reply: reply}
+	if err := <-reply; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-sup.finished:
+		t.Fatal("stale completion notified")
+	default:
+	}
+	sup.stopAll()
+	// The completion observer may enqueue after stop. A stale event is rejected
+	// by the state check regardless of command ordering.
+	sup.cmds <- command{kind: cmdProbesFinished, pinger: created[2], reply: reply}
+	<-reply
+	select {
+	case <-sup.finished:
+		t.Fatal("explicit stop notified as count completion")
+	default:
+	}
+}
+
+func TestSupervisorShutdownJoinsCompletionObservers(t *testing.T) {
+	p := newCompletingPinger()
+	sup := newSupervisor(supervisorConfig{countLimited: true, makePinger: func(int) pingerController { return p }})
+	sup.Start()
+	if err := sup.startPinger(); err != nil {
+		t.Fatal(err)
+	}
+	sup.Shutdown()
+	if !p.isReleased() || sup.stateSnapshot() != stateTerminated {
+		t.Fatal("measurement still live after Shutdown")
+	}
+	select {
+	case <-sup.loopDone:
+	default:
+		t.Fatal("command loop still live")
+	}
+	// Shutdown has already waited for observers; repeated joins must return.
+	done := make(chan struct{})
+	go func() { sup.observers.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("completion observer leaked")
+	}
+}
+
+// TestCountObserverDoesNotNotifyAfterShutdown pins that a completion arriving
+// after Shutdown closed done is dropped rather than queued, even though cmds
+// has room for it, and that Shutdown (which joins the observer) still returns.
+func TestCountObserverDoesNotNotifyAfterShutdown(t *testing.T) {
+	p := &fakePinger{workersDone: make(chan struct{})} // Stop does not release the workers
+	sup := newSupervisor(supervisorConfig{countLimited: true, makePinger: func(int) pingerController { return p }})
+	sup.Start()
+	if err := sup.startPinger(); err != nil {
+		t.Fatal(err)
+	}
+	shutdownDone := make(chan struct{})
+	go func() { sup.Shutdown(); close(shutdownDone) }()
+
+	<-sup.loopDone // done is closed and nothing drains cmds any more
+	p.finish()     // the observer wakes with room in cmds and done closed
+
+	select {
+	case <-shutdownDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Shutdown did not return: the completion observer is stuck")
+	}
+	if n := len(sup.cmds); n != 0 {
+		t.Fatalf("observer queued %d command(s) after shutdown", n)
+	}
+}
+
+// TestCountObserverGivesUpWhenShutdownInterruptsASend covers the other exit:
+// an observer already blocked sending to a queue nobody drains must return
+// once done closes.
+func TestCountObserverGivesUpWhenShutdownInterruptsASend(t *testing.T) {
+	p := &fakePinger{workersDone: make(chan struct{})}
+	sup := newSupervisor(supervisorConfig{})
+	sup.cmds = make(chan command) // unbuffered and never read
+	sup.done = make(chan struct{})
+	sup.startCountObserver(p)
+	p.finish()
+
+	joined := make(chan struct{})
+	go func() { sup.observers.Wait(); close(joined) }()
+	select {
+	case <-joined:
+		t.Fatal("observer returned before shutdown although its send cannot complete")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(sup.done)
+	select {
+	case <-joined:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the completion observer is stuck sending after shutdown")
+	}
+}
+
+// recordOnePing gives the fixture target one sent-and-answered probe so a
+// later assertion can tell "stats survived" from "stats were wiped".
+func recordOnePing(t *testing.T, s *supervisor) {
+	t.Helper()
+	tgt := s.cfg.targets[0]
+	tgt.IncSent()
+	tgt.OnSuccess(5*time.Millisecond, 64)
+}
+
+// TestResetRoute_PreservesPingStats is the decoupling guard: replacing the
+// route engine must not call Reset() on every target, which would clear the
+// ping counters (and, via TargetStats.Reset, the hop stats) as a side
+// effect. Clearing ping stats is the 'R' key's job — input_handler.go
+// already resets every target there — so the engine swap must not do it a
+// second time from inside the supervisor.
+func TestResetRoute_PreservesPingStats(t *testing.T) {
+	sup, _ := newStateTestSupervisor(t)
+	sup.cfg.config.mtr = true
+	if err := doCmd(t, sup, cmdStart); err != nil {
+		t.Fatalf("cmdStart: %v", err)
+	}
+	defer func() { _ = doCmd(t, sup, cmdTerminate) }()
+	recordOnePing(t, sup)
+
+	if err := doCmd(t, sup, cmdResetRoute); err != nil {
+		t.Fatalf("cmdResetRoute: %v", err)
+	}
+
+	v := sup.cfg.targets[0].GetView()
+	if v.Sent != 1 || v.Recv != 1 {
+		t.Errorf("after cmdResetRoute: Sent=%d Recv=%d, want 1/1 — the route engine swap wiped the ping counters", v.Sent, v.Recv)
+	}
+}
+
+// TestRestart_PreservesPingStatsRegardlessOfMTR: restartRoute is also reached
+// from startAll, so a restart that reset statistics there would wipe the
+// ping counters when --mtr was on and keep them when it was off — the same
+// command with two different outcomes depending on an unrelated flag. Both
+// cases must preserve them.
+func TestRestart_PreservesPingStatsRegardlessOfMTR(t *testing.T) {
+	for _, mtrEnabled := range []bool{false, true} {
+		name := "mtr disabled"
+		if mtrEnabled {
+			name = "mtr enabled"
+		}
+		t.Run(name, func(t *testing.T) {
+			sup, _ := newStateTestSupervisor(t)
+			sup.cfg.config.mtr = mtrEnabled
+			if err := doCmd(t, sup, cmdStart); err != nil {
+				t.Fatalf("cmdStart: %v", err)
+			}
+			defer func() { _ = doCmd(t, sup, cmdTerminate) }()
+			recordOnePing(t, sup)
+
+			if err := doCmd(t, sup, cmdRestart); err != nil {
+				t.Fatalf("cmdRestart: %v", err)
+			}
+
+			v := sup.cfg.targets[0].GetView()
+			if v.Sent != 1 || v.Recv != 1 {
+				t.Errorf("after cmdRestart: Sent=%d Recv=%d, want 1/1", v.Sent, v.Recv)
+			}
+		})
 	}
 }
