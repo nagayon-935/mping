@@ -54,6 +54,29 @@ func TestBuildTargetsForIteration(t *testing.T) {
 	}
 }
 
+func TestBuildTargetsForIterationDNSServerMatchesResolution(t *testing.T) {
+	tests := []struct {
+		host string
+		want string
+	}{
+		{host: "example.com", want: "192.0.2.53"},
+		{host: "192.0.2.1", want: "-"},
+		{host: "2001:db8::1", want: "-"},
+		// A zoned IPv6 literal is measured without DNS (netip.ParseAddr
+		// accepts it), so it must not report the configured DNS server.
+		{host: "fe80::1%en0", want: "-"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.host, func(t *testing.T) {
+			targets := buildTargetsForIteration([]targetSpec{{Host: tt.host}}, config{dnsServer: "192.0.2.53"})
+
+			if got := targets[0].GetView().DNSServer; got != tt.want {
+				t.Errorf("DNSServer = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExpandTargets(t *testing.T) {
 	groups := []ui.TargetGroup{{Name: "G1", Indices: []int{0}}}
 	tests := []struct {

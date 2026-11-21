@@ -114,10 +114,11 @@ func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetSta
 		t := stats.NewTargetStats(spec.display())
 		t.SetResolveAddress(spec.resolveAddr())
 		t.ConfigureHealth(policy)
-		if net.ParseIP(spec.Host) == nil {
-			t.SetDNSServer(dnsServer)
-		} else {
+		// Match pinger.ResolveIPAddrContext: zoned IPv6 literals skip DNS too.
+		if _, err := netip.ParseAddr(spec.Host); err == nil {
 			t.SetDNSServer("-")
+		} else {
+			t.SetDNSServer(dnsServer)
 		}
 		targets[i] = t
 	}
