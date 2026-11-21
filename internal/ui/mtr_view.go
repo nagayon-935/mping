@@ -21,28 +21,12 @@ const (
 
 // mtrLossColorTag returns the tview color tag for a hop's loss level.
 func mtrLossColorTag(l stats.Level) string {
-	switch l {
-	case stats.LevelCrit:
-		return "[red::b]"
-	case stats.LevelWarn:
-		return "[orange]"
-	default:
-		return "[green]"
-	}
+	return levelTags{crit: "[red::b]", warn: "[orange]", ok: "[green]", other: "[green]"}.of(l)
 }
 
 // rttColorTag returns the tview color tag for an RTT level.
 func rttColorTag(l stats.Level) string {
-	switch l {
-	case stats.LevelCrit:
-		return "[red]"
-	case stats.LevelWarn:
-		return "[orange]"
-	case stats.LevelOK:
-		return "[green]"
-	default:
-		return "[white]"
-	}
+	return levelTags{crit: "[red]", warn: "[orange]", ok: "[green]", other: "[white]"}.of(l)
 }
 
 // mtrFixedW sums every MTR column but Host and adds 6 separators in compact

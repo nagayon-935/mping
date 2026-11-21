@@ -33,18 +33,28 @@ func levelColor(l stats.Level) tcell.Color {
 	}
 }
 
+// levelTags is one kind of cell's tview color tag per stats.Level; other
+// covers the levels with nothing to judge yet (none, pending).
+type levelTags struct {
+	crit, warn, ok, other string
+}
+
+func (t levelTags) of(l stats.Level) string {
+	switch l {
+	case stats.LevelCrit:
+		return t.crit
+	case stats.LevelWarn:
+		return t.warn
+	case stats.LevelOK:
+		return t.ok
+	default:
+		return t.other
+	}
+}
+
 // statusColorTag returns a tview color tag for the given port status.
 func statusColorTag(status string) string {
-	switch stats.PortStatusLevel(status) {
-	case stats.LevelOK:
-		return "[green]"
-	case stats.LevelCrit:
-		return "[red]"
-	case stats.LevelWarn:
-		return "[yellow]"
-	default:
-		return "[white]"
-	}
+	return levelTags{crit: "[red]", warn: "[yellow]", ok: "[green]", other: "[white]"}.of(stats.PortStatusLevel(status))
 }
 
 // makeDoubleBorderDrawFunc creates a SetDrawFunc callback that draws a
