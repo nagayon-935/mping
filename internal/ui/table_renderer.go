@@ -303,6 +303,7 @@ func (tr *tableRenderer) renderTexts(views []stats.TargetView) ([]columnRowConte
 		rowCtx[i] = columnRowContext{
 			view: view, sourceIPv4: tr.sourceIPv4, sourceIPv6: tr.sourceIPv6,
 			packetSize: tr.packetSize, lossRate: calcLossRate(view),
+			spark: new(sparkMemo),
 		}
 		texts[i] = renderRowTexts(tr.cols, rowCtx[i])
 	}
@@ -314,19 +315,20 @@ func (tr *tableRenderer) scanTargets(views []stats.TargetView, rowCtx []columnRo
 	now := time.Now()
 	for i := range tr.targets {
 		view := views[i]
+		key := targetViewKey(view)
 		rowSourceIP := displaySourceIPForDst(view.IP, tr.sourceIPv4, tr.sourceIPv6)
 		if !view.Health.Configured && !view.LastLossTime.IsZero() {
-			lastTime, exists := tr.vs.lastLossTimes[targetViewKey(view)]
+			lastTime, exists := tr.vs.lastLossTimes[key]
 			if !exists || view.LastLossTime.After(lastTime) {
-				tr.vs.lastLossTimes[targetViewKey(view)] = view.LastLossTime
+				tr.vs.lastLossTimes[key] = view.LastLossTime
 				tr.vs.appendLog(buildErrorLogMessage(view, rowSourceIP, view.LastError, view.LastLossTime))
 			}
 		}
-		state, msgs := updateAlertState(view, rowSourceIP, rowCtx[i].lossRate, now, tr.vs.alertState[targetViewKey(view)])
+		state, msgs := updateAlertState(view, rowSourceIP, rowCtx[i].lossRate, now, tr.vs.alertState[key])
 		for _, msg := range msgs {
 			tr.vs.appendLog(msg)
 		}
-		tr.vs.alertState[targetViewKey(view)] = state
+		tr.vs.alertState[key] = state
 	}
 }
 

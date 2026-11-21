@@ -38,15 +38,16 @@ func statusChangeMessage(subject, prevStatus, newStatus, healthyStatus string) s
 // logStatusChangeIfNeeded checks lastStatuses[key] against newStatus and, if
 // it changed, appends a log line built by statusChangeMessage. It always
 // records newStatus under key afterward (a no-op for the initial ""/
-// "Checking..." placeholder status). Shared by the port and HTTP monitor
-// panes.
-func logStatusChangeIfNeeded(lastStatuses map[string]string, key, newStatus, healthyStatus, subject string,
-	log func(string)) {
+// "Checking..." placeholder status). subject builds the line's subject and
+// runs only when a change is logged, keeping formatting off the per-tick
+// path. Shared by the port and HTTP monitor panes.
+func logStatusChangeIfNeeded(lastStatuses map[string]string, key, newStatus, healthyStatus string,
+	subject func() string, log func(string)) {
 	if newStatus == "" || newStatus == "Checking..." {
 		return
 	}
 	if prev, seen := lastStatuses[key]; seen && prev != newStatus && log != nil {
-		log(statusChangeMessage(subject, prev, newStatus, healthyStatus))
+		log(statusChangeMessage(subject(), prev, newStatus, healthyStatus))
 	}
 	lastStatuses[key] = newStatus
 }
@@ -151,7 +152,9 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 		views = append(views, view)
 		for _, pr := range view.PortResults {
 			key := fmt.Sprintf("%s|%d/%s", targetViewKey(view), pr.Port, pr.Protocol)
-			subject := fmt.Sprintf("[white]%s[-] [white]%d/%s:[white]", tview.Escape(view.Host), pr.Port, pr.Protocol)
+			subject := func() string {
+				return fmt.Sprintf("[white]%s[-] [white]%d/%s:[white]", tview.Escape(view.Host), pr.Port, pr.Protocol)
+			}
 			logStatusChangeIfNeeded(lastPortStatuses, key, pr.Status, "Open", subject, log)
 		}
 	}

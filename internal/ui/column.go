@@ -20,6 +20,29 @@ type columnRowContext struct {
 	sourceIPv6 string
 	packetSize int
 	lossRate   float64
+	// spark, when set, caches this row's sparkline so its plain text (for
+	// layout) and its colored cell share one bucket pass. Rows built without
+	// it compute the sparkline on demand.
+	spark *sparkMemo
+}
+
+// sparkMemo is one row's rendered sparkline, filled on first use.
+type sparkMemo struct {
+	done          bool
+	plain, styled string
+}
+
+// sparkline returns the row's plain and loss-colored sparkline of points
+// samples, sparkWidth cells wide.
+func (ctx columnRowContext) sparkline(points int) (plain, styled string) {
+	if m := ctx.spark; m != nil && m.done {
+		return m.plain, m.styled
+	}
+	plain, styled = sparklines(ctx.view.History, points, sparkWidth)
+	if ctx.spark != nil {
+		*ctx.spark = sparkMemo{done: true, plain: plain, styled: styled}
+	}
+	return plain, styled
 }
 
 // column describes one main-table column: its display properties, how its
@@ -221,9 +244,13 @@ func mainTableColumns(o columnOptions) []column {
 		cols = append(cols, column{
 			name: sparkColumnName, align: tview.AlignLeft, base: sparkWidth, min: sparkWidth, max: sparkWidth,
 			shrinkPriority: 5, growPriority: 130, hideRank: rankSpark,
-			render: func(ctx columnRowContext) string { return sparkline(ctx.view.History, o.SparkPoints, sparkWidth) },
+			render: func(ctx columnRowContext) string {
+				plain, _ := ctx.sparkline(o.SparkPoints)
+				return plain
+			},
 			styled: func(ctx columnRowContext) string {
-				return sparklineStyled(ctx.view.History, o.SparkPoints, sparkWidth)
+				_, styled := ctx.sparkline(o.SparkPoints)
+				return styled
 			},
 			color: func(columnRowContext, string) (tcell.Color, bool) { return vividCyan, true },
 		})

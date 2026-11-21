@@ -110,7 +110,7 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, th stats.Threshold
 	// Detect status changes and log them.
 	if lastStatuses != nil && log != nil {
 		for _, v := range views {
-			subject := fmt.Sprintf("[white]HTTP %s:[white]", tview.Escape(v.URL))
+			subject := func() string { return fmt.Sprintf("[white]HTTP %s:[white]", tview.Escape(v.URL)) }
 			logStatusChangeIfNeeded(lastStatuses, v.URL, v.Status, "Up", subject, log)
 		}
 	}
