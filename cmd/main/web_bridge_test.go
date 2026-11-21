@@ -183,6 +183,41 @@ func TestWebGroupsMapsIndicesToTargetIDs(t *testing.T) {
 	}
 }
 
+func TestWebProviderFrameBuildsGroupsFromTheReturnedTargets(t *testing.T) {
+	a, b := stats.NewTargetStats("a"), stats.NewTargetStats("b")
+	// Each read sees one host fewer, as if a delete lands between reads.
+	sets := []ui.TargetSet{
+		{Targets: []*stats.TargetStats{a, b}, Groups: []ui.TargetGroup{{Name: "g", Indices: []int{0, 1}}}},
+		{Targets: []*stats.TargetStats{a}, Groups: []ui.TargetGroup{{Name: "g", Indices: []int{0}}}},
+	}
+	reads := 0
+	p := webProvider{
+		webController: webController{sup: &supervisor{}},
+		targets: func() ui.TargetSet {
+			set := sets[min(reads, len(sets)-1)]
+			reads++
+			return set
+		},
+	}
+
+	meta, targets := p.Frame()
+
+	if reads != 1 {
+		t.Fatalf("Frame read the live targets %d times, want 1", reads)
+	}
+	present := make(map[uint64]bool, len(targets))
+	for _, tgt := range targets {
+		present[tgt.ID()] = true
+	}
+	for _, g := range meta.Groups {
+		for _, id := range g.TargetIDs {
+			if !present[id] {
+				t.Errorf("group %q references target %d missing from the same frame", g.Name, id)
+			}
+		}
+	}
+}
+
 func TestWebGroupsIsEmptyWithoutGroups(t *testing.T) {
 	got := webGroups(ui.TargetSet{Targets: []*stats.TargetStats{stats.NewTargetStats("a")}})
 

@@ -182,7 +182,7 @@ func TestReloadAfterCountCompletionPublishesRunningAndClearsOldNotification(t *t
 		t.Fatal("a completed target hid the newly added worker")
 	}
 	provider := newWebProvider(s, cfg, specs, 0, nil)
-	if provider.Meta().MeasurementState != "running" {
+	if meta, _ := provider.Frame(); meta.MeasurementState != "running" {
 		t.Fatal("web state not synchronized")
 	}
 }

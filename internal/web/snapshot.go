@@ -50,10 +50,11 @@ func (c *snapshotCache) get() ([]byte, snapshotKey, error) {
 	if c.ok && c.key == key {
 		return c.body, key, nil
 	}
+	meta, targets := p.Frame()
 	body, err := json.Marshal(SnapshotResponse{
 		State:    state,
-		Meta:     p.Meta(),
-		Snapshot: stats.BuildSnapshot(p.Targets(), p.HTTPResults()),
+		Meta:     meta,
+		Snapshot: stats.BuildSnapshot(targets, p.HTTPResults()),
 	})
 	if err != nil {
 		return nil, snapshotKey{}, fmt.Errorf("encode snapshot: %w", err)

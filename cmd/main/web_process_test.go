@@ -29,7 +29,9 @@ type staticProvider struct{ targets []*stats.TargetStats }
 
 func (p staticProvider) Targets() []*stats.TargetStats         { return p.targets }
 func (p staticProvider) HTTPResults() []*stats.HTTPCheckResult { return nil }
-func (p staticProvider) Meta() web.Meta                        { return web.Meta{IntervalMs: 1000} }
+func (p staticProvider) Frame() (web.Meta, []*stats.TargetStats) {
+	return web.Meta{IntervalMs: 1000}, p.targets
+}
 
 func TestWebUIRunsItsFrontendInAnUnprivilegedProcess(t *testing.T) {
 	src := web.NewSource()
