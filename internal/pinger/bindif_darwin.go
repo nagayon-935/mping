@@ -28,7 +28,7 @@ var interfaceByNameFn = net.InterfaceByName
 // The RawConn form is what net.Dialer.Control hands us, used by the port and
 // HTTP checkers (see dialbind.go) so their TCP/UDP connections leave via the
 // same physical interface as the ICMP sockets (see bindToInterface in
-// bindif.go). Failures stay non-fatal for the reasons documented there.
+// probe_socket.go). Failures stay non-fatal for the reasons documented there.
 func bindRawConnToInterface(rawConn syscall.RawConn, ifaceName string, isIPv6 bool) {
 	if ifaceName == "" || rawConn == nil {
 		return

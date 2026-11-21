@@ -3,6 +3,7 @@ package pinger
 import (
 	"fmt"
 	"net"
+	"syscall"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/privilege"
@@ -37,6 +38,16 @@ type listenPacketFunc func(network, address string) (net.PacketConn, error)
 // nested section deadlocks once an AsRealUser section waits in between.
 var runPrivileged = privilege.Privileged
 
+// inPrivileged runs a best-effort setsockopt-style fn inside runPrivileged.
+// Binding to an interface needs CAP_NET_RAW on Linux, which a setuid-root
+// run only has while not inside privilege.AsRealUser.
+func inPrivileged(fn func()) {
+	_ = runPrivileged(func() error {
+		fn()
+		return nil
+	})
+}
+
 // privilegedListenPacket is the default listenPacketFunc: raw ICMP sockets
 // need root (or CAP_NET_RAW), so they are opened inside privilege.Privileged,
 // never while a setuid-root run has dropped to the invoking user for file I/O.
@@ -56,25 +67,16 @@ func privilegedListenPacket(network, address string) (net.PacketConn, error) {
 // dispatch to it with the correct interface name and address family without
 // requiring root privileges, real sockets, or real network interfaces.
 var bindToInterfaceFn = func(c net.PacketConn, ifaceName string, isIPv6 bool) {
-	// SO_BINDTODEVICE needs CAP_NET_RAW on Linux, which a setuid-root run
-	// only has while not inside privilege.AsRealUser.
-	_ = runPrivileged(func() error {
-		bindToInterface(c, ifaceName, isIPv6)
-		return nil
-	})
+	inPrivileged(func() { bindToInterface(c, ifaceName, isIPv6) })
 }
 
 // listenICMP opens a raw ICMP (v4) or ICMPv6 (v6) socket bound to the
 // configured Source address, or to the wildcard address when none is set.
 // Interface binding is left to the caller via bindToInterfaceFn.
 func (p *Pinger) listenICMP(v6 bool) (net.PacketConn, error) {
-	source := p.Source
-	if source == "" && p.Interface != "" && !interfaceBindingSupported {
-		var err error
-		source, err = p.interfaceSource(v6)
-		if err != nil {
-			return nil, err
-		}
+	source, err := p.socketSource(v6)
+	if err != nil {
+		return nil, err
 	}
 	return p.listenICMPSource(v6, source)
 }
@@ -160,4 +162,61 @@ func configureICMPBuffers(conn any) error {
 		return fmt.Errorf("set ICMP send buffer: %w", err)
 	}
 	return nil
+}
+
+// bindRawConnToInterfaceFn is a seam over the platform-specific
+// bindRawConnToInterface (see bindif_darwin.go / bindif_linux.go /
+// bindif_other.go). Tests replace it to assert that the net.Dialer.Control
+// hooks built by NewBoundDialer dispatch with the right interface name and
+// address family, without needing privileges, real interfaces, or a real
+// connection. It mirrors bindToInterfaceFn, the equivalent seam for the ICMP
+// net.PacketConn path.
+var bindRawConnToInterfaceFn = func(c syscall.RawConn, ifaceName string, isIPv6 bool) {
+	inPrivileged(func() { bindRawConnToInterface(c, ifaceName, isIPv6) })
+}
+
+// bindRawConnToInterfaceHeldFn binds without entering privilege.Privileged.
+// Use it from code already running inside a privileged section, such as a
+// net.Dialer.Control hook of a dial wrapped in privilege.Privileged: the
+// privilege RWMutex is not reentrant, and a nested read lock deadlocks once
+// an AsRealUser section is waiting for the write lock in between.
+var bindRawConnToInterfaceHeldFn = bindRawConnToInterface
+
+// rawConnOf extracts the syscall.RawConn behind a net.PacketConn, reporting
+// ok=false for conns that don't expose one (notably the fakes used in this
+// package's seam-based unit tests). Callers treat !ok as "skip the bind",
+// matching bindToInterface's non-fatal contract.
+func rawConnOf(c net.PacketConn) (syscall.RawConn, bool) {
+	sc, ok := c.(interface {
+		SyscallConn() (syscall.RawConn, error)
+	})
+	if !ok {
+		return nil, false
+	}
+	rawConn, err := sc.SyscallConn()
+	if err != nil {
+		return nil, false
+	}
+	return rawConn, true
+}
+
+// bindToInterface binds the underlying socket of c to the network interface
+// named ifaceName, so outgoing packets leave via that physical interface
+// regardless of what the routing table would otherwise select and regardless
+// of the same address being assigned to more than one interface. The
+// platform-specific part lives in bindRawConnToInterface (bindif_darwin.go:
+// IP_BOUND_IF / IPV6_BOUND_IF; bindif_linux.go: SO_BINDTODEVICE;
+// bindif_other.go: a no-op).
+//
+// Failures are non-fatal: if c doesn't expose a raw socket (including a nil
+// c), the interface can't be resolved, or the setsockopt call itself fails
+// (e.g. missing CAP_NET_RAW), mping silently falls back to the source-IP bind
+// Pinger.Start already performs via p.Source - the same non-fatal treatment
+// as the ipv4.FlagTTL / ipv6.FlagHopLimit control-message setup in Start().
+func bindToInterface(c net.PacketConn, ifaceName string, isIPv6 bool) {
+	rawConn, ok := rawConnOf(c)
+	if !ok {
+		return
+	}
+	bindRawConnToInterface(rawConn, ifaceName, isIPv6)
 }
