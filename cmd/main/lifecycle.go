@@ -66,20 +66,11 @@ func parseAndLoadHosts(args []string, out, errOut io.Writer) (p startupParams, e
 		fmt.Fprintf(errOut, "%s: %v\n", prefix, err)
 		return startupParams{}, 1, false
 	}
-	hosts, groups, err = expandTargets(hosts, groups, cfg)
-	if err != nil {
-		fmt.Fprintf(errOut, "Error expanding targets: %v\n", err)
-		return startupParams{}, 1, false
-	}
+	hosts, groups = expandTargets(hosts, groups, cfg)
 	if len(hosts) == 0 {
 		fmt.Fprint(errOut, usage)
 		return startupParams{}, 1, false
 	}
-	if err := cfg.thresholds.Validate(); err != nil {
-		fmt.Fprintf(errOut, "Invalid thresholds: %v\n", err)
-		return startupParams{}, 1, false
-	}
-
 	return startupParams{cfg: cfg, hosts: hosts, fs: fs, cliCfg: cliCfg, cliHosts: cliHosts, groups: groups}, 0, true
 }
 
@@ -159,7 +150,7 @@ func checkerBindConfig(cfg config, bindIP string) pinger.BindConfig {
 // resolverBindConfig is checkerBindConfig for expandTargets' --resolve-all DNS
 // lookups. expandTargets runs at startup (parseAndLoadHosts, before
 // prepareRunEnv has resolved bindIP via determineSourceIPs), on every
-// hosts-file reload (requestFileReload and apply) and when a host is added
+// hosts-file reload (requestFileReload) and when a host is added
 // live, so it resolves bindIP itself instead of receiving it as a parameter.
 // An unknown -I interface never gets this far: validateBinding, reached
 // through mergeHosts' validateMergedHosts, rejects it before expandTargets
@@ -174,29 +165,6 @@ func resolverBindConfig(cfg config, specs []targetSpec) pinger.BindConfig {
 		return pinger.BindConfig{}
 	}
 	return checkerBindConfig(cfg, bindIP)
-}
-
-// buildTargetsForIteration creates TargetStats for hosts and tags each with
-// its display DNS server (used by the UI's DNS column).
-func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetStats {
-	targets := initTargets(specs)
-	for i, t := range targets {
-		t.SetResolveAddress(specs[i].resolveAddr())
-		// Health is available during startup PMTU work, before the supervisor
-		// reapplies the policy and attaches the event sink.
-		t.ConfigureHealth(healthPolicy(cfg))
-		hostName := specs[i].Host
-		if net.ParseIP(hostName) == nil {
-			if cfg.dnsServer != "" {
-				t.SetDNSServer(cfg.dnsServer)
-			} else {
-				t.SetDNSServer("Default")
-			}
-		} else {
-			t.SetDNSServer("-")
-		}
-	}
-	return targets
 }
 
 // buildPingerOptions constructs the pinger.Options for one loop iteration,
@@ -253,8 +221,7 @@ func startWatcher(hostsFile string, onFileChange func(), logCh chan<- string) (c
 		defer close(innerDone)
 		paths := func() []string { return hostsfile.WatchPaths(hostsFile) }
 		if err := watcher.WatchPaths(watchCtx, paths, onFileChange); err != nil {
-			postLog(logCh, fmt.Sprintf("[red][%s] Watcher error: %v — auto-reload disabled, restart mping to re-enable[-]",
-				clock(), err))
+			postLog(logCh, logLine("red", fmt.Sprintf("Watcher error: %v — auto-reload disabled, restart mping to re-enable", err)))
 		}
 	}()
 	return cancelFn, innerDone
@@ -263,7 +230,7 @@ func startWatcher(hostsFile string, onFileChange func(), logCh chan<- string) (c
 // watchDurationLimit arms sig to fire once durationCtx's deadline elapses,
 // converging --duration onto the same ExternalCloseCh shutdown path a YAML
 // reload already uses (see reload_coordinator.go): this function never calls
-// rc.requestFileReload, so rc.apply() finds no pending
+// rc.requestFileReload, so prepareReload finds no pending
 // reload afterwards and run()'s main loop breaks out to printExitSummary
 // instead of re-entering — the same outcome as the user pressing 'q'.
 //
@@ -284,7 +251,7 @@ func watchDurationLimit(durationCtx context.Context, sig *reloadSignal, logCh ch
 		defer close(exited)
 		select {
 		case <-durationCtx.Done():
-			postLog(logCh, fmt.Sprintf("[green][%s] Duration limit reached, shutting down...[-]", clock()))
+			postLog(logCh, logLine("green", "Duration limit reached, shutting down..."))
 			sig.fire()
 		case <-done:
 		}
@@ -383,4 +350,33 @@ func finishIteration(sup *supervisor, watchCancel func(), watchDone chan struct{
 	sup.Shutdown()
 	watchCancel()
 	<-watchDone
+}
+
+// logTimeLayout is the HH:MM:SS timestamp that starts every TUI Log line.
+const logTimeLayout = "15:04:05"
+
+// clock returns the current wall-clock time in logTimeLayout.
+func clock() string {
+	return time.Now().Format(logTimeLayout)
+}
+
+// logLine formats one TUI Log line as "[HH:MM:SS] msg", wrapped in the tview
+// colour tag color when one is given. msg is used verbatim: escape any
+// user-controlled text in it first.
+func logLine(color, msg string) string {
+	line := "[" + clock() + "] " + msg
+	if color == "" {
+		return line
+	}
+	return "[" + color + "]" + line + "[-]"
+}
+
+// postLog sends line to ch without ever blocking: when the channel is full (or
+// nil) the line is dropped. Log notices are best-effort, and a stalled TUI must
+// never wedge the goroutine posting them.
+func postLog(ch chan<- string, line string) {
+	select {
+	case ch <- line:
+	default:
+	}
 }

@@ -102,13 +102,13 @@ func TestSparklineStyledColorsLoss(t *testing.T) {
 	history := []time.Duration{10 * ms, 12 * ms, 10 * ms, 0, 0, 0}
 
 	// Act
-	got := sparklineStyled(history, 8, 4)
+	plain, got := sparklines(history, 8, 4)
 
 	// Assert
 	if !strings.Contains(got, colorTag(lossPartialColor)) || !strings.Contains(got, colorTag(levelColor(stats.LevelCrit))+"×[-]") {
 		t.Errorf("sparklineStyled = %q, want orange for some loss and a red × for all lost", got)
 	}
-	if plain := sparkline(history, 8, 4); tview.TaggedStringWidth(got) != runewidth.StringWidth(plain) {
+	if tview.TaggedStringWidth(got) != runewidth.StringWidth(plain) {
 		t.Errorf("styled width %d != plain width %d", tview.TaggedStringWidth(got), runewidth.StringWidth(plain))
 	}
 }

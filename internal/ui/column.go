@@ -20,6 +20,29 @@ type columnRowContext struct {
 	sourceIPv6 string
 	packetSize int
 	lossRate   float64
+	// spark, when set, caches this row's sparkline so its plain text (for
+	// layout) and its colored cell share one bucket pass. Rows built without
+	// it compute the sparkline on demand.
+	spark *sparkMemo
+}
+
+// sparkMemo is one row's rendered sparkline, filled on first use.
+type sparkMemo struct {
+	done          bool
+	plain, styled string
+}
+
+// sparkline returns the row's plain and loss-colored sparkline of points
+// samples, sparkWidth cells wide.
+func (ctx columnRowContext) sparkline(points int) (plain, styled string) {
+	if m := ctx.spark; m != nil && m.done {
+		return m.plain, m.styled
+	}
+	plain, styled = sparklines(ctx.view.History, points, sparkWidth)
+	if ctx.spark != nil {
+		*ctx.spark = sparkMemo{done: true, plain: plain, styled: styled}
+	}
+	return plain, styled
 }
 
 // column describes one main-table column: its display properties, how its
@@ -221,9 +244,13 @@ func mainTableColumns(o columnOptions) []column {
 		cols = append(cols, column{
 			name: sparkColumnName, align: tview.AlignLeft, base: sparkWidth, min: sparkWidth, max: sparkWidth,
 			shrinkPriority: 5, growPriority: 130, hideRank: rankSpark,
-			render: func(ctx columnRowContext) string { return sparkline(ctx.view.History, o.SparkPoints, sparkWidth) },
+			render: func(ctx columnRowContext) string {
+				plain, _ := ctx.sparkline(o.SparkPoints)
+				return plain
+			},
 			styled: func(ctx columnRowContext) string {
-				return sparklineStyled(ctx.view.History, o.SparkPoints, sparkWidth)
+				_, styled := ctx.sparkline(o.SparkPoints)
+				return styled
 			},
 			color: func(columnRowContext, string) (tcell.Color, bool) { return vividCyan, true },
 		})
@@ -321,4 +348,57 @@ func renderRowCells(cols []column, texts []string, widths, aligns []int, ctx col
 		cells[i] = cell
 	}
 	return cells
+}
+
+var tableErrorCandidates = []string{
+	"DNS Error",
+	"No Conn",
+	"No IPv4 Conn",
+	"No IPv6 Conn",
+	"Timeout",
+	"ICMP Error",
+	"Destination Network Unreachable",
+	"Destination Host Unreachable",
+	"Destination Protocol Unreachable",
+	"Destination Port Unreachable",
+	"Fragmentation Needed",
+	"Source Route Failed",
+	"Destination Network Unknown",
+	"Destination Host Unknown",
+	"Source Host Isolated",
+	"Network Administratively Prohibited",
+	"Host Administratively Prohibited",
+	"Network Unreachable for ToS",
+	"Host Unreachable for ToS",
+	"Communication Administratively Prohibited",
+	"Host Precedence Violation",
+	"Precedence Cutoff in Effect",
+	"Destination Unreachable",
+	"Time Exceeded",
+	"Fragment Reassembly Time Exceeded",
+	"Parameter Problem",
+	"Missing Required Option",
+	"Bad Length",
+}
+
+func formatTableError(err string) string {
+	if idx := strings.LastIndex(err, ": "); idx >= 0 {
+		return err[idx+2:]
+	}
+	return err
+}
+
+func calcInitialTableErrorWidth(views []stats.TargetView, header string, minWidth int) int {
+	maxWidth := max(minWidth, runewidth.StringWidth(header))
+	for _, s := range tableErrorCandidates {
+		if w := runewidth.StringWidth(s); w > maxWidth {
+			maxWidth = w
+		}
+	}
+	for _, v := range views {
+		if w := runewidth.StringWidth(formatTableError(v.LastError)); w > maxWidth {
+			maxWidth = w
+		}
+	}
+	return maxWidth
 }

@@ -1,8 +1,7 @@
 // Ping monitor table. Rebuilt from the snapshot on every update; row focus
 // and selection are restored by target ID.
 import { el, statusChip } from "./dom.js";
-import { countCell, numCell, rttCell, textCell } from "./cells.js";
-import { columnWidthPx, setColumns } from "./columns.js";
+import { columnWidthPx, countCell, numCell, rttCell, setColumns, textCell } from "./columns.js";
 import { SORTS } from "./workspace.js";
 import { shortReason } from "./health_text.js";
 import { sparkline } from "./spark_view.js";

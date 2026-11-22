@@ -46,6 +46,17 @@ var bindRawConnToSourceFn = func(raw syscall.RawConn, source string, v6 bool) er
 	return bindErr
 }
 
+// socketSource returns the address a probe socket binds to: p.Source when
+// set, otherwise the interface's address for the family on platforms that
+// cannot bind a socket to an interface natively (where the source address is
+// the only way to honour --interface), and "" to let the OS choose.
+func (p *Pinger) socketSource(v6 bool) (string, error) {
+	if p.Source != "" || p.Interface == "" || interfaceBindingSupported {
+		return p.Source, nil
+	}
+	return p.interfaceSource(v6)
+}
+
 // interfaceSource is used only when no explicit source was selected.
 func (p *Pinger) interfaceSource(v6 bool) (string, error) {
 	source := p.SourceV4

@@ -128,8 +128,13 @@ func TestRunKeyboardScroll(t *testing.T) {
 	// With far more targets than rows, only a window of rows is rendered.
 	// Paging to the bottom must bring the last host into view and paging
 	// back must restore the first, and neither may crash or hang the app.
+	//
+	// Every key redraws the whole screen, which costs tens of milliseconds
+	// under -race. A short screen and three pages of targets keep the queued
+	// redraws well inside testTimeout even on a loaded machine; more targets
+	// or rows would only repeat the same paging.
 	t.Run("many targets scroll to the bottom and back", func(t *testing.T) {
-		const numTargets = 100
+		const numTargets = 3 * tableMinVisibleRows
 		targets := make([]*stats.TargetStats, numTargets)
 		for i := range targets {
 			targets[i] = stats.NewTargetStats(fmt.Sprintf("host%03d", i))
@@ -137,7 +142,7 @@ func TestRunKeyboardScroll(t *testing.T) {
 			targets[i].IncSent()
 			targets[i].OnSuccess(10*time.Millisecond, 64)
 		}
-		h := startTUI(t, RunOptions{Targets: targets}, 200, 50)
+		h := startTUI(t, RunOptions{Targets: targets}, 200, 24)
 		first, last := "host000", fmt.Sprintf("host%03d", numTargets-1)
 		frame := h.wait(first)
 		if requireAll(last)(frame) {

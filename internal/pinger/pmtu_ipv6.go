@@ -222,13 +222,9 @@ func waitIPv6PMTUReply(ctx context.Context, c ipv6PMTUSocket, buf []byte, id, se
 // is available, and supplies a family-specific LocalAddr on other platforms.
 func (p *Pinger) ipv6PMTUDialer() (*net.Dialer, error) {
 	dialer := &net.Dialer{Timeout: time.Second}
-	source := p.Source
-	if source == "" && p.Interface != "" && !interfaceBindingSupported {
-		var err error
-		source, err = p.interfaceSource(true)
-		if err != nil {
-			return nil, err
-		}
+	source, err := p.socketSource(true)
+	if err != nil {
+		return nil, err
 	}
 	if source != "" {
 		addr, err := netip.ParseAddr(source)

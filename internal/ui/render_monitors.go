@@ -6,9 +6,8 @@ import (
 	"time"
 
 	"github.com/mattn/go-runewidth"
-	"github.com/rivo/tview"
-
 	"github.com/nagayon-935/mping/internal/stats"
+	"github.com/rivo/tview"
 )
 
 // maxHostWidth returns the widest target display name or header, plus padding.
@@ -38,15 +37,16 @@ func statusChangeMessage(subject, prevStatus, newStatus, healthyStatus string) s
 // logStatusChangeIfNeeded checks lastStatuses[key] against newStatus and, if
 // it changed, appends a log line built by statusChangeMessage. It always
 // records newStatus under key afterward (a no-op for the initial ""/
-// "Checking..." placeholder status). Shared by the port and HTTP monitor
-// panes.
-func logStatusChangeIfNeeded(lastStatuses map[string]string, key, newStatus, healthyStatus, subject string,
-	log func(string)) {
+// "Checking..." placeholder status). subject builds the line's subject and
+// runs only when a change is logged, keeping formatting off the per-tick
+// path. Shared by the port and HTTP monitor panes.
+func logStatusChangeIfNeeded(lastStatuses map[string]string, key, newStatus, healthyStatus string,
+	subject func() string, log func(string)) {
 	if newStatus == "" || newStatus == "Checking..." {
 		return
 	}
 	if prev, seen := lastStatuses[key]; seen && prev != newStatus && log != nil {
-		log(statusChangeMessage(subject, prev, newStatus, healthyStatus))
+		log(statusChangeMessage(subject(), prev, newStatus, healthyStatus))
 	}
 	lastStatuses[key] = newStatus
 }
@@ -151,7 +151,9 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 		views = append(views, view)
 		for _, pr := range view.PortResults {
 			key := fmt.Sprintf("%s|%d/%s", targetViewKey(view), pr.Port, pr.Protocol)
-			subject := fmt.Sprintf("[white]%s[-] [white]%d/%s:[white]", tview.Escape(view.Host), pr.Port, pr.Protocol)
+			subject := func() string {
+				return fmt.Sprintf("[white]%s[-] [white]%d/%s:[white]", tview.Escape(view.Host), pr.Port, pr.Protocol)
+			}
 			logStatusChangeIfNeeded(lastPortStatuses, key, pr.Status, "Open", subject, log)
 		}
 	}
@@ -218,4 +220,56 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 	var sb strings.Builder
 	writeBoxTable(&sb, boxCols, groups, " Waiting for results...")
 	return sb.String()
+}
+
+// wellKnownServices maps a port number to its protocol -> service name.
+var wellKnownServices = map[int]map[string]string{
+	20:    {"tcp": "FTP-Data"},
+	21:    {"tcp": "FTP"},
+	22:    {"tcp": "SSH"},
+	23:    {"tcp": "Telnet"},
+	25:    {"tcp": "SMTP"},
+	53:    {"tcp": "DNS", "udp": "DNS"},
+	67:    {"udp": "DHCP"},
+	68:    {"udp": "DHCP"},
+	80:    {"tcp": "HTTP"},
+	110:   {"tcp": "POP3"},
+	123:   {"udp": "NTP"},
+	143:   {"tcp": "IMAP"},
+	161:   {"udp": "SNMP"},
+	389:   {"tcp": "LDAP"},
+	443:   {"tcp": "HTTPS"},
+	445:   {"tcp": "SMB"},
+	465:   {"tcp": "SMTPS"},
+	514:   {"udp": "Syslog"},
+	587:   {"tcp": "SMTP"},
+	636:   {"tcp": "LDAPS"},
+	993:   {"tcp": "IMAPS"},
+	995:   {"tcp": "POP3S"},
+	1433:  {"tcp": "MSSQL"},
+	1521:  {"tcp": "Oracle"},
+	2181:  {"tcp": "ZooKeeper"},
+	3306:  {"tcp": "MySQL"},
+	3389:  {"tcp": "RDP"},
+	5432:  {"tcp": "PostgreSQL"},
+	5672:  {"tcp": "AMQP"},
+	5900:  {"tcp": "VNC"},
+	6379:  {"tcp": "Redis"},
+	8080:  {"tcp": "HTTP-Alt"},
+	8443:  {"tcp": "HTTPS-Alt"},
+	9200:  {"tcp": "Elasticsearch"},
+	9300:  {"tcp": "Elasticsearch"},
+	11211: {"tcp": "Memcached", "udp": "Memcached"},
+	27017: {"tcp": "MongoDB"},
+}
+
+// portServiceName returns the well-known service name for port/protocol, or
+// "Unknown" when there's no match.
+func portServiceName(port int, protocol string) string {
+	if protos, ok := wellKnownServices[port]; ok {
+		if name, ok := protos[protocol]; ok {
+			return name
+		}
+	}
+	return "Unknown"
 }

@@ -1,8 +1,7 @@
 // Dedicated MTR pane. Its table and scroll containers survive snapshots so
 // live measurements never reset the user's position in a long route.
 import { el, statusChip } from "./dom.js";
-import { countCell, numCell, rttCell, textCell } from "./cells.js";
-import { columnWidthPx, setColumns } from "./columns.js";
+import { columnWidthPx, countCell, numCell, rttCell, setColumns, textCell } from "./columns.js";
 import { formatPct, selectColumns, targetAddress } from "./model.js";
 
 /** Hop, address, loss and latest/average RTT always show; the rest appear as

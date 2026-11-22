@@ -14,6 +14,9 @@ func TestBuildSnapshot_Empty(t *testing.T) {
 	if len(snap.Targets) != 0 {
 		t.Errorf("expected 0 targets, got %d", len(snap.Targets))
 	}
+	if snap.HTTPChecks != nil {
+		t.Errorf("HTTPChecks = %+v, want nil without HTTP results", snap.HTTPChecks)
+	}
 	if snap.Timestamp.IsZero() {
 		t.Error("Timestamp should not be zero")
 	}
@@ -226,7 +229,7 @@ func TestBuildSnapshot_HTTPChecksSummarizeEachResult(t *testing.T) {
 	}
 }
 
-func TestBuildSnapshotFromViews_PortsAndMTRHopsUseMilliseconds(t *testing.T) {
+func TestTargetSummaryFromView_PortsAndMTRHopsUseMilliseconds(t *testing.T) {
 	view := TargetView{
 		Host:       "router.example",
 		Thresholds: DefaultThresholds(),
@@ -240,9 +243,7 @@ func TestBuildSnapshotFromViews_PortsAndMTRHopsUseMilliseconds(t *testing.T) {
 		},
 	}
 
-	snap := BuildSnapshotFromViews([]TargetView{view}, nil)
-
-	target := snap.Targets[0]
+	target := TargetSummaryFromView(view)
 	wantPort := PortSummary{Port: 443, Protocol: "tcp", Status: "Open", Level: LevelOK, RTTMs: 2.5, OpenCount: 3, ClosedCount: 1}
 	if len(target.PortResults) != 1 || target.PortResults[0] != wantPort {
 		t.Errorf("PortResults = %+v, want [%+v]", target.PortResults, wantPort)
@@ -252,7 +253,27 @@ func TestBuildSnapshotFromViews_PortsAndMTRHopsUseMilliseconds(t *testing.T) {
 	if len(target.MTRHops) != 1 || target.MTRHops[0] != wantHop {
 		t.Errorf("MTRHops = %+v, want [%+v]", target.MTRHops, wantHop)
 	}
-	if snap.HTTPChecks != nil {
-		t.Errorf("HTTPChecks = %+v, want nil without HTTP results", snap.HTTPChecks)
+}
+
+// BenchmarkBuildSnapshotWithPortHistory exercises the web snapshot with full
+// RTT buffers. Its allocation cost should be independent of the history length.
+func BenchmarkBuildSnapshotWithPortHistory(b *testing.B) {
+	targets := make([]*TargetStats, 20)
+	for i := range targets {
+		target := NewTargetStats("host")
+		ports := []*PortCheckResult{NewPortCheckResult(80, "tcp"), NewPortCheckResult(443, "tcp")}
+		target.SetPortResults(ports)
+		for range historySize {
+			target.IncSent()
+			target.OnSuccess(time.Millisecond, 64)
+			for _, port := range ports {
+				port.SetResult("Open", time.Millisecond)
+			}
+		}
+		targets[i] = target
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		BuildSnapshot(targets, nil)
 	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -9,25 +10,25 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
-func TestAllTargetsUnresponsive(t *testing.T) {
+func TestPrintExitSummaryReportsAnyReply(t *testing.T) {
 	allLoss := []*stats.TargetStats{stats.NewTargetStats("a"), stats.NewTargetStats("b")}
 	for _, tgt := range allLoss {
 		tgt.IncSent()
 	}
-	if !allTargetsUnresponsive(allLoss) {
-		t.Error("expected true when no target has received a reply")
+	if printExitSummary(io.Discard, allLoss) {
+		t.Error("expected false when no target has received a reply")
 	}
 
 	partial := []*stats.TargetStats{stats.NewTargetStats("a"), stats.NewTargetStats("b")}
 	partial[0].IncSent()
 	partial[0].OnSuccess(5*time.Millisecond, 64)
 	partial[1].IncSent()
-	if allTargetsUnresponsive(partial) {
-		t.Error("expected false when at least one target received a reply")
+	if !printExitSummary(io.Discard, partial) {
+		t.Error("expected true when at least one target received a reply")
 	}
 
-	if !allTargetsUnresponsive(nil) {
-		t.Error("expected true for an empty target list")
+	if printExitSummary(io.Discard, nil) {
+		t.Error("expected false for an empty target list")
 	}
 }
 

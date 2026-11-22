@@ -16,13 +16,11 @@ func durs(ms ...int) []time.Duration {
 	return out
 }
 
-func TestReconstructHistoryWindow_NotYetWrapped(t *testing.T) {
-	// Ring not yet full: length < size, so entries are simply buf[:length]
-	// in chronological order — mirrors reconstructHistory's own fast path.
-	buf := make([]time.Duration, 10)
-	copy(buf, durs(1, 2, 3, 4, 5))
-	idx := 5
-	length := 5
+func TestHistorySnapshotWindow_NotYetWrapped(t *testing.T) {
+	var a rttAccumulator
+	for _, d := range durs(1, 2, 3, 4, 5) {
+		a.appendHistory(d, 10)
+	}
 
 	tests := []struct {
 		name string
@@ -36,20 +34,17 @@ func TestReconstructHistoryWindow_NotYetWrapped(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := reconstructHistoryWindow(buf, idx, length, tt.n)
+			got := a.historySnapshotWindow(tt.n)
 			assertDurationsEqual(t, got, tt.want)
 		})
 	}
 }
 
-func TestReconstructHistoryWindow_Wrapped(t *testing.T) {
-	// Ring full and wrapped: size=5, 8 total appends means the buffer holds
-	// [6,7,8,4,5] physically, idx=8%5=3 is both the next-write slot and the
-	// oldest entry's position; chronological order is [4,5,6,7,8].
-	buf := make([]time.Duration, 5)
-	copy(buf, durs(6, 7, 8, 4, 5))
-	idx := 8
-	length := 5
+func TestHistorySnapshotWindow_Wrapped(t *testing.T) {
+	var a rttAccumulator
+	for _, d := range durs(1, 2, 3, 4, 5, 6, 7, 8) {
+		a.appendHistory(d, 5)
+	}
 
 	tests := []struct {
 		name string
@@ -57,24 +52,25 @@ func TestReconstructHistoryWindow_Wrapped(t *testing.T) {
 		want []time.Duration
 	}{
 		{"window within one segment (no wrap in window)", 2, durs(7, 8)},
-		{"window straddling the wrap point", 3, durs(6, 7, 8)},
+		{"window straddling the wrap point", 4, durs(5, 6, 7, 8)},
 		{"window equal to full ring", 5, durs(4, 5, 6, 7, 8)},
 		{"window larger than ring", 20, durs(4, 5, 6, 7, 8)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := reconstructHistoryWindow(buf, idx, length, tt.n)
+			got := a.historySnapshotWindow(tt.n)
 			assertDurationsEqual(t, got, tt.want)
 		})
 	}
 }
 
-func TestReconstructHistoryWindow_Empty(t *testing.T) {
-	if got := reconstructHistoryWindow(nil, 0, 0, 10); got != nil {
+func TestHistorySnapshotWindow_Empty(t *testing.T) {
+	var a rttAccumulator
+	if got := a.historySnapshotWindow(10); got != nil {
 		t.Errorf("expected nil for empty history, got %v", got)
 	}
-	buf := make([]time.Duration, 5)
-	if got := reconstructHistoryWindow(buf, 0, 0, 10); got != nil {
+	a.history = make([]time.Duration, 5)
+	if got := a.historySnapshotWindow(10); got != nil {
 		t.Errorf("expected nil for zero length, got %v", got)
 	}
 }
@@ -85,7 +81,7 @@ func TestRttAccumulator_HistorySnapshotWindow_MatchesFullSnapshotTail(t *testing
 		a.appendHistory(time.Duration(i)*time.Millisecond, historySize)
 	}
 
-	full := a.historySnapshot()
+	full := a.historySnapshotWindow(historySize)
 	window := a.historySnapshotWindow(30)
 
 	if len(window) != 30 {

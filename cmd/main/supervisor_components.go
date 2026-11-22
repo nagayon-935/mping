@@ -11,7 +11,7 @@ import (
 
 // onFlap is the shared callback for route-change events.
 func (s *supervisor) onFlap(host, desc string) {
-	postLog(s.cfg.logCh, fmt.Sprintf("[yellow][%s] Route flap %s: %s[-]", clock(), host, desc))
+	postLog(s.cfg.logCh, logLine("yellow", fmt.Sprintf("Route flap %s: %s", host, desc)))
 }
 
 // startAll runs only in stateStopped, after the previous measurement has
@@ -53,7 +53,7 @@ func (s *supervisor) configureTarget(t *stats.TargetStats) {
 	logCh := s.cfg.logCh
 	t.SetEventSink(func(e stats.Event) {
 		if e.Kind == "health" {
-			postLog(logCh, fmt.Sprintf("[%s] %s: %s", e.At.Format("15:04:05"), tview.Escape(host), tview.Escape(e.Message)))
+			postLog(logCh, fmt.Sprintf("[%s] %s: %s", e.At.Format(logTimeLayout), tview.Escape(host), tview.Escape(e.Message)))
 		}
 	})
 }
