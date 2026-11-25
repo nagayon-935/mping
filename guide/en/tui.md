@@ -6,6 +6,7 @@
 
 | Key | Action |
 | :--- | :--- |
+| **?** | Open keyboard help. Press **?** or **Esc** to close it. |
 | **q** | Quit the application |
 | **s** | Stop all measurements and preserve their last statistics |
 | **S** | Restart measurements with new workers, preserving statistics (after **s**) |
@@ -49,14 +50,14 @@ Existing files, including symlink destinations, are preserved. Each save writes 
 
 ## RTT Graphs and Log panes
 
-* **RTT Graphs** — one chart per target with an auto-scaling Y-axis (expands immediately on a spike, shrinks after a hold period) and roughly 30 seconds of recent samples at the configured interval on the X-axis. ICMP and TCP/UDP port series are both supported. Lost probes are drawn as a red `×` on the zero line and columns where only some probes were lost as orange bars (the same colors as the **RTT 60s** sparkline); a chart header shows the window's loss, e.g. `loss 20% (6/30)`. The pane takes the spare rows left once the Ping Monitor has room for 12 hosts, the Log keeping its base height; it shows up to six charts at once and scrolls for more. Press **f** on the pane to fold or open it.
+* **RTT Graphs** — one chart per target with an auto-scaling Y-axis (expands immediately on a spike, shrinks after a hold period) and roughly 30 seconds of recent samples at the configured interval on the X-axis. ICMP and TCP/UDP port series are both supported. Lost probes are drawn as a red `×` on the zero line and columns where only some probes were lost as orange bars (the same colors as the **RTT 60s** sparkline); a chart header shows the window's loss, e.g. `loss 20% (6/30)`, in the default text colour up to the target’s warning threshold, orange above it, and red above the critical threshold. The pane takes the spare rows left once the Ping Monitor has room for 12 hosts, the Log keeping its base height; it shows up to six charts at once and scrolls for more. Press **f** on the pane to fold or open it.
 * **Log** — records threshold alerts and status changes. The same status change hitting several targets in the same second is logged once with the targets it hit (e.g. `[12:09:03] crit: Jitter > 50.0ms (3 hosts) — 1.1.1.1, 8.8.8.8, 9.9.9.9`).
 
-* **MTR Monitor** — Each target's header starts with its health (e.g. `○ OK`), followed by `loss from hop N` when loss starts at a hop and persists to the destination. A hop's loss is coloured only when it persists to every later hop: routers that rate-limit or ignore ICMP (`*` / 100% with replying hops after them) are shown in gray, not red.
+* **MTR Monitor** — Each target's header starts with its health (e.g. `○ OK`), followed by `loss from hop N` for the first hop whose effective loss exceeds the warning threshold. Effective loss is the lowest loss at that hop or any later hop. It uses the target’s ping loss thresholds. At or below the warning threshold, persistent loss uses the default text colour and loss that drops at a later hop is muted.
 
 ## TUI columns
 
-* **ST** — Target health: `○` OK, `△` warning, `×` critical, `–` waiting for results, `◼` stopped or finished. Always shown.
+* **ST** — Target health: `○` OK, `△` warning, `×` critical, `–` waiting for results, `◼` stopped or finished. Always shown. Named group headers count critical, warning, waiting and stopped hosts, with the worst state first. A fully healthy group shows `○ all OK`.
 * **SRC** — The bound source address, or the automatically detected source-address hint for the destination's address family.
 * **DST** — Resolved destination IP. Shown as `domain (IP)` when a hostname is given.
 * **DNS** — DNS server used to resolve the target (shown only when some target has one).

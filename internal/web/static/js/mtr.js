@@ -26,6 +26,10 @@ function abnormalHop(hop) {
   return hop.effective_loss_level === "warn" || hop.effective_loss_level === "crit";
 }
 
+function nonPersistentLoss(hop) {
+  return hop.loss_pct > hop.effective_loss_pct;
+}
+
 function hopCell(key, hop, features) {
   switch (key) {
     case "ttl": return numCell(String(hop.ttl));
@@ -38,7 +42,7 @@ function hopCell(key, hop, features) {
       const text = formatPct(hop.loss_pct);
       if (abnormalHop(hop)) return el("td", { className: "num" }, statusChip(hop.effective_loss_level, text));
       const cell = numCell(text);
-      if (hop.loss_pct > 0) cell.classList.add("muted");
+      if (nonPersistentLoss(hop)) cell.classList.add("muted");
       return cell;
     }
     case "sent": return countCell(hop.sent);

@@ -98,6 +98,15 @@ export function buildSections(targets, groups) {
   return sections;
 }
 
+/** Non-OK counts in display order, with the worst active status first. */
+export function groupSummary(targets) {
+  const counts = { crit: 0, warn: 0, pending: 0, stopped: 0, ok: 0 };
+  for (const target of targets) counts[targetStatus(target)]++;
+  if (targets.length > 0 && counts.ok === targets.length) return [{ level: "ok", label: "all OK" }];
+  return ["crit", "warn", "pending", "stopped"].filter(level => counts[level] > 0)
+    .map(level => ({ level, label: String(counts[level]) }));
+}
+
 export function summarize(targets) {
   const out = { total: targets.length, ok: 0, warn: 0, crit: 0, pending: 0 };
   for (const t of targets) out[rowLevel(t)]++;

@@ -90,7 +90,7 @@ func httpSinceStr(t time.Time) string {
 
 // renderHTTPMonitorTable builds the HTTP Monitor pane string.
 // It also detects status changes and appends log messages when log is non-nil.
-func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, th stats.Thresholds, availW int, lastStatuses map[string]string, log func(string)) string {
+func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastStatuses map[string]string, log func(string)) string {
 	// Compact: drop Min/Avg/Max/Since when screen is narrow.
 	compact := availW < minHTTPURLW+httpFixedW(false)+httpBorderW
 
@@ -111,7 +111,7 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, th stats.Threshold
 	// Compact: URL | Status | Code | Last | Up | Down
 	// Full:    URL | Status | Code | Last | Min | Avg | Max | Up | Down | Since
 	rtt := func(get func(stats.HTTPCheckView) time.Duration) func(stats.HTTPCheckView) boxCell {
-		return rttCell(get, formatHTTPRTT, th.RTT)
+		return plainCell(func(v stats.HTTPCheckView) string { return formatHTTPRTT(get(v)) })
 	}
 	all := []monitorColumn[stats.HTTPCheckView]{
 		{boxColumn{header: "URL", width: urlW}, plainCell(func(v stats.HTTPCheckView) string { return tview.Escape(v.URL) }), false},

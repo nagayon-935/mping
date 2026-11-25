@@ -14,14 +14,22 @@ function simpleTable(headers, rows, flexibleKey) {
   return el("div", { className: "table-wrap" }, table);
 }
 
+export function portLatencyCell(port) {
+  if (port.status === "Open") return rttCell(port.rtt_ms);
+  const timeout = (port.status === "Filtered" || port.status === "Open|Filtered") && port.rtt_ms > 0;
+  const cell = numCell(timeout ? "timeout" : "–");
+  if (timeout) cell.classList.add("muted");
+  return cell;
+}
+
 export function portsFor(t) {
   if (!t.port_results?.length) return el("p", { className: "empty", text: "No port checks for this target." });
   return simpleTable(
-    [["Port", false, "port"], ["Status", false, "statusLabel"], ["RTT", true, "rtt"], ["Open", true, "count"], ["Closed", true, "count"]],
+    [["Port", false, "port"], ["Status", false, "statusLabel"], ["Last", true, "rtt"], ["Open", true, "count"], ["Closed", true, "count"]],
     t.port_results.map((p) => [
       textCell(`${p.port}/${p.protocol}`, "mono"),
       el("td", {}, statusChip(p.level ?? "pending", p.status || "Waiting")),
-      rttCell(p.rtt_ms), countCell(p.open_count), countCell(p.closed_count),
+      portLatencyCell(p), countCell(p.open_count), countCell(p.closed_count),
     ]),
   );
 }

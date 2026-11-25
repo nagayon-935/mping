@@ -13,6 +13,10 @@ export function formatTime(value) {
   return p ? `${p.hour}:${p.minute}:${p.second}` : "–";
 }
 
+export function formatEventMessage(event, message = event.message) {
+  return event.count > 1 ? `${message} (${event.count} times, last ${formatTime(event.last_at)})` : message;
+}
+
 export function formatDateTime(value) {
   const p = parts(value, true);
   return p ? `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}` : "–";

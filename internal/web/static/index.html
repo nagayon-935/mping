@@ -204,7 +204,14 @@
         <h2 id="log-title" class="pane-title">Event log</h2>
         <p id="log-status" class="pane-hint">Events from all targets.</p>
       </div>
-      <button id="refresh-log" class="btn" type="button">Refresh</button>
+      <div class="log-controls">
+        <span class="tool"><select id="log-kind" aria-label="Event kind">
+          <option value="">All events</option>
+          <option value="health">Health changes only</option>
+        </select></span>
+        <input id="log-host-filter" class="filter" type="search" placeholder="Filter by host" aria-label="Filter events by host">
+        <button id="refresh-log" class="btn" type="button">Refresh</button>
+      </div>
     </div>
     <div id="log-body" class="pane-scroll"><p class="empty">Loading…</p></div>
   </section>

@@ -21,7 +21,8 @@ const (
 
 type mtrRow struct {
 	stats.HopView
-	lossLevel stats.Level
+	lossLevel     stats.Level
+	nonPersistent bool
 }
 
 // mtrLossCell displays raw loss with the effective level's styling.
@@ -31,7 +32,7 @@ func mtrLossCell(h mtrRow) boxCell {
 	case stats.LevelWarn, stats.LevelCrit:
 		return boxCell{text: statusSymbol(h.lossLevel) + " " + text, tag: targetStatusTags.of(h.lossLevel)}
 	default:
-		if h.LossPct > 0 {
+		if h.nonPersistent {
 			return boxCell{text: text, tag: "[gray]"}
 		}
 		return boxCell{text: text}
@@ -92,7 +93,7 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, 
 	firstLoss := true
 	for i, h := range hops {
 		lossLevel := view.Thresholds.HopLoss(effective[i])
-		hopRows[i] = mtrRow{HopView: h, lossLevel: lossLevel}
+		hopRows[i] = mtrRow{HopView: h, lossLevel: lossLevel, nonPersistent: h.LossPct > effective[i]}
 		if firstLoss && lossLevel != stats.LevelOK {
 			summary += fmt.Sprintf(" · loss from hop %d", h.TTL)
 			firstLoss = false

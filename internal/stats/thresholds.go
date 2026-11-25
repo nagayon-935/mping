@@ -100,19 +100,8 @@ func (t Thresholds) Loss(pct float64) Level {
 	}
 }
 
-// HopLoss classifies an MTR hop's loss percentage. Any loss at a hop is
-// worth a look, so it warns from the first lost probe and is critical at or
-// above LossCrit.
-func (t Thresholds) HopLoss(pct float64) Level {
-	switch {
-	case pct >= t.LossCrit:
-		return LevelCrit
-	case pct > 0:
-		return LevelWarn
-	default:
-		return LevelOK
-	}
-}
+// HopLoss classifies an MTR hop's loss percentage using the ping loss thresholds.
+func (t Thresholds) HopLoss(pct float64) Level { return t.Loss(pct) }
 
 // EffectiveHopLosses returns the minimum loss at or after each hop in route
 // order. A later hop with lower loss shows that at least some of the apparent

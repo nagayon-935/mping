@@ -248,3 +248,56 @@ func (d *webAccessDialog) show() {
 func (d *webAccessDialog) handle(event *tcell.EventKey) *tcell.EventKey {
 	return handleModalKey(event)
 }
+
+const keyHelpText = `?           Open or close keyboard help
+Esc         Close help, details or a dialog, or exit maximized view
+Tab         Cycle panes, or move focus within details or a dialog
+Shift+Tab   Move focus backward in dialogs
+Up / Down   Move through hosts or scroll the focused pane
+PgUp / PgDn  Move or scroll one page
+Left / Right  Move between dialog buttons or edit text
+Enter       Open host details, submit an input or activate a button
+f           Fold or expand the focused pane
+z           Toggle maximization of the focused pane
+w           Save a session or host report
+b           Show the Web UI URL and copy it with Enter
+a           Add a host from the overview
+d           Delete the selected host
+s           Stop measurement
+S           Restart measurement after stopping
+R           Reset statistics
+q           Quit
+Ctrl+C      Quit`
+
+type helpDialog struct {
+	app     *tview.Application
+	root    *tview.Pages
+	restore func(tview.Primitive)
+	focus   tview.Primitive
+	open    bool
+}
+
+func (d *helpDialog) show() {
+	d.focus = d.app.GetFocus()
+	d.open = true
+	help := tview.NewTextView().SetText(keyHelpText).SetWordWrap(true)
+	help.SetBackgroundColor(tcell.ColorBlack)
+	help.SetBorder(true).SetTitle(" Keyboard help ").SetBorderPadding(0, 0, 1, 1)
+	// Leave the previous page visible around the scrollable help.
+	column := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(nil, 1, 0, false).AddItem(help, 0, 1, true).AddItem(nil, 1, 0, false)
+	overlay := tview.NewFlex().
+		AddItem(nil, 0, 1, false).AddItem(column, 0, 8, true).AddItem(nil, 0, 1, false)
+	d.root.AddPage("keyHelp", overlay, true, true)
+	d.app.SetFocus(help)
+}
+
+func (d *helpDialog) handle(event *tcell.EventKey) *tcell.EventKey {
+	if event.Key() == tcell.KeyEscape || event.Rune() == '?' {
+		d.open = false
+		d.root.RemovePage("keyHelp")
+		d.restore(d.focus)
+		return nil
+	}
+	return event
+}

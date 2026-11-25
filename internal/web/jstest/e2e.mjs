@@ -78,7 +78,8 @@ try {
   await check("live badge and grouped rows", async () => {
     assert.match(await page.textContent("#badge"), /Live/);
     assert.match(await page.textContent("#updated"), /^· last probe /);
-    assert.deepEqual(await page.$$eval("tr.group-row", (r) => r.map((x) => x.textContent)), ["core (2)", "internet (3)", "Ungrouped (1)"]);
+    assert.deepEqual(await page.$$eval("tr.group-row td", cells => cells.map(cell => cell.firstChild.textContent)), ["core (2)", "internet (3)", "Ungrouped (1)"]);
+    assert.equal(await page.locator("tr.group-row").filter({ has: page.locator(".status") }).count(), 3);
     assert.equal(await page.$$eval("tr.target-row", (r) => r.length), 6);
     assert.ok(await page.isHidden("#pane-inspect"));
     assert.ok(await page.isVisible("#pane-mtr"));
@@ -325,13 +326,13 @@ try {
     const full=await geometry();
     assert.ok(full.height>200);assert.ok(full.scroll>full.visible);
     await many.$eval("#mtr-table-wrap", n => { n.scrollTop = 200; });
-    const sticky = await many.$eval("#mtr-table-wrap", n => {
-      const head = n.querySelector(".mtr-target-row th").getBoundingClientRect();
-      const bounds = n.getBoundingClientRect();
-      return {top:head.top-bounds.top, text:n.querySelector(".mtr-target-label").textContent};
+    const headings = await many.$eval("#mtr-table-wrap", wrap => {
+      const column = wrap.querySelector("thead th").getBoundingClientRect();
+      const target = wrap.querySelector(".mtr-target-row th").getBoundingClientRect();
+      return { column: column.top - wrap.getBoundingClientRect().top, targetBottom: target.bottom - column.bottom };
     });
-    assert.ok(Math.abs(sticky.top - 36) <= 1, "target heading stays beneath the column headings");
-    assert.match(sticky.text, /Targetmtr-0.example30 hops/);
+    assert.ok(Math.abs(headings.column) <= 1, "column headings stay at the top of the scroller");
+    assert.ok(headings.targetBottom < 0, "target heading scrolls away with its hops");
     await many.fill("#filter","mtr-0");
     await many.waitForFunction(()=>document.querySelectorAll("#mtr tbody").length===1);
     assert.equal((await geometry()).height,full.height);

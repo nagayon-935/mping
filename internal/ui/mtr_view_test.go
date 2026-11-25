@@ -192,7 +192,8 @@ func TestRenderMTRTable_EffectiveLoss(t *testing.T) {
 		absent   []string
 	}{
 		{"intermediate loss muted", 10, []string{"○ OK", "[gray] *", "[gray] 100.0%"}, []string{"loss from hop", "× 100.0%"}},
-		{"loss persists", 9, []string{"○ OK · loss from hop 2", "[orange] △ 100.0%", "[orange] △ 10.0%"}, nil},
+		{"low loss persists", 9, []string{"[gray] 100.0%", " 10.0%"}, []string{"loss from hop", "[gray] 10.0%", "△ 10.0%"}},
+		{"warning loss persists", 5, []string{"○ OK · loss from hop 2", "[orange] △ 100.0%", "[orange] △ 50.0%"}, nil},
 		{"destination silent", 0, []string{"○ OK · loss from hop 2", "[red] × 100.0%"}, nil},
 	}
 	for _, tt := range tests {

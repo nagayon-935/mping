@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { badgeIcon } from "../static/js/dom.js";
-import { targetStatus } from "../static/js/model.js";
+import { groupSummary, targetStatus } from "../static/js/model.js";
 import { renderMTR } from "../static/js/mtr.js";
 
 test("status symbols distinguish health, waiting and stopped measurements", () => {
@@ -46,12 +46,12 @@ test("MTR displays raw loss but only marks abnormal effective loss", (t) => {
     insertBefore: () => {},
   });
   const tests = [
-    { ip: "", loss_pct: 100, loss_level: "crit", effective_loss_level: "ok", muted: true },
-    { ip: "192.0.2.1", loss_pct: 20, loss_level: "warn", effective_loss_level: "ok", muted: true },
-    { ip: "192.0.2.2", loss_pct: 0, loss_level: "ok", effective_loss_level: "ok", muted: false },
-    { ip: "", loss_pct: 100, loss_level: "crit", effective_loss_level: "warn", symbol: "△" },
-    { ip: "192.0.2.3", loss_pct: 50, loss_level: "warn", effective_loss_level: "warn", symbol: "△" },
-    { ip: "", loss_pct: 100, loss_level: "crit", effective_loss_level: "crit", symbol: "×" },
+    { ip: "", loss_pct: 100, effective_loss_pct: 0, effective_loss_level: "ok", muted: true },
+    { ip: "192.0.2.1", loss_pct: 20, effective_loss_pct: 10, effective_loss_level: "ok", muted: true },
+    { ip: "192.0.2.2", loss_pct: 20, effective_loss_pct: 20, effective_loss_level: "ok", muted: false },
+    { ip: "", loss_pct: 100, effective_loss_pct: 21, effective_loss_level: "warn", symbol: "△" },
+    { ip: "192.0.2.3", loss_pct: 80, effective_loss_pct: 80, effective_loss_level: "warn", symbol: "△" },
+    { ip: "", loss_pct: 100, effective_loss_pct: 100, effective_loss_level: "crit", symbol: "×" },
   ];
   const hops = tests.map((hop, i) => ({ ...hop, ttl: i + 1 }));
   renderMTR(table, [{ id: 1, host: "example.com", health: { status: "ok" }, mtr_hops: hops }], { features: {} });
@@ -84,5 +84,18 @@ test("MTR displays raw loss but only marks abnormal effective loss", (t) => {
       assert.equal(address.children[0].textContent, "No reply");
       assert.equal(address.className, hop.muted ? "mono muted col-ip" : "mono col-ip");
     }
+  }
+});
+
+test("group summary text leads with the worst state and omits zero counts", () => {
+  for (const [states, expected] of [
+    [["ok", "ok"], " · ○ all OK"],
+    [["warn", "ok", "crit"], " · × 1 · △ 1"],
+    [["finished", "pending", "warn", "warn"], " · △ 2 · – 1 · ◼ 1"],
+    [["stopped"], " · ◼ 1"],
+  ]) {
+    const targets = states.map(state => ({ health: { status: state }, measurement_state: state }));
+    const text = groupSummary(targets).map(({ level, label }) => ` · ${badgeIcon(level)} ${label}`).join("");
+    assert.equal(text, expected);
   }
 });

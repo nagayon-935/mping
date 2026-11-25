@@ -361,7 +361,7 @@ func (tr *tableRenderer) renderRows(rowCtx []columnRowContext, texts [][]string,
 		case groupRowSpacer:
 			setGroupSpacerRow(tr.table, tableRow, len(tr.activeHeaders))
 		case groupRowHeader:
-			setGroupHeaderRow(tr.table, tableRow, tr.widths, row.groupName, len(tr.groups[row.groupIdx].Indices))
+			setGroupHeaderRow(tr.table, tableRow, tr.widths, tr.groups[row.groupIdx], rowCtx)
 		case groupRowSubHeader:
 			setHeaderRow(tr.table, tableRow, tr.activeHeaders, tr.widths, tr.activeAligns, tr.headerColor)
 		case groupRowUngrouped, groupRowTarget:

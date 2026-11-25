@@ -63,6 +63,7 @@ type HopSummary struct {
 	Recv               int     `json:"recv"`
 	LossPct            float64 `json:"loss_pct"`
 	LossLevel          Level   `json:"loss_level"`
+	EffectiveLossPct   float64 `json:"effective_loss_pct"`
 	EffectiveLossLevel Level   `json:"effective_loss_level"`
 	LastRTTMs          float64 `json:"last_rtt_ms"`
 	AvgRTTMs           float64 `json:"avg_rtt_ms"`
@@ -194,6 +195,7 @@ func hopSummaries(hops []HopView, thresholds Thresholds) []HopSummary {
 			Recv:               h.Recv,
 			LossPct:            h.LossPct,
 			LossLevel:          thresholds.HopLoss(h.LossPct),
+			EffectiveLossPct:   effective[i],
 			EffectiveLossLevel: thresholds.HopLoss(effective[i]),
 			LastRTTMs:          durationMs(h.LastRTT),
 			AvgRTTMs:           durationMs(h.AvgRTT),

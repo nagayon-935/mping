@@ -189,7 +189,7 @@ body {
 #mtr { border-collapse: separate; border-spacing: 0; }
 #mtr thead th { z-index: 3; height: 36px; }
 #mtr .mtr-target-row th {
-  position: sticky; top: 36px; z-index: 2; padding: 10px;
+  position: static; padding: 10px;
   background: var(--surface-2); border-top: 2px solid var(--border);
   box-shadow: inset 3px 0 var(--series);
   color: var(--ink); font-size: 13px; text-transform: none; letter-spacing: normal;
@@ -202,7 +202,7 @@ body {
 .mtr-target-kind { color: var(--series-ink); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
 .mtr-target-summary { grid-column: 2 / -1; display: flex; align-items: baseline; gap: 10px; }
 .mtr-target-loss { color: var(--ink-2); font-size: 12px; }
-#mtr td.muted { color: var(--muted); }
+.grid td.muted { color: var(--muted); }
 .mtr-target-count { color: var(--muted); font-size: 11px; font-weight: 400; }
 .mtr-target-address { grid-column: 2 / -1; color: var(--ink-2); font: 500 12px/1.4 var(--mono); }
 #mtr .mtr-waiting { color: var(--muted); font-size: 12px; }
@@ -395,6 +395,9 @@ canvas.summary-canvas { display: block; width: 100%; height: clamp(180px, 26dvh,
 .trace-message { padding: 20px 0; font-size: 13px; color: var(--ink-2); }
 .trace-message p { margin: 8px 0 0; overflow-wrap: anywhere; }
 .grid.log td { height: 36px; }
+.grid.log tr.lvl-warn td { background: var(--warn-tint); }
+.grid.log tr.lvl-crit td { background: var(--crit-tint); }
+.log-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
 /* All desktop panes occupy stable grid cells and scroll internally. */
 @media (min-width: 1100px) {

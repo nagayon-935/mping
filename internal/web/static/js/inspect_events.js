@@ -2,7 +2,7 @@
 // records the Log page lists for every host), refreshed while Summary is open.
 import { el, fetchJSON, statusChip } from "./dom.js";
 import { healthTransition } from "./health_text.js";
-import { formatTime } from "./time.js";
+import { formatEventMessage, formatTime } from "./time.js";
 
 const RECENT_EVENTS = 6;
 const REFRESH_MS = 5000;
@@ -14,7 +14,7 @@ export function describeEvent(event) {
   return {
     level: health ? health.level : null,
     kind: event.kind,
-    text: event.count > 1 ? `${message} (${event.count} times) (last ${formatTime(event.last_at)})` : message,
+    text: formatEventMessage(event, message),
   };
 }
 

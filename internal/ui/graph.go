@@ -25,9 +25,10 @@ const (
 // GetViewWindow() call per target, and the draw code just reads the
 // already-fetched fields instead of each re-fetching from TargetStats.
 type graphSeries struct {
-	label   string
-	history []time.Duration
-	lastRTT time.Duration
+	label      string
+	history    []time.Duration
+	lastRTT    time.Duration
+	thresholds stats.Thresholds
 }
 
 // GraphView is a custom primitive for rendering RTT graphs
@@ -69,10 +70,10 @@ func (g *GraphView) buildSeries(historyWindow int) []graphSeries {
 	var out []graphSeries
 	for _, t := range g.targets {
 		v := t.GetViewWindow(historyWindow)
-		out = append(out, graphSeries{label: v.Host, history: v.History, lastRTT: v.LastRTT})
+		out = append(out, graphSeries{label: v.Host, history: v.History, lastRTT: v.LastRTT, thresholds: v.Thresholds})
 		if g.includePorts {
 			for _, port := range v.PortResults {
-				out = append(out, graphSeries{label: fmt.Sprintf("%s %d/%s", v.Host, port.Port, port.Protocol), history: port.History, lastRTT: port.RTT})
+				out = append(out, graphSeries{label: fmt.Sprintf("%s %d/%s", v.Host, port.Port, port.Protocol), history: port.History, lastRTT: port.RTT, thresholds: v.Thresholds})
 			}
 		}
 	}
@@ -210,9 +211,9 @@ func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell,
 	headerStr := fmt.Sprintf("% -20s %s", s.label, formatRTT(s.lastRTT))
 	headerStr = truncateToDisplayWidth(headerStr, cell.width-2)
 	tview.Print(screen, headerStr, cell.x, cell.y, cell.width-2, tview.AlignLeft, tcell.ColorYellow)
-	if loss := windowLossText(s.history, windowPoints); loss != "" {
+	if loss, color := windowLoss(s.history, windowPoints, s.thresholds); loss != "" {
 		lossX := cell.x + runewidth.StringWidth(headerStr) + 2
-		tview.Print(screen, loss, lossX, cell.y, max(cell.x+cell.width-2-lossX, 0), tview.AlignLeft, vividRed)
+		tview.Print(screen, loss, lossX, cell.y, max(cell.x+cell.width-2-lossX, 0), tview.AlignLeft, color)
 	}
 
 	graphX := cell.x
@@ -262,9 +263,9 @@ func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell,
 	}
 }
 
-// windowLossText reports the lost probes among the trailing windowPoints
+// windowLoss reports the lost probes among the trailing windowPoints
 // samples ("loss 13% (4/30)"), or "" when none were lost.
-func windowLossText(history []time.Duration, windowPoints int) string {
+func windowLoss(history []time.Duration, windowPoints int, thresholds stats.Thresholds) (string, tcell.Color) {
 	if len(history) > windowPoints {
 		history = history[len(history)-windowPoints:]
 	}
@@ -275,9 +276,14 @@ func windowLossText(history []time.Duration, windowPoints int) string {
 		}
 	}
 	if lost == 0 {
-		return ""
+		return "", tcell.ColorDefault
 	}
-	return fmt.Sprintf("loss %.0f%% (%d/%d)", float64(lost)*100/float64(len(history)), lost, len(history))
+	pct := float64(lost) * 100 / float64(len(history))
+	color := tcell.ColorDefault
+	if level := thresholds.Loss(pct); level != stats.LevelOK {
+		color = levelColor(level)
+	}
+	return fmt.Sprintf("loss %.0f%% (%d/%d)", pct, lost, len(history)), color
 }
 
 // barRunes are the eighth-height blocks a bar's top cell is drawn with.

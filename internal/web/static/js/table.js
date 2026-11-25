@@ -1,12 +1,12 @@
 // Ping monitor table. Rebuilt from the snapshot on every update; row focus
 // and selection are restored by target ID.
-import { badgeIcon, el, statusChip } from "./dom.js";
+import { badgeIcon, el, statusChip, statusLabel } from "./dom.js";
 import { columnWidthPx, countCell, numCell, rttCell, setColumns, textCell } from "./columns.js";
 import { SORTS } from "./workspace.js";
 import { shortReason } from "./health_text.js";
 import { sparkline } from "./spark_view.js";
 import {
-  buildSections, cellLevels, formatPct, isIPLiteral, lossRate, matchesFilter, rowLevel,
+  buildSections, cellLevels, formatPct, groupSummary, isIPLiteral, lossRate, matchesFilter, rowLevel,
   selectColumns, statusReason, targetStatus,
 } from "./model.js";
 
@@ -115,8 +115,14 @@ export function renderTargets(table, view, onOpen, onSort) {
   const rows = [];
   for (const section of buildSections(visible, sortedFlat ? [] : meta.groups)) {
     if (section.name != null) {
-      rows.push(el("tr", { className: "group-row" },
-        el("td", { text: `${section.name} (${section.targets.length})`, attrs: { colspan: String(columns.length) } })));
+      const heading = el("td", { text: `${section.name} (${section.targets.length})`, attrs: { colspan: String(columns.length) } });
+      for (const { level, label } of groupSummary(section.targets)) {
+        const chip = statusChip(level, label);
+        chip.setAttribute("role", "img");
+        chip.setAttribute("aria-label", level === "ok" ? label : `${statusLabel(level)}: ${label}`);
+        heading.append(" · ", chip);
+      }
+      rows.push(el("tr", { className: "group-row" }, heading));
     }
     for (const t of section.targets) {
       const cells = cellLevels(t);

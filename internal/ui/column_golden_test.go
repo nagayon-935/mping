@@ -144,7 +144,7 @@ func TestColumnGolden_Groups(t *testing.T) {
 		wantHeader        = "║ST  │SRC   │DST                                                     │       RCV│      LOST│       LOSS%│         RTT│         AVG│         JIT│RTT 60s           │    SIZE│     MTU│   TTL│LAST LOSS  ║"
 		wantUngrouped     = "║–   │Auto  │standalone.example.com (10.0.0.1)                       │         0│         0│        0.0%│           -│           -│           -│                  │      56│       -│     -│-          ║"
 		wantSpacer        = "║    │      │                                                        │          │          │            │            │            │            │                  │        │        │      │           ║"
-		wantGroupHeader   = "║    │      │ ▸ core  (1 hosts)                                      │          │          │            │            │            │            │                  │        │        │      │           ║"
+		wantGroupHeader   = "║    │      │ ▸ core  (1 hosts) · – 1                                │          │          │            │            │            │            │                  │        │        │      │           ║"
 		wantSubHeader     = wantHeader
 		wantGroupedTarget = "║–   │Auto  │grouped.example.com (10.0.0.2)                          │         0│         0│        0.0%│           -│           -│           -│                  │      56│       -│     -│-          ║"
 	)
