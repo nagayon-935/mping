@@ -50,7 +50,7 @@ func mtrHostColW(availW int, compact bool) int {
 // renderMTRTable builds the MTR monitor pane string.
 // One table per target, separated by a blank line.
 // Columns: Hop, Host(ASN), Loss%, Snt, [Recv,] Last, Avg, [Min, Max, Jitter]
-func renderMTRTable(targets []*stats.TargetStats, availW int, srcIPv4, srcIPv6 string) string {
+func renderMTRTable(targets []*stats.TargetStats, availW int, sources sourceIPs) string {
 	// Compact mode: drop Recv/Min/Max/Jitter columns when screen is narrow.
 	// Threshold: minimum width to fit all columns with minMTRHostW host column.
 	compact := availW < mtrFixedW(false)+minMTRHostW
@@ -59,7 +59,7 @@ func renderMTRTable(targets []*stats.TargetStats, availW int, srcIPv4, srcIPv6 s
 
 	var sb strings.Builder
 	for ti, t := range targets {
-		renderMTRTargetTable(&sb, t, hostW, compact, srcIPv4, srcIPv6)
+		renderMTRTargetTable(&sb, t, hostW, compact, sources)
 		if ti < len(targets)-1 {
 			sb.WriteString("\n")
 		}
@@ -68,12 +68,12 @@ func renderMTRTable(targets []*stats.TargetStats, availW int, srcIPv4, srcIPv6 s
 }
 
 // renderMTRTargetTable renders one target's hop table.
-func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, compact bool, srcIPv4, srcIPv6 string) {
+func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, compact bool, sources sourceIPs) {
 	view := t.GetViewWindow(0)
 	hops := view.MTRHops
 
 	// Target label: "SrcIP -> DstIP" (with hostname prefix when applicable)
-	srcIP := displaySourceIPForDst(view.IP, srcIPv4, srcIPv6)
+	srcIP := sources.forDst(view.IP)
 	dstIP := view.IP
 	if dstIP == "" {
 		dstIP = view.Host

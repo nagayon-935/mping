@@ -29,6 +29,7 @@ type supervisorConfig struct {
 	durationDeadline    time.Time
 	sourceIPv4          string
 	sourceIPv6          string
+	sources             *sourceHints // per-target route-selected source; sourceIPv4/v6 stay the session-wide hints
 	network             string
 	packetSize          int
 	targets             []*stats.TargetStats

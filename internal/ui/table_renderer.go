@@ -24,8 +24,7 @@ import (
 // must post updates through that mailbox.
 type tableRenderer struct {
 	targets     []*stats.TargetStats
-	sourceIPv4  string
-	sourceIPv6  string
+	sources     sourceIPs
 	packetSize  int
 	sparkPoints int
 	groups      []TargetGroup
@@ -80,7 +79,7 @@ type tableRenderer struct {
 // headers/aligns/widths/priorities, seeds the Error column's data-derived
 // max width, and primes the initial column widths and log lines.
 func newTableRenderer(
-	targets []*stats.TargetStats, sourceIPv4, sourceIPv6 string, packetSize int, colOpts columnOptions, groups []TargetGroup,
+	targets []*stats.TargetStats, sources sourceIPs, packetSize int, colOpts columnOptions, groups []TargetGroup,
 	table *tview.Table, tablePane *tview.Flex, initialLogs []string, vs *viewState,
 ) *tableRenderer {
 	views := fetchViews(targets, max(colOpts.SparkPoints, 0))
@@ -94,7 +93,7 @@ func newTableRenderer(
 
 	cols := mainTableColumns(colOpts)
 	tr := &tableRenderer{
-		targets: targets, sourceIPv4: sourceIPv4, sourceIPv6: sourceIPv6, packetSize: packetSize,
+		targets: targets, sources: sources, packetSize: packetSize,
 		sparkPoints:      max(colOpts.SparkPoints, 0),
 		groups:           groups,
 		cols:             cols,
@@ -157,7 +156,7 @@ func (tr *tableRenderer) calcColumnWidths(views []stats.TargetView) []int {
 		}
 		maxWidth := runewidth.StringWidth(c.name)
 		for _, view := range views {
-			ctx := columnRowContext{view: view, sourceIPv4: tr.sourceIPv4, sourceIPv6: tr.sourceIPv6, packetSize: tr.packetSize}
+			ctx := columnRowContext{view: view, sources: tr.sources, packetSize: tr.packetSize}
 			if w := runewidth.StringWidth(c.render(ctx)); w > maxWidth {
 				maxWidth = w
 			}
@@ -301,7 +300,7 @@ func (tr *tableRenderer) renderTexts(views []stats.TargetView) ([]columnRowConte
 	texts := make([][]string, len(views))
 	for i, view := range views {
 		rowCtx[i] = columnRowContext{
-			view: view, sourceIPv4: tr.sourceIPv4, sourceIPv6: tr.sourceIPv6,
+			view: view, sources: tr.sources,
 			packetSize: tr.packetSize, lossRate: calcLossRate(view),
 			spark: new(sparkMemo),
 		}
@@ -316,7 +315,7 @@ func (tr *tableRenderer) scanTargets(views []stats.TargetView, rowCtx []columnRo
 	for i := range tr.targets {
 		view := views[i]
 		key := targetViewKey(view)
-		rowSourceIP := displaySourceIPForDst(view.IP, tr.sourceIPv4, tr.sourceIPv6)
+		rowSourceIP := tr.sources.forDst(view.IP)
 		if !view.Health.Configured && !view.LastLossTime.IsZero() {
 			lastTime, exists := tr.vs.lastLossTimes[key]
 			if !exists || view.LastLossTime.After(lastTime) {

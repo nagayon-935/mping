@@ -271,6 +271,7 @@ type runOptionsParams struct {
 	doneCh        chan struct{}
 	dispV4        string
 	dispV6        string
+	sources       *sourceHints
 	packetSize    int
 	preLogs       []string
 	cfg           config
@@ -304,6 +305,7 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 		DoneCh:           p.doneCh,
 		SourceIPv4:       p.dispV4,
 		SourceIPv6:       p.dispV6,
+		SourceForDst:     p.sources.forDst,
 		PacketSize:       p.packetSize,
 		InitialLogs:      p.preLogs,
 		Route:            uiRouteMode(p.cfg),

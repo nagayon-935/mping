@@ -14,7 +14,7 @@ type Settings struct {
 	PayloadBytes        int                `json:"payload_bytes"`
 	Interface           string             `json:"interface,omitempty"`
 	BoundSource         string             `json:"bound_source,omitempty"`
-	SourceIPv4Hint      string             `json:"source_ipv4_hint,omitempty"`
+	SourceIPv4Hint      string             `json:"source_ipv4_hint,omitempty"` // session-wide, from the first target with a route; Target.SourceIP is per target
 	SourceIPv6Hint      string             `json:"source_ipv6_hint,omitempty"`
 	Network             string             `json:"network"`
 	Count               int                `json:"count"`
@@ -55,6 +55,7 @@ type Target struct {
 	Group            string              `json:"group,omitempty"`
 	InterfaceMTU     int                 `json:"interface_mtu,omitempty"`
 	DNSServer        string              `json:"dns_server,omitempty"`
+	SourceIP         string              `json:"source_ip,omitempty"` // source the route to this target selects
 	MTRFlapCount     int                 `json:"mtr_flap_count"`
 	MTRLastFlapAt    time.Time           `json:"mtr_last_flap_at,omitzero"`
 	MTRLastFlapDesc  string              `json:"mtr_last_flap_description,omitempty"`

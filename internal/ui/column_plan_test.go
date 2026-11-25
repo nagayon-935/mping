@@ -17,7 +17,7 @@ func newPlanRenderer(t *testing.T, targets []*stats.TargetStats, opts columnOpti
 	t.Helper()
 	table := tview.NewTable().SetBorders(true)
 	pane := tview.NewFlex().AddItem(table, 0, 1, true)
-	tr := newTableRenderer(targets, "10.0.0.5", "", 56, opts, nil, table, pane, nil, newViewState(tview.NewTextView()))
+	tr := newTableRenderer(targets, sourceIPs{v4: "10.0.0.5"}, 56, opts, nil, table, pane, nil, newViewState(tview.NewTextView()))
 	_, texts := tr.renderTexts(fetchViews(targets, tr.sparkPoints))
 	return tr, texts
 }

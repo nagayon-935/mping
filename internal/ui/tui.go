@@ -58,9 +58,10 @@ type RunOptions struct {
 	MeasurementState func() string
 	Interval         time.Duration
 	Timeout          time.Duration
-	DoneCh           chan struct{} // receives count-completion notifications; nil means unlimited
-	SourceIPv4       string
-	SourceIPv6       string
+	DoneCh           chan struct{}             // receives count-completion notifications; nil means unlimited
+	SourceIPv4       string                    // session-wide IPv4 source hint
+	SourceIPv6       string                    // session-wide IPv6 source hint
+	SourceForDst     func(dstIP string) string // route-selected source per destination ("" = use the hint); may be nil
 	PacketSize       int
 	InitialLogs      []string
 	// WebControlURL is retained separately from the rotating Log. Empty disables
