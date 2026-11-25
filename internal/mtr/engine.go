@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	defaultMTRHops         = 30
-	defaultTracerouteHops  = 20
+	defaultMaxHops         = 30
+	unresponsiveMaxHops    = 20
 	defaultProbeInterval   = 1 * time.Second
 	defaultHopTimeout      = 1 * time.Second
 	defaultRediscoverEvery = 10 * time.Minute
@@ -50,7 +50,8 @@ type Config struct {
 	// PathOnly limits the engine to discovering the route, at start and every
 	// RediscoverEvery, without probing each hop every ProbeInterval.
 	PathOnly bool
-	// MaxHops defaults to 20 in path-only mode and 30 in MTR mode.
+	// MaxHops defaults to 30, or 20 when the destination does not answer Echo.
+	// An explicit limit applies regardless of destination reachability.
 	MaxHops         int
 	ProbeInterval   time.Duration
 	HopTimeout      time.Duration
@@ -67,15 +68,15 @@ type Config struct {
 	// AnnotationRetry is how long an incomplete ASN/PTR result is kept before
 	// it is looked up again. Defaults to defaultAnnotationRetry when <= 0.
 	AnnotationRetry time.Duration
+
+	limitUnresponsive bool
 }
 
 func (c *Config) withDefaults() Config {
 	out := *c
 	if out.MaxHops <= 0 {
-		out.MaxHops = defaultMTRHops
-		if out.PathOnly {
-			out.MaxHops = defaultTracerouteHops
-		}
+		out.MaxHops = defaultMaxHops
+		out.limitUnresponsive = true
 	}
 	if out.ProbeInterval <= 0 {
 		out.ProbeInterval = defaultProbeInterval

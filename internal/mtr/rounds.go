@@ -3,6 +3,7 @@ package mtr
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -10,12 +11,12 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
-// fanOut sends one TTL-limited probe per TTL in 1..n concurrently. Each
+// fanOut sends one TTL-limited probe per TTL in [firstTTL, lastTTL] concurrently. Each
 // worker writes its own result slot before the caller inspects the round.
 // When record is set, it can publish each completed sample immediately and
 // must be safe to call concurrently. sem bounds probes across the Engine.
-func fanOut(ctx context.Context, prober HopProber, sock HopSocket, dest string, timeout time.Duration, sem chan struct{}, n int, record func(ttl int, reply pinger.HopReply)) []pinger.HopReply {
-	replies := make([]pinger.HopReply, n)
+func fanOut(ctx context.Context, prober HopProber, sock HopSocket, dest string, timeout time.Duration, sem chan struct{}, firstTTL, lastTTL int, record func(ttl int, reply pinger.HopReply)) []pinger.HopReply {
+	replies := make([]pinger.HopReply, lastTTL-firstTTL+1)
 	var wg sync.WaitGroup
 	for i := range replies {
 		wg.Go(func() {
@@ -24,14 +25,15 @@ func fanOut(ctx context.Context, prober HopProber, sock HopSocket, dest string, 
 			}
 			defer release(sem)
 
+			ttl := firstTTL + i
 			traceID := prober.NextTraceID()
-			reply, err := prober.ProbeHop(ctx, sock, dest, i+1, traceID, timeout)
+			reply, err := prober.ProbeHop(ctx, sock, dest, ttl, traceID, timeout)
 			if err != nil || ctx.Err() != nil {
 				return
 			}
 			replies[i] = reply
 			if record != nil {
-				record(i+1, reply)
+				record(ttl, reply)
 			}
 		})
 	}
@@ -52,23 +54,74 @@ func routeLength(dest string, replies []pinger.HopReply) (int, error) {
 			unreachable = reply
 		}
 	}
-	if unreachable.UnreachableReason == "" {
-		return len(replies), nil
+	if err := unreachableError(dest, unreachable); err != nil {
+		return 0, err
 	}
-	if unreachable.SrcIP != "" {
-		return 0, fmt.Errorf("%s: %s (reported by %s)", dest, unreachable.UnreachableReason, unreachable.SrcIP)
+	return len(replies), nil
+}
+
+func unreachableError(dest string, reply pinger.HopReply) error {
+	if reply.UnreachableReason == "" {
+		return nil
 	}
-	return 0, fmt.Errorf("%s: %s", dest, unreachable.UnreachableReason)
+	if reply.SrcIP != "" {
+		return fmt.Errorf("%s: %s (reported by %s)", dest, reply.UnreachableReason, reply.SrcIP)
+	}
+	return fmt.Errorf("%s: %s", dest, reply.UnreachableReason)
+}
+
+// routeRound requires a destination Echo before probing individual hops above
+// the silent-destination limit. The high-TTL check samples only reachability.
+func routeRound(ctx context.Context, prober HopProber, sock HopSocket, dest string, cfg Config, sem chan struct{}, lastTTL int, record func(ttl int, reply pinger.HopReply)) ([]pinger.HopReply, int, error) {
+	firstLimit := lastTTL
+	if cfg.limitUnresponsive {
+		firstLimit = min(lastTTL, unresponsiveMaxHops)
+	}
+	var extension []pinger.HopReply
+	var reachability pinger.HopReply
+	probeExtension := func() {
+		if ctx.Err() != nil {
+			return
+		}
+		const reachabilityTTL = 255
+		reachability = fanOut(ctx, prober, sock, dest, cfg.HopTimeout, sem, reachabilityTTL, reachabilityTTL, nil)[0]
+		if reachability.ReachedDest && ctx.Err() == nil {
+			extension = fanOut(ctx, prober, sock, dest, cfg.HopTimeout, sem, firstLimit+1, lastTTL, record)
+		}
+	}
+	var wg sync.WaitGroup
+	if firstLimit < lastTTL && record != nil {
+		// Once a long route is known, check reachability alongside its first
+		// hops so one slow intermediate hop cannot delay the extension.
+		wg.Go(probeExtension)
+	}
+	replies := fanOut(ctx, prober, sock, dest, cfg.HopTimeout, sem, 1, firstLimit, record)
+	if firstLimit < lastTTL && record == nil && !slices.ContainsFunc(replies, func(reply pinger.HopReply) bool {
+		return reply.ReachedDest
+	}) {
+		probeExtension()
+	}
+	wg.Wait()
+	replies = append(replies, extension...)
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	hopCount, err := routeLength(dest, replies)
+	if err != nil && reachability.ReachedDest {
+		// The destination answered even though no individual hop probe
+		// identified its TTL. Publish the partial route.
+		return replies, len(replies), nil
+	}
+	if err == nil && reachability.UnreachableReason != "" && !replies[hopCount-1].ReachedDest {
+		err = unreachableError(dest, reachability)
+	}
+	return replies, hopCount, err
 }
 
 // discover publishes the path up to the first destination reply or MaxHops.
 // On failure or cancellation it preserves the last discovered route.
 func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTRStats, dest string, cfg Config, sem chan struct{}, ann *hopAnnotator) (int, error) {
-	replies := fanOut(ctx, prober, sock, dest, cfg.HopTimeout, sem, cfg.MaxHops, nil)
-	if err := ctx.Err(); err != nil {
-		return 0, err
-	}
-	hopCount, err := routeLength(dest, replies)
+	replies, hopCount, err := routeRound(ctx, prober, sock, dest, cfg, sem, cfg.MaxHops, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -89,7 +142,7 @@ func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.
 // Timeouts and explicit unreachable replies are loss. Unsent probes do not
 // count toward statistics.
 func probe(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTRStats, dest string, hopCount int, cfg Config, sem chan struct{}, ann *hopAnnotator) error {
-	replies := fanOut(ctx, prober, sock, dest, cfg.HopTimeout, sem, hopCount, func(ttl int, reply pinger.HopReply) {
+	_, _, err := routeRound(ctx, prober, sock, dest, cfg, sem, hopCount, func(ttl int, reply pinger.HopReply) {
 		if reply.Responded && reply.UnreachableReason == "" {
 			mtr.RecordReplyAnnotated(ttl, reply.SrcIP, ann.cached(reply.SrcIP), reply.RTT)
 			ann.note(reply.SrcIP)
@@ -97,10 +150,6 @@ func probe(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTR
 			mtr.RecordLoss(ttl)
 		}
 	})
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	_, err := routeLength(dest, replies)
 	return err
 }
 

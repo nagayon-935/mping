@@ -123,33 +123,40 @@ func TestEngine_RecordsSocketFailureAndRetries(t *testing.T) {
 	}
 }
 
-func TestEngine_SilentDestinationUsesModeHopLimit(t *testing.T) {
+func TestEngine_SilentDestinationUsesTwentyHopLimit(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
 		pathOnly bool
-		wantHops int
 	}{
-		{name: "traceroute", pathOnly: true, wantHops: 20},
-		{name: "MTR", wantHops: 30},
+		{name: "traceroute", pathOnly: true},
+		{name: "MTR"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				target := newTestTarget("8.8.8.8")
-				prober := newFakeProber(map[int]pinger.HopReply{1: {SrcIP: "10.0.0.1", Responded: true}})
-				engine := NewEngine(prober, []*stats.TargetStats{target}, Config{PathOnly: tt.pathOnly})
+				prober := &ttlTrackingProber{fakeProber: newFakeProber(map[int]pinger.HopReply{
+					1: {SrcIP: "10.0.0.1", Responded: true},
+				})}
+				engine := NewEngine(prober, []*stats.TargetStats{target}, Config{PathOnly: tt.pathOnly, ProbeInterval: time.Second})
 				engine.Start()
 				defer engine.Stop()
 				synctest.Wait()
 
 				hops := target.MTR().View()
-				if len(hops) != tt.wantHops || hops[0].IP != "10.0.0.1" || hops[tt.wantHops-1].IP != "" {
+				if len(hops) != 20 || hops[0].IP != "10.0.0.1" || hops[19].IP != "" {
 					t.Fatalf("partial path has %d hops: %+v", len(hops), hops)
 				}
-				if calls := prober.probeCalls(); calls != tt.wantHops {
-					t.Errorf("discovery sent %d probes, want %d", calls, tt.wantHops)
-				}
+				prober.expectTTLs(t, 20, true)
 				if err := target.MTR().Error(); err != "" {
 					t.Errorf("silent destination reported route error %q", err)
+				}
+
+				time.Sleep(time.Second)
+				synctest.Wait()
+				if tt.pathOnly {
+					prober.expectTTLs(t, 0, false)
+				} else {
+					prober.expectTTLs(t, 20, false)
 				}
 			})
 		})
@@ -159,10 +166,10 @@ func TestEngine_SilentDestinationUsesModeHopLimit(t *testing.T) {
 func TestEngine_PathOnlyUnreachableDiscoveryRetries(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		target := newTestTarget("8.8.8.8")
-		prober := newFakeProber(map[int]pinger.HopReply{
-			1: {SrcIP: "10.0.0.1", Responded: true, UnreachableReason: "Destination Host Unreachable"},
-		})
-		engine := NewEngine(prober, []*stats.TargetStats{target}, Config{PathOnly: true, RediscoverEvery: time.Minute, MaxHops: 3})
+		prober := &ttlTrackingProber{fakeProber: newFakeProber(map[int]pinger.HopReply{
+			255: {SrcIP: "10.0.0.1", Responded: true, UnreachableReason: "Destination Host Unreachable"},
+		})}
+		engine := NewEngine(prober, []*stats.TargetStats{target}, Config{PathOnly: true, RediscoverEvery: time.Minute})
 		engine.Start()
 		defer engine.Stop()
 		synctest.Wait()
@@ -171,6 +178,7 @@ func TestEngine_PathOnlyUnreachableDiscoveryRetries(t *testing.T) {
 		if got := target.MTR().Error(); got != wantError || len(target.MTR().View()) != 0 {
 			t.Fatalf("failed discovery published hops=%+v, error=%q", target.MTR().View(), got)
 		}
+		prober.expectTTLs(t, 20, true)
 
 		// A destination echo reply proves the target was reached even when
 		// another probe in the round received an ICMP rejection.
@@ -186,5 +194,6 @@ func TestEngine_PathOnlyUnreachableDiscoveryRetries(t *testing.T) {
 		if err := target.MTR().Error(); err != "" || len(hops) != 2 || hops[0].IP != "" || hops[1].IP != "8.8.8.8" {
 			t.Fatalf("recovered discovery published hops=%+v, error=%q", hops, err)
 		}
+		prober.expectTTLs(t, 20, false)
 	})
 }
