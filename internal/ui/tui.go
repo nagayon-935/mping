@@ -11,7 +11,7 @@ import (
 )
 
 func init() {
-	// Keep ambiguous-width box-drawing, block and marker glyphs (▁..█, ×, ▲, ·, ▸)
+	// Keep ambiguous-width box-drawing, block and marker glyphs (▁..█, ○, △, ×, ▲, ·, ▸)
 	// at width 1 even under East Asian locales (e.g. ja_JP.UTF-8), matching
 	// sparkWidth and strip column calculations.
 	runewidth.DefaultCondition.EastAsianWidth = false

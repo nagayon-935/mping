@@ -53,21 +53,22 @@ type TargetSummary struct {
 
 // HopSummary is a JSON-serialisable summary for a single MTR hop.
 type HopSummary struct {
-	TTL       int     `json:"ttl"`
-	IP        string  `json:"ip"` // "" when hop never responded
-	ASN       string  `json:"asn,omitempty"`
-	Country   string  `json:"country,omitempty"`
-	Org       string  `json:"org,omitempty"`
-	PTR       string  `json:"ptr,omitempty"`
-	Sent      int     `json:"sent"`
-	Recv      int     `json:"recv"`
-	LossPct   float64 `json:"loss_pct"`
-	LossLevel Level   `json:"loss_level"`
-	LastRTTMs float64 `json:"last_rtt_ms"`
-	AvgRTTMs  float64 `json:"avg_rtt_ms"`
-	MinRTTMs  float64 `json:"min_rtt_ms"`
-	MaxRTTMs  float64 `json:"max_rtt_ms"`
-	JitterMs  float64 `json:"jitter_ms"`
+	TTL                int     `json:"ttl"`
+	IP                 string  `json:"ip"` // "" when hop never responded
+	ASN                string  `json:"asn,omitempty"`
+	Country            string  `json:"country,omitempty"`
+	Org                string  `json:"org,omitempty"`
+	PTR                string  `json:"ptr,omitempty"`
+	Sent               int     `json:"sent"`
+	Recv               int     `json:"recv"`
+	LossPct            float64 `json:"loss_pct"`
+	LossLevel          Level   `json:"loss_level"`
+	EffectiveLossLevel Level   `json:"effective_loss_level"`
+	LastRTTMs          float64 `json:"last_rtt_ms"`
+	AvgRTTMs           float64 `json:"avg_rtt_ms"`
+	MinRTTMs           float64 `json:"min_rtt_ms"`
+	MaxRTTMs           float64 `json:"max_rtt_ms"`
+	JitterMs           float64 `json:"jitter_ms"`
 }
 
 // PortSummary is a JSON-serialisable summary for a single port check result.
@@ -180,23 +181,25 @@ func portSummaries(results []PortCheckView) []PortSummary {
 
 func hopSummaries(hops []HopView, thresholds Thresholds) []HopSummary {
 	var mtrHops []HopSummary
-	for _, h := range hops {
+	effective := EffectiveHopLosses(hops)
+	for i, h := range hops {
 		mtrHops = append(mtrHops, HopSummary{
-			TTL:       h.TTL,
-			IP:        h.IP,
-			ASN:       h.ASN,
-			Country:   h.Country,
-			Org:       h.Org,
-			PTR:       h.PTR,
-			Sent:      h.Sent,
-			Recv:      h.Recv,
-			LossPct:   h.LossPct,
-			LossLevel: thresholds.HopLoss(h.LossPct),
-			LastRTTMs: durationMs(h.LastRTT),
-			AvgRTTMs:  durationMs(h.AvgRTT),
-			MinRTTMs:  durationMs(h.MinRTT),
-			MaxRTTMs:  durationMs(h.MaxRTT),
-			JitterMs:  durationMs(h.Jitter),
+			TTL:                h.TTL,
+			IP:                 h.IP,
+			ASN:                h.ASN,
+			Country:            h.Country,
+			Org:                h.Org,
+			PTR:                h.PTR,
+			Sent:               h.Sent,
+			Recv:               h.Recv,
+			LossPct:            h.LossPct,
+			LossLevel:          thresholds.HopLoss(h.LossPct),
+			EffectiveLossLevel: thresholds.HopLoss(effective[i]),
+			LastRTTMs:          durationMs(h.LastRTT),
+			AvgRTTMs:           durationMs(h.AvgRTT),
+			MinRTTMs:           durationMs(h.MinRTT),
+			MaxRTTMs:           durationMs(h.MaxRTT),
+			JitterMs:           durationMs(h.Jitter),
 		})
 	}
 	return mtrHops

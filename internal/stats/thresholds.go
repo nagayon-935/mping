@@ -114,6 +114,22 @@ func (t Thresholds) HopLoss(pct float64) Level {
 	}
 }
 
+// EffectiveHopLosses returns the minimum loss at or after each hop in route
+// order. A later hop with lower loss shows that at least some of the apparent
+// loss was local to earlier responders.
+func EffectiveHopLosses(hops []HopView) []float64 {
+	losses := make([]float64, len(hops))
+	if len(hops) == 0 {
+		return losses
+	}
+	loss := hops[len(hops)-1].LossPct
+	for i := len(hops) - 1; i >= 0; i-- {
+		loss = min(loss, hops[i].LossPct)
+		losses[i] = loss
+	}
+	return losses
+}
+
 // Levels are the per-measurement levels of a target's latest statistics.
 type Levels struct {
 	// Loss is the lifetime loss ratio over completed probes; LevelNone until

@@ -50,10 +50,13 @@ Existing files, including symlink destinations, are preserved. Each save writes 
 ## RTT Graphs and Log panes
 
 * **RTT Graphs** — one chart per target with an auto-scaling Y-axis (expands immediately on a spike, shrinks after a hold period) and roughly 30 seconds of recent samples at the configured interval on the X-axis. ICMP and TCP/UDP port series are both supported. Lost probes are drawn as a red `×` on the zero line and columns where only some probes were lost as orange bars (the same colors as the **RTT 60s** sparkline); a chart header shows the window's loss, e.g. `loss 20% (6/30)`. The pane takes the spare rows left once the Ping Monitor has room for 12 hosts, the Log keeping its base height; it shows up to six charts at once and scrolls for more. Press **f** on the pane to fold or open it.
-* **Log** — records threshold alerts and status changes. The same status change hitting several targets in the same second is logged once with the targets it hit (e.g. `[12:09:03] crit: Jitter > 50.0ms ×3 — 1.1.1.1, 8.8.8.8, 9.9.9.9`).
+* **Log** — records threshold alerts and status changes. The same status change hitting several targets in the same second is logged once with the targets it hit (e.g. `[12:09:03] crit: Jitter > 50.0ms (3 hosts) — 1.1.1.1, 8.8.8.8, 9.9.9.9`).
+
+* **MTR Monitor** — Each target's header starts with its health (e.g. `○ OK`), followed by `loss from hop N` when loss starts at a hop and persists to the destination. A hop's loss is coloured only when it persists to every later hop: routers that rate-limit or ignore ICMP (`*` / 100% with replying hops after them) are shown in gray, not red.
 
 ## TUI columns
 
+* **ST** — Target health: `○` OK, `△` warning, `×` critical, `–` waiting for results, `◼` stopped or finished. Always shown.
 * **SRC** — The bound source address, or the automatically detected source-address hint for the destination's address family.
 * **DST** — Resolved destination IP. Shown as `domain (IP)` when a hostname is given.
 * **DNS** — DNS server used to resolve the target (shown only when some target has one).

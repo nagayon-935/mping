@@ -52,6 +52,48 @@ func (t levelTags) of(l stats.Level) string {
 	}
 }
 
+const levelStopped stats.Level = "stopped"
+
+var targetStatusTags = levelTags{crit: "[red]", warn: "[orange]", ok: "[green]", other: "[gray]"}
+
+func targetStatusLevel(v stats.TargetView) stats.Level {
+	switch v.MeasurementState {
+	case "stopped", "finished":
+		return levelStopped
+	}
+	return stats.Level(v.Health.Status)
+}
+
+func statusSymbol(level stats.Level) string {
+	switch level {
+	case stats.LevelOK:
+		return "○"
+	case stats.LevelWarn:
+		return "△"
+	case stats.LevelCrit:
+		return "×"
+	case levelStopped:
+		return "◼"
+	default:
+		return "–"
+	}
+}
+
+func statusLabel(level stats.Level) string {
+	switch level {
+	case stats.LevelOK:
+		return "OK"
+	case stats.LevelWarn:
+		return "Warning"
+	case stats.LevelCrit:
+		return "Critical"
+	case levelStopped:
+		return "Stopped"
+	default:
+		return "Waiting"
+	}
+}
+
 // statusColorTag returns a tview color tag for the given port status.
 func statusColorTag(status string) string {
 	return levelTags{crit: "[red]", warn: "[yellow]", ok: "[green]", other: "[white]"}.of(stats.PortStatusLevel(status))

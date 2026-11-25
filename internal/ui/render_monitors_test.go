@@ -99,7 +99,7 @@ func TestRenderTracerouteTable(t *testing.T) {
 		setRouteHops(target, "10.0.0.1")
 		target.MTR().CheckFlap([]string{"10.0.0.9"}, time.Date(2026, 1, 2, 3, 4, 5, 0, time.Local))
 		got := renderTracerouteTable([]*stats.TargetStats{target}, 120)
-		if !strings.Contains(got, "[FLAP ×1 03:04:05]") {
+		if !strings.Contains(got, "[FLAP 1 times 03:04:05]") {
 			t.Fatalf("expected a flap badge, got: %s", got)
 		}
 	})

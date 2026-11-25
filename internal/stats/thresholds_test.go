@@ -2,6 +2,7 @@ package stats
 
 import (
 	"math"
+	"slices"
 	"testing"
 	"time"
 )
@@ -106,5 +107,30 @@ func TestViewLevelsFollowTheTargetsThresholds(t *testing.T) {
 	}
 	if v.Levels.LastRTT != LevelCrit || v.Levels.Loss != LevelOK {
 		t.Fatalf("levels under custom thresholds = %+v, want last_rtt crit and loss ok", v.Levels)
+	}
+}
+
+func TestEffectiveHopLosses(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  []float64
+		want []float64
+	}{
+		{"trailing no reply", []float64{0, 100}, []float64{0, 100}},
+		{"middle no reply", []float64{0, 100, 0}, []float64{0, 0, 0}},
+		{"nonpersistent partial loss", []float64{20, 10, 0}, []float64{0, 0, 0}},
+		{"persistent loss", []float64{0, 90, 25, 50}, []float64{0, 25, 25, 50}},
+		{"empty", nil, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hops := make([]HopView, len(tt.raw))
+			for i, loss := range tt.raw {
+				hops[i].LossPct = loss
+			}
+			if got := EffectiveHopLosses(hops); !slices.Equal(got, tt.want) {
+				t.Errorf("EffectiveHopLosses(%v) = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
 	}
 }

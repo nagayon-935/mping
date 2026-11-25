@@ -445,7 +445,7 @@ try {
       return {addresses:[...path.querySelectorAll(".trace-address")].map(n=>n.textContent),
         run:path.querySelector(".is-run")?.textContent,summary:path.querySelector(".trace-summary").textContent};
     });
-    assert.deepEqual(result.addresses,["192.0.2.1","No reply × 4","192.0.2.6","No reply","No reply","192.0.2.9"]);
+    assert.deepEqual(result.addresses,["192.0.2.1","No reply (4 hops)","192.0.2.6","No reply","No reply","192.0.2.9"]);
     assert.match(result.run,/Hops 2–5/);
     assert.equal(result.summary,"9 hops · 6 no reply");
   });

@@ -91,7 +91,7 @@ func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
 			routeLines[j] = tview.Escape(routeLines[j])
 		}
 		if view.MTRFlapCount > 0 {
-			routeLines = append(routeLines, fmt.Sprintf("[FLAP ×%d %s]", view.MTRFlapCount, view.MTRLastFlapAt.Format(logTimeLayout)))
+			routeLines = append(routeLines, fmt.Sprintf("[FLAP %d times %s]", view.MTRFlapCount, view.MTRLastFlapAt.Format(logTimeLayout)))
 		}
 		// Host, hop count and initial TTL go on the first line only.
 		first := []string{tview.Escape(view.Host)}

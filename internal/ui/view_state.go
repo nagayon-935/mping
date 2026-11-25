@@ -134,5 +134,5 @@ func (g healthLogGroup) line() string {
 		more = fmt.Sprintf(" +%d", len(hosts)-logGroupMaxHosts)
 		hosts = hosts[:logGroupMaxHosts]
 	}
-	return fmt.Sprintf("[%s] %s: %s ×%d — %s%s", g.at, g.status, g.cause, len(g.hosts), strings.Join(hosts, ", "), more)
+	return fmt.Sprintf("[%s] %s: %s (%d hosts) — %s%s", g.at, g.status, g.cause, len(g.hosts), strings.Join(hosts, ", "), more)
 }

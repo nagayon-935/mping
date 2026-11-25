@@ -63,7 +63,7 @@ export function createLog(dom) {
           el("td", { className: "log-host", text: event.host }),
           el("td", { text: event.kind }),
           el("td", { className: "log-message", text: event.count > 1
-            ? `${event.message} ×${event.count} (last ${formatTime(event.last_at)})` : event.message })));
+            ? `${event.message} (${event.count} times) (last ${formatTime(event.last_at)})` : event.message })));
       }
       const head = el("thead", {}, el("tr", {}, ...["Time", "Host", "Kind", "Message"].map(text => el("th", { text, attrs: { scope: "col" } }))));
       const cols = el("colgroup", {}, ...["112px", "220px", "140px", ""].map(width => {

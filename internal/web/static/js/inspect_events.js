@@ -14,7 +14,7 @@ export function describeEvent(event) {
   return {
     level: health ? health.level : null,
     kind: event.kind,
-    text: event.count > 1 ? `${message} ×${event.count} (last ${formatTime(event.last_at)})` : message,
+    text: event.count > 1 ? `${message} (${event.count} times) (last ${formatTime(event.last_at)})` : message,
   };
 }
 

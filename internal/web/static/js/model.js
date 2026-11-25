@@ -16,6 +16,11 @@ export function rowLevel(t) {
   return Object.hasOwn(STATUS_LABELS, t.health?.status) ? t.health.status : "pending";
 }
 
+/** Status shown in live tables, including when measurement ends. */
+export function targetStatus(t) {
+  return t.measurement_state === "stopped" || t.measurement_state === "finished" ? "stopped" : rowLevel(t);
+}
+
 /** Why the target has its rowLevel, as the server explained it. */
 export function statusReason(t) {
   return t.health?.reason || "Waiting for a completed probe";

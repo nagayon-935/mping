@@ -1,13 +1,13 @@
 // Ping monitor table. Rebuilt from the snapshot on every update; row focus
 // and selection are restored by target ID.
-import { el, statusChip } from "./dom.js";
+import { badgeIcon, el, statusChip } from "./dom.js";
 import { columnWidthPx, countCell, numCell, rttCell, setColumns, textCell } from "./columns.js";
 import { SORTS } from "./workspace.js";
 import { shortReason } from "./health_text.js";
 import { sparkline } from "./spark_view.js";
 import {
   buildSections, cellLevels, formatPct, isIPLiteral, lossRate, matchesFilter, rowLevel,
-  selectColumns, statusReason,
+  selectColumns, statusReason, targetStatus,
 } from "./model.js";
 
 /** The overview keeps current measurements plus a one-minute RTT sparkline;
@@ -47,8 +47,8 @@ function targetCell(col, t, cells, features, group, focused, sparks) {
       // An OK row needs no explanation; leaving it blank makes the rows that
       // do need attention stand out. The row names what breached and its
       // value; the thresholds are in the title and in Summary.
-      const level = rowLevel(t);
-      const reasons = statusReason(t);
+      const level = targetStatus(t);
+      const reasons = level === "stopped" ? "" : statusReason(t);
       return el("td", { attrs: { title: reasons } }, statusChip(level),
         el("span", { className: "status-reason", text: level === "ok" ? "" : shortReason(reasons) }));
     }
@@ -59,19 +59,24 @@ function targetCell(col, t, cells, features, group, focused, sparks) {
     case "host": return hostCell(t, features, group, focused);
     case "ip": return textCell(t.ip || "–", "mono");
     case "asn": return textCell([t.asn, t.org].filter(Boolean).join(" ") || "–");
-    case "loss": return metricCell(numCell(t.recv + t.loss === 0 ? "–" : formatPct(lossRate(t)), cells.loss));
+    case "loss": return metricCell(numCell(t.recv + t.loss === 0 ? "–" : formatPct(lossRate(t))), cells.loss);
     case "sent": return countCell(t.sent);
     case "recv": return countCell(t.recv);
-    case "last": return metricCell(rttCell(t.last_rtt_ms, cells.last));
-    case "jitter": return metricCell(rttCell(t.jitter_ms, cells.jitter));
+    case "last": return metricCell(rttCell(t.last_rtt_ms), cells.last);
+    case "jitter": return metricCell(rttCell(t.jitter_ms), cells.jitter);
     case "ttl": return numCell(t.last_ttl > 0 ? String(t.last_ttl) : "–");
     default: return el("td");
   }
 }
 
-function metricCell(td) {
-  const text = td.textContent;
-  td.replaceChildren(el("span", { className: "metric-value", text }));
+function metricCell(td, level) {
+  const value = el("span", { className: "metric-value" });
+  if (level === "warn" || level === "crit") {
+    td.classList.add(`lvl-${level}`);
+    value.append(el("span", { className: "metric-icon", text: badgeIcon(level), attrs: { "aria-hidden": "true" } }));
+  }
+  value.append(td.textContent);
+  td.replaceChildren(value);
   return td;
 }
 

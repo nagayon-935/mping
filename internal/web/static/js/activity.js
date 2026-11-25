@@ -7,7 +7,7 @@ import { STATUS_LABELS } from "./model.js";
 import { formatTime } from "./time.js";
 import { activityItems, formatDuration, lastHourSummary, recentAcrossHosts } from "./activity_model.js";
 
-/** "▲ host" with the level spelled out for screen readers. */
+/** "△ host" with the level spelled out for screen readers. */
 function whoChip(level, who) {
   return el("span", { className: `status lvl-${level}` },
     el("span", { className: "status-icon", text: badgeIcon(level), attrs: { "aria-hidden": "true" } }),

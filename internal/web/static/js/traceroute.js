@@ -18,7 +18,7 @@ export function tracePath(target, features) {
       list.append(el("li", { className: "trace-hop is-unanswered is-run" },
         el("span", { className: "trace-number", text: "⋯", attrs: { "aria-label": `Hops ${hop.first} to ${hop.last}` } }),
         el("div", { className: "trace-identity" },
-          el("span", { className: "trace-address", text: `No reply × ${hop.count}` }),
+          el("span", { className: "trace-address", text: `No reply (${hop.count} hops)` }),
           el("span", { className: "trace-annotation", text: `Hops ${hop.first}–${hop.last}` }))));
       continue;
     }

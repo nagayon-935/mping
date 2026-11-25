@@ -106,7 +106,7 @@ test("recent events: newest first, identical simultaneous events fold into one l
   ];
   const out = recentAcrossHosts(events, 3);
   assert.deepEqual(out.map((e) => [e.kind, e.level, e.text, e.hosts]), [
-    ["ping", null, "Request timeout ×4", ["d"]],
+    ["ping", null, "Request timeout (4 times)", ["d"]],
     ["ping", null, "Request timeout", ["d"]],
     ["health", "warn", "Jitter 12.3 ms", ["c"]],
   ]);

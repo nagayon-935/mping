@@ -155,6 +155,16 @@ func explicitRank(asked bool, explicit, supplementary int) int {
 func mainTableColumns(o columnOptions) []column {
 	cols := []column{
 		{
+			name: "ST", align: tview.AlignLeft, base: 2, min: 2, max: 2,
+			render: func(ctx columnRowContext) string {
+				return statusSymbol(targetStatusLevel(ctx.view))
+			},
+			styled: func(ctx columnRowContext) string {
+				level := targetStatusLevel(ctx.view)
+				return targetStatusTags.of(level) + statusSymbol(level) + "[-]"
+			},
+		},
+		{
 			name: "SRC", align: tview.AlignLeft, base: 6, min: 4, max: 45,
 			dynamic: true, shrinkPriority: 20, growPriority: 10,
 			hideRank: explicitRank(o.SourceExplicit, rankSrcExplicit, rankSrc), setting: true,
@@ -330,7 +340,7 @@ func renderRowCells(cols []column, texts []string, widths, aligns []int, ctx col
 	for i, c := range cols {
 		text := formatCellText(texts[i], widths[i], aligns[i])
 		if c.styled != nil && aligns[i] == tview.AlignLeft && widths[i] >= runewidth.StringWidth(texts[i]) {
-			// Not cut: color the cells by loss, padded like formatCellText.
+			// The styled text fits. Pad it to the same width as the plain cell.
 			text = c.styled(ctx) + strings.Repeat(" ", widths[i]-runewidth.StringWidth(texts[i]))
 		}
 		cell := tview.NewTableCell(text).

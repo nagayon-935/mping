@@ -113,7 +113,7 @@ test("latestEvents orders repeated events by last_at and caps at limit", () => {
   ]);
   const d = describeEvent(events[0]);
   assert.equal(d.level, "crit");
-  assert.match(d.text, /^Jitter 55\.0ms > 50\.0ms ×4 \(last /);
+  assert.match(d.text, /^Jitter 55\.0ms > 50\.0ms \(4 times\) \(last /);
 });
 
 test("latestProbeAt compares parsed timestamps rather than RFC3339Nano text", () => {
