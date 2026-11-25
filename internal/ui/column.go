@@ -25,21 +25,21 @@ type columnRowContext struct {
 	spark *sparkMemo
 }
 
-// sparkMemo is one row's rendered sparkline, filled on first use.
+// sparkMemo is one row's rendered sparkline at one width, filled on first use.
 type sparkMemo struct {
-	done          bool
+	width         int
 	plain, styled string
 }
 
 // sparkline returns the row's plain and loss-colored sparkline of points
-// samples, sparkWidth cells wide.
-func (ctx columnRowContext) sparkline(points int) (plain, styled string) {
-	if m := ctx.spark; m != nil && m.done {
+// samples, width cells wide.
+func (ctx columnRowContext) sparkline(points, width int) (plain, styled string) {
+	if m := ctx.spark; m != nil && m.width == width && width > 0 {
 		return m.plain, m.styled
 	}
-	plain, styled = sparklines(ctx.view.History, points, sparkWidth)
+	plain, styled = sparklines(ctx.view.History, points, width)
 	if ctx.spark != nil {
-		*ctx.spark = sparkMemo{done: true, plain: plain, styled: styled}
+		*ctx.spark = sparkMemo{width: width, plain: plain, styled: styled}
 	}
 	return plain, styled
 }
@@ -73,6 +73,10 @@ type column struct {
 	// styled, when set, returns the cell text with tview color tags, at
 	// the same display width as render's text.
 	styled func(ctx columnRowContext) string
+	// fit, when set, draws the cell at exactly width cells (the column's
+	// width less padding) instead of padding render's text, so the content
+	// fills whatever width the layout gives the column.
+	fit func(ctx columnRowContext, width int) (styled string)
 	// setting marks a column that shows configuration rather than a
 	// measurement (payload size, source address, interface MTU): hidden, its
 	// value moves to the pane title when every row shares it.
@@ -225,12 +229,14 @@ func mainTableColumns(o columnOptions) []column {
 	if o.SparkPoints > 0 {
 		cols = append(cols, column{
 			name: sparkColumnName, align: tview.AlignRight, base: sparkWidth, fixed: true, hideRank: rankSpark,
+			// The layout reserves sparkWidth; the cell then draws the
+			// trend across the column's full width.
 			render: func(ctx columnRowContext) string {
-				plain, _ := ctx.sparkline(o.SparkPoints)
+				plain, _ := ctx.sparkline(o.SparkPoints, sparkWidth)
 				return plain
 			},
-			styled: func(ctx columnRowContext) string {
-				_, styled := ctx.sparkline(o.SparkPoints)
+			fit: func(ctx columnRowContext, width int) string {
+				_, styled := ctx.sparkline(o.SparkPoints, width)
 				return styled
 			},
 			color: func(columnRowContext, string) (tcell.Color, bool) { return vividCyan, true },
@@ -305,7 +311,9 @@ func renderRowCells(cols []column, texts []string, widths, aligns []int, ctx col
 	cells := make([]*tview.TableCell, len(cols))
 	for i, c := range cols {
 		text := tview.Escape(padBoxCell(texts[i], widths[i], aligns[i]))
-		if c.styled != nil {
+		if c.fit != nil && widths[i] > boxCellPadding {
+			text = " " + c.fit(ctx, widths[i]-boxCellPadding) + " "
+		} else if c.styled != nil {
 			// The styled text has the plain text's width; pad it the same
 			// way, on the side its alignment leaves open.
 			if spare := widths[i] - boxCellPadding - runewidth.StringWidth(texts[i]); spare >= 0 {

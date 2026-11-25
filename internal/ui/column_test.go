@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"github.com/mattn/go-runewidth"
 	"slices"
 	"testing"
 	"time"
@@ -199,13 +200,18 @@ func TestRenderErrorCell(t *testing.T) {
 	}
 }
 
-func TestRowSparklineIsComputedOncePerRow(t *testing.T) {
+func TestRowSparklineIsComputedOncePerRowAndWidth(t *testing.T) {
 	ctx := columnRowContext{view: stats.TargetView{History: []time.Duration{10 * time.Millisecond, 0}}, spark: new(sparkMemo)}
 	wantPlain, wantStyled := sparklines(ctx.view.History, 8, sparkWidth)
 
-	plain, styled := ctx.sparkline(8)
+	plain, styled := ctx.sparkline(8, sparkWidth)
+	history := ctx.view.History
 	ctx.view.History = nil // a recompute would now draw an empty sparkline
-	cachedPlain, cachedStyled := ctx.sparkline(8)
+	cachedPlain, cachedStyled := ctx.sparkline(8, sparkWidth)
+	ctx.view.History = history
+	if wide, _ := ctx.sparkline(8, 30); runewidth.StringWidth(wide) != 30 {
+		t.Errorf("a different width must redraw: got %d cells, want 30", runewidth.StringWidth(wide))
+	}
 
 	if plain != wantPlain || styled != wantStyled {
 		t.Fatalf("sparkline() = %q, %q, want %q, %q", plain, styled, wantPlain, wantStyled)
