@@ -233,7 +233,7 @@ try {
   });
 
   await check("enabled port checks appear within Summary", async () => {
-    await page.click("tr.target-row >> nth=0");
+    await page.getByRole("button", { name: "Inspect core-rtr1.example", exact: true }).click();
     await page.waitForFunction(()=>document.querySelector("#inspect-host").textContent === "core-rtr1.example");
     assert.match(await page.textContent("#inspect-body"), /443\/tcp/);
     assert.equal(await page.locator('#inspect-body [role="tab"]').count(),0);
@@ -826,7 +826,8 @@ try {
 
   await check("deleting needs a confirming second press", async () => {
     const row = ctl.locator("tr.target-row", { hasText: "added.e2e.example" });
-    await row.click();
+    // Canceling the previous confirmation leaves this host selected.
+    if (await row.getAttribute("aria-current") !== "true") await row.click();
     const del = ctl.getByRole("button", { name: "Delete added.e2e.example" });
     await del.click();
     assert.ok((await rowHosts()).includes("added.e2e.example"), "first press must not delete");
@@ -929,11 +930,16 @@ try {
     await shot(narrow,"mtr-stacked");
   });
 
-  await check("a window narrower than supported scrolls the page instead of compressing it", async () => {
+  await check("at phone width the monitor table scrolls within the page layout", async () => {
     await narrow.setViewportSize({width:390,height:844});
     await narrow.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
-    assert.ok(await narrow.evaluate(()=>document.documentElement.scrollWidth>=720));
-    assert.ok(await narrow.$eval("#workspace",n=>n.getBoundingClientRect().width>=720-1));
+    assert.ok(await narrow.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    const scrollLeft = await narrow.$eval("#pane-monitor .table-wrap", (wrap) => {
+      wrap.scrollLeft = 80;
+      return wrap.scrollLeft;
+    });
+    assert.ok(scrollLeft > 0, "required columns scroll inside the monitor");
+    assert.deepEqual(await narrow.locator("#targets th").allTextContents(), ["Status", "Host", "Loss %", "RTT"]);
   });
 
   await check("no console errors", async () => assert.deepEqual(problems, []));

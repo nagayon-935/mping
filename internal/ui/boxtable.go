@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattn/go-runewidth"
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/rivo/tview"
 )
@@ -111,19 +112,27 @@ func boxHeaderRow(cols []boxColumn) string {
 	return sb.String()
 }
 
-// boxRow builds one data row. No trailing newline is added.
-func boxRow(cols []boxColumn, cells []boxCell) string {
-	var sb strings.Builder
+// writeBoxRow appends one data row without a trailing newline.
+func writeBoxRow(sb *strings.Builder, cols []boxColumn, cells []boxCell) {
 	sb.WriteString("[white]│")
 	for i, c := range cols {
-		if tag := cells[i].tag; tag != "" {
-			sb.WriteString(tag + tview.Escape(c.pad(cells[i].text)) + "[-][white]│")
-		} else {
-			sb.WriteString("[white]" + tview.Escape(c.pad(cells[i].text)) + "[white]│")
+		cell := cells[i]
+		tag := cell.tag
+		if tag == "" {
+			tag = "[white]"
 		}
+		sb.WriteString(tag)
+		text := c.pad(cell.text)
+		if strings.Contains(text, "[") {
+			text = tview.Escape(text)
+		}
+		sb.WriteString(text)
+		if cell.tag != "" {
+			sb.WriteString("[-]")
+		}
+		sb.WriteString("[white]│")
 	}
 	sb.WriteString("[-]")
-	return sb.String()
 }
 
 // boxSpanRow draws a padded row spanning all columns.
@@ -131,13 +140,17 @@ func boxSpanRow(text string, innerW int, colorTag string) string {
 	return "[white]│" + colorTag + tview.Escape(paddedCell(text, innerW)) + "[white::-]│[-]"
 }
 
-// writeLabelledBoxTable writes a table with a spanning target label above
-// the column headings.
-func writeLabelledBoxTable(sb *strings.Builder, cols []boxColumn, label string, groups [][][]boxCell, empty string) {
+// writeLabelledBoxTable puts the target label and any notice above the column headings.
+func writeLabelledBoxTable(sb *strings.Builder, cols []boxColumn, label string, notice boxCell, groups [][][]boxCell, empty string) {
 	widths := boxWidths(cols)
 	innerW := boxInnerWidth(cols)
 	fmt.Fprintln(sb, boxBorder([]int{innerW}, borderTop))
 	fmt.Fprintln(sb, boxSpanRow(label, innerW, "[yellow::b]"))
+	if notice.text != "" {
+		for _, line := range strings.Split(runewidth.Wrap(notice.text, innerW-2), "\n") {
+			fmt.Fprintln(sb, boxSpanRow(line, innerW, notice.tag))
+		}
+	}
 	fmt.Fprintln(sb, boxBorder(widths, borderIntro))
 	writeBoxBody(sb, cols, groups, empty)
 }
@@ -159,7 +172,8 @@ func writeBoxBody(sb *strings.Builder, cols []boxColumn, groups [][][]boxCell, e
 	fmt.Fprintln(sb, boxBorder(widths, borderMid))
 	for i, rows := range groups {
 		for _, cells := range rows {
-			fmt.Fprintln(sb, boxRow(cols, cells))
+			writeBoxRow(sb, cols, cells)
+			sb.WriteByte('\n')
 		}
 		if i < len(groups)-1 {
 			fmt.Fprintln(sb, boxBorder(widths, borderMid))

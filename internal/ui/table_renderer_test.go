@@ -234,15 +234,43 @@ func TestColumnWidthsFollowLateArrivingASN(t *testing.T) {
 	}
 
 	before := []stats.TargetView{{Host: "example.com", IP: "192.0.2.1"}}
-	_, beforeTexts := tr.renderTexts(before)
+	beforeTexts := tr.renderLayoutTexts(testColumnRows(before))
 	widthsBefore := tr.calcColumnWidths(beforeTexts)
 
 	after := []stats.TargetView{{Host: "example.com", IP: "192.0.2.1", ASN: "AS15169", Org: "Google LLC"}}
-	_, afterTexts := tr.renderTexts(after)
+	afterTexts := tr.renderLayoutTexts(testColumnRows(after))
 	widthsAfter := tr.calcColumnWidths(afterTexts)
 
 	if widthsAfter[asnIdx] <= widthsBefore[asnIdx] {
 		t.Errorf("expected the ASN column to widen once ASN data arrived, got before=%d after=%d",
 			widthsBefore[asnIdx], widthsAfter[asnIdx])
+	}
+}
+
+func TestTableRendererGroupedScrollDrawsLatestSparkline(t *testing.T) {
+	targets := make([]*stats.TargetStats, 64)
+	for i := range targets {
+		targets[i] = replyingTarget(fmt.Sprintf("192.0.2.%d", i+1), 10*time.Millisecond)
+	}
+	tr := newTestTableRenderer(targets, 240)
+	tr.cols = mainTableColumns(columnOptions{SparkPoints: 60})
+	tr.sparkPoints = 60
+	tr.groups = []TargetGroup{{Name: "Last section", Indices: []int{0}}}
+	tr.update()
+
+	targets[0].IncSent()
+	targets[0].OnFailure("Timeout")
+	tr.selectionEnabled = true
+	tr.selectedID = targets[0].ID()
+	tr.scrollToSelection = true
+	tr.update()
+
+	col := slices.Index(tr.activeHeaders, sparkColumnName)
+	if col < 0 {
+		t.Fatalf("%s column missing", sparkColumnName)
+	}
+	cell := tr.table.GetCell(tr.selectedRow(), col)
+	if !strings.Contains(cell.Text, "×") {
+		t.Errorf("scrolled target sparkline = %q, want latest timeout marker", cell.Text)
 	}
 }

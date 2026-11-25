@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -11,6 +12,33 @@ import (
 
 	"github.com/nagayon-935/mping/internal/stats"
 )
+
+func BenchmarkRenderMTRTable(b *testing.B) {
+	const targetCount, hopCount = 24, 20
+	targets := make([]*stats.TargetStats, targetCount)
+	for i := range targets {
+		hops := make([]stats.HopView, hopCount)
+		for j := range hops {
+			hops[j] = stats.HopView{
+				TTL: j + 1, IP: fmt.Sprintf("198.51.100.%d", j+1),
+				ASN: "AS64496", Org: "Network Operator [East]",
+				Sent: 100, Recv: 90 + j%11, AvgRTT: time.Duration(1000+1711*j) * time.Microsecond,
+			}
+		}
+		targets[i] = buildMTRTarget(fmt.Sprintf("router-%02d.example", i), fmt.Sprintf("192.0.2.%d", i+1), hops)
+	}
+	for _, layout := range []struct {
+		name  string
+		width int
+	}{{"compact", 80}, {"full", 160}} {
+		b.Run(layout.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				renderMTRTable(targets, layout.width, sourceIPs{})
+			}
+		})
+	}
+}
 
 // buildMTRTarget creates a TargetStats with a set of pre-loaded hops for testing.
 func buildMTRTarget(host, ip string, hops []stats.HopView) *stats.TargetStats {
@@ -32,6 +60,47 @@ func buildMTRTarget(host, ip string, hops []stats.HopView) *stats.TargetStats {
 		}
 	}
 	return t
+}
+
+func TestRouteViewsShowDiscoveryErrorWithOrWithoutHops(t *testing.T) {
+	const hopIP = "192.0.2.1"
+	const failure = "destination unreachable"
+	for _, tc := range []struct {
+		name string
+		hops []stats.HopView
+	}{
+		{name: "empty"},
+		{name: "partial", hops: []stats.HopView{{TTL: 1, IP: hopIP}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := buildMTRTarget("example.com", "192.0.2.10", tc.hops)
+			target.MTR().SetError(failure)
+			targets := []*stats.TargetStats{target}
+			for _, view := range []struct {
+				name string
+				text string
+			}{
+				{"traceroute table", renderTracerouteTable(targets, 120)},
+				{"MTR table", renderMTRTable(targets, 120, sourceIPs{})},
+				{"traceroute details", renderHostDetails(target, RunOptions{Route: RoutePath})},
+				{"MTR details", renderHostDetails(target, RunOptions{Route: RouteMonitor})},
+			} {
+				t.Run(view.name, func(t *testing.T) {
+					if !strings.Contains(view.text, "Route discovery failed: "+failure) {
+						t.Fatalf("missing route error in %q", view.text)
+					}
+					if len(tc.hops) > 0 && !strings.Contains(view.text, hopIP) {
+						t.Fatalf("missing discovered hop in %q", view.text)
+					}
+					for _, pending := range []string{"Discovering...", "Route not discovered yet."} {
+						if strings.Contains(view.text, pending) {
+							t.Fatalf("route error appeared alongside pending status %q", pending)
+						}
+					}
+				})
+			}
+		})
+	}
 }
 
 func TestMtrIPStr(t *testing.T) {

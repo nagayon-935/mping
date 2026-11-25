@@ -32,26 +32,27 @@ func diffProbeConfig(oldCfg, newCfg config) []string {
 	return changed
 }
 
-func (s *supervisor) reconcileTargets(cfg config, specs []targetSpec) (targets []*stats.TargetStats, added []int, reused map[*stats.TargetStats]bool) {
+func (s *supervisor) reconcileTargets(specs []targetSpec) (targets []*stats.TargetStats, added []int, reused map[*stats.TargetStats]bool) {
 	type key struct{ host, ip string }
-	identity := func(spec targetSpec) key { return key{spec.Host, spec.PinnedIP} }
 	old := map[key][]*stats.TargetStats{}
 	for i, spec := range s.cfg.specs {
-		old[identity(spec)] = append(old[identity(spec)], s.cfg.targets[i])
+		id := key{spec.Host, spec.PinnedIP}
+		old[id] = append(old[id], s.cfg.targets[i])
 	}
 	targets = make([]*stats.TargetStats, len(specs))
 	added = []int{}
 	reused = map[*stats.TargetStats]bool{}
 	for i, spec := range specs {
-		entries := old[identity(spec)]
-		if len(entries) > 0 {
-			targets[i] = entries[0]
-			old[identity(spec)] = entries[1:]
-			reused[targets[i]] = true
-		} else {
-			targets[i] = s.newLiveTargets(cfg, []targetSpec{spec})[0]
+		id := key{spec.Host, spec.PinnedIP}
+		entries := old[id]
+		if len(entries) == 0 {
+			targets[i] = s.newLiveTarget(spec)
 			added = append(added, i)
+			continue
 		}
+		targets[i] = entries[0]
+		old[id] = entries[1:]
+		reused[targets[i]] = true
 	}
 	return targets, added, reused
 }
@@ -63,7 +64,7 @@ func (s *supervisor) reloadLive(cfg config, specs []targetSpec, groups []ui.Targ
 			reason = "probe settings changed: " + strings.Join(changed, ", ")
 			return nil
 		}
-		targets, added, reused := s.reconcileTargets(cfg, specs)
+		targets, added, reused := s.reconcileTargets(specs)
 		var dynamic dynamicPinger
 		if s.state == stateRunning && (len(added) > 0 || len(reused) != len(s.cfg.targets)) {
 			var ok bool

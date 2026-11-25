@@ -115,7 +115,13 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, availW int,
 		}
 		groups = [][][]boxCell{rows}
 	}
-	writeLabelledBoxTable(sb, boxCols, label, groups, "Discovering...")
+	var notice boxCell
+	empty := "Discovering..."
+	if view.MTRError != "" {
+		notice = boxCell{text: routeDiscoveryFailed + view.MTRError, tag: levelTag(stats.LevelWarn)}
+		empty = ""
+	}
+	writeLabelledBoxTable(sb, boxCols, label, notice, groups, empty)
 }
 
 // mtrIPStr returns the display string for a hop's IP, PTR name and AS.

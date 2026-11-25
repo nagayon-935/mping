@@ -123,8 +123,8 @@ func (g *GraphView) preferredHeight(width int) int {
 	return visibleRows*graphPreferredRowHeight + 2
 }
 
-// seriesCount is len(g.buildSeries(...)) without fetching any history or
-// label data: one series per target, plus one per port check when
+// seriesCount counts graph series without fetching any history or label
+// data: one series per target, plus one per port check when
 // includePorts is set (Host Details).
 func (g *GraphView) seriesCount() int {
 	n := len(g.targets)

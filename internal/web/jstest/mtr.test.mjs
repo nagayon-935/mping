@@ -18,16 +18,46 @@ test("status symbols distinguish health, waiting and stopped measurements", () =
   }
 });
 
-function createElement() {
+function createElement(tag) {
   const node = {
+    tag,
     children: [],
     attributes: {},
     style: {},
     className: "",
-    setAttribute(name, value) { node.attributes[name] = value; },
-    append(...children) { node.children.push(...children); },
-    replaceChildren(...children) { node.children = children; },
-    classList: { add(name) { node.className += ` ${name}`; } },
+    get cells() { return this.children; },
+    get firstElementChild() { return this.children[0] ?? null; },
+    get nextElementSibling() {
+      const siblings = this.parent?.children;
+      return siblings?.[siblings.indexOf(this) + 1] ?? null;
+    },
+    setAttribute(name, value) { this.attributes[name] = value; },
+    insertBefore(child, before) {
+      child.remove?.();
+      const index = before ? this.children.indexOf(before) : this.children.length;
+      this.children.splice(index, 0, child);
+      if (child.remove) child.parent = this;
+    },
+    append(...children) { for (const child of children) this.insertBefore(child, null); },
+    remove() {
+      if (this.parent) this.parent.children.splice(this.parent.children.indexOf(this), 1);
+      this.parent = null;
+    },
+    replaceWith(child) {
+      this.parent.insertBefore(child, this);
+      this.remove();
+    },
+    replaceChildren(...children) {
+      this.children = [];
+      this.append(...children);
+    },
+    classList: {
+      add(name) { node.className += ` ${name}`; },
+      toggle(name, enabled) {
+        if (enabled) this.add(name);
+        else node.className = node.className.split(" ").filter(part => part !== name).join(" ");
+      },
+    },
   };
   return node;
 }
@@ -41,16 +71,20 @@ function mockDocument(t) {
   });
 }
 
-function renderTargetMTR(target) {
-  const table = Object.assign(createElement(), {
+function createMTRTable() {
+  const table = Object.assign(createElement("table"), {
     parentElement: { clientWidth: 400, scrollLeft: 0, scrollTop: 0 },
-    tBodies: [],
-    tHead: createElement(),
-    querySelector: () => null,
-    insertBefore: () => {},
+    tHead: createElement("thead"),
+    querySelector(selector) { return this.children.find((child) => child.tag === selector); },
   });
+  table.append(table.tHead);
+  return table;
+}
+
+function renderTargetMTR(target) {
+  const table = createMTRTable();
   renderMTR(table, [target], { features: {} });
-  const [head, ...rows] = table.children[0].children;
+  const [head, ...rows] = table.children.find((child) => child.tag === "tbody").children;
   const summary = head.children[0].children[0].children.find((node) => node.className === "mtr-target-summary");
   return { summary, rows };
 }
@@ -99,16 +133,46 @@ test("MTR displays raw loss but only marks abnormal effective loss", (t) => {
 test("MTR keeps its hop count and discovery messages", (t) => {
   mockDocument(t);
   const target = { host: "example.com", ip: "192.0.2.10", health: { status: "crit" } };
+  const partial = [{ ttl: 1, ip: "192.0.2.1", recv: 1, loss_pct: 0 }];
   for (const [hops, error, count, message] of [
     [[], "", "Waiting for hops", "Waiting for hop replies…"],
-    [[], "probe failed", "Waiting for hops", "Route discovery failed: probe failed"],
-    [[{ ttl: 1, ip: "192.0.2.1", recv: 1, loss_pct: 0 }], "", "1 hop"],
+    [[], "probe failed", "0 hops", "Route discovery failed: probe failed"],
+    [partial, "", "1 hop"],
+    [partial, "destination unreachable", "1 hop", "Route discovery failed: destination unreachable"],
   ]) {
     const { summary, rows } = renderTargetMTR({ ...target, mtr_hops: hops, mtr_error: error });
     assert.deepEqual(summary.children.map(node => [node.className, node.textContent]),
       [["mtr-target-count", count]]);
     if (message) assert.equal(rows[0].children[0].textContent, message);
+    assert.equal(rows.length, hops.length + Number(Boolean(message)));
+    if (hops.length) {
+      const address = rows.at(-1).children.find(node => node.className.split(" ").includes("col-ip"));
+      assert.equal(address.children[0].textContent, hops[0].ip);
+    }
   }
+});
+
+test("MTR updates only changed hop cells and removes obsolete hops", (t) => {
+  mockDocument(t);
+  const table = createMTRTable();
+  const meta = { features: {} };
+  const hop = { ttl: 1, ip: "192.0.2.1", loss_pct: 0, last_rtt_ms: 12 };
+  const target = { id: 1, host: "example.com", mtr_hops: [hop, { ...hop, ttl: 2 }] };
+  renderMTR(table, [target], meta);
+  const body = table.children.find((child) => child.tag === "tbody");
+  const [heading, first] = body.children;
+  const address = first.cells[1];
+  const latest = first.cells[3];
+
+  renderMTR(table, [{ ...target, mtr_hops: [{ ...hop, last_rtt_ms: 25 }] }], meta, target.id);
+  assert.equal(table.children.find((child) => child.tag === "tbody"), body);
+  assert.equal(body.children.length, 2);
+  assert.notEqual(body.children[0], heading); // the displayed hop count changed
+  assert.ok(body.children[0].className.includes("is-selected"));
+  assert.equal(body.children[1], first);
+  assert.equal(first.cells[1], address);
+  assert.notEqual(first.cells[3], latest);
+  assert.equal(first.cells[3].textContent, "25.0 ms");
 });
 
 test("Traceroute keeps hop counts, discovery progress and failures", (t) => {
@@ -132,6 +196,11 @@ test("Traceroute keeps hop counts, discovery progress and failures", (t) => {
     assert.equal(chip.children[1].textContent, label);
     if (error) assert.equal(detail.textContent, error);
   }
+  const partial = tracePath({ ...target, mtr_error: "destination unreachable", mtr_hops: [{ ttl: 1, ip: "2001:db8::1" }] }, {});
+  const [warning, summary, hops] = partial.children;
+  assert.equal(warning.children[1].textContent, "destination unreachable");
+  assert.equal(summary.textContent, "1 hop · 0 no reply");
+  assert.equal(hops.children.length, 1);
 });
 
 test("group summary text leads with the worst state and omits zero counts", () => {

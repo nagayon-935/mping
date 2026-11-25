@@ -44,8 +44,9 @@ export function percentile(series, p) {
  */
 export function robustAxis(series, { minimum = ROBUST_MIN_MS } = {}) {
   const values = finiteValues(series);
-  const p95 = percentile(values, 0.95);
-  const peak = values.length ? Math.max(...values) : 0;
+  values.sort((a, b) => a - b);
+  const p95 = values[Math.ceil(values.length * 0.95) - 1] ?? 0;
+  const peak = values.at(-1) ?? 0;
   const axis = rttAxis(Math.max(p95, minimum));
   return { ...axis, p95, peak, clipped: peak > axis.max };
 }

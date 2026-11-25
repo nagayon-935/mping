@@ -136,13 +136,29 @@ export function createWorkspaceView({ inspect, activity, canControl, selectTarge
     return `No hosts match ${query}${STATUS_LABELS[view.status] ?? "the current filters"}.`;
   }
 
+  let sparkCache;
+
+  function monitorSparks(view, targets) {
+    const history = view.series;
+    const interval = view.meta.interval_ms;
+    const now = view.historyNow ?? Date.now();
+    const cached = sparkCache?.result;
+    if (sparkCache?.history === history && sparkCache.interval === interval && sparkCache.now === now &&
+        targets.length === cached.series.size && targets.every(({ id }) => cached.series.has(id))) {
+      return cached;
+    }
+    const result = prepareSparks(targets, history, interval, now, cached);
+    sparkCache = { history, interval, now, result };
+    return result;
+  }
+
   function renderTargetsPane(view, targets, total) {
     const { features } = view.meta;
     const fields = ["host", "IP", ...(features.ptr ? ["PTR"] : []), ...(features.asn ? ["AS"] : [])].join(", ");
     $("filter").placeholder = `Filter ${fields}`;
     $("filter").setAttribute("aria-label", `Filter ${fields}`);
     renderUnlessSelecting($("targets"), () => {
-      const sparks = prepareSparks(targets, view.series, view.meta.interval_ms, view.historyNow ?? Date.now());
+      const sparks = monitorSparks(view, targets);
       const shown = renderTargets($("targets"), { ...view, visibleTargets: targets, sparks }, selectTarget, sortColumn);
       $("targets-empty").hidden = shown > 0;
       $("targets-empty-message").textContent = emptyTargetsMessage(view, total);

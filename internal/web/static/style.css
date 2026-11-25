@@ -202,6 +202,7 @@ body {
 .mtr-target-count { color: var(--muted); font-size: 11px; font-weight: 400; }
 .mtr-target-address { grid-column: 2 / -1; color: var(--ink-2); font: 500 12px/1.4 var(--mono); }
 #mtr .mtr-waiting { color: var(--muted); font-size: 12px; }
+#mtr .mtr-error { color: var(--warning-ink); font-size: 12px; white-space: normal; overflow-wrap: anywhere; }
 .pane {
   display: flex;
   flex-direction: column;
@@ -389,6 +390,7 @@ canvas.summary-canvas { display: block; width: 100%; height: clamp(180px, 26dvh,
 .trace-hop.is-destination .trace-number { border-color: var(--series); color: var(--series-ink); }
 .trace-tag { margin-top: 3px; padding: 2px 6px; border-radius: 4px; background: var(--surface-2); color: var(--ink-2); font-size: 11px; }
 .trace-message { padding: 20px 0; font-size: 13px; color: var(--ink-2); }
+.trace-result .trace-message { padding: 8px 0 0; }
 .trace-message p { margin: 8px 0 0; overflow-wrap: anywhere; }
 .grid.log td { height: 36px; }
 .grid.log tr.lvl-warn td { background: var(--warn-tint); }

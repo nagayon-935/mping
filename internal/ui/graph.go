@@ -19,11 +19,7 @@ const (
 	graphScaleHoldSecs  = 5     // seconds before scale is allowed to shrink
 )
 
-// graphSeries is a single RTT data series for the graph: an ICMP target or
-// one of its TCP/UDP port checks. It holds a pre-fetched snapshot rather than
-// a live *stats.TargetStats reference: buildSeries takes exactly one
-// GetViewWindow() call per target, and the draw code just reads the
-// already-fetched fields instead of each re-fetching from TargetStats.
+// graphSeries is the snapshot of one ping or TCP/UDP check plotted in a graph.
 type graphSeries struct {
 	label      string
 	history    []time.Duration
@@ -59,25 +55,34 @@ func NewGraphView(targets []*stats.TargetStats, interval time.Duration) *GraphVi
 	}
 }
 
-// buildSeries constructs the list of graphSeries from current target state,
-// fetching exactly one GetViewWindow(historyWindow) snapshot per target.
-// Called at the start of each Draw so that dynamically added targets
-// appear. historyWindow should be the same trailing-window size Draw is
-// about to plot (timeBasedWidth) — GetViewWindow already truncates to it,
-// so windowMax/projectDurationsToGraph's own truncation below becomes a
-// no-op rather than doing real work on a multi-thousand-entry buffer.
-func (g *GraphView) buildSeries(historyWindow int) []graphSeries {
-	var out []graphSeries
+// buildDetailSeries snapshots the ping and port-check histories for the
+// details graph, whose layout depends on the number of live ports.
+func (g *GraphView) buildDetailSeries(historyWindow int) []graphSeries {
+	out := make([]graphSeries, 0, len(g.targets))
 	for _, t := range g.targets {
 		v := t.GetViewWindow(historyWindow)
 		out = append(out, graphSeries{label: v.Host, history: v.History, lastRTT: v.LastRTT, thresholds: v.Thresholds})
-		if g.includePorts {
-			for _, port := range v.PortResults {
-				out = append(out, graphSeries{label: fmt.Sprintf("%s %d/%s", v.Host, port.Port, port.Protocol), history: port.History, lastRTT: port.RTT, thresholds: v.Thresholds})
-			}
+		for _, port := range v.PortResults {
+			out = append(out, graphSeries{label: fmt.Sprintf("%s %d/%s", v.Host, port.Port, port.Protocol), history: port.History, lastRTT: port.RTT, thresholds: v.Thresholds})
 		}
 	}
 	return out
+}
+
+// visiblePingSeries copies the visible histories and measures only the
+// maximum for off-screen targets so the Y scale stays shared while scrolling.
+func (g *GraphView) visiblePingSeries(start, end, historyWindow int) ([]graphSeries, time.Duration) {
+	series := make([]graphSeries, 0, end-start)
+	var peak time.Duration
+	for i, t := range g.targets {
+		if i < start || i >= end {
+			peak = max(peak, t.PingWindowMax(historyWindow))
+			continue
+		}
+		view := t.GetPingViewWindow(historyWindow)
+		series = append(series, graphSeries{label: view.Host, history: view.History, lastRTT: view.LastRTT, thresholds: view.Thresholds})
+	}
+	return series, max(peak, windowMax(series, historyWindow))
 }
 
 // windowMax returns the largest RTT value across all series within the current window.
@@ -141,39 +146,49 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 		return
 	}
 
-	// Explicitly clear the inner rect to prevent rendering duplication
-	for row := y; row < y+height; row++ {
-		for col := x; col < x+width; col++ {
-			screen.SetContent(col, row, ' ', nil, tcell.StyleDefault.Background(tcell.ColorBlack))
+	// The box already paints the graph background in the normal black
+	// theme. Keep the plot black if a caller customizes the surrounding box.
+	if g.GetBackgroundColor() != tcell.ColorBlack {
+		background := tcell.StyleDefault.Background(tcell.ColorBlack)
+		for row := y; row < y+height; row++ {
+			for col := x; col < x+width; col++ {
+				screen.SetContent(col, row, ' ', nil, background)
+			}
 		}
 	}
 
-	// Compute time-based window width first so buildSeries can fetch
-	// exactly this many trailing history points per target via
-	// GetViewWindow, instead of the full history ring.
+	// Use the same trailing sample window for scaling and plotting.
 	timeBasedWidth := 1
 	if g.interval > 0 {
 		timeBasedWidth = max(int(graphWindowSeconds*time.Second/g.interval), 1)
 	}
 
-	series := g.buildSeries(timeBasedWidth)
-	if len(series) == 0 {
-		return
+	seriesCount := len(g.targets)
+	var series []graphSeries
+	if g.includePorts {
+		series = g.buildDetailSeries(timeBasedWidth)
+		seriesCount = len(series)
 	}
-
-	// Update auto-scale from current window maximum across all series.
-	g.updateScale(windowMax(series, timeBasedWidth), time.Now())
-	yMaxDur := time.Duration(g.currentScale.maxMs * float64(time.Millisecond))
-
-	numCols, numRowsTotal, visibleRows, colWidth, rowHeight := layoutGraph(len(series), width, height)
+	numCols, numRowsTotal, visibleRows, colWidth, rowHeight := layoutGraph(seriesCount, width, height)
 	if visibleRows == 0 {
 		return
 	}
 	g.clampScroll(numRowsTotal, visibleRows)
 
+	start := g.scrollRow * numCols
+	end := min(start+visibleRows*numCols, seriesCount)
+	var peak time.Duration
+	if g.includePorts {
+		peak = windowMax(series, timeBasedWidth)
+		series = series[start:end]
+	} else {
+		series, peak = g.visiblePingSeries(start, end, timeBasedWidth)
+	}
+	g.updateScale(peak, time.Now())
+	yMaxDur := time.Duration(g.currentScale.maxMs * float64(time.Millisecond))
+
 	// Draw loop
 	for r := range visibleRows {
-		rowIndex := g.scrollRow + r
 		baseY := y + (r * rowHeight)
 		if baseY >= y+height {
 			break
@@ -185,7 +200,7 @@ func (g *GraphView) Draw(screen tcell.Screen) {
 		}
 
 		for c := range numCols {
-			idx := rowIndex*numCols + c
+			idx := r*numCols + c
 			if idx >= len(series) {
 				break
 			}

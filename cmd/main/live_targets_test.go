@@ -67,6 +67,42 @@ func TestLiveReloadRollsBackPartialRegistration(t *testing.T) {
 	}
 }
 
+func TestLiveReloadReusesPinnedDuplicatesInOrder(t *testing.T) {
+	specs := []targetSpec{
+		{Host: "router.example", PinnedIP: "192.0.2.1", Name: "first"},
+		{Host: "router.example", PinnedIP: "192.0.2.1", Name: "second"},
+		{Host: "router.example", PinnedIP: "192.0.2.2", Name: "other"},
+	}
+	targets := buildTargetsForIteration(specs, config{})
+	targets[0].SetIfaceMTU(9000)
+	s := newSupervisor(supervisorConfig{targets: targets, specs: specs})
+	s.Start()
+	t.Cleanup(s.Shutdown)
+
+	updated := []targetSpec{specs[2], specs[1], specs[0], specs[0]}
+	cfg := config{healthFailures: 5, healthRecoveries: 2, healthWindow: 30 * time.Second}
+	if applied, _, err := s.reloadLive(cfg, updated, nil); !applied || err != nil {
+		t.Fatalf("reload = %v, %v", applied, err)
+	}
+	got := s.liveTargets().Targets
+	if len(got) != 4 || got[0] != targets[2] || got[1] != targets[0] || got[2] != targets[1] {
+		t.Fatalf("reload did not reuse duplicate targets in order: %v", got)
+	}
+	for i, target := range got {
+		if target.DisplayName() != updated[i].display() {
+			t.Errorf("target %d display name = %q, want %q", i, target.DisplayName(), updated[i].display())
+		}
+	}
+	added := got[3]
+	if added == targets[0] || added == targets[1] || added == targets[2] {
+		t.Fatal("additional duplicate reused an existing identity")
+	}
+	view := added.GetView()
+	if added.ResolveAddress() != "192.0.2.1" || view.IfaceMTU != 9000 || view.Health.WindowSeconds != 30 {
+		t.Fatalf("new target address = %q, interface MTU = %d, health window = %g", added.ResolveAddress(), view.IfaceMTU, view.Health.WindowSeconds)
+	}
+}
+
 func TestLiveEditsKeepStatisticsAndStoppedState(t *testing.T) {
 	a, b := stats.NewTargetStats("a"), stats.NewTargetStats("b")
 	a.IncSent()

@@ -16,32 +16,9 @@ import (
 // computed once per row rather than recomputed by every column.
 type columnRowContext struct {
 	view       stats.TargetView
-	sources    sourceIPs
+	sourceIP   string
 	packetSize int
 	lossRate   float64
-	// spark, when set, caches this row's sparkline so its plain text and
-	// its colored cell share one bucket pass. Rows built without it compute
-	// the sparkline on demand.
-	spark *sparkMemo
-}
-
-// sparkMemo is one row's rendered sparkline at one width, filled on first use.
-type sparkMemo struct {
-	width         int
-	plain, styled string
-}
-
-// sparkline returns the row's plain and loss-colored sparkline of points
-// samples, width cells wide.
-func (ctx columnRowContext) sparkline(points, width int) (plain, styled string) {
-	if m := ctx.spark; m != nil && m.width == width && width > 0 {
-		return m.plain, m.styled
-	}
-	plain, styled = sparklines(ctx.view.History, points, width)
-	if ctx.spark != nil {
-		*ctx.spark = sparkMemo{width: width, plain: plain, styled: styled}
-	}
-	return plain, styled
 }
 
 // column describes how a Ping Monitor column is laid out and rendered.
@@ -81,6 +58,12 @@ type column struct {
 	// measurement (payload size, source address, interface MTU): hidden, its
 	// value moves to the pane title when every row shares it.
 	setting bool
+}
+
+// affectsLayout reports whether the column's text is used to choose a
+// width, hide an empty column, or display a shared setting in the pane title.
+func (c column) affectsLayout() bool {
+	return (c.dynamic && !c.fixed) || c.hideWhenEmpty || c.setting
 }
 
 // columnOptions says which optional columns exist and which columns the user
@@ -151,7 +134,7 @@ func mainTableColumns(o columnOptions) []column {
 			dynamic:  true,
 			hideRank: explicitRank(o.SourceExplicit, rankSrcExplicit, rankSrc), setting: true,
 			render: func(ctx columnRowContext) string {
-				return ctx.sources.forDst(ctx.view.IP)
+				return ctx.sourceIP
 			},
 		},
 		{
@@ -232,11 +215,11 @@ func mainTableColumns(o columnOptions) []column {
 			// The layout reserves sparkWidth; the cell then draws the
 			// trend across the column's full width.
 			render: func(ctx columnRowContext) string {
-				plain, _ := ctx.sparkline(o.SparkPoints, sparkWidth)
+				plain, _ := sparklines(ctx.view.History, o.SparkPoints, sparkWidth)
 				return plain
 			},
 			fit: func(ctx columnRowContext, width int) string {
-				_, styled := ctx.sparkline(o.SparkPoints, width)
+				_, styled := sparklines(ctx.view.History, o.SparkPoints, width)
 				return styled
 			},
 			color: func(columnRowContext, string) (tcell.Color, bool) { return vividCyan, true },
@@ -294,50 +277,35 @@ func columnIndex(cols []column, name string) int {
 	return slices.IndexFunc(cols, func(c column) bool { return c.name == name })
 }
 
-// renderRowTexts renders every column's cell text for one row from a single
-// shared context.
-func renderRowTexts(cols []column, ctx columnRowContext) []string {
-	texts := make([]string, len(cols))
-	for i, c := range cols {
-		texts[i] = c.render(ctx)
-	}
-	return texts
-}
-
-// renderRowCells builds formatted, colored table cells for one row from
-// already-rendered text. Each column owns its own color logic, so it can't
-// drift out of sync with where DNS/ASN/PTR happen to sit.
-func renderRowCells(cols []column, texts []string, widths, aligns []int, ctx columnRowContext, rowColor tcell.Color) []*tview.TableCell {
-	cells := make([]*tview.TableCell, len(cols))
-	for i, c := range cols {
-		text := tview.Escape(padBoxCell(texts[i], widths[i], aligns[i]))
-		if c.fit != nil && widths[i] > boxCellPadding {
-			text = " " + c.fit(ctx, widths[i]-boxCellPadding) + " "
-		} else if c.styled != nil {
-			// The styled text has the plain text's width; pad it the same
-			// way, on the side its alignment leaves open.
-			if spare := widths[i] - boxCellPadding - runewidth.StringWidth(texts[i]); spare >= 0 {
-				if aligns[i] == tview.AlignRight {
+func renderCell(c column, raw string, width, align int, ctx columnRowContext, rowColor tcell.Color) *tview.TableCell {
+	var text string
+	if c.fit != nil && width > boxCellPadding {
+		text = " " + c.fit(ctx, width-boxCellPadding) + " "
+	} else {
+		text = tview.Escape(padBoxCell(raw, width, align))
+		if c.styled != nil {
+			// Pad the styled text on the side its alignment leaves open.
+			if spare := width - boxCellPadding - runewidth.StringWidth(raw); spare >= 0 {
+				if align == tview.AlignRight {
 					text = strings.Repeat(" ", spare+1) + c.styled(ctx) + " "
 				} else {
 					text = " " + c.styled(ctx) + strings.Repeat(" ", spare+1)
 				}
 			}
 		}
-		cell := tview.NewTableCell(text).
-			SetBackgroundColor(tcell.ColorBlack).
-			SetTextColor(rowColor).
-			SetMaxWidth(widths[i]).
-			SetAlign(aligns[i])
-		if c.color != nil {
-			if col, ok := c.color(ctx, texts[i]); ok {
-				cell.SetTextColor(col)
-				if c.bold {
-					cell.SetAttributes(tcell.AttrBold)
-				}
+	}
+	cell := tview.NewTableCell(text).
+		SetBackgroundColor(tcell.ColorBlack).
+		SetTextColor(rowColor).
+		SetMaxWidth(width).
+		SetAlign(align)
+	if c.color != nil {
+		if col, ok := c.color(ctx, raw); ok {
+			cell.SetTextColor(col)
+			if c.bold {
+				cell.SetAttributes(tcell.AttrBold)
 			}
 		}
-		cells[i] = cell
 	}
-	return cells
+	return cell
 }

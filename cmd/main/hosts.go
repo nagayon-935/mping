@@ -105,24 +105,25 @@ func buildHostsAndGroups(docHosts []hostsfile.Entry, docGroups []hostsfile.Group
 // buildTargetsForIteration initializes the statistics before startup PMTU probes run.
 func buildTargetsForIteration(specs []targetSpec, cfg config) []*stats.TargetStats {
 	targets := make([]*stats.TargetStats, len(specs))
-	policy := healthPolicy(cfg)
-	dnsServer := cfg.dnsServer
-	if dnsServer == "" {
-		dnsServer = "Default"
-	}
 	for i, spec := range specs {
-		t := stats.NewTargetStats(spec.display())
-		t.SetResolveAddress(spec.resolveAddr())
-		t.ConfigureHealth(policy)
-		// Match pinger.ResolveIPAddrContext: zoned IPv6 literals skip DNS too.
-		if _, err := netip.ParseAddr(spec.Host); err == nil {
-			t.SetDNSServer("-")
-		} else {
-			t.SetDNSServer(dnsServer)
-		}
-		targets[i] = t
+		targets[i] = newTarget(spec, cfg)
 	}
 	return targets
+}
+
+func newTarget(spec targetSpec, cfg config) *stats.TargetStats {
+	t := stats.NewTargetStats(spec.display())
+	t.SetResolveAddress(spec.resolveAddr())
+	t.ConfigureHealth(healthPolicy(cfg))
+	dnsServer := cfg.dnsServer
+	// Match pinger.ResolveIPAddrContext: zoned IPv6 literals skip DNS too.
+	if _, err := netip.ParseAddr(spec.Host); err == nil {
+		dnsServer = "-"
+	} else if dnsServer == "" {
+		dnsServer = "Default"
+	}
+	t.SetDNSServer(dnsServer)
+	return t
 }
 
 // expandTargets keeps unresolved names available for the pinger to retry.

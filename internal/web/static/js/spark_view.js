@@ -1,6 +1,7 @@
 // Monitor-row sparklines: the last minute of RTT as a small SVG. The
 // geometry is computed by spark.js; this module only builds elements. SVG
 // presentation attributes (not inline styles) keep it within the CSP.
+import { sameValues } from "./live_rows.js";
 import { windowSeries } from "./timeline.js";
 import { robustAxis } from "./scale.js";
 import { SPARK_SECONDS, sparkGeometry } from "./spark.js";
@@ -26,8 +27,16 @@ function lastMinute(samples, intervalMs, now) {
  * row heights compare and a single spike is clipped instead of flattening
  * the others.
  */
-export function prepareSparks(targets, history, intervalMs, now) {
-  const series = new Map(targets.map((t) => [t.id, lastMinute(history.get(t.id), intervalMs, now)]));
+export function prepareSparks(targets, history, intervalMs, now, previous) {
+  const series = new Map();
+  for (const { id } of targets) {
+    const samples = lastMinute(history.get(id), intervalMs, now);
+    const old = previous?.series.get(id);
+    series.set(id, sameValues(old, samples) ? old : samples);
+  }
+  if (series.size === previous?.series.size && [...series].every(([id, samples]) => previous.series.get(id) === samples)) {
+    return previous;
+  }
   const axis = robustAxis([...series.values()].flat());
   return { series, max: axis.max };
 }

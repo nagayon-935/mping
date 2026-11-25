@@ -473,7 +473,7 @@ func TestPingTableAndMTRShowEachRowsOwnSource(t *testing.T) {
 
 	tr := newTableRenderer([]*stats.TargetStats{ll, global}, src, 56, columnOptions{}, nil,
 		tview.NewTable(), tview.NewFlex(), nil, newViewState(tview.NewTextView()))
-	_, texts := tr.renderTexts(fetchViews(tr.targets, 0))
+	texts := tr.renderLayoutTexts(tr.fetchRows(0, len(tr.targets)))
 	mtr := renderMTRTable([]*stats.TargetStats{global}, 160, src)
 
 	if got := texts[0][0]; got != "fe80::2" {

@@ -1,14 +1,15 @@
 import { el, statusChip } from "./dom.js";
+import { sameValues, syncChildren } from "./live_rows.js";
 import { targetAddress } from "./model.js";
 
 /** The discovered hops of one target (mtr_hops). AS and PTR annotations
  * follow the current feature flags. */
 export function tracePath(target, features) {
   const hops = target.mtr_hops ?? [];
+  const failure = target.mtr_error && el("div", { className: "trace-message" },
+    statusChip("warn", "Route discovery failed"), el("p", { text: target.mtr_error }));
   if (!hops.length) {
-    if (target.mtr_error) return el("div", { className: "trace-message" },
-      statusChip("warn", "Route discovery failed"), el("p", { text: target.mtr_error }));
-    return el("div", { className: "trace-message" }, statusChip("pending", "Discovering…"));
+    return failure || el("div", { className: "trace-message" }, statusChip("pending", "Discovering…"));
   }
   const noReply = hops.filter((hop) => !hop.ip).length;
   const summary = `${hops.length} ${hops.length === 1 ? "hop" : "hops"} · ${noReply} no reply`;
@@ -32,7 +33,8 @@ export function tracePath(target, features) {
       el("span", { className: "trace-number", text: String(hop.ttl), attrs: { "aria-label": `Hop ${hop.ttl}` } }), identity,
       destination && el("span", { className: "trace-tag", text: "Destination" })));
   }
-  return el("div", { className: "trace-result" }, el("p", { className: "trace-summary", text: summary }), list);
+  return el("div", { className: "trace-result" }, failure,
+    el("p", { className: "trace-summary", text: summary }), list);
 }
 
 /** Runs of SILENT_RUN or more consecutive unanswered hops become one
@@ -53,24 +55,44 @@ function collapseSilentRuns(hops) {
   return out;
 }
 
+function traceTarget(target, features) {
+  const address = targetAddress(target);
+  return el("section", {
+    className: "trace-target",
+    attrs: { "data-target-id": String(target.id), "aria-label": target.host },
+  }, el("div", { className: "trace-target-head" },
+    el("span", { className: "mtr-target-kind", text: "Target" }),
+    el("strong", { className: "cell-text", text: target.host, attrs: { title: target.host } }),
+    address && el("span", { className: "trace-target-address mono cell-text", text: address, attrs: { title: target.ip || "" } })),
+    tracePath(target, features));
+}
+
+const renderedRoutes = new WeakMap();
+
 /** All hosts are visible independently of the selected Summary target. */
 export function renderTraceroutes(container, targets, features, selectedId = null) {
   const top = container.scrollTop;
+  const previous = renderedRoutes.get(container);
+  const entries = new Map();
   if (!targets.length) {
-    container.replaceChildren(el("p", { className: "empty", text: "No targets match the filter." }));
+    if (!container.firstElementChild?.classList.contains("empty")) {
+      container.replaceChildren(el("p", { className: "empty", text: "No targets match the filter." }));
+    }
   } else {
-    container.replaceChildren(...targets.map((target) => {
-      const address = targetAddress(target);
-      return el("section", {
-        className: `trace-target${target.id === selectedId ? " is-selected" : ""}`,
-        attrs: { "data-target-id": String(target.id), "aria-label": target.host },
-      }, el("div", { className: "trace-target-head" },
-        el("span", { className: "mtr-target-kind", text: "Target" }),
-        el("strong", { className: "cell-text", text: target.host, attrs: { title: target.host } }),
-        address && el("span", { className: "trace-target-address mono cell-text", text: address, attrs: { title: target.ip || "" } })),
-      tracePath(target, features));
-    }));
+    for (const target of targets) {
+      // The same snapshot also carries per-hop statistics, but a trace only
+      // shows identities and the discovery result.
+      const values = [target.host, target.ip, target.mtr_error];
+      for (const hop of target.mtr_hops ?? []) {
+        values.push(hop.ttl, hop.ip, features.ptr && hop.ptr, features.asn && hop.asn, features.asn && hop.org);
+      }
+      const old = previous?.get(target.id);
+      const node = sameValues(old?.values, values) ? old.node : traceTarget(target, features);
+      node.classList.toggle("is-selected", target.id === selectedId);
+      entries.set(target.id, { node, values });
+    }
+    syncChildren(container, [...entries.values()].map(({ node }) => node));
   }
-  container.scrollTop = top;
+  renderedRoutes.set(container, entries);
+  if (container.scrollTop !== top) container.scrollTop = top;
 }
-
