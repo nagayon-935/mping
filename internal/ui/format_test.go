@@ -146,3 +146,20 @@ func TestPaddedCells(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatTableError(t *testing.T) {
+	for _, tt := range []struct {
+		reason string
+		want   string
+	}{
+		{"write ip 10.70.71.68->8.8.8.8: sendmsg: no route to host", "no route to host"},
+		{"Destination Host Unreachable", "Host Unreachable"},
+		{"ICMP Error: Destination Port Unreachable", "Port Unreachable"},
+		{"Timeout", "Timeout"},
+		{"", "-"},
+	} {
+		if got := formatTableError(tt.reason); got != tt.want {
+			t.Errorf("formatTableError(%q) = %q, want %q", tt.reason, got, tt.want)
+		}
+	}
+}

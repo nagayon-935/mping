@@ -38,7 +38,8 @@ func bucketHistory(history []time.Duration, windowPoints, width int) []stripBuck
 	if len(history) > windowPoints {
 		history = history[len(history)-windowPoints:]
 	}
-	offset := windowPoints - len(history)
+	// Fill from the left until the window is full, as the RTT graph does.
+	offset := 0
 	for i, v := range history {
 		b := &buckets[min((offset+i)*width/windowPoints, width-1)]
 		b.has = true

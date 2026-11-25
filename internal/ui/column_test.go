@@ -7,6 +7,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/nagayon-935/mping/internal/stats"
+	"github.com/rivo/tview"
 )
 
 // TestMainTableColumns_DynamicFlags checks which columns are marked dynamic (width tracks rendered content) rather than returning a
@@ -175,61 +176,26 @@ func TestDSTBeforeTheNameResolves(t *testing.T) {
 	}
 }
 
-func TestFormatTableError(t *testing.T) {
-	tests := []struct {
-		name string
-		in   string
-		want string
+func TestRenderErrorCell(t *testing.T) {
+	cols := mainTableColumns(columnOptions{})
+	errCol := cols[columnIndex(cols, "ERR")]
+	if errCol.base != 20 || !errCol.fixed || errCol.hideWhenEmpty {
+		t.Fatalf("ERR must have a fixed 20-cell reference width and show empty values: %+v", errCol)
+	}
+	for _, tt := range []struct {
+		reason string
+		text   string
+		color  tcell.Color
 	}{
-		{
-			name: "extract tail message",
-			in:   "write ip 10.70.71.68->8.8.8.8: sendmsg: no route to host",
-			want: "no route to host",
-		},
-		{
-			name: "no separator keeps original",
-			in:   "Timeout",
-			want: "Timeout",
-		},
-		{
-			name: "empty",
-			in:   "",
-			want: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := formatTableError(tt.in); got != tt.want {
-				t.Fatalf("formatTableError(%q): got %q, want %q", tt.in, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestCalcInitialTableErrorWidth(t *testing.T) {
-	failed := stats.TargetView{LastError: "This is a very long error message that exceeds normal width expectations!!"}
-	tests := []struct {
-		name        string
-		views       []stats.TargetView
-		minWidth    int
-		wantAtLeast int
-	}{
-		{
-			name: "includes the known error candidates", minWidth: 10,
-			wantAtLeast: len("Communication Administratively Prohibited"),
-		},
-		{
-			name: "includes a target's current error", views: []stats.TargetView{failed}, minWidth: 5,
-			wantAtLeast: len("This is a very long error message"),
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := calcInitialTableErrorWidth(tt.views, "Error", tt.minWidth); got < tt.wantAtLeast {
-				t.Errorf("calcInitialTableErrorWidth = %d, want at least %d", got, tt.wantAtLeast)
-			}
-		})
+		{"Destination Host Unreachable", " Host Unreachable     ", tcell.ColorRed},
+		{"Communication Administratively Prohibited", " Communication Adm... ", tcell.ColorRed},
+		{"", " -                    ", tcell.ColorWhite},
+	} {
+		ctx := columnRowContext{view: stats.TargetView{LastError: tt.reason}}
+		cell := renderRowCells([]column{errCol}, []string{errCol.render(ctx)}, []int{22}, []int{tview.AlignLeft}, ctx, tcell.ColorWhite)[0]
+		if cell.Text != tt.text || cellForeground(cell) != tt.color {
+			t.Errorf("reason %q: got %q in %v, want %q in %v", tt.reason, cell.Text, cellForeground(cell), tt.text, tt.color)
+		}
 	}
 }
 

@@ -55,11 +55,12 @@ func BenchmarkCalcColumnWidths(b *testing.B) {
 	}
 
 	tr := newBenchTableRenderer(b, targetCount)
+	_, texts := tr.renderTexts(views)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = tr.calcColumnWidths(views)
+		_ = tr.calcColumnWidths(texts)
 	}
 }
 

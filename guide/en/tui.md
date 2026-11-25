@@ -50,7 +50,7 @@ Existing files, including symlink destinations, are preserved. Each save writes 
 
 ## RTT Graphs and Log panes
 
-* **RTT Graphs** — one chart per target with an auto-scaling Y-axis (expands immediately on a spike, shrinks after a hold period) and roughly 30 seconds of recent samples at the configured interval on the X-axis. ICMP and TCP/UDP port series are both supported. Lost probes are drawn as a red `×` on the zero line and columns where only some probes were lost as orange bars (the same colors as the **RTT 60s** sparkline); a chart header shows the window's loss, e.g. `loss 20%`, in the default text colour up to the target’s warning threshold, orange above it, and red above the critical threshold. The pane takes the spare rows left once the Ping Monitor has room for 12 hosts, the Log keeping its base height; it shows up to six charts at once and scrolls for more. Press **f** on the pane to fold or open it.
+* **RTT Graphs** — one chart per target with an auto-scaling Y-axis (expands immediately on a spike, shrinks after a hold period) and roughly 30 seconds of recent samples at the configured interval on the X-axis, drawn from the left edge until the window fills and then scrolling. ICMP and TCP/UDP port series are both supported. Lost probes are drawn as a red `×` on the zero line and columns where only some probes were lost as orange bars (the same colors as the **RTT 60s** sparkline); a chart header shows the window's loss, e.g. `loss 20%`, in the default text colour up to the target’s warning threshold, orange above it, and red above the critical threshold. The pane takes the spare rows left once the Ping Monitor has room for 12 hosts, the Log keeping its base height; it shows up to six charts at once and scrolls for more. Press **f** on the pane to fold or open it.
 * **Log** — records threshold alerts and status changes. The same status change hitting several targets in the same second is logged once with the targets it hit (e.g. `[12:09:03] crit: Jitter > 50.0ms (3 hosts) — 1.1.1.1, 8.8.8.8, 9.9.9.9`).
 
 * **MTR Monitor** — The header identifies the target and displays the source and destination addresses. Hop rows show where loss persists, using the lowest loss at that hop or any later hop as the effective loss. The target’s ping loss thresholds determine the loss colours. At or below the warning threshold, persistent loss uses the default text colour and loss that drops at a later hop is muted.
@@ -74,14 +74,14 @@ Existing files, including symlink destinations, are preserved. Each save writes 
 * **MTU** — MTU of the specified or initially inferred outbound interface. With `-m` the column is **PMTU** and shows the discovered path MTU.
 * **RTT 60s** — Sparkline of the last 60 seconds of RTT (`▲` above the row's p95 scale). Cells are cyan without loss, orange when some probes in them were lost, and a red `×` when all were.
 * **TTL** — IPv4 TTL or IPv6 Hop Limit of the last reply.
-* **ERR** — Abbreviated latest error message (red), shown only while some target has one. Full details appear in the Log pane.
+* **ERR** — Abbreviated latest error message (red), or `-` when there is no error. Pane width determines whether the column is visible. Full error text appears in the Log pane and host details.
 * **LAST LOSS** — Time elapsed since the last packet loss.
 
 ### Narrow terminals
 
-Cells are not cut short. When the terminal is too narrow for every column, whole columns are hidden instead, in this order:
+When the terminal is too narrow for every column at its reference width, columns are hidden in this order:
 
-1. Supplementary columns: SIZE → MTU → SRC → DNS → LAST LOSS → LOST → RCV → TTL → AVG → RTT 60s (the sparkline goes last: it is the only RTT trend for hosts past the six the graph pane shows at once) (SIZE, MTU, SRC and DNS only when their option was not given).
+1. Supplementary columns: SIZE → MTU → SRC → DNS → LAST LOSS → ERR → LOST → RCV → TTL → AVG → RTT 60s (the sparkline goes last: it is the only RTT trend for hosts past the six the graph pane shows at once) (SIZE, MTU, SRC and DNS only when their option was not given).
 2. Columns requested with an option: SIZE (`-s`) → SRC (`-S` / `-I`) → DNS (`-d`) → ASN (`-a`) → PTR (`-r`) → PMTU (`-m`).
 
-DST, LOSS%, RTT and JIT (and ERR while an error is shown) are never hidden. The pane title lists hidden columns; a hidden setting every row shares, such as the payload size or a pinned source address, appears there with its value (`Ping Monitor · SIZE 56 · hidden: TTL AVG`). Every value stays available in the host details (Enter).
+DST, LOSS%, RTT and JIT are never hidden. The pane title lists hidden columns. A hidden setting every row shares, such as the payload size or a pinned source address, appears there with its value (`Ping Monitor · SIZE 56 · hidden: TTL AVG`). Every value stays available in the host details (Enter).

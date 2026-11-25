@@ -15,7 +15,7 @@ import (
 // fixed-width table cells. Box columns also reserve two padding cells.
 const (
 	fixedMsWidth = len("99999.99ms")
-	fixedMsColW  = fixedMsWidth + 2
+	fixedMsColW  = fixedMsWidth + boxCellPadding
 )
 
 // formatFixedMs formats a duration as milliseconds with 2 decimal places
@@ -151,6 +151,9 @@ func formatCellText(text string, width int, align int) string {
 	return text + pad
 }
 
+// boxCellPadding reserves a space at either edge of a table cell.
+const boxCellPadding = 2
+
 // paddedCell left-aligns text between one space of padding on either side.
 func paddedCell(text string, colW int) string {
 	return padBoxCell(text, colW, tview.AlignLeft)
@@ -162,5 +165,17 @@ func rightPaddedCell(text string, colW int) string {
 }
 
 func padBoxCell(text string, colW, align int) string {
-	return " " + formatCellText(text, colW-2, align) + " "
+	return " " + formatCellText(text, colW-boxCellPadding, align) + " "
+}
+
+// formatTableError shortens the latest error for the Ping Monitor cell.
+func formatTableError(err string) string {
+	if idx := strings.LastIndex(err, ": "); idx >= 0 {
+		err = err[idx+2:]
+	}
+	err = strings.TrimPrefix(err, "Destination ")
+	if err == "" {
+		return "-"
+	}
+	return err
 }
