@@ -61,7 +61,7 @@ type RunOptions struct {
 	DoneCh           chan struct{}             // receives count-completion notifications; nil means unlimited
 	SourceIPv4       string                    // session-wide IPv4 source hint
 	SourceIPv6       string                    // session-wide IPv6 source hint
-	SourceForDst     func(dstIP string) string // route-selected source per destination ("" = use the hint); may be nil
+	SourceForDst     func(dstIP string) string // route-selected source per destination ("" = use the hint); called while drawing, so it must not block; may be nil
 	PacketSize       int
 	InitialLogs      []string
 	// WebControlURL is retained separately from the rotating Log. Empty disables

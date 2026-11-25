@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -41,9 +42,93 @@ func TestSourceHintsGiveEachDestinationItsRouteSelectedSource(t *testing.T) {
 		{"192.0.2.1", "10.0.0.2"},
 	}
 	for _, tt := range tests {
-		if got := h.forDst(tt.dst); got != tt.want {
-			t.Errorf("forDst(%q) = %q, want %q", tt.dst, got, tt.want)
+		if got := h.resolve(tt.dst); got != tt.want {
+			t.Errorf("resolve(%q) = %q, want %q", tt.dst, got, tt.want)
 		}
+	}
+}
+
+func TestSourceHintsLookupNeverWaitsForTheProbe(t *testing.T) {
+	release := make(chan struct{})
+	stubOutboundIP(t, func(remote, network string) string {
+		<-release
+		return kernelRoutes(remote, network)
+	})
+	h := newSourceHints(config{}, runEnv{})
+
+	// The TUI draw goroutine calls lookup: a probe still running must not
+	// stall the frame, so the first answer is empty (family hint shown).
+	if got := h.lookup(globalDst); got != "" {
+		t.Fatalf("lookup before the probe finished = %q, want empty", got)
+	}
+	close(release)
+	h.wait()
+
+	if got := h.lookup(globalDst); got != globalSrc {
+		t.Errorf("lookup after the probe = %q, want %q", got, globalSrc)
+	}
+}
+
+func TestSourceHintsLookupProbesEachDestinationOnceAtATime(t *testing.T) {
+	var mu sync.Mutex
+	probes := 0
+	release := make(chan struct{})
+	stubOutboundIP(t, func(remote, network string) string {
+		mu.Lock()
+		probes++
+		mu.Unlock()
+		<-release
+		return kernelRoutes(remote, network)
+	})
+	h := newSourceHints(config{}, runEnv{})
+
+	for range 10 {
+		h.lookup(globalDst)
+	}
+	close(release)
+	h.wait()
+
+	if probes != 1 {
+		t.Errorf("probes for 10 lookups while one was running = %d, want 1", probes)
+	}
+}
+
+func TestSourceHintsLookupKeepsTheLastAnswerWhileRefreshing(t *testing.T) {
+	answer := globalSrc
+	stubOutboundIP(t, func(string, string) string { return answer })
+	now := time.Unix(1000, 0)
+	h := newSourceHints(config{}, runEnv{})
+	h.now = func() time.Time { return now }
+	h.resolve(globalDst)
+
+	answer = "2001:db8:2:3::b0" // temporary address rotated
+	now = now.Add(sourceHintTTL + time.Second)
+
+	if got := h.lookup(globalDst); got != globalSrc {
+		t.Errorf("lookup of an expired entry = %q, want the previous %q until the refresh lands", got, globalSrc)
+	}
+	h.wait()
+	if got := h.lookup(globalDst); got != answer {
+		t.Errorf("lookup after the refresh = %q, want %q", got, answer)
+	}
+}
+
+func TestSourceHintsRetryAFailedProbeSooner(t *testing.T) {
+	probes := 0
+	stubOutboundIP(t, func(string, string) string { probes++; return "" })
+	now := time.Unix(1000, 0)
+	h := newSourceHints(config{}, runEnv{})
+	h.now = func() time.Time { return now }
+
+	h.resolve(globalDst)
+	now = now.Add(sourceMissTTL + time.Second)
+	h.resolve(globalDst)
+
+	if sourceMissTTL >= sourceHintTTL {
+		t.Fatalf("sourceMissTTL %v should be shorter than sourceHintTTL %v", sourceMissTTL, sourceHintTTL)
+	}
+	if probes != 2 {
+		t.Errorf("probes = %d, want 2: a failed probe (route not up yet) is retried after sourceMissTTL", probes)
 	}
 }
 
@@ -57,14 +142,14 @@ func TestSourceHintsProbeEachDestinationOnceWithinTTL(t *testing.T) {
 	h := newSourceHints(config{}, runEnv{})
 	h.now = func() time.Time { return now }
 
-	h.forDst(globalDst)
-	h.forDst(globalDst)
+	h.resolve(globalDst)
+	h.resolve(globalDst)
 	if probes != 1 {
 		t.Fatalf("probes within TTL = %d, want 1", probes)
 	}
 
 	now = now.Add(sourceHintTTL + time.Second)
-	h.forDst(globalDst)
+	h.resolve(globalDst)
 	if probes != 2 {
 		t.Fatalf("probes after TTL = %d, want 2 (address may have rotated)", probes)
 	}
@@ -92,8 +177,8 @@ func TestSourceHintsLeaveFallbackToCaller(t *testing.T) {
 			probed = false
 			h := newSourceHints(tt.cfg, tt.env)
 
-			if got := h.forDst(tt.dst); got != "" {
-				t.Errorf("forDst(%q) = %q, want empty so the family hint is shown", tt.dst, got)
+			if got := h.resolve(tt.dst); got != "" {
+				t.Errorf("resolve(%q) = %q, want empty so the family hint is shown", tt.dst, got)
 			}
 			if probed != tt.wantProbe {
 				t.Errorf("probe consulted = %v, want %v", probed, tt.wantProbe)
@@ -116,8 +201,8 @@ func TestSourceHintsDualStackInterfaceProbesThroughTheInterface(t *testing.T) {
 
 	h := newSourceHints(config{ifaceName: "en0"}, runEnv{dispV6: linkLocalSrc})
 
-	if got := h.forDst(globalDst); got != globalSrc {
-		t.Errorf("forDst(%q) = %q, want %q", globalDst, got, globalSrc)
+	if got := h.resolve(globalDst); got != globalSrc {
+		t.Errorf("resolve(%q) = %q, want %q", globalDst, got, globalSrc)
 	}
 	if gotBind.Interface != "en0" {
 		t.Errorf("probe bind interface = %q, want en0", gotBind.Interface)
@@ -126,9 +211,10 @@ func TestSourceHintsDualStackInterfaceProbesThroughTheInterface(t *testing.T) {
 
 func TestNilSourceHintsAnswerEmpty(t *testing.T) {
 	var h *sourceHints
-	if got := h.forDst(globalDst); got != "" {
-		t.Errorf("nil forDst = %q, want empty", got)
+	if got := h.resolve(globalDst) + h.lookup(globalDst); got != "" {
+		t.Errorf("nil resolve/lookup = %q, want empty", got)
 	}
+	h.wait()
 }
 
 func TestCaptureReportRecordsEachTargetsSource(t *testing.T) {

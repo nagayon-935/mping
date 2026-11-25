@@ -12,7 +12,7 @@ import (
 // the active targets first, then removed ones (removed_at set). Ports, HTTP
 // checks, hops and events are only in the JSON format.
 var csvHeader = []string{
-	"captured_at", "target_id", "host", "ip", "group", "removed_at",
+	"captured_at", "target_id", "host", "ip", "source_ip", "group", "removed_at",
 	"measurement_state", "health_status", "health_reason",
 	"sent", "received", "lost", "loss_pct", "recent_loss_pct", "duplicates", "late_replies",
 	"last_rtt_ms", "min_rtt_ms", "avg_rtt_ms", "max_rtt_ms", "jitter_ms", "last_ttl",
@@ -65,7 +65,7 @@ func csvRow(captured time.Time, t Target) []string {
 		lastLoss = *v.LastLossTime
 	}
 	return []string{
-		csvTime(captured), strconv.FormatUint(v.ID, 10), spreadsheetText(v.Host), v.IP, spreadsheetText(t.Group), csvTime(removed),
+		csvTime(captured), strconv.FormatUint(v.ID, 10), spreadsheetText(v.Host), v.IP, t.SourceIP, spreadsheetText(t.Group), csvTime(removed),
 		v.MeasurementState, v.Health.Status, spreadsheetText(v.Health.Reason),
 		strconv.Itoa(v.Sent), strconv.Itoa(v.Recv), strconv.Itoa(v.Loss),
 		strconv.FormatFloat(v.LossRatePct, 'f', 1, 64), strconv.FormatFloat(v.Health.RecentLossPct, 'f', 1, 64),

@@ -305,7 +305,7 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 		DoneCh:           p.doneCh,
 		SourceIPv4:       p.dispV4,
 		SourceIPv6:       p.dispV6,
-		SourceForDst:     p.sources.forDst,
+		SourceForDst:     p.sources.lookup,
 		PacketSize:       p.packetSize,
 		InitialLogs:      p.preLogs,
 		Route:            uiRouteMode(p.cfg),

@@ -38,10 +38,11 @@ func (s *supervisor) archiveTarget(target *stats.TargetStats) {
 	}
 }
 
-// newReportTarget captures t with the source its route uses.
+// newReportTarget captures t with the source its route uses now (at capture,
+// or at removal for an archived target).
 func (s *supervisor) newReportTarget(t *stats.TargetStats) report.Target {
 	record := report.NewTarget(t)
-	record.SourceIP = s.cfg.sources.forDst(record.Statistics.IP)
+	record.SourceIP = s.cfg.sources.resolve(record.Statistics.IP)
 	return record
 }
 
