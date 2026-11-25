@@ -18,7 +18,7 @@ func TestSelectionKeepsIdentityAndSkipsGroupHeadings(t *testing.T) {
 	pane := tview.NewFlex().AddItem(table, 0, 1, true)
 	pane.SetRect(0, 0, 220, 40)
 	table.SetRect(0, 0, 218, 38)
-	tr := newTableRenderer([]*stats.TargetStats{a, b, c}, "", "", 56, columnOptions{}, []TargetGroup{{Name: "group", Indices: []int{0, 1}}}, table, pane, nil, newViewState(tview.NewTextView()))
+	tr := newTableRenderer([]*stats.TargetStats{a, b, c}, sourceIPs{}, 56, columnOptions{}, []TargetGroup{{Name: "group", Indices: []int{0, 1}}}, table, pane, nil, newViewState(tview.NewTextView()))
 	tr.selectionEnabled = true
 	tr.selectedID = c.ID()
 	tr.update()

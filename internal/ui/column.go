@@ -16,8 +16,7 @@ import (
 // computed once per row rather than recomputed by every column.
 type columnRowContext struct {
 	view       stats.TargetView
-	sourceIPv4 string
-	sourceIPv6 string
+	sources    sourceIPs
 	packetSize int
 	lossRate   float64
 	// spark, when set, caches this row's sparkline so its plain text (for
@@ -159,7 +158,7 @@ func mainTableColumns(o columnOptions) []column {
 			dynamic: true, shrinkPriority: 20, growPriority: 10,
 			hideRank: explicitRank(o.SourceExplicit, rankSrcExplicit, rankSrc), setting: true,
 			render: func(ctx columnRowContext) string {
-				return displaySourceIPForDst(ctx.view.IP, ctx.sourceIPv4, ctx.sourceIPv6)
+				return ctx.sources.forDst(ctx.view.IP)
 			},
 		},
 		{

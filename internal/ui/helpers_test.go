@@ -444,3 +444,45 @@ func TestAppendErrorLog_Truncation(t *testing.T) {
 		t.Errorf("last entry should be new-entry, got %q", logs[len(logs)-1])
 	}
 }
+
+func TestSourceIPsPreferTheRouteSelectedSourcePerDestination(t *testing.T) {
+	// The family hint came from a link-local first target; each destination's
+	// own route picks a different source.
+	routes := map[string]string{"2606:4700:4700::1111": "2001:db8::a9", "fe80::1%en0": "fe80::2"}
+	src := sourceIPs{v6: "fe80::2", lookup: func(dst string) string { return routes[dst] }}
+
+	tests := []struct{ dst, want string }{
+		{"2606:4700:4700::1111", "2001:db8::a9"},
+		{"fe80::1%en0", "fe80::2"},
+		{"2001:db8::99", "fe80::2"}, // no answer: family hint
+		{"192.0.2.1", "Auto"},       // no answer, no IPv4 hint
+	}
+	for _, tt := range tests {
+		if got := src.forDst(tt.dst); got != tt.want {
+			t.Errorf("forDst(%q) = %q, want %q", tt.dst, got, tt.want)
+		}
+	}
+}
+
+func TestPingTableAndMTRShowEachRowsOwnSource(t *testing.T) {
+	ll, global := stats.NewTargetStats("fe80::1%en0"), stats.NewTargetStats("2606:4700:4700::1111")
+	ll.SetIP("fe80::1%en0")
+	global.SetIP("2606:4700:4700::1111")
+	routes := map[string]string{"2606:4700:4700::1111": "2001:db8::a9", "fe80::1%en0": "fe80::2"}
+	src := sourceIPs{v6: "fe80::2", lookup: func(dst string) string { return routes[dst] }}
+
+	tr := newTableRenderer([]*stats.TargetStats{ll, global}, src, 56, columnOptions{}, nil,
+		tview.NewTable(), tview.NewFlex(), nil, newViewState(tview.NewTextView()))
+	_, texts := tr.renderTexts(fetchViews(tr.targets, 0))
+	mtr := renderMTRTable([]*stats.TargetStats{global}, 160, src)
+
+	if got := texts[0][0]; got != "fe80::2" {
+		t.Errorf("link-local row SRC = %q, want fe80::2", got)
+	}
+	if got := texts[1][0]; got != "2001:db8::a9" {
+		t.Errorf("global row SRC = %q, want 2001:db8::a9", got)
+	}
+	if !strings.Contains(mtr, "2001:db8::a9 -> 2606:4700:4700::1111") {
+		t.Errorf("MTR header lacks the global source:\n%s", mtr)
+	}
+}

@@ -25,7 +25,7 @@ func (s *supervisor) groupNameForIndex(targetIdx int) string {
 }
 
 func (s *supervisor) archiveTarget(target *stats.TargetStats) {
-	record := report.NewTarget(target)
+	record := s.newReportTarget(target)
 	if i := slices.Index(s.cfg.targets, target); i >= 0 {
 		record.Group = s.groupNameForIndex(i)
 	}
@@ -36,6 +36,14 @@ func (s *supervisor) archiveTarget(target *stats.TargetStats) {
 		s.removed = append([]report.Target(nil), s.removed[len(s.removed)-maxRemovedTargets:]...)
 		s.removedDropped++
 	}
+}
+
+// newReportTarget captures t with the source its route uses now (at capture,
+// or at removal for an archived target).
+func (s *supervisor) newReportTarget(t *stats.TargetStats) report.Target {
+	record := report.NewTarget(t)
+	record.SourceIP = s.cfg.sources.resolve(record.Statistics.IP)
+	return record
 }
 
 // captureReport runs on the supervisor command loop, so target membership,
@@ -82,7 +90,7 @@ func (s *supervisor) captureReport(selectedID uint64) (report.Report, error) {
 		if selectedID != 0 && t.ID() != selectedID {
 			continue
 		}
-		record := report.NewTarget(t)
+		record := s.newReportTarget(t)
 		record.Group = s.groupNameForIndex(i)
 		r.Targets = append(r.Targets, record)
 	}

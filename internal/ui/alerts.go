@@ -21,6 +21,25 @@ type alertFlags struct {
 	jitterRed bool
 }
 
+// sourceIPs decides the source address shown for each destination. lookup
+// (RunOptions.SourceForDst) reports the source the kernel's route selection
+// picks for one destination IP, so a link-local and a global IPv6 target each
+// show their own; when it is nil or has no answer, the session-wide hint for
+// the destination's family is shown instead.
+type sourceIPs struct {
+	v4, v6 string
+	lookup func(dstIP string) string
+}
+
+func (s sourceIPs) forDst(dstIP string) string {
+	if s.lookup != nil {
+		if src := s.lookup(dstIP); src != "" {
+			return src
+		}
+	}
+	return displaySourceIPForDst(dstIP, s.v4, s.v6)
+}
+
 // displaySourceIPForDst returns the source address shown for dstIP: the IPv4
 // or IPv6 source matching the destination's family, or "Auto" when that
 // source is unset. A destination that is not an IP literal (a hostname) is
@@ -113,4 +132,9 @@ func targetViewKey(v stats.TargetView) string {
 		return v.Host
 	}
 	return fmt.Sprintf("%d", v.ID)
+}
+
+// sources is the source-address view of o shared by every pane.
+func (o RunOptions) sources() sourceIPs {
+	return sourceIPs{v4: o.SourceIPv4, v6: o.SourceIPv6, lookup: o.SourceForDst}
 }

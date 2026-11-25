@@ -58,6 +58,7 @@ type iteration struct {
 	preLogs           []string
 	// logCh carries route, health, PMTU, reload and web notices to the TUI Log.
 	logCh      chan string
+	sources    *sourceHints
 	pmtuCancel context.CancelFunc
 	pmtuDone   chan struct{}
 }
@@ -110,7 +111,8 @@ func (s *session) startIteration(first bool) (*iteration, bool) {
 		timeout:  time.Duration(cfg.timeoutMs) * time.Millisecond,
 		// The supervisor's OnFlap callback writes to logCh, so it must exist
 		// before the supervisor is constructed.
-		logCh: make(chan string, 16),
+		logCh:   make(chan string, 16),
+		sources: newSourceHints(cfg, env),
 	}
 
 	s.targets = buildTargetsForIteration(hosts, cfg)
@@ -138,7 +140,7 @@ func (s *session) startIteration(first bool) (*iteration, bool) {
 	it.sup = newSupervisor(supervisorConfig{
 		makePinger: makePinger,
 		specs:      hosts, groups: s.groups, config: cfg,
-		startedAt: s.startedAt, sourceIPv4: env.dispV4, sourceIPv6: env.dispV6,
+		startedAt: s.startedAt, sourceIPv4: env.dispV4, sourceIPv6: env.dispV6, sources: it.sources,
 		durationLimit: s.startup.duration, durationDeadline: s.durationDeadline,
 		network: env.resNetwork,
 		makeTargetPinger: func(size int, targets []*stats.TargetStats, specs []targetSpec) pingerController {
@@ -206,7 +208,7 @@ func (s *session) runUIUntilDone(it *iteration) bool {
 		// after a restart. Other monitors and duration/reload handling
 		// remain active.
 		doneCh: sup.finished,
-		dispV4: s.env.dispV4, dispV6: s.env.dispV6,
+		dispV4: s.env.dispV4, dispV6: s.env.dispV6, sources: it.sources,
 		packetSize: it.packetSize, preLogs: it.preLogs, cfg: cfg,
 		sup: sup, sig: sig, logCh: it.logCh,
 		currentHosts: s.hosts, currentGroups: s.groups,

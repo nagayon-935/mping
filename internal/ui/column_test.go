@@ -95,7 +95,7 @@ func TestRenderRowTexts(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := columnRowContext{view: tt.view, sourceIPv4: "10.0.0.2", packetSize: 56, lossRate: calcLossRate(tt.view)}
+			ctx := columnRowContext{view: tt.view, sources: sourceIPs{v4: "10.0.0.2"}, packetSize: 56, lossRate: calcLossRate(tt.view)}
 			texts := renderRowTexts(mainTableColumns(columnOptions{DNS: tt.dns, ASN: tt.asn, PTR: tt.ptr}), ctx)
 			if len(texts) != tt.wantLen {
 				t.Fatalf("texts len = %d, want %d", len(texts), tt.wantLen)

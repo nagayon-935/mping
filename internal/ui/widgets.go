@@ -89,7 +89,7 @@ func newSidePanes(opts RunOptions, currentTargets func() []*stats.TargetStats, r
 		if route() == RoutePath {
 			return renderTracerouteTable(currentTargets(), availW)
 		}
-		return renderMTRTable(currentTargets(), availW, opts.SourceIPv4, opts.SourceIPv6)
+		return renderMTRTable(currentTargets(), availW, opts.sources())
 	})
 	routePane.titleFn = func() string { return routePaneTitle(route()) }
 	port := newMonitorPane(opts.PortEnabled, " Port Monitor ", func(availW int) string {

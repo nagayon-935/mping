@@ -179,10 +179,19 @@ func detectAutoSourceIPs(specs []targetSpec) (src4, src6 string) {
 
 // detectInterfaceSourceIPs finds source hints with route probes bound to iface.
 func detectInterfaceSourceIPs(specs []targetSpec, iface string) (src4, src6 string) {
+	return detectSourceIPs(specs, interfaceRouteProbe(iface))
+}
+
+// getPreferredOutboundIPBoundFn is a seam over getPreferredOutboundIPBound.
+var getPreferredOutboundIPBoundFn = getPreferredOutboundIPBound
+
+// interfaceRouteProbe returns a route probe bound to iface the way the ICMP
+// sockets are, so it reports the source those probes leave with.
+func interfaceRouteProbe(iface string) func(remote, network string) string {
 	bind := checkerBindConfig(config{ifaceName: iface}, "")
-	return detectSourceIPs(specs, func(remote, network string) string {
-		return getPreferredOutboundIPBound(remote, network, bind)
-	})
+	return func(remote, network string) string {
+		return getPreferredOutboundIPBoundFn(remote, network, bind)
+	}
 }
 
 // detectSourceIPs returns the first non-empty source hint for each family,

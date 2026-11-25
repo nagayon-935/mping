@@ -47,7 +47,7 @@ func renderHostDetails(t *stats.TargetStats, opts RunOptions) string {
 	v := t.GetViewWindow(0)
 	var b strings.Builder
 	fmt.Fprintf(&b, "[yellow::b]%s[-::-]  Target #%d\n", tview.Escape(v.Host), v.ID)
-	fmt.Fprintf(&b, "IP: %s\nSource: %s\nStarted: %s  (%s elapsed)\n", tview.Escape(v.IP), tview.Escape(displaySourceIPForDst(v.IP, opts.SourceIPv4, opts.SourceIPv6)), detailTimestamp(v.StartedAt), time.Since(v.StartedAt).Round(time.Second))
+	fmt.Fprintf(&b, "IP: %s\nSource: %s\nStarted: %s  (%s elapsed)\n", tview.Escape(v.IP), tview.Escape(opts.sources().forDst(v.IP)), detailTimestamp(v.StartedAt), time.Since(v.StartedAt).Round(time.Second))
 	fmt.Fprintf(&b, "Ping statistics window: %s\n", detailTimestamp(v.WindowStartedAt))
 	if v.Health.Configured {
 		fmt.Fprintf(&b, "Measurements: %s | Health: %s — %s\nRecent loss (%.0fs): %.1f%% | Consecutive failures / replies: %d / %d\nLast probe: %s | Last reply: %s\n", tview.Escape(v.MeasurementState), v.Health.Status, tview.Escape(v.Health.Reason), v.Health.WindowSeconds, v.Health.RecentLossPct, v.Health.ConsecutiveFailures, v.Health.ConsecutiveSuccesses, detailTimestamp(v.Health.LastProbeAt), detailTimestamp(v.Health.LastReplyAt))
