@@ -16,6 +16,7 @@ const (
 	httpCodeColW   = 6 // "  200 "
 	httpCountColW  = 7 // " 99999 "
 	minHTTPURLW    = 20
+	maxHTTPURLMinW = 40 // the URL column asks for at most this much before optional columns
 )
 
 // httpCodeStr formats a status code for display.
@@ -48,7 +49,7 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 		return plainCell(func(v stats.HTTPCheckView) string { return formatFixedMs(get(v)) })
 	}
 	all := []monitorColumn[stats.HTTPCheckView]{
-		{boxColumn{header: "URL", width: minHTTPURLW}, plainCell(func(v stats.HTTPCheckView) string { return v.URL }), false},
+		{boxColumn{header: "URL", width: httpURLMinWidth(views)}, plainCell(func(v stats.HTTPCheckView) string { return v.URL }), false},
 		{boxColumn{header: "Status", width: httpStatusColW}, func(v stats.HTTPCheckView) boxCell {
 			return boxCell{text: v.Status, tag: httpStatusColorTag(v.Status)}
 		}, false},
@@ -63,11 +64,7 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 		{boxColumn{header: "Down", width: httpCountColW, rightAlign: true}, plainCell(func(v stats.HTTPCheckView) string { return fmt.Sprintf("%d", v.DownCount) }), false},
 		{boxColumn{header: "Since", width: timeAgoColW}, plainCell(func(v stats.HTTPCheckView) string { return formatLossAgo(v.LastChange) }), true},
 	}
-	urlWidth := minHTTPURLW
-	for _, v := range views {
-		urlWidth = max(urlWidth, runewidth.StringWidth(v.URL)+2)
-	}
-	cols, boxCols := fitMonitorColumns(all, "URL", urlWidth, availW)
+	cols, boxCols := fitMonitorColumns(all, "URL", availW)
 	if len(cols) == 0 {
 		return truncateToDisplayWidth(monitorTooNarrow, availW)
 	}
@@ -85,4 +82,15 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 		}
 	}
 	return sb.String()
+}
+
+// httpURLMinWidth is the URL column's declared width: the longest URL with
+// padding, between minHTTPURLW and maxHTTPURLMinW. URLs are fixed for the run,
+// so this keeps them readable without letting the layout follow live values.
+func httpURLMinWidth(views []stats.HTTPCheckView) int {
+	w := minHTTPURLW
+	for _, v := range views {
+		w = max(w, runewidth.StringWidth(v.URL)+2)
+	}
+	return min(w, maxHTTPURLMinW)
 }

@@ -5,8 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mattn/go-runewidth"
-
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
@@ -59,12 +57,9 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, availW int,
 	hops := view.MTRHops
 	effective := stats.EffectiveHopLosses(hops)
 	hopRows := make([]mtrRow, len(hops))
-	hostWidth := minMTRHostW
 	for i, h := range hops {
 		lossLevel := view.Thresholds.HopLoss(effective[i])
-		host := mtrIPStr(h)
-		hostWidth = max(hostWidth, runewidth.StringWidth(host)+2)
-		hopRows[i] = mtrRow{HopView: h, host: host, lossLevel: lossLevel, nonPersistent: h.LossPct > effective[i]}
+		hopRows[i] = mtrRow{HopView: h, host: mtrIPStr(h), lossLevel: lossLevel, nonPersistent: h.LossPct > effective[i]}
 	}
 
 	// Target label: "SrcIP -> DstIP" (with hostname prefix when applicable)
@@ -105,7 +100,7 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, availW int,
 		{boxColumn{header: "Max", width: fixedMsColW, rightAlign: true}, rtt(func(h stats.HopView) time.Duration { return h.MaxRTT }), true},
 		{boxColumn{header: "Jitter", width: fixedMsColW, rightAlign: true}, rtt(func(h stats.HopView) time.Duration { return h.Jitter }), true},
 	}
-	cols, boxCols := fitMonitorColumns(all, "Host", hostWidth, availW)
+	cols, boxCols := fitMonitorColumns(all, "Host", availW)
 	if len(cols) == 0 {
 		fmt.Fprintln(sb, truncateToDisplayWidth(monitorTooNarrow, availW))
 		return

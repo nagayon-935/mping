@@ -141,7 +141,92 @@ func (tr *tableRenderer) fitColumns(active, desired, minW, maxW []int, available
 		return out
 	}
 	available := max(availableTableWidth-max(len(active)-1, 0), 0)
-	return fitWidthsToAvailable(pick(desired), pick(minW), pick(maxW), pick(tr.shrinkPriorities), pick(tr.growPriorities), available)
+	minimum, reference, totalBase := 0, 0, 0
+	for _, i := range active {
+		c := tr.cols[i]
+		minimum += minW[i]
+		totalBase += c.base
+		if c.fixed {
+			reference += c.base
+		} else {
+			reference += c.max
+		}
+	}
+	if minimum > available {
+		return nil, false
+	}
+
+	// Reserve numeric padding before growing text columns. If longer text
+	// needs more than its reference width, give back the padding as needed
+	// to fit the minimums.
+	lower, upper := pick(minW), pick(maxW)
+	if refSpare := available - reference; refSpare > 0 {
+		padding := 0
+		for j, i := range active {
+			if c := tr.cols[i]; c.fixed {
+				extra := refSpare * c.base / totalBase
+				lower[j] += extra
+				padding += extra
+			}
+		}
+		overflow := minimum + padding - available
+		for j := len(active) - 1; j >= 0 && overflow > 0; j-- {
+			giveBack := min(overflow, lower[j]-minW[active[j]])
+			lower[j] -= giveBack
+			overflow -= giveBack
+		}
+		for j, i := range active {
+			if tr.cols[i].fixed {
+				upper[j] = lower[j]
+			}
+		}
+	}
+
+	widths, ok := fitWidthsToAvailable(pick(desired), lower, upper, pick(tr.shrinkPriorities), pick(tr.growPriorities), available)
+	if !ok {
+		return nil, false
+	}
+	remaining := available
+	weights := make([]int, len(widths))
+	for j, w := range widths {
+		remaining -= w
+		if !tr.cols[active[j]].fixed {
+			weights[j] = w
+		}
+	}
+	spreadProportionally(widths, weights, remaining)
+	return widths, true
+}
+
+// spreadProportionally adds positive extra width in proportion to the
+// weights. Zero-weight columns are skipped, and the first eligible columns
+// get one cell each from rounding.
+func spreadProportionally(widths, weights []int, extra int) {
+	if extra <= 0 {
+		return
+	}
+	total := 0
+	for _, w := range weights {
+		total += w
+	}
+	if total == 0 {
+		return
+	}
+	remaining := extra
+	for i, w := range weights {
+		share := extra * w / total
+		widths[i] += share
+		remaining -= share
+	}
+	for i, w := range weights {
+		if remaining == 0 {
+			break
+		}
+		if w > 0 {
+			widths[i]++
+			remaining--
+		}
+	}
 }
 
 // paneTitle names the Ping Monitor pane and, when columns are hidden for

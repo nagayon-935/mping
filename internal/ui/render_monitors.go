@@ -175,14 +175,10 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 			return formatFixedMs(get(pr))
 		}
 	}
-	targetWidth := len("Target") + 2
-	for _, v := range views {
-		targetWidth = max(targetWidth, runewidth.StringWidth(v.Host)+2)
-	}
 	// The target name is shown on the target's first port only.
 	// Its minimum fits host names up to maxPortTargetW, so the full layout is
 	// not picked at the cost of cutting short names that compact would show.
-	target := monitorColumn[portRow]{boxColumn: boxColumn{header: "Target", width: min(targetWidth, maxPortTargetW)},
+	target := monitorColumn[portRow]{boxColumn: boxColumn{header: "Target", width: min(maxHostWidth("Target", targets), maxPortTargetW)},
 		cell: func(r portRow) boxCell {
 			if r.first {
 				return boxCell{text: r.host}
@@ -224,7 +220,7 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 	}, true)
 
 	all := []monitorColumn[portRow]{target, port, service, status, last, minC, avg, maxC, count, change}
-	cols, boxCols := fitMonitorColumns(all, "Target", targetWidth, availW)
+	cols, boxCols := fitMonitorColumns(all, "Target", availW)
 	if len(cols) == 0 {
 		return truncateToDisplayWidth(monitorTooNarrow, availW)
 	}

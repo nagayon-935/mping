@@ -2,8 +2,20 @@ package ui
 
 import (
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/rivo/tview"
 )
+
+func assertBoxTableWidth(t *testing.T, table string, want int) {
+	t.Helper()
+	for line := range strings.SplitSeq(strings.TrimSuffix(table, "\n"), "\n") {
+		if got := tview.TaggedStringWidth(line); got != want {
+			t.Errorf("table line spans %d cells, want %d: %q", got, want, line)
+		}
+	}
+}
 
 func TestFitMonitorColumns(t *testing.T) {
 	all := []monitorColumn[int]{
@@ -12,22 +24,28 @@ func TestFitMonitorColumns(t *testing.T) {
 		{boxColumn: boxColumn{header: "Last", width: 6}},
 	}
 	for _, tt := range []struct {
-		name    string
-		avail   int
-		content int
-		want    []int
+		name  string
+		avail int
+		want  []int
 	}{
-		{"full leaves spare width", 32, 12, []int{7, 12, 6}},
-		{"full exact fit", 27, 20, []int{7, 10, 6}},
-		{"compact with spare width", 26, 14, []int{14, 6}},
-		{"compact shrinks below minimum", 15, 14, []int{6, 6}},
-		{"compact uses minimum for short content", 26, 5, []int{10, 6}},
-		{"compact cannot fit its fixed columns", 10, 14, nil},
+		{"wider column gets more extra", 50, []int{14, 20, 12}},
+		{"full exact fit", 27, []int{7, 10, 6}},
+		{"compact distributes spare", 26, []int{15, 8}},
+		{"compact shrinks below minimum", 15, []int{6, 6}},
+		{"compact cannot fit its fixed columns", 10, nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			cols, boxCols := fitMonitorColumns(all, "Flexible", tt.content, tt.avail)
+			cols, boxCols := fitMonitorColumns(all, "Flexible", tt.avail)
 			if got := boxWidths(boxCols); !slices.Equal(got, tt.want) {
 				t.Errorf("box widths = %v, want %v", got, tt.want)
+			}
+			if len(cols) != len(boxCols) {
+				t.Fatalf("got %d monitor columns and %d box columns", len(cols), len(boxCols))
+			}
+			if len(boxCols) > 0 {
+				if got := boxInnerWidth(boxCols) + 2; got != tt.avail {
+					t.Errorf("table spans %d cells, want %d", got, tt.avail)
+				}
 			}
 			for i, col := range cols {
 				if col.boxColumn != boxCols[i] {

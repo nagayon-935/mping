@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -129,6 +130,7 @@ func TestHTTPLatenciesUseNeutralColour(t *testing.T) {
 func TestHTTPMonitorTable_FitsURLAndAlignsNumericCells(t *testing.T) {
 	const url = "http://[2001:db8::1]/health"
 	r := makeHTTPResult(url, "Up", 200, 99999990*time.Microsecond)
+	codeAndLatency := regexp.MustCompile(`│ +200 │ +99999\.99ms │`)
 
 	for _, tt := range []struct {
 		name    string
@@ -136,21 +138,22 @@ func TestHTTPMonitorTable_FitsURLAndAlignsNumericCells(t *testing.T) {
 		full    bool
 		wantURL bool
 	}{
-		{"wide leaves spare width", 220, true, true},
-		{"compact fits URL", 85, false, true},
-		{"compact shrinks URL", 55, false, false},
+		{"full spans pane and fits URL", 220, true, true},
+		{"medium drops optional columns, URL stays whole", 100, false, true},
+		{"narrow keeps the URL whole", 85, false, true},
+		{"too narrow shrinks the URL below its minimum", 55, false, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			out := renderHTTPMonitorTable([]*stats.HTTPCheckResult{r}, tt.width, nil, nil)
 			plain := tview.NewTextView().SetDynamicColors(true).SetText(out).GetText(true)
-			top, _, _ := strings.Cut(out, "\n")
-			if width := tview.TaggedStringWidth(top); width > tt.width || tt.full && width >= tt.width {
-				t.Errorf("table spans %d cells in a %d-cell pane", width, tt.width)
+			assertBoxTableWidth(t, out, tt.width)
+			if visible := strings.Contains(plain, url); visible != tt.wantURL {
+				t.Errorf("URL visibility = %v, want %v:\n%s", visible, tt.wantURL, plain)
 			}
-			if strings.Contains(plain, url) != tt.wantURL {
-				t.Errorf("URL visibility = %v, want %v:\n%s", !tt.wantURL, tt.wantURL, plain)
+			if !tt.wantURL && !strings.Contains(plain, ". │ Up ") {
+				t.Errorf("expected an ellipsis in the URL cell:\n%s", plain)
 			}
-			if !strings.Contains(plain, "│  200 │ 99999.99ms │") {
+			if !codeAndLatency.MatchString(plain) {
 				t.Errorf("code and latency should be right-aligned with padding:\n%s", plain)
 			}
 			if strings.Contains(plain, "s ago") != tt.full {

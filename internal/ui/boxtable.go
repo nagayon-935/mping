@@ -177,16 +177,31 @@ func writeBoxBody(sb *strings.Builder, cols []boxColumn, groups [][][]boxCell, e
 type monitorColumn[V any] struct {
 	boxColumn
 	cell func(V) boxCell
-	full bool // shown only in the full layout
+	full bool // optional: dropped (rightmost first) when the pane is too narrow
 }
 
-// layoutColumns returns the columns shown in the given layout, in order,
-// together with their box-table columns.
-func layoutColumns[V any](all []monitorColumn[V], compact bool) ([]monitorColumn[V], []boxColumn) {
+// layoutColumns returns the columns that fit availW at their declared
+// widths, in order, together with their box-table columns. Optional (full)
+// columns are dropped one at a time from the right until the rest fit, so a
+// medium-width pane keeps as many columns as it can instead of jumping
+// straight to the compact set.
+func layoutColumns[V any](all []monitorColumn[V], availW int) ([]monitorColumn[V], []boxColumn) {
+	shown := make([]bool, len(all))
+	width := 1 // the left border; each column adds its width and a separator
+	for i, c := range all {
+		shown[i] = true
+		width += c.width + 1
+	}
+	for i := len(all) - 1; i >= 0 && width > availW; i-- {
+		if all[i].full {
+			shown[i] = false
+			width -= all[i].width + 1
+		}
+	}
 	var cols []monitorColumn[V]
 	var boxCols []boxColumn
-	for _, c := range all {
-		if !c.full || !compact {
+	for i, c := range all {
+		if shown[i] {
 			cols = append(cols, c)
 			boxCols = append(boxCols, c.boxColumn)
 		}
@@ -194,24 +209,35 @@ func layoutColumns[V any](all []monitorColumn[V], compact bool) ([]monitorColumn
 	return cols, boxCols
 }
 
-// fitMonitorColumns chooses the layout using the declared widths (including
-// the flexible column's minimum), then fits that column to its content.
-func fitMonitorColumns[V any](all []monitorColumn[V], flexibleHeader string, flexibleWidth, availW int) ([]monitorColumn[V], []boxColumn) {
-	cols, boxCols := layoutColumns(all, false)
-	if boxInnerWidth(boxCols)+2 > availW {
-		cols, boxCols = layoutColumns(all, true)
-	}
+// fitMonitorColumns sizes the table from the declared widths. Fixed columns
+// get proportional shares of spare width, and the flexible column absorbs
+// the remaining space or shrinks when even the minimal layout is too wide.
+func fitMonitorColumns[V any](all []monitorColumn[V], flexibleHeader string, availW int) ([]monitorColumn[V], []boxColumn) {
+	cols, boxCols := layoutColumns(all, availW)
 	spare := availW - boxInnerWidth(boxCols) - 2
+	total, flex := 0, -1
 	for i, c := range boxCols {
+		total += c.width
 		if c.header == flexibleHeader {
-			limit := c.width + spare
-			if limit < 2 {
-				return nil, nil
-			}
-			boxCols[i].width = min(max(c.width, flexibleWidth), limit)
-			cols[i].width = boxCols[i].width
-			break
+			flex = i
 		}
+	}
+	if flex < 0 || boxCols[flex].width+spare < 2 {
+		return nil, nil
+	}
+	remaining := spare
+	if spare > 0 {
+		for i := range boxCols {
+			if i != flex {
+				extra := spare * boxCols[i].width / total
+				boxCols[i].width += extra
+				remaining -= extra
+			}
+		}
+	}
+	boxCols[flex].width += remaining
+	for i := range cols {
+		cols[i].width = boxCols[i].width
 	}
 	return cols, boxCols
 }

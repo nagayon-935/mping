@@ -229,13 +229,14 @@ func TestPortMonitorColumnWidths(t *testing.T) {
 		avail int
 		want  []int
 	}{
-		{"full leaves spare width after the longest Target", 200, []int{42, 9, 9, 15, 12, 12, 12, 12, 13, 15}},
+		{"full distributes spare from declared widths", 200, []int{37, 12, 12, 21, 17, 17, 17, 17, 18, 21}},
 		{"compact shrinks Target", 55, []int{14, 9, 15, 12}},
-		{"too narrow for full: long host keeps its room", 100, []int{42, 9, 15, 12}},
-		{"narrower than compact: Target shrinks, no overflow", 46, []int{5, 9, 15, 12}},
+		{"medium keeps the optional columns that fit", 100, []int{30, 10, 10, 17, 13, 13}},
+		{"compact shrinks Target below its minimum", 46, []int{5, 9, 15, 12}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			table := renderPortMonitorTable([]*stats.TargetStats{target}, tt.avail, map[string]string{}, nil)
+			assertBoxTableWidth(t, table, tt.avail)
 			top, _, _ := strings.Cut(table, "\n")
 			var widths []int
 			for col := range strings.SplitSeq(strings.TrimSuffix(strings.TrimPrefix(top, "[white]┌"), "┐[-]"), "┬") {
@@ -273,8 +274,9 @@ func TestPortMonitorLatency(t *testing.T) {
 					continue
 				}
 				cells := strings.Split(line, "│")
-				if got := strings.TrimSpace(tview.NewTextView().SetDynamicColors(true).SetText(cells[5]).GetText(true)); got != tt.last {
-					t.Errorf("Last = %q, want %q in %s", got, tt.last, line)
+				got := tview.NewTextView().SetDynamicColors(true).SetText(cells[5]).GetText(true)
+				if !strings.HasPrefix(got, " ") || strings.TrimLeft(got, " ") != tt.last+" " {
+					t.Errorf("Last = %q, want %q right-aligned with padding in %s", got, tt.last, line)
 				}
 				if tt.last == "timeout" && !strings.HasPrefix(cells[5], "[gray]") {
 					t.Errorf("timeout is missing muted colour: %s", cells[5])
