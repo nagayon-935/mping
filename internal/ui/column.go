@@ -228,7 +228,7 @@ func mainTableColumns(o columnOptions) []column {
 	)
 	if o.SparkPoints > 0 {
 		cols = append(cols, column{
-			name: sparkColumnName, align: tview.AlignRight, base: sparkWidth, fixed: true, hideRank: rankSpark,
+			name: sparkColumnName, align: tview.AlignLeft, base: sparkWidth, fixed: true, hideRank: rankSpark,
 			// The layout reserves sparkWidth; the cell then draws the
 			// trend across the column's full width.
 			render: func(ctx columnRowContext) string {

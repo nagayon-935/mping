@@ -215,9 +215,14 @@ func layoutColumns[V any](all []monitorColumn[V], availW int) ([]monitorColumn[V
 func fitMonitorColumns[V any](all []monitorColumn[V], flexibleHeader string, availW int) ([]monitorColumn[V], []boxColumn) {
 	cols, boxCols := layoutColumns(all, availW)
 	spare := availW - boxInnerWidth(boxCols) - 2
+	// Numbers keep their fixed widths so they sit next to their headings;
+	// only text columns (left-aligned) share the spare width, which then
+	// shows as space after left-aligned text rather than before numbers.
 	total, flex := 0, -1
 	for i, c := range boxCols {
-		total += c.width
+		if !c.rightAlign {
+			total += c.width
+		}
 		if c.header == flexibleHeader {
 			flex = i
 		}
@@ -227,9 +232,9 @@ func fitMonitorColumns[V any](all []monitorColumn[V], flexibleHeader string, ava
 	}
 	remaining := spare
 	if spare > 0 {
-		for i := range boxCols {
-			if i != flex {
-				extra := spare * boxCols[i].width / total
+		for i, c := range boxCols {
+			if i != flex && !c.rightAlign {
+				extra := spare * c.width / total
 				boxCols[i].width += extra
 				remaining -= extra
 			}

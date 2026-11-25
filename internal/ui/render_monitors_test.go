@@ -229,9 +229,9 @@ func TestPortMonitorColumnWidths(t *testing.T) {
 		avail int
 		want  []int
 	}{
-		{"full distributes spare from declared widths", 200, []int{37, 12, 12, 21, 17, 17, 17, 17, 18, 21}},
+		{"full gives spare only to text columns", 200, []int{44, 16, 16, 26, 12, 12, 12, 12, 13, 26}},
 		{"compact shrinks Target", 55, []int{14, 9, 15, 12}},
-		{"medium keeps the optional columns that fit", 100, []int{30, 10, 10, 17, 13, 13}},
+		{"medium keeps the optional columns that fit", 100, []int{31, 10, 10, 18, 12, 12}},
 		{"compact shrinks Target below its minimum", 46, []int{5, 9, 15, 12}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

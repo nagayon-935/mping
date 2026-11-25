@@ -54,13 +54,13 @@ func TestColumnGolden_WideLayout(t *testing.T) {
 	}{
 		{
 			name:       "NoDNSNoASN",
-			wantHeader: "║ SRC   │ DST                            │     RCV │    LOST │   LOSS% │         RTT │         AVG │        JIT │           RTT 60s │   SIZE │    MTU │ TTL │ ERR                   │ LAST LOSS        ║",
-			wantData:   "║ Auto  │ example.com (93.184.216.34)    │       0 │       0 │    0.0% │           - │           - │          - │                   │     56 │      - │   - │ -                     │ -                ║",
+			wantHeader: "║ SRC   │ DST                             │    RCV │   LOST │  LOSS% │        RTT │        AVG │        JIT │ RTT 60s             │   SIZE │    MTU │ TTL │ ERR                    │ LAST LOSS         ║",
+			wantData:   "║ Auto  │ example.com (93.184.216.34)     │      0 │      0 │   0.0% │          - │          - │          - │                     │     56 │      - │   - │ -                      │ -                 ║",
 		},
 		{
 			name:       "DNSOnly",
 			dns:        true,
-			wantHeader: "║ SRC   │ DST                          │ DNS     │    RCV │   LOST │  LOSS% │        RTT │        AVG │        JIT │          RTT 60s │   SIZE │    MTU │ TTL │ ERR                  │ LAST LOSS       ║",
+			wantHeader: "║ SRC   │ DST                          │ DNS     │    RCV │   LOST │  LOSS% │        RTT │        AVG │        JIT │ RTT 60s          │   SIZE │    MTU │ TTL │ ERR                  │ LAST LOSS       ║",
 			wantData:   "║ Auto  │ example.com (93.184.216.34)  │ 8.8.8.8 │      0 │      0 │   0.0% │          - │          - │          - │                  │     56 │      - │   - │ -                    │ -               ║",
 		},
 		{
@@ -71,14 +71,14 @@ func TestColumnGolden_WideLayout(t *testing.T) {
 			// "AS1513...".
 			name:       "ASNOnly",
 			asn:        true,
-			wantHeader: "║ SRC   │ DST                          │              ASN │    RCV │   LOST │  LOSS% │        RTT │        AVG │        JIT │          RTT 60s │    MTU │ TTL │ ERR                  │ LAST LOSS       ║",
+			wantHeader: "║ SRC   │ DST                          │              ASN │    RCV │   LOST │  LOSS% │        RTT │        AVG │        JIT │ RTT 60s          │    MTU │ TTL │ ERR                  │ LAST LOSS       ║",
 			wantData:   "║ Auto  │ example.com (93.184.216.34)  │ AS15133 EdgeCast │      0 │      0 │   0.0% │          - │          - │          - │                  │      - │   - │ -                    │ -               ║",
 		},
 		{
 			name:       "DNSAndASN",
 			dns:        true,
 			asn:        true,
-			wantHeader: "║ SRC   │ DST                         │ DNS     │              ASN │    RCV │   LOST │  LOSS% │        RTT │        AVG │        JIT │          RTT 60s │ TTL │ ERR                  │ LAST LOSS       ║",
+			wantHeader: "║ SRC   │ DST                         │ DNS     │              ASN │    RCV │   LOST │  LOSS% │        RTT │        AVG │        JIT │ RTT 60s          │ TTL │ ERR                  │ LAST LOSS       ║",
 			wantData:   "║ Auto  │ example.com (93.184.216.34) │ 8.8.8.8 │ AS15133 EdgeCast │      0 │      0 │   0.0% │          - │          - │          - │                  │   - │ -                    │ -               ║",
 		},
 	}
@@ -173,8 +173,8 @@ func TestColumnLayoutDoesNotChangeWithErrors(t *testing.T) {
 // columns hide in rank order and the core columns share the remaining width.
 func TestColumnGolden_NarrowLayout(t *testing.T) {
 	const (
-		wantHeader = "║ DST                            │   LOSS% │        RTT │        JIT ║"
-		wantData   = "║ example.com (93.184.216.34)    │    0.0% │          - │          - ║"
+		wantHeader = "║ DST                             │  LOSS% │        RTT │        JIT ║"
+		wantData   = "║ example.com (93.184.216.34)     │   0.0% │          - │          - ║"
 	)
 	target := stats.NewTargetStats("example.com")
 	target.SetIP("93.184.216.34")
@@ -195,12 +195,12 @@ func TestColumnGolden_NarrowLayout(t *testing.T) {
 
 func TestColumnGolden_Groups(t *testing.T) {
 	const (
-		wantHeader        = "║ SRC   │ DST                                 │     RCV │    LOST │   LOSS% │        RTT │        AVG │        JIT │          RTT 60s │   SIZE │    MTU │ TTL │ ERR                  │ LAST LOSS       ║"
-		wantUngrouped     = "║ Auto  │ standalone.example.com (10.0.0.1)   │       0 │       0 │    0.0% │          - │          - │          - │                  │     56 │      - │   - │ -                    │ -               ║"
-		wantSpacer        = "║       │                                     │         │         │         │            │            │            │                  │        │        │     │                      │                 ║"
-		wantGroupHeader   = "║       │ ▸ core  (1 hosts) · – 1             │         │         │         │            │            │            │                  │        │        │     │                      │                 ║"
+		wantHeader        = "║ SRC   │ DST                                 │    RCV │   LOST │  LOSS% │        RTT │        AVG │        JIT │ RTT 60s           │   SIZE │    MTU │ TTL │ ERR                   │ LAST LOSS        ║"
+		wantUngrouped     = "║ Auto  │ standalone.example.com (10.0.0.1)   │      0 │      0 │   0.0% │          - │          - │          - │                   │     56 │      - │   - │ -                     │ -                ║"
+		wantSpacer        = "║       │                                     │        │        │        │            │            │            │                   │        │        │     │                       │                  ║"
+		wantGroupHeader   = "║       │ ▸ core  (1 hosts) · – 1             │        │        │        │            │            │            │                   │        │        │     │                       │                  ║"
 		wantSubHeader     = wantHeader
-		wantGroupedTarget = "║ Auto  │ grouped.example.com (10.0.0.2)      │       0 │       0 │    0.0% │          - │          - │          - │                  │     56 │      - │   - │ -                    │ -               ║"
+		wantGroupedTarget = "║ Auto  │ grouped.example.com (10.0.0.2)      │      0 │      0 │   0.0% │          - │          - │          - │                   │     56 │      - │   - │ -                     │ -                ║"
 	)
 	ungrouped := stats.NewTargetStats("standalone.example.com")
 	ungrouped.SetIP("10.0.0.1")

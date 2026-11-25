@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/mattn/go-runewidth"
+	"github.com/rivo/tview"
 )
 
 // columnPlan is the full layout chosen for one tick: which columns are shown
@@ -86,9 +87,13 @@ func (tr *tableRenderer) fitColumns(active, references []int, availableTableWidt
 		widths[j] = references[i] + boxCellPadding
 	}
 	if spare >= 0 {
+		// Only text columns and the sparkline grow; numeric columns keep
+		// their fixed widths so the numbers stay next to their headings.
 		weights := make([]int, len(active))
 		for j, i := range active {
-			weights[j] = references[i]
+			if c := tr.cols[i]; c.align == tview.AlignLeft || c.fit != nil {
+				weights[j] = references[i]
+			}
 		}
 		spreadProportionally(widths, weights, spare)
 		return widths, true

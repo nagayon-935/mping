@@ -33,7 +33,9 @@ func logStatusChangeIfNeeded(lastStatuses map[string]string, key, newStatus stri
 		return
 	}
 	if prev, seen := lastStatuses[key]; seen && prev != newStatus && log != nil {
-		log(fmt.Sprintf("[darkgray]%s[-] %s %s → %s%s[-]",
+		// "[15:04:05] subject: prev → new", the same time stamp as every other
+		// Log line.
+		log(fmt.Sprintf("[%s] %s %s → %s%s[-]",
 			time.Now().Format(logTimeLayout), subject(), prev, colorTag(newStatus), newStatus))
 	}
 	lastStatuses[key] = newStatus

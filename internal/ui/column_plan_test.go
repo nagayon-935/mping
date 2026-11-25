@@ -293,14 +293,20 @@ func TestPlanColumns_SparklineOutlivesSupplementaryColumns(t *testing.T) {
 	}
 }
 
-func TestPlanColumns_SharesSpareWidthAcrossAllColumns(t *testing.T) {
+func TestPlanColumns_SharesSpareWidthOnlyAcrossTextColumns(t *testing.T) {
 	tr, texts := newPlanRenderer(t, []*stats.TargetStats{replyingTarget("10.0.0.1", time.Millisecond)}, columnOptions{SparkPoints: 60})
 	// Source, destination, counters, timings, sparkline, settings, TTL,
 	// error and last loss. Padding and separators are accounted for below.
 	references := []int{8, 8, 6, 6, 6, 10, 10, 10, 16, 6, 6, 3, 20, 15}
-	total := 0
-	for _, ref := range references {
+	// SRC, DST, the sparkline, ERR and LAST LOSS share the spare width;
+	// numeric columns stay at their fixed widths.
+	grows := map[int]bool{0: true, 1: true, 8: true, 12: true, 13: true}
+	total, textTotal := 0, 0
+	for j, ref := range references {
 		total += ref
+		if grows[j] {
+			textTotal += ref
+		}
 	}
 	minimum := total + boxCellPadding*len(references) + len(references) - 1
 
@@ -312,10 +318,13 @@ func TestPlanColumns_SharesSpareWidthAcrossAllColumns(t *testing.T) {
 		}
 		for j, ref := range references {
 			got := plan.widths[j] - boxCellPadding - ref
-			lower := spare * ref / total
-			upper := lower
-			if spare > 0 && spare < total {
-				upper++ // A remainder cell can go to this column.
+			lower, upper := 0, 0
+			if grows[j] {
+				lower = spare * ref / textTotal
+				upper = lower
+				if spare > 0 {
+					upper++ // A remainder cell can go to this column.
+				}
 			}
 			if got < lower || got > upper {
 				t.Errorf("spare %d: %s gained %d cells, want %d to %d", spare, tr.cols[plan.active[j]].name, got, lower, upper)
