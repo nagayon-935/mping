@@ -61,33 +61,33 @@ type TargetView struct {
 // viewLocked captures the target and its monitors with up to n RTT samples
 // per series. The caller holds t.mu for reading.
 func (t *TargetStats) viewLocked(n int) TargetView {
+	view := t.pingViewLocked(n)
+	view.IPHistory = append([]IPChange(nil), t.ipHistory...)
+	view.PortResults = make([]PortCheckView, len(t.portResults))
+	for i, result := range t.portResults {
+		view.PortResults[i] = result.getViewWindow(n)
+	}
+	// MTRStats carries its own lock; snapshot it while the target reference
+	// is protected by TargetStats.mu.
+	if t.mtrStats != nil {
+		view.MTRHops = t.mtrStats.View()
+		view.MTRFlapCount, view.MTRLastFlapAt, view.MTRLastFlapDesc = t.mtrStats.FlapInfo()
+		view.MTRError = t.mtrStats.Error()
+	}
+	return view
+}
+
+func (t *TargetStats) pingViewLocked(n int) TargetView {
 	var avg time.Duration
 	if t.recv > 0 {
 		avg = t.rtt.sum / time.Duration(t.recv)
-	}
-
-	portCopy := make([]PortCheckView, len(t.portResults))
-	for i, r := range t.portResults {
-		portCopy[i] = r.getViewWindow(n)
-	}
-
-	// MTRStats carries its own lock; snapshot it while the target reference
-	// is protected by TargetStats.mu.
-	var mtrHops []HopView
-	var mtrFlapCount int
-	var mtrLastFlapAt time.Time
-	var mtrLastFlapDesc, mtrError string
-	if t.mtrStats != nil {
-		mtrHops = t.mtrStats.View()
-		mtrFlapCount, mtrLastFlapAt, mtrLastFlapDesc = t.mtrStats.FlapInfo()
-		mtrError = t.mtrStats.Error()
 	}
 
 	th := t.healthPolicyLocked().Thresholds
 	return TargetView{
 		Health: t.healthViewLocked(), MeasurementState: t.measurementState,
 		Thresholds: th, Levels: th.levels(t.recv, t.loss, t.lastRTT, time.Duration(t.jitter)),
-		IPHistory: append([]IPChange(nil), t.ipHistory...), IPChanges: t.ipChanges,
+		IPChanges:        t.ipChanges,
 		ID:               t.id,
 		StartedAt:        t.startedAt,
 		WindowStartedAt:  t.windowStartedAt,
@@ -105,12 +105,6 @@ func (t *TargetStats) viewLocked(n int) TargetView {
 		PMTUSource:       t.pathMTU.Source,
 		PMTUStatus:       t.pathMTU.Status,
 		PMTUBottleneckIP: t.pathMTU.BottleneckIP,
-		PortResults:      portCopy,
-		MTRHops:          mtrHops,
-		MTRFlapCount:     mtrFlapCount,
-		MTRLastFlapAt:    mtrLastFlapAt,
-		MTRLastFlapDesc:  mtrLastFlapDesc,
-		MTRError:         mtrError,
 		Sent:             t.sent,
 		Recv:             t.recv,
 		Loss:             t.loss,
@@ -143,6 +137,38 @@ func (t *TargetStats) GetViewWindow(n int) TargetView {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.viewLocked(n)
+}
+
+// GetPingViewWindow returns the target's ICMP stats with up to n trailing
+// RTT samples. Port checks, route monitoring and IP change history are
+// omitted so Ping Monitor and its graph can refresh without copying them.
+func (t *TargetStats) GetPingViewWindow(n int) TargetView {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.pingViewLocked(n)
+}
+
+// PingWindowMax returns the maximum RTT in the trailing n ping samples
+// without copying the history. It returns zero for an empty window.
+func (t *TargetStats) PingWindowMax(n int) time.Duration {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	n = min(n, t.rtt.historyLen)
+	if n <= 0 {
+		return 0
+	}
+	history := t.rtt.history
+	start := (t.rtt.historyIdx - n) % len(history)
+	end := min(start+n, len(history))
+	var peak time.Duration
+	for _, sample := range history[start:end] {
+		peak = max(peak, sample)
+	}
+	for _, sample := range history[:n-(end-start)] {
+		peak = max(peak, sample)
+	}
+	return peak
 }
 
 // FormatASN renders an AS number with its operator name, falling back to the

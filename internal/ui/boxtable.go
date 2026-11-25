@@ -112,19 +112,27 @@ func boxHeaderRow(cols []boxColumn) string {
 	return sb.String()
 }
 
-// boxRow builds one data row. No trailing newline is added.
-func boxRow(cols []boxColumn, cells []boxCell) string {
-	var sb strings.Builder
+// writeBoxRow appends one data row without a trailing newline.
+func writeBoxRow(sb *strings.Builder, cols []boxColumn, cells []boxCell) {
 	sb.WriteString("[white]│")
 	for i, c := range cols {
-		if tag := cells[i].tag; tag != "" {
-			sb.WriteString(tag + tview.Escape(c.pad(cells[i].text)) + "[-][white]│")
-		} else {
-			sb.WriteString("[white]" + tview.Escape(c.pad(cells[i].text)) + "[white]│")
+		cell := cells[i]
+		tag := cell.tag
+		if tag == "" {
+			tag = "[white]"
 		}
+		sb.WriteString(tag)
+		text := c.pad(cell.text)
+		if strings.Contains(text, "[") {
+			text = tview.Escape(text)
+		}
+		sb.WriteString(text)
+		if cell.tag != "" {
+			sb.WriteString("[-]")
+		}
+		sb.WriteString("[white]│")
 	}
 	sb.WriteString("[-]")
-	return sb.String()
 }
 
 // boxSpanRow draws a padded row spanning all columns.
@@ -164,7 +172,8 @@ func writeBoxBody(sb *strings.Builder, cols []boxColumn, groups [][][]boxCell, e
 	fmt.Fprintln(sb, boxBorder(widths, borderMid))
 	for i, rows := range groups {
 		for _, cells := range rows {
-			fmt.Fprintln(sb, boxRow(cols, cells))
+			writeBoxRow(sb, cols, cells)
+			sb.WriteByte('\n')
 		}
 		if i < len(groups)-1 {
 			fmt.Fprintln(sb, boxBorder(widths, borderMid))

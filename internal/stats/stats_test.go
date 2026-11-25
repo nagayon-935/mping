@@ -573,3 +573,49 @@ func TestTargetStatsIdentity(t *testing.T) {
 		t.Fatalf("view ID = %d, want %d", v.ID, a.ID())
 	}
 }
+
+func TestGetPingViewWindowSkipsMonitorDetails(t *testing.T) {
+	target := NewTargetStats("example.com")
+	target.SetIP("192.0.2.1")
+	target.MTR().SetIP(1, "192.0.2.254", "", "", "")
+	target.SetPortResults([]*PortCheckResult{NewPortCheckResult(443, "tcp")})
+	target.IncSent()
+	target.OnSuccess(42*time.Millisecond, 64)
+
+	want := target.GetViewWindow(1)
+	want.IPHistory = nil
+	want.MTRHops = nil
+	want.PortResults = nil
+	if got := target.GetPingViewWindow(1); !reflect.DeepEqual(got, want) {
+		t.Fatalf("GetPingViewWindow(1) = %+v, want %+v", got, want)
+	}
+}
+
+func TestPingWindowMaxAcrossHistoryWrap(t *testing.T) {
+	target := NewTargetStats("example.com")
+	for i := range historySize - 2 {
+		target.IncSent()
+		target.OnSuccess(time.Duration(i+1)*time.Millisecond, 64)
+	}
+	target.IncSent()
+	target.OnSuccess(50*time.Second, 64)
+	for range 4 {
+		target.IncSent()
+		target.OnSuccess(time.Millisecond, 64)
+	}
+
+	for _, tc := range []struct {
+		points int
+		want   time.Duration
+	}{
+		{0, 0},
+		{2, time.Millisecond},
+		{4, time.Millisecond},
+		{5, 50 * time.Second},
+		{historySize + 1, 50 * time.Second},
+	} {
+		if got := target.PingWindowMax(tc.points); got != tc.want {
+			t.Errorf("PingWindowMax(%d) = %v, want %v", tc.points, got, tc.want)
+		}
+	}
+}

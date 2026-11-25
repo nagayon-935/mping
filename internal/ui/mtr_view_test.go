@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -11,6 +12,33 @@ import (
 
 	"github.com/nagayon-935/mping/internal/stats"
 )
+
+func BenchmarkRenderMTRTable(b *testing.B) {
+	const targetCount, hopCount = 24, 20
+	targets := make([]*stats.TargetStats, targetCount)
+	for i := range targets {
+		hops := make([]stats.HopView, hopCount)
+		for j := range hops {
+			hops[j] = stats.HopView{
+				TTL: j + 1, IP: fmt.Sprintf("198.51.100.%d", j+1),
+				ASN: "AS64496", Org: "Network Operator [East]",
+				Sent: 100, Recv: 90 + j%11, AvgRTT: time.Duration(1000+1711*j) * time.Microsecond,
+			}
+		}
+		targets[i] = buildMTRTarget(fmt.Sprintf("router-%02d.example", i), fmt.Sprintf("192.0.2.%d", i+1), hops)
+	}
+	for _, layout := range []struct {
+		name  string
+		width int
+	}{{"compact", 80}, {"full", 160}} {
+		b.Run(layout.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				renderMTRTable(targets, layout.width, sourceIPs{})
+			}
+		})
+	}
+}
 
 // buildMTRTarget creates a TargetStats with a set of pre-loaded hops for testing.
 func buildMTRTarget(host, ip string, hops []stats.HopView) *stats.TargetStats {

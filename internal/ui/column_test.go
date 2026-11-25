@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"github.com/mattn/go-runewidth"
 	"slices"
 	"testing"
 	"time"
@@ -97,7 +96,7 @@ func TestRenderRowTexts(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := columnRowContext{view: tt.view, sources: sourceIPs{v4: "10.0.0.2"}, packetSize: 56, lossRate: calcLossRate(tt.view)}
+			ctx := columnRowContext{view: tt.view, sourceIP: "10.0.0.2", packetSize: 56, lossRate: calcLossRate(tt.view)}
 			texts := renderRowTexts(mainTableColumns(columnOptions{DNS: tt.dns, ASN: tt.asn, PTR: tt.ptr}), ctx)
 			if len(texts) != tt.wantLen {
 				t.Fatalf("texts len = %d, want %d", len(texts), tt.wantLen)
@@ -200,27 +199,6 @@ func TestRenderErrorCell(t *testing.T) {
 	}
 }
 
-func TestRowSparklineIsComputedOncePerRowAndWidth(t *testing.T) {
-	ctx := columnRowContext{view: stats.TargetView{History: []time.Duration{10 * time.Millisecond, 0}}, spark: new(sparkMemo)}
-	wantPlain, wantStyled := sparklines(ctx.view.History, 8, sparkWidth)
-
-	plain, styled := ctx.sparkline(8, sparkWidth)
-	history := ctx.view.History
-	ctx.view.History = nil // a recompute would now draw an empty sparkline
-	cachedPlain, cachedStyled := ctx.sparkline(8, sparkWidth)
-	ctx.view.History = history
-	if wide, _ := ctx.sparkline(8, 30); runewidth.StringWidth(wide) != 30 {
-		t.Errorf("a different width must redraw: got %d cells, want 30", runewidth.StringWidth(wide))
-	}
-
-	if plain != wantPlain || styled != wantStyled {
-		t.Fatalf("sparkline() = %q, %q, want %q, %q", plain, styled, wantPlain, wantStyled)
-	}
-	if cachedPlain != plain || cachedStyled != styled {
-		t.Errorf("second call = %q, %q, want the row's cached %q, %q", cachedPlain, cachedStyled, plain, styled)
-	}
-}
-
 // TestTableColorsFollowTheTargetsThresholds renders a row for a target whose
 // health policy carries custom thresholds and checks the cells are coloured
 // by those, not by the defaults (30ms RTT is fine under the defaults).
@@ -256,4 +234,25 @@ func TestTableColorsFollowTheTargetsThresholds(t *testing.T) {
 			t.Errorf("%s cell color = %v, want %v", name, got, color)
 		}
 	}
+}
+
+// renderRowTexts renders every column's cell text for one row from a single
+// shared context.
+func renderRowTexts(cols []column, ctx columnRowContext) []string {
+	texts := make([]string, len(cols))
+	for i, c := range cols {
+		texts[i] = c.render(ctx)
+	}
+	return texts
+}
+
+// renderRowCells builds formatted, colored table cells for one row from
+// already-rendered text. Each column owns its own color logic, so it can't
+// drift out of sync with where DNS/ASN/PTR happen to sit.
+func renderRowCells(cols []column, texts []string, widths, aligns []int, ctx columnRowContext, rowColor tcell.Color) []*tview.TableCell {
+	cells := make([]*tview.TableCell, len(cols))
+	for i, c := range cols {
+		cells[i] = renderCell(c, texts[i], widths[i], aligns[i], ctx, rowColor)
+	}
+	return cells
 }

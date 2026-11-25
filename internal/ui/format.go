@@ -115,9 +115,25 @@ func truncateToDisplayWidth(s string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	if runewidth.StringWidth(s) <= width {
+	if cellDisplayWidth(s) <= width {
 		return s
 	}
+	return truncateCellText(s, width)
+}
+
+// cellDisplayWidth skips grapheme measurement for printable ASCII, where
+// each byte occupies one column.
+func cellDisplayWidth(text string) int {
+	for i := 0; i < len(text); i++ {
+		if text[i] < ' ' || text[i] > '~' {
+			return runewidth.StringWidth(text)
+		}
+	}
+	return len(text)
+}
+
+// truncateCellText shortens text known to be wider than width.
+func truncateCellText(s string, width int) string {
 	if width <= 3 {
 		return strings.Repeat(".", width)
 	}
@@ -139,8 +155,14 @@ func truncateToDisplayWidth(s string, width int) string {
 }
 
 func formatCellText(text string, width int, align int) string {
-	text = truncateToDisplayWidth(text, width)
-	textWidth := runewidth.StringWidth(text)
+	if width <= 0 {
+		return ""
+	}
+	textWidth := cellDisplayWidth(text)
+	if textWidth > width {
+		text = truncateCellText(text, width)
+		textWidth = cellDisplayWidth(text)
+	}
 	if textWidth >= width {
 		return text
 	}

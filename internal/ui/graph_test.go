@@ -282,11 +282,19 @@ func TestLayoutGraph(t *testing.T) {
 	}
 }
 
-// BenchmarkGraphViewDraw_20Targets_LongHistory tracks GraphView's
-// allocations: buildSeries must fetch a windowed history snapshot exactly
-// once per target per Draw, since each fetch copies up to historySize
-// entries. Run with `go test -bench=. -benchmem`.
+// BenchmarkGraphViewDraw_20Targets_LongHistory measures graph draws with
+// the history buffers filled and more targets than the viewport can show.
 func BenchmarkGraphViewDraw_20Targets_LongHistory(b *testing.B) {
+	benchmarkGraphViewDraw(b, 20)
+}
+
+func BenchmarkGraphViewDraw_500Targets_LongHistory(b *testing.B) {
+	benchmarkGraphViewDraw(b, 500)
+}
+
+func benchmarkGraphViewDraw(b *testing.B, numTargets int) {
+	b.Helper()
+
 	screen := tcell.NewSimulationScreen("UTF-8")
 	if err := screen.Init(); err != nil {
 		b.Fatalf("screen init: %v", err)
@@ -294,7 +302,6 @@ func BenchmarkGraphViewDraw_20Targets_LongHistory(b *testing.B) {
 	defer screen.Fini()
 	screen.SetSize(160, 40)
 
-	const numTargets = 20
 	targets := make([]*stats.TargetStats, numTargets)
 	for i := range targets {
 		targets[i] = stats.NewTargetStats("host")
@@ -444,5 +451,16 @@ func requireText(t *testing.T, text string, wants ...string) {
 		if !strings.Contains(text, want) {
 			t.Errorf("screen missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestGraphViewScaleIncludesOffscreenTargets(t *testing.T) {
+	targets := graphTargets(20, "host")
+	targets[19].IncSent()
+	targets[19].OnSuccess(2*time.Second, 64)
+	graph := NewGraphView(targets, time.Second)
+	series, peak := graph.visiblePingSeries(0, 6, graphWindowSeconds)
+	if len(series) != 6 || peak != 2*time.Second {
+		t.Fatalf("visible graph has %d series with peak %v, want 6 series and 2s peak", len(series), peak)
 	}
 }

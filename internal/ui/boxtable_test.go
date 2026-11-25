@@ -88,12 +88,14 @@ func TestBoxHeaderRow(t *testing.T) {
 }
 
 func TestBoxRowColoursOnlyTaggedCells(t *testing.T) {
-	cols := []boxColumn{{width: 4, rightAlign: true}, {width: 6}}
-	got := boxRow(cols, []boxCell{{text: "a"}, {text: "Open", tag: "[green]"}})
-	want := "[white]│[white]" + rightPaddedCell("a", 4) + "[white]│[green]" + paddedCell("Open", 6) + "[-][white]│[-]"
-	if got != want {
-		t.Errorf("boxRow = %q, want %q", got, want)
+	cols := []boxColumn{{width: 4, rightAlign: true}, {width: 9}}
+	var row strings.Builder
+	writeBoxRow(&row, cols, []boxCell{{text: "a"}, {text: "界[red]", tag: "[green]"}})
+	want := "[white]│[white]  a [white]│[green] 界[red[] [-][white]│[-]"
+	if got := row.String(); got != want {
+		t.Errorf("box row = %q, want %q", got, want)
 	}
+	assertBoxTableWidth(t, row.String(), 16)
 }
 
 func TestBoxSpanRow(t *testing.T) {

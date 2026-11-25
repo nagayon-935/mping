@@ -55,7 +55,7 @@ func BenchmarkCalcColumnWidths(b *testing.B) {
 	}
 
 	tr := newBenchTableRenderer(b, targetCount)
-	_, texts := tr.renderTexts(views)
+	texts := tr.renderLayoutTexts(testColumnRows(views))
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -91,10 +91,8 @@ func BenchmarkTableRendererUpdate_500Targets_Scrolled(b *testing.B) {
 	}
 }
 
-// BenchmarkTableRendererUpdate_100Targets tracks update()'s allocations
-// (run with `go test -bench=. -benchmem`). Each GetView() copies up to
-// historySize RTT history entries, so each target's GetView() must run
-// exactly once per update() call.
+// BenchmarkTableRendererUpdate_100Targets tracks the table refresh with
+// populated target statistics and the sparkline disabled.
 func BenchmarkTableRendererUpdate_100Targets(b *testing.B) {
 	const numTargets = 100
 	targets := make([]*stats.TargetStats, numTargets)
@@ -112,5 +110,41 @@ func BenchmarkTableRendererUpdate_100Targets(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		tr.update()
+	}
+}
+
+// BenchmarkTableRendererLiveUpdate updates every target before refreshing a
+// scrolled Ping Monitor with one minute of RTT history.
+func BenchmarkTableRendererLiveUpdate(b *testing.B) {
+	const targetsCount = 500
+	const points = 600
+	targets := make([]*stats.TargetStats, targetsCount)
+	for i := range targets {
+		target := stats.NewTargetStats(fmt.Sprintf("host-%03d.example.com", i))
+		target.SetIP(fmt.Sprintf("192.0.2.%d", i%254+1))
+		for j := range points {
+			target.IncSent()
+			target.OnSuccess(time.Duration(j%60+1)*time.Millisecond, 64)
+		}
+		targets[i] = target
+	}
+	for _, width := range []int{80, 240} {
+		b.Run(fmt.Sprintf("Width%d", width), func(b *testing.B) {
+			table := tview.NewTable().SetBorders(true).SetFixed(1, 1)
+			pane := tview.NewFlex().AddItem(table, 0, 1, true)
+			pane.SetRect(0, 0, width, 30)
+			vs := newViewState(tview.NewTextView())
+			tr := newTableRenderer(targets, sourceIPs{v4: "192.0.2.254"}, 56, columnOptions{SparkPoints: points}, nil, table, pane, nil, vs)
+			table.SetOffset(250, 0)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				for _, target := range targets {
+					target.IncSent()
+					target.OnSuccess(time.Duration(i%60+1)*time.Millisecond, 64)
+				}
+				tr.update()
+			}
+		})
 	}
 }

@@ -19,7 +19,7 @@ func newPlanRenderer(t *testing.T, targets []*stats.TargetStats, opts columnOpti
 	table := tview.NewTable().SetBorders(true)
 	pane := tview.NewFlex().AddItem(table, 0, 1, true)
 	tr := newTableRenderer(targets, sourceIPs{v4: "10.0.0.5"}, 56, opts, nil, table, pane, nil, newViewState(tview.NewTextView()))
-	_, texts := tr.renderTexts(fetchViews(targets, tr.sparkPoints))
+	texts := tr.renderLayoutTexts(tr.fetchRows(0, len(targets)))
 	return tr, texts
 }
 
@@ -112,6 +112,7 @@ func TestPlanColumns_HidesNothingWhenEverythingFits(t *testing.T) {
 func TestPlanColumns_NeverCutsNumbers(t *testing.T) {
 	// Arrange: a long RTT value in a terminal that must hide columns.
 	tr, texts := newPlanRenderer(t, []*stats.TargetStats{replyingTarget("10.0.0.1", 679842*time.Microsecond)}, columnOptions{})
+	row := tr.fetchRows(0, 1)[0]
 
 	for _, width := range []int{120, 90, 70, 50} {
 		// Act
@@ -125,7 +126,7 @@ func TestPlanColumns_NeverCutsNumbers(t *testing.T) {
 			if tr.cols[i].align != tview.AlignRight || tr.cols[i].dynamic {
 				continue
 			}
-			if text := texts[0][i]; plan.widths[j]-boxCellPadding < len(text) {
+			if text := tr.cols[i].render(row); plan.widths[j]-boxCellPadding < len(text) {
 				t.Errorf("width %d: %s is %d wide, value %q cut", width, tr.cols[i].name, plan.widths[j], text)
 			}
 			if name := tr.cols[i].name; plan.widths[j]-boxCellPadding < len(name) {
@@ -144,7 +145,7 @@ func TestPlanColumns_DNSRequiresAConfiguredServer(t *testing.T) {
 	}
 
 	target.SetDNSServer("")
-	_, texts = tr.renderTexts(fetchViews(tr.targets, tr.sparkPoints))
+	texts = tr.renderLayoutTexts(tr.fetchRows(0, len(tr.targets)))
 	plan := tr.planColumns(texts, 200)
 	if slices.Contains(shownNames(tr, plan), "DNS") || slices.Contains(plan.hidden, "DNS") {
 		t.Errorf("DNS should be omitted without a server, got shown %v and hidden %v", shownNames(tr, plan), plan.hidden)
@@ -259,7 +260,8 @@ func TestSparklineWidth_SingleCellGlyphs(t *testing.T) {
 	if got := tr.planColumns(texts, 200); !got.ok {
 		t.Fatal("plan did not fit")
 	}
-	if got := runewidth.StringWidth(texts[0][sparkCol]); got != sparkWidth {
+	row := tr.fetchRows(0, 1)[0]
+	if got := runewidth.StringWidth(tr.cols[sparkCol].render(row)); got != sparkWidth {
 		t.Errorf("RTT 60s content width = %d, want %d", got, sparkWidth)
 	}
 }
@@ -371,4 +373,12 @@ func TestSpreadProportionally(t *testing.T) {
 			}
 		})
 	}
+}
+
+func testColumnRows(views []stats.TargetView) []columnRowContext {
+	rows := make([]columnRowContext, len(views))
+	for i, view := range views {
+		rows[i].view = view
+	}
+	return rows
 }
