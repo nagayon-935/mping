@@ -224,7 +224,7 @@ func mainTableColumns(o columnOptions) []column {
 	)
 	if o.SparkPoints > 0 {
 		cols = append(cols, column{
-			name: sparkColumnName, align: tview.AlignLeft, base: sparkWidth, fixed: true, hideRank: rankSpark,
+			name: sparkColumnName, align: tview.AlignRight, base: sparkWidth, fixed: true, hideRank: rankSpark,
 			render: func(ctx columnRowContext) string {
 				plain, _ := ctx.sparkline(o.SparkPoints)
 				return plain
@@ -305,9 +305,15 @@ func renderRowCells(cols []column, texts []string, widths, aligns []int, ctx col
 	cells := make([]*tview.TableCell, len(cols))
 	for i, c := range cols {
 		text := tview.Escape(padBoxCell(texts[i], widths[i], aligns[i]))
-		if c.styled != nil && aligns[i] == tview.AlignLeft {
+		if c.styled != nil {
+			// The styled text has the plain text's width; pad it the same
+			// way, on the side its alignment leaves open.
 			if spare := widths[i] - boxCellPadding - runewidth.StringWidth(texts[i]); spare >= 0 {
-				text = " " + c.styled(ctx) + strings.Repeat(" ", spare+1)
+				if aligns[i] == tview.AlignRight {
+					text = strings.Repeat(" ", spare+1) + c.styled(ctx) + " "
+				} else {
+					text = " " + c.styled(ctx) + strings.Repeat(" ", spare+1)
+				}
 			}
 		}
 		cell := tview.NewTableCell(text).

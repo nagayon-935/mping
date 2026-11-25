@@ -26,16 +26,15 @@ func TestProjectDurationsToGraph(t *testing.T) {
 		name          string
 		data          []time.Duration
 		window, width int
-		wantSlot      int           // slot expected to hold wantValue
-		wantValue     time.Duration // checked when non-zero
-		wantEmpty     int           // slot expected to be unfilled, or -1
+		wantLast      time.Duration // right-aligned latest sample, when non-zero
+		wantLeftEmpty bool          // slot 0 unfilled: the window is not yet full
 		wantAllFilled bool          // a continuous span covers every slot
 	}{
-		{"partially filled window starts at the left edge", []time.Duration{1 * ms, 2 * ms, 3 * ms}, 30, 10, 0, 2 * ms, 9, false},
-		{"narrow window spans every slot", []time.Duration{1 * ms, 2 * ms, 3 * ms}, 2, 4, 0, 0, -1, true},
-		{"a window of one draws at the right edge", []time.Duration{5 * ms}, 1, 3, 2, 5 * ms, 0, false},
-		{"single sample in a window of one", []time.Duration{5 * ms}, 1, 10, 9, 5 * ms, 0, false},
-		{"data beyond the window is trimmed to its tail", []time.Duration{1 * ms, 2 * ms, 3 * ms, 4 * ms}, 2, 5, 4, 4 * ms, -1, true},
+		{"partially filled window is right-aligned", []time.Duration{1 * ms, 2 * ms, 3 * ms}, 30, 10, 3 * ms, true, false},
+		{"narrow window spans every slot", []time.Duration{1 * ms, 2 * ms, 3 * ms}, 2, 4, 0, false, true},
+		{"single sample is right-aligned", []time.Duration{5 * ms}, 1, 3, 5 * ms, true, false},
+		{"single sample in a window of one", []time.Duration{5 * ms}, 1, 10, 5 * ms, true, false},
+		{"data beyond the window is trimmed to its tail", []time.Duration{1 * ms, 2 * ms, 3 * ms, 4 * ms}, 2, 5, 4 * ms, false, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -47,11 +46,11 @@ func TestProjectDurationsToGraph(t *testing.T) {
 			if len(values) != tt.width || len(has) != tt.width {
 				t.Fatalf("projection size: got values=%d has=%d, want %d", len(values), len(has), tt.width)
 			}
-			if tt.wantValue != 0 && (!has[tt.wantSlot] || values[tt.wantSlot] != tt.wantValue) {
-				t.Errorf("slot %d: has=%v value=%v, want %v", tt.wantSlot, has[tt.wantSlot], values[tt.wantSlot], tt.wantValue)
+			if tt.wantLast != 0 && (!has[tt.width-1] || values[tt.width-1] != tt.wantLast) {
+				t.Errorf("latest sample should be right-aligned: has=%v value=%v, want %v", has[tt.width-1], values[tt.width-1], tt.wantLast)
 			}
-			if tt.wantEmpty >= 0 && has[tt.wantEmpty] {
-				t.Errorf("slot %d should be empty: has=%v", tt.wantEmpty, has)
+			if tt.wantLeftEmpty && has[0] {
+				t.Errorf("left side should be empty when the window is not yet filled: has=%v", has)
 			}
 			if tt.wantAllFilled && slices.Contains(has, false) {
 				t.Errorf("expected a continuous span: has=%v", has)

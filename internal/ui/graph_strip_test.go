@@ -22,9 +22,9 @@ func TestBucketHistory(t *testing.T) {
 		want         []stripBucket
 	}{
 		{
-			name:    "samples fill from the left, slowest reply per column",
+			name:    "samples land right-aligned, slowest reply per column",
 			history: []time.Duration{10 * ms, 30 * ms, 20 * ms, 5 * ms}, windowPoints: 8, width: 4,
-			want: []stripBucket{{max: 30 * ms, has: true}, {max: 20 * ms, has: true}, {}, {}},
+			want: []stripBucket{{}, {}, {max: 30 * ms, has: true}, {max: 20 * ms, has: true}},
 		},
 		{
 			name:    "a lost probe marks its column",
