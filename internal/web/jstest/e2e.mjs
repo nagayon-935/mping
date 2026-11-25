@@ -71,14 +71,15 @@ try {
   // Extra-wide windows also exercise the workspace maximum width.
   // Narrower layouts are checked separately below.
   const WIDE = { width: 4200, height: 1000 };
-  // The narrowest supported window (style.css: body min-width).
+  // Compact layout with room for the required monitor columns.
   const NARROWEST = { width: 720, height: 900 };
   const page = await open({ viewport: WIDE });
 
   await check("live badge and grouped rows", async () => {
     assert.match(await page.textContent("#badge"), /Live/);
     assert.match(await page.textContent("#updated"), /^· last probe /);
-    assert.deepEqual(await page.$$eval("tr.group-row", (r) => r.map((x) => x.textContent)), ["core (2)", "internet (3)", "Ungrouped (1)"]);
+    assert.deepEqual(await page.$$eval("tr.group-row td", cells => cells.map(cell => cell.firstChild.textContent)), ["core (2)", "internet (3)", "Ungrouped (1)"]);
+    assert.equal(await page.locator("tr.group-row").filter({ has: page.locator(".status") }).count(), 3);
     assert.equal(await page.$$eval("tr.target-row", (r) => r.length), 6);
     assert.ok(await page.isHidden("#pane-inspect"));
     assert.ok(await page.isVisible("#pane-mtr"));
@@ -87,10 +88,16 @@ try {
     assert.ok(await page.isVisible("#nav-http"));
     assert.equal(await page.locator('#inspect-tabs [data-tab="summary"]').count(), 0);
     assert.equal(await page.$$eval("svg.spark", (n) => n.length), 6);
+    const spark = page.locator('svg.spark[aria-label^="RTT last"]').first();
+    const label = await spark.getAttribute("aria-label");
+    assert.match(label, /^RTT last 60 s: min .+, avg .+, max .+; \d+ lost$/);
+    assert.equal(await spark.locator("title").textContent(), label);
   });
 
   await check("a wide screen shows every column; a narrow one keeps the highest-priority ones", async () => {
-    const headers = () => page.$$eval("#targets th", (h) => h.map((x) => x.textContent));
+    const headers = () => page.$$eval("#targets th", (h) => h.map((x) =>
+      x.matches(".col-spark") ? x.textContent.split(" (")[0] : x.textContent));
+    assert.match(await page.textContent("#targets th.col-spark"), /^RTT · 60s \(0–.+ ms\)$/);
     assert.deepEqual(await headers(),
       ["Status", "Host", "IP", "AS", "RTT · 60s", "Loss %", "Sent", "Recv", "RTT", "Jitter", "TTL"]);
     assert.equal(await page.$$eval("#pane-monitor input[type=checkbox]", (n) => n.length), 0, "no column toggle any more");
@@ -180,6 +187,7 @@ try {
   });
 
   await check("hovering the Summary RTT chart shows sample readouts", async () => {
+    assert.equal(await page.textContent(".chart-scale"), "Scale fits most samples; taller spikes are cut off and marked ▲");
     await page.locator("canvas.summary-canvas").scrollIntoViewIfNeeded();
     const box = await page.locator("canvas.summary-canvas").boundingBox();
     await page.mouse.move(box.x + box.width - 20, box.y + box.height / 2);
@@ -325,13 +333,13 @@ try {
     const full=await geometry();
     assert.ok(full.height>200);assert.ok(full.scroll>full.visible);
     await many.$eval("#mtr-table-wrap", n => { n.scrollTop = 200; });
-    const sticky = await many.$eval("#mtr-table-wrap", n => {
-      const head = n.querySelector(".mtr-target-row th").getBoundingClientRect();
-      const bounds = n.getBoundingClientRect();
-      return {top:head.top-bounds.top, text:n.querySelector(".mtr-target-label").textContent};
+    const headings = await many.$eval("#mtr-table-wrap", wrap => {
+      const column = wrap.querySelector("thead th").getBoundingClientRect();
+      const target = wrap.querySelector(".mtr-target-row th").getBoundingClientRect();
+      return { column: column.top - wrap.getBoundingClientRect().top, targetBottom: target.bottom - column.bottom };
     });
-    assert.ok(Math.abs(sticky.top - 36) <= 1, "target heading stays beneath the column headings");
-    assert.match(sticky.text, /Targetmtr-0.example30 hops/);
+    assert.ok(Math.abs(headings.column) <= 1, "column headings stay at the top of the scroller");
+    assert.ok(headings.targetBottom < 0, "target heading scrolls away with its hops");
     await many.fill("#filter","mtr-0");
     await many.waitForFunction(()=>document.querySelectorAll("#mtr tbody").length===1);
     assert.equal((await geometry()).height,full.height);
@@ -445,7 +453,7 @@ try {
       return {addresses:[...path.querySelectorAll(".trace-address")].map(n=>n.textContent),
         run:path.querySelector(".is-run")?.textContent,summary:path.querySelector(".trace-summary").textContent};
     });
-    assert.deepEqual(result.addresses,["192.0.2.1","No reply × 4","192.0.2.6","No reply","No reply","192.0.2.9"]);
+    assert.deepEqual(result.addresses,["192.0.2.1","No reply (4 hops)","192.0.2.6","No reply","No reply","192.0.2.9"]);
     assert.match(result.run,/Hops 2–5/);
     assert.equal(result.summary,"9 hops · 6 no reply");
   });

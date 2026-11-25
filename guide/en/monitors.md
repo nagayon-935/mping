@@ -21,7 +21,7 @@
 * Columns:
   * **Hop** — TTL hop number
   * **Host** — Responder IP, followed by its PTR name when `-r` is given and its AS when `-a` is given (e.g., `8.8.8.8 dns.google (AS15169 Google LLC)`). `*` when no response.
-  * **Loss%** — Packet loss percentage for this hop (green / orange / red)
+  * **Loss%** — Raw packet loss at this hop. The lowest loss at this or any later hop sets the level using the target’s ping loss thresholds. If it is at or below the warning threshold, persistent loss uses the default text colour and loss that drops at a later hop is muted.
   * **Snt** — Total probes sent
   * **Recv** — Total replies received
   * **Last** — RTT of the most recent probe
@@ -51,6 +51,7 @@
   * **Down** — cumulative Down + Error count
   * **Since** — time elapsed since the last status change
 * On narrow terminals, **Min**, **Avg**, **Max**, and **Since** columns are hidden automatically (compact mode).
+* Response times use the default text colour. **Status** shows the check’s health.
 * Status changes are logged to the Log pane (e.g. `HTTP https://example.com: Up → Down`).
 * HTTP check results are included in statistics snapshots as `http_checks`.
 
@@ -66,7 +67,7 @@
   * **Port** — Port number and protocol (e.g. `443/tcp`)
   * **Service** — Estimated service name (`Unknown` if not recognized)
   * **Status** — Green `Open` / Red `Closed` / Yellow `Filtered` or `Open|Filtered`
-  * **Last / Min / Avg / Max** — Latest, minimum, average and maximum RTT; Min/Avg/Max use Open results only.
+  * **Last / Min / Avg / Max** — Latest, minimum, average and maximum RTT for open ports. On a timeout, **Last** shows muted `timeout`. Other unavailable latency values show `–`.
   * **Open/Closed** — Cumulative Open count / Closed+Filtered+Open|Filtered count
   * **Last Change** — Time elapsed since the last status change
 

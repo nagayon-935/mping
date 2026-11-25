@@ -113,13 +113,28 @@ func TestProjectDurationsToGraphMarksLoss(t *testing.T) {
 	}
 }
 
-func TestWindowLossText(t *testing.T) {
+func TestWindowLoss(t *testing.T) {
 	ms := time.Millisecond
-	if got := windowLossText([]time.Duration{10 * ms, 10 * ms}, 30); got != "" {
-		t.Errorf("no loss: %q, want empty", got)
+	history := []time.Duration{0, ms, 0, 0, ms}
+	tests := []struct {
+		name       string
+		window     int
+		warn, crit float64
+		text       string
+		color      tcell.Color
+	}{
+		{"no loss in latest sample", 1, 20, 80, "", tcell.ColorDefault},
+		{"at warning", 4, 50, 80, "loss 50% (2/4)", tcell.ColorDefault},
+		{"at critical", 4, 20, 50, "loss 50% (2/4)", tcell.ColorOrange},
+		{"above critical", 4, 20, 49, "loss 50% (2/4)", vividRed},
 	}
-	if got, want := windowLossText([]time.Duration{0, 10 * ms, 0, 0, 10 * ms}, 4), "loss 50% (2/4)"; got != want {
-		t.Errorf("windowLossText = %q, want %q", got, want)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			text, color := windowLoss(history, tt.window, stats.Thresholds{LossWarn: tt.warn, LossCrit: tt.crit})
+			if text != tt.text || color != tt.color {
+				t.Errorf("windowLoss = %q, %v; want %q, %v", text, color, tt.text, tt.color)
+			}
+		})
 	}
 }
 

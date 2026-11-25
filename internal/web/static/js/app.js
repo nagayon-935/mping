@@ -71,6 +71,9 @@ const activity = createActivity({
 const log = createLog({
   body: $("log-body"),
   status: $("log-status"),
+  kind: $("log-kind"),
+  host: $("log-host-filter"),
+  clear: $("clear-log-filters"),
   requestRender: scheduleRender,
   isStopped: () => view.state === "stopped",
 });

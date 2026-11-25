@@ -139,7 +139,7 @@ export function recentAcrossHosts(events, limit = 6) {
   for (const e of sorted) {
     const health = healthTransition(e);
     const level = health?.level ?? null;
-    const text = health ? shortReason(health.reason) : (e.count > 1 ? `${e.message} ×${e.count}` : e.message);
+    const text = health ? shortReason(health.reason) : (e.count > 1 ? `${e.message} (${e.count} times)` : e.message);
     const last = out.at(-1);
     if (last && last.level === level && last.kind === e.kind && last.text === text
         && Math.abs(Date.parse(last.at) - time(e)) <= 1000 && !last.hosts.includes(e.host)) {

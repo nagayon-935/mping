@@ -59,7 +59,9 @@ func newHeader(interval time.Duration) *tview.TextView {
 }
 
 // footerHelpText is the key help shown in the footer while measurement runs.
-const footerHelpText = "Enter Detail | Tab Pane | f Fold | z Max | w Save | a Add | d Del | s Stop | q Quit"
+// It fits in 80 columns: the centered footer clips both ends when it is
+// wider, which would hide "? Help". The help dialog lists every key.
+const footerHelpText = "? Help | Enter Detail | Tab Pane | w Save | a Add | d Del | s Stop | q Quit"
 
 func newFooter() *tview.TextView {
 	footer := tview.NewTextView().
@@ -100,7 +102,7 @@ func newSidePanes(opts RunOptions, currentTargets func() []*stats.TargetStats, r
 		if opts.HTTPResults != nil {
 			results = opts.HTTPResults()
 		}
-		return renderHTTPMonitorTable(results, vs.thresholds, availW, vs.lastHTTPStatuses, vs.appendLog)
+		return renderHTTPMonitorTable(results, availW, vs.lastHTTPStatuses, vs.appendLog)
 	})
 	return []*monitorPane{routePane, port, http}
 }

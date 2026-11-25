@@ -32,6 +32,12 @@ test("overview retains minimum fields, feature flags, current RTT and an optiona
  assert.ok(targetColumns({asn:true}).some(c=>c.key==="asn"));
 });
 
+test("overview sparkline header reflects the shared scale top",()=>{
+ for (const [max,label] of [[100,"RTT · 60s (0–100 ms)"],[2,"RTT · 60s (0–2.00 ms)"]]) {
+  assert.equal(targetColumns({},[],max).find(c=>c.key==="spark").label,label);
+ }
+});
+
 test("a stored sort is restored only when its key and direction are still offered",()=>{
  assert.deepEqual(parseSort(JSON.stringify({key:"last",direction:"desc"})),{key:"last",direction:"desc"});
  assert.equal(parseSort(JSON.stringify({key:"removed",direction:"desc"})),null);

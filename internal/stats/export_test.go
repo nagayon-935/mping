@@ -240,6 +240,7 @@ func TestTargetSummaryFromView_PortsAndMTRHopsUseMilliseconds(t *testing.T) {
 			{TTL: 1, IP: "192.0.2.1", ASN: "AS64500", Country: "JP", Org: "Example", Sent: 10, Recv: 9, LossPct: 10,
 				LastRTT: time.Millisecond, AvgRTT: 2 * time.Millisecond, MinRTT: 500 * time.Microsecond,
 				MaxRTT: 4 * time.Millisecond, Jitter: 250 * time.Microsecond},
+			{TTL: 2, IP: "192.0.2.2", Sent: 20, Recv: 19, LossPct: 5},
 		},
 	}
 
@@ -249,9 +250,12 @@ func TestTargetSummaryFromView_PortsAndMTRHopsUseMilliseconds(t *testing.T) {
 		t.Errorf("PortResults = %+v, want [%+v]", target.PortResults, wantPort)
 	}
 	wantHop := HopSummary{TTL: 1, IP: "192.0.2.1", ASN: "AS64500", Country: "JP", Org: "Example", Sent: 10, Recv: 9,
-		LossPct: 10, LossLevel: LevelWarn, LastRTTMs: 1, AvgRTTMs: 2, MinRTTMs: 0.5, MaxRTTMs: 4, JitterMs: 0.25}
-	if len(target.MTRHops) != 1 || target.MTRHops[0] != wantHop {
-		t.Errorf("MTRHops = %+v, want [%+v]", target.MTRHops, wantHop)
+		LossPct: 10, LossLevel: LevelOK, EffectiveLossPct: 5, EffectiveLossLevel: LevelOK, LastRTTMs: 1, AvgRTTMs: 2, MinRTTMs: 0.5, MaxRTTMs: 4, JitterMs: 0.25}
+	if len(target.MTRHops) != 2 {
+		t.Fatalf("MTRHops has %d entries, want 2", len(target.MTRHops))
+	}
+	if got := target.MTRHops[0]; got != wantHop {
+		t.Errorf("first hop = %+v, want %+v", got, wantHop)
 	}
 }
 

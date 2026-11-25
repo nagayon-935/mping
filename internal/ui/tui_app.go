@@ -38,6 +38,7 @@ type tui struct {
 	reportDialog       *saveDialog
 	deleteConfirmation *deleteDialog
 	webAccess          *webAccessDialog
+	help               *helpDialog
 	reportReturnFocus  tview.Primitive
 }
 
@@ -64,9 +65,6 @@ func newTUI(opts RunOptions) *tui {
 	// Render state shared between tableRenderer, the key handler, and the
 	// monitor pane render closures.
 	t.vs = newViewState(newLogView())
-	if opts.Thresholds != nil {
-		t.vs.thresholds = *opts.Thresholds
-	}
 	t.sidePanes = newSidePanes(opts, func() []*stats.TargetStats { return t.targets }, func() RouteMode { return t.opts.Route }, t.vs)
 
 	t.tr = newTableRenderer(t.targets, opts.sources(), opts.PacketSize, opts.columnOptions(), opts.Groups,
@@ -79,13 +77,9 @@ func newTUI(opts RunOptions) *tui {
 	return t
 }
 
-// pullTargets replaces the target list (and the run's thresholds and route
-// mode) from TargetSource.
+// pullTargets replaces the target list and route mode from TargetSource.
 func (t *tui) pullTargets() {
 	set := t.opts.TargetSource()
-	if set.Thresholds != nil && set.Thresholds.RTTCrit > 0 {
-		t.vs.thresholds = *set.Thresholds
-	}
 	if set.Route != RouteOff && t.opts.Route != RouteOff {
 		t.opts.Route = set.Route
 		if t.details != nil {
@@ -118,7 +112,7 @@ func (t *tui) buildLayout() {
 	}
 }
 
-// buildDialogs creates the report, delete and web access dialogs.
+// buildDialogs creates the overlay dialogs.
 func (t *tui) buildDialogs() {
 	t.reportDialog = newSaveDialog(t.app, t.root, t.session, t.opts.OnSaveReport, func() {
 		if t.details.open {
@@ -131,6 +125,7 @@ func (t *tui) buildDialogs() {
 	}, t.notifyResult)
 	t.deleteConfirmation = newDeleteDialog(t.app, t.root, t.confirmDelete, t.restoreFocus)
 	t.deleteConfirmation.quit = func() { t.session.Stop(); t.app.Stop() }
+	t.help = &helpDialog{app: t.app, root: t.root, restore: t.restoreFocus}
 	t.webAccess = newWebAccessDialog(t.app, t.root, t.opts.WebControlURL, t.session.copyClipboard, t.restoreFocus)
 }
 
@@ -138,7 +133,8 @@ func (t *tui) buildDialogs() {
 func (t *tui) dialogOpen() bool {
 	return (t.reportDialog != nil && t.reportDialog.open) ||
 		(t.deleteConfirmation != nil && t.deleteConfirmation.open) ||
-		(t.webAccess != nil && t.webAccess.open)
+		(t.webAccess != nil && t.webAccess.open) ||
+		(t.help != nil && t.help.open)
 }
 
 // closeDetails leaves the host details page, unless a dialog is still
@@ -176,7 +172,7 @@ func (t *tui) notifyResult(message string, failed bool) {
 	t.vs.appendLog(text)
 	t.footer.SetDynamicColors(true).SetText(text)
 	if t.details.open {
-		t.details.footer.SetDynamicColors(true).SetText(text + " | w: Save | Esc: Back")
+		t.details.footer.SetDynamicColors(true).SetText("? Help | w: Save | Esc: Back | " + text)
 	}
 }
 
@@ -285,8 +281,14 @@ func (t *tui) handleKey(event *tcell.EventKey, input func(*tcell.EventKey) *tcel
 		return t.reportDialog.handle(event)
 	case t.webAccess.open:
 		return t.webAccess.handle(event)
+	case t.help.open:
+		return t.help.handle(event)
 	}
 	typing := t.app.GetFocus() == t.addHostInput || t.app.GetFocus() == t.deleteHostInput
+	if event.Rune() == '?' && !typing {
+		t.help.show()
+		return nil
+	}
 	if event.Rune() == 'b' && !typing && t.opts.WebControlURL != "" {
 		t.webAccess.show()
 		return nil

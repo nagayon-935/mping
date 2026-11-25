@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>mping</title>
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -19,7 +20,7 @@
   <ul id="summary" class="fleet" aria-label="Host health; select a count to filter the monitor"></ul>
   <span class="spacer"></span>
   <div id="connection" class="conn lvl-pending">
-    <span class="conn-dot" aria-hidden="true"></span>
+    <span class="conn-icon" aria-hidden="true">–</span>
     <span id="badge" class="conn-label" role="status">Connecting</span>
     <span id="updated" class="conn-time"></span>
   </div>
@@ -121,7 +122,7 @@
       </div>
     </div>
     <div id="common-cause" class="common-cause" role="note" hidden>
-      <span class="common-cause-icon" aria-hidden="true">▲</span>
+      <span class="common-cause-icon" aria-hidden="true">△</span>
       <strong id="common-cause-headline"></strong>
       <span id="common-cause-detail" class="common-cause-detail"></span>
       <span class="spacer"></span>
@@ -204,7 +205,15 @@
         <h2 id="log-title" class="pane-title">Event log</h2>
         <p id="log-status" class="pane-hint">Events from all targets.</p>
       </div>
-      <button id="refresh-log" class="btn" type="button">Refresh</button>
+      <div class="log-controls">
+        <span class="tool"><select id="log-kind" aria-label="Event kind">
+          <option value="">All events</option>
+          <option value="health">Health changes only</option>
+        </select></span>
+        <input id="log-host-filter" class="filter" type="search" placeholder="Filter by host" aria-label="Filter events by host">
+        <button id="clear-log-filters" class="btn" type="button" hidden>Clear filters</button>
+        <button id="refresh-log" class="btn" type="button">Refresh</button>
+      </div>
     </div>
     <div id="log-body" class="pane-scroll"><p class="empty">Loading…</p></div>
   </section>

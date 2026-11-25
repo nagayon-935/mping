@@ -21,17 +21,21 @@ export function el(tag, opts = {}, ...children) {
   return node;
 }
 
-const icons = { ok: "●", warn: "▲", crit: "■", pending: "○", none: "○", stopped: "◼" };
+const icons = { ok: "○", warn: "△", crit: "×", pending: "–", none: "–", stopped: "◼" };
+
+export function statusLabel(level) {
+  return STATUS_LABELS[level] ?? (level === "stopped" ? "Stopped" : "–");
+}
 
 /** Status as shape + label so it never relies on colour alone. */
-export function statusChip(level, label = STATUS_LABELS[level] ?? "–") {
+export function statusChip(level, label = statusLabel(level)) {
   return el("span", { className: `status lvl-${level}` },
-    el("span", { className: "status-icon", text: icons[level] ?? "○", attrs: { "aria-hidden": "true" } }),
+    el("span", { className: "status-icon", text: badgeIcon(level), attrs: { "aria-hidden": "true" } }),
     el("span", { text: label }));
 }
 
 export function badgeIcon(level) {
-  return icons[level] ?? "○";
+  return Object.hasOwn(icons, level) ? icons[level] : icons.none;
 }
 
 /** Whether the user has text selected inside node (e.g. copying an IP). */

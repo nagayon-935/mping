@@ -15,7 +15,7 @@ import { robustAxis } from "./scale.js";
 export function createSummaryChart() {
   const windowSelect = el("select", { attrs: { id: "graph-window", "aria-label": "Chart time window" } });
   const title = el("h3", { text: "RTT" });
-  const caption = el("span", { className: "chart-scale", text: "p95 scale · higher peaks are clipped (▲)" });
+  const caption = el("span", { className: "chart-scale", text: "Scale fits most samples; taller spikes are cut off and marked ▲" });
   const canvas = el("canvas", { className: "summary-canvas", attrs: { "aria-hidden": "true" } });
   const readout = el("p", { className: "graph-readout", attrs: { id: "summary-chart-readout" } });
   const empty = el("p", { className: "graph-empty", text: "Waiting for the first completed measurement…" });

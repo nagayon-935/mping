@@ -67,8 +67,7 @@ func (v *targetSnapshot) targetSet() ui.TargetSet {
 	if v == nil {
 		return ui.TargetSet{}
 	}
-	th := v.config.thresholds
-	return ui.TargetSet{Targets: v.targets, Groups: v.groups, Thresholds: &th, Route: uiRouteMode(v.config)}
+	return ui.TargetSet{Targets: v.targets, Groups: v.groups, Route: uiRouteMode(v.config)}
 }
 
 func (s *supervisor) measurementState() string {

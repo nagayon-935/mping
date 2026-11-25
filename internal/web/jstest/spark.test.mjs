@@ -11,7 +11,7 @@ test("points span the box from oldest (left) to newest (right)", () => {
   assert.deepEqual(points(g.runs[0]), [[0, 21], [50, 11], [100, 1]]);
   assert.equal(g.min, 0);
   assert.equal(g.max, 40);
-  assert.equal(g.label, "RTT 0.00 to 40 ms over the last 60 seconds");
+  assert.equal(g.label, "RTT last 60 s: min 0.00 ms, avg 20 ms, max 40 ms; 0 lost");
 });
 
 test("lost probes break the line and are reported by position", () => {
@@ -20,7 +20,7 @@ test("lost probes break the line and are reported by position", () => {
   assert.deepEqual(g.losses, [50]);
   assert.equal(g.lostCount, 1);
   assert.equal(g.allLost, false);
-  assert.match(g.label, /, 1 lost$/);
+  assert.match(g.label, /; 1 lost$/);
 });
 
 test("a window of only lost probes is flagged so it can be drawn as a red baseline", () => {
@@ -28,7 +28,7 @@ test("a window of only lost probes is flagged so it can be drawn as a red baseli
   assert.equal(g.allLost, true);
   assert.equal(g.empty, false);
   assert.deepEqual(g.runs, []);
-  assert.equal(g.label, "No replies in the last 60 seconds");
+  assert.equal(g.label, "No replies in the last 60 seconds; 3 lost");
 });
 
 test("no completed probe at all is empty, not lost", () => {
@@ -52,14 +52,19 @@ test("an isolated sample still draws a stub", () => {
   assert.equal(points(g.runs[0]).length, 2);
 });
 
-test("dense series are reduced to at most SPARK_MAX_POINTS points, keeping losses", () => {
-  const series = Array.from({ length: 600 }, (_, i) => (i === 300 ? null : 5));
+test("dense series are reduced for drawing but keep full-window statistics", () => {
+  const series = Array.from({ length: 600 }, (_, i) => i % 5 === 0 ? 5 : 1);
+  series[301] = series[302] = null;
   const g = sparkGeometry(series, box);
   assert.ok(points(g.runs.join(" ")).length <= SPARK_MAX_POINTS + 2);
   assert.equal(g.losses.length, 1);
+  assert.equal(g.lostCount, 2);
+  assert.equal(g.min, 1);
+  assert.equal(g.avg, 1078 / 598);
+  assert.equal(g.max, 5);
 });
 
-test("labels keep a single value when min and max round alike", () => {
-  assert.equal(sparkLabel({ empty: false, allLost: false, min: 12.2, max: 12.4, lostCount: 0 }), "RTT 12 ms over the last 60 seconds");
-  assert.equal(sparkLabel({ empty: false, allLost: false, min: 1.25, max: 3, lostCount: 2, seconds: 30 }), "RTT 1.3 to 3.0 ms over the last 30 seconds, 2 lost");
+test("labels include min, average, peak and losses for the given window", () => {
+  assert.equal(sparkLabel({ min: 1.25, avg: 2, max: 3, lostCount: 2, seconds: 30 }),
+    "RTT last 30 s: min 1.3 ms, avg 2.0 ms, max 3.0 ms; 2 lost");
 });

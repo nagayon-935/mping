@@ -1,7 +1,7 @@
 // Global header: the fleet-health pills (which also filter the monitor) and
 // one compact connection indicator folding the browser connection, the
 // server state, the measurement state and the latest probe time.
-import { $ } from "./dom.js";
+import { $, badgeIcon } from "./dom.js";
 import { summarize } from "./model.js";
 import { connectionSummary } from "./health_text.js";
 import { formatTime } from "./time.js";
@@ -32,6 +32,7 @@ export function renderHeader(view) {
   const conn = connectionSummary({ state: view.state, connected: view.connected, measurement, hasSnapshot: !!view.snapshot });
   const node = $("connection");
   node.className = `conn lvl-${conn.level}`;
+  node.querySelector(".conn-icon").textContent = badgeIcon(conn.level);
   // Only the label is a live region: the probe time changes every second.
   if ($("badge").textContent !== conn.label) $("badge").textContent = conn.label;
   // Without a live stream the values on screen are frozen: say so in place.

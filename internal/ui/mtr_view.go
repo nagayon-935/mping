@@ -11,17 +11,32 @@ import (
 )
 
 const (
-	mtrHopColW  = 5 // " Hop " — "   1." fits exactly
-	mtrLossColW = 8 // " 100.0% "
-	mtrSntColW  = 6 // " Snt  "
-	mtrRecvColW = 6 // " Recv "
-	mtrLatColW  = 9 // " 12.1ms  "
+	mtrHopColW  = 5  // " Hop " — "   1." fits exactly
+	mtrLossColW = 10 // " × 100.0% "
+	mtrSntColW  = 6  // " Snt  "
+	mtrRecvColW = 6  // " Recv "
+	mtrLatColW  = 9  // " 12.1ms  "
 	minMTRHostW = 16
 )
 
-// mtrLossColorTag returns the tview color tag for a hop's loss level.
-func mtrLossColorTag(l stats.Level) string {
-	return levelTags{crit: "[red::b]", warn: "[orange]", ok: "[green]", other: "[green]"}.of(l)
+type mtrRow struct {
+	stats.HopView
+	lossLevel     stats.Level
+	nonPersistent bool
+}
+
+// mtrLossCell displays raw loss with the effective level's styling.
+func mtrLossCell(h mtrRow) boxCell {
+	text := fmt.Sprintf("%.1f%%", h.LossPct)
+	switch h.lossLevel {
+	case stats.LevelWarn, stats.LevelCrit:
+		return boxCell{text: statusSymbol(h.lossLevel) + " " + text, tag: targetStatusTags.of(h.lossLevel)}
+	default:
+		if h.nonPersistent {
+			return boxCell{text: text, tag: "[gray]"}
+		}
+		return boxCell{text: text}
+	}
 }
 
 // rttColorTag returns the tview color tag for an RTT level.
@@ -71,6 +86,19 @@ func renderMTRTable(targets []*stats.TargetStats, availW int, sources sourceIPs)
 func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, compact bool, sources sourceIPs) {
 	view := t.GetViewWindow(0)
 	hops := view.MTRHops
+	effective := stats.EffectiveHopLosses(hops)
+	hopRows := make([]mtrRow, len(hops))
+	level := targetStatusLevel(view)
+	summary := statusSymbol(level) + " " + statusLabel(level)
+	firstLoss := true
+	for i, h := range hops {
+		lossLevel := view.Thresholds.HopLoss(effective[i])
+		hopRows[i] = mtrRow{HopView: h, lossLevel: lossLevel, nonPersistent: h.LossPct > effective[i]}
+		if firstLoss && lossLevel != stats.LevelOK {
+			summary += fmt.Sprintf(" · loss from hop %d", h.TTL)
+			firstLoss = false
+		}
+	}
 
 	// Target label: "SrcIP -> DstIP" (with hostname prefix when applicable)
 	srcIP := sources.forDst(view.IP)
@@ -83,22 +111,27 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, 
 		label = fmt.Sprintf("%s (%s -> %s)", view.Host, srcIP, dstIP)
 	}
 	if view.MTRFlapCount > 0 {
-		label += fmt.Sprintf("  [FLAP ×%d %s]", view.MTRFlapCount, view.MTRLastFlapAt.Format(logTimeLayout))
+		label += fmt.Sprintf("  [FLAP %d times %s]", view.MTRFlapCount, view.MTRLastFlapAt.Format(logTimeLayout))
 	}
 
 	// Compact: Hop | Host | Loss% | Snt | Last | Avg
 	// Full:    Hop | Host | Loss% | Snt | Recv | Last | Avg | Min | Max | Jitter
-	rtt := func(get func(stats.HopView) time.Duration) func(stats.HopView) boxCell {
-		return rttCell(get, formatRTT, view.Thresholds.RTT)
+	rtt := func(get func(stats.HopView) time.Duration) func(mtrRow) boxCell {
+		cell := rttCell(get, formatRTT, view.Thresholds.RTT)
+		return func(h mtrRow) boxCell { return cell(h.HopView) }
 	}
-	all := []monitorColumn[stats.HopView]{
-		{boxColumn{header: "Hop", width: mtrHopColW}, plainCell(func(h stats.HopView) string { return fmt.Sprintf("%3d.", h.TTL) }), false},
-		{boxColumn{header: "Host", width: hostW}, plainCell(mtrIPStr), false},
-		{boxColumn{header: "Loss%", width: mtrLossColW}, func(h stats.HopView) boxCell {
-			return boxCell{text: fmt.Sprintf("%.1f%%", h.LossPct), tag: mtrLossColorTag(view.Thresholds.HopLoss(h.LossPct))}
+	all := []monitorColumn[mtrRow]{
+		{boxColumn{header: "Hop", width: mtrHopColW}, plainCell(func(h mtrRow) string { return fmt.Sprintf("%3d.", h.TTL) }), false},
+		{boxColumn{header: "Host", width: hostW}, func(h mtrRow) boxCell {
+			cell := boxCell{text: mtrIPStr(h.HopView)}
+			if h.IP == "" && h.lossLevel == stats.LevelOK {
+				cell.tag = "[gray]"
+			}
+			return cell
 		}, false},
-		{boxColumn{header: "Snt", width: mtrSntColW}, plainCell(func(h stats.HopView) string { return fmt.Sprintf("%d", h.Sent) }), false},
-		{boxColumn{header: "Recv", width: mtrRecvColW}, plainCell(func(h stats.HopView) string { return fmt.Sprintf("%d", h.Recv) }), true},
+		{boxColumn{header: "Loss%", width: mtrLossColW}, mtrLossCell, false},
+		{boxColumn{header: "Snt", width: mtrSntColW}, plainCell(func(h mtrRow) string { return fmt.Sprintf("%d", h.Sent) }), false},
+		{boxColumn{header: "Recv", width: mtrRecvColW}, plainCell(func(h mtrRow) string { return fmt.Sprintf("%d", h.Recv) }), true},
 		{boxColumn{header: "Last", width: mtrLatColW}, rtt(func(h stats.HopView) time.Duration { return h.LastRTT }), false},
 		{boxColumn{header: "Avg", width: mtrLatColW}, rtt(func(h stats.HopView) time.Duration { return h.AvgRTT }), false},
 		{boxColumn{header: "Min", width: mtrLatColW}, rtt(func(h stats.HopView) time.Duration { return h.MinRTT }), true},
@@ -108,15 +141,15 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, hostW int, 
 	cols, boxCols := layoutColumns(all, compact)
 
 	// One row per hop, with no rule between hops.
-	var rows [][]boxCell
-	for _, h := range hops {
-		rows = append(rows, rowCells(cols, h))
-	}
 	var groups [][][]boxCell
-	if len(rows) > 0 {
+	if len(hopRows) > 0 {
+		rows := make([][]boxCell, len(hopRows))
+		for i, h := range hopRows {
+			rows[i] = rowCells(cols, h)
+		}
 		groups = [][][]boxCell{rows}
 	}
-	writeLabelledBoxTable(sb, boxCols, label, groups, " Discovering...")
+	writeLabelledBoxTable(sb, boxCols, summary+" — "+label, groups, " Discovering...")
 }
 
 // mtrIPStr returns the display string for a hop's IP, PTR name and AS.

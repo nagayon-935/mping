@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -186,5 +187,37 @@ func TestTableRendererUpdate_GroupHeaderRendersEvenWhenMembersOffWindow(t *testi
 	farRow := 45
 	if got := tr.table.GetCell(farRow, 0).Text; got != "" {
 		t.Errorf("G1's last member (table row %d, outside window) expected empty cell, got %q", farRow, got)
+	}
+}
+
+func TestGroupStatusSummary(t *testing.T) {
+	for _, tt := range []struct {
+		name, want string
+		levels     []stats.Level
+	}{
+		{"healthy", " · ○ all OK", []stats.Level{stats.LevelOK, stats.LevelOK}},
+		{"mixed", " · × 1 · △ 2 · – 1 · ◼ 1", []stats.Level{stats.LevelOK, levelStopped, stats.LevelWarn, stats.LevelPending, stats.LevelWarn, stats.LevelCrit}},
+		{"stopped only", " · ◼ 1", []stats.Level{levelStopped}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			group := TargetGroup{Name: "internet"}
+			rows := make([]columnRowContext, len(tt.levels))
+			for i, level := range tt.levels {
+				group.Indices = append(group.Indices, i)
+				if level == levelStopped {
+					rows[i].view.MeasurementState = "finished"
+					level = stats.LevelCrit
+				}
+				rows[i].view.Health.Status = string(level)
+			}
+			total, summary := groupStatusSummary(group, rows)
+			var text strings.Builder
+			for _, part := range summary {
+				text.WriteString(part.text)
+			}
+			if total != len(rows) || text.String() != tt.want {
+				t.Errorf("group summary = %d %q, want %d %q", total, text.String(), len(rows), tt.want)
+			}
+		})
 	}
 }

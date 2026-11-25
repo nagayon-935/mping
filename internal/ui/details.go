@@ -25,7 +25,7 @@ func newHostDetails(opts RunOptions) *hostDetails {
 	d.text.SetBorder(true).SetTitle(" Host Details ").SetBackgroundColor(tcell.ColorBlack)
 	d.graph.includePorts = true
 	d.graph.SetBorder(true).SetTitle(" Target RTT ").SetBackgroundColor(tcell.ColorBlack)
-	d.footer = tview.NewTextView().SetText("Esc: Back | Tab: Text/Graph | ↑↓: Scroll | d: Delete | w: Save | q: Quit").SetWrap(false)
+	d.footer = tview.NewTextView().SetText("? Help | Esc: Back | Tab: Panes | ↑↓: Scroll | d: Delete | w: Save | q: Quit").SetWrap(false)
 	d.footer.SetBackgroundColor(tcell.ColorBlack)
 	d.pane = tview.NewFlex().SetDirection(tview.FlexRow).AddItem(d.text, 0, 3, true).AddItem(d.graph, 0, 2, false).AddItem(d.footer, 1, 0, false)
 	return d

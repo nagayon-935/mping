@@ -4,7 +4,7 @@
 // helpers only reshape that text for compact places.
 
 const BREACH = /^(Recent loss|RTT|Jitter) (\d+(?:\.\d+)?)(ms|%) > (\d+(?:\.\d+)?)(ms|%)$/;
-const HEALTH = /^(ok|warn|crit|pending): (.*)$/;
+const HEALTH = /^(ok|warn|crit|pending):\s*([\s\S]*)$/;
 const METRIC_NAMES = { "Recent loss": "Loss", RTT: "RTT", Jitter: "Jitter" };
 
 /** A health transition event as {level, reason}, or null for other kinds. */

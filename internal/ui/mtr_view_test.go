@@ -183,3 +183,39 @@ func TestRenderMTRTable_HopNumberNeverTruncated(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderMTRTable_EffectiveLoss(t *testing.T) {
+	tests := []struct {
+		name     string
+		destRecv int
+		want     []string
+		absent   []string
+	}{
+		{"intermediate loss muted", 10, []string{"○ OK", "[gray] *", "[gray] 100.0%"}, []string{"loss from hop", "× 100.0%"}},
+		{"low loss persists", 9, []string{"[gray] 100.0%", " 10.0%"}, []string{"loss from hop", "[gray] 10.0%", "△ 10.0%"}},
+		{"warning loss persists", 5, []string{"○ OK · loss from hop 2", "[orange] △ 100.0%", "[orange] △ 50.0%"}, nil},
+		{"destination silent", 0, []string{"○ OK · loss from hop 2", "[red] × 100.0%"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := buildMTRTarget("8.8.8.8", "8.8.8.8", []stats.HopView{
+				{TTL: 1, IP: "10.0.0.1", Sent: 10, Recv: 10, AvgRTT: time.Millisecond},
+				{TTL: 2, Sent: 10},
+				{TTL: 3, IP: "8.8.8.8", Sent: 10, Recv: tt.destRecv, AvgRTT: 10 * time.Millisecond},
+			})
+			target.IncSent()
+			target.OnSuccess(10*time.Millisecond, 64)
+			got := renderMTRTable([]*stats.TargetStats{target}, 75, "10.0.0.1", "")
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("MTR table missing %q in:\n%s", want, got)
+				}
+			}
+			for _, absent := range tt.absent {
+				if strings.Contains(got, absent) {
+					t.Errorf("MTR table unexpectedly contains %q in:\n%s", absent, got)
+				}
+			}
+		})
+	}
+}

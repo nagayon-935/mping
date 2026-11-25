@@ -1,18 +1,18 @@
 // Ping monitor table. Rebuilt from the snapshot on every update; row focus
 // and selection are restored by target ID.
-import { el, statusChip } from "./dom.js";
+import { badgeIcon, el, statusChip, statusLabel } from "./dom.js";
 import { columnWidthPx, countCell, numCell, rttCell, setColumns, textCell } from "./columns.js";
 import { SORTS } from "./workspace.js";
 import { shortReason } from "./health_text.js";
 import { sparkline } from "./spark_view.js";
 import {
-  buildSections, cellLevels, formatPct, isIPLiteral, lossRate, matchesFilter, rowLevel,
-  selectColumns, statusReason,
+  buildSections, cellLevels, formatPct, formatRTT, groupSummary, isIPLiteral, lossRate, matchesFilter, rowLevel,
+  selectColumns, statusReason, targetStatus,
 } from "./model.js";
 
 /** The overview keeps current measurements plus a one-minute RTT sparkline;
  * historical statistics and the large chart live in Summary. */
-export function targetColumns(features, targets = []) {
+export function targetColumns(features, targets = [], sparkMax) {
   // Use configured identities, not changing DNS results or filtered rows,
   // so receiving measurements and searching cannot add/remove this column.
   const showIP = !targets.length || targets.some((t) => !isIPLiteral(t.host));
@@ -21,7 +21,7 @@ export function targetColumns(features, targets = []) {
     { key: "host", label: "Host", required: true },
     showIP && { key: "ip", label: "IP", priority: 6 },
     features.asn && { key: "asn", label: "AS", priority: 8 },
-    { key: "spark", label: "RTT · 60s", priority: 2, title: "RTT over the last 60 seconds on a scale shared by all rows; red ticks are lost probes, a dashed red line means no replies" },
+    { key: "spark", label: sparkMax == null ? "RTT · 60s" : `RTT · 60s (0–${formatRTT(sparkMax)})`, priority: 2, title: "RTT over the last 60 seconds on a scale shared by all rows; red ticks are lost probes, a dashed red line means no replies" },
     { key: "loss", label: "Loss %", required: true, title: "Lifetime loss over completed probes; status uses recent loss and consecutive failures", num: true },
     { key: "sent", label: "Sent", num: true, priority: 4 },
     { key: "recv", label: "Recv", num: true, priority: 5 },
@@ -47,8 +47,8 @@ function targetCell(col, t, cells, features, group, focused, sparks) {
       // An OK row needs no explanation; leaving it blank makes the rows that
       // do need attention stand out. The row names what breached and its
       // value; the thresholds are in the title and in Summary.
-      const level = rowLevel(t);
-      const reasons = statusReason(t);
+      const level = targetStatus(t);
+      const reasons = level === "stopped" ? "" : statusReason(t);
       return el("td", { attrs: { title: reasons } }, statusChip(level),
         el("span", { className: "status-reason", text: level === "ok" ? "" : shortReason(reasons) }));
     }
@@ -59,19 +59,24 @@ function targetCell(col, t, cells, features, group, focused, sparks) {
     case "host": return hostCell(t, features, group, focused);
     case "ip": return textCell(t.ip || "–", "mono");
     case "asn": return textCell([t.asn, t.org].filter(Boolean).join(" ") || "–");
-    case "loss": return metricCell(numCell(t.recv + t.loss === 0 ? "–" : formatPct(lossRate(t)), cells.loss));
+    case "loss": return metricCell(numCell(t.recv + t.loss === 0 ? "–" : formatPct(lossRate(t))), cells.loss);
     case "sent": return countCell(t.sent);
     case "recv": return countCell(t.recv);
-    case "last": return metricCell(rttCell(t.last_rtt_ms, cells.last));
-    case "jitter": return metricCell(rttCell(t.jitter_ms, cells.jitter));
+    case "last": return metricCell(rttCell(t.last_rtt_ms), cells.last);
+    case "jitter": return metricCell(rttCell(t.jitter_ms), cells.jitter);
     case "ttl": return numCell(t.last_ttl > 0 ? String(t.last_ttl) : "–");
     default: return el("td");
   }
 }
 
-function metricCell(td) {
-  const text = td.textContent;
-  td.replaceChildren(el("span", { className: "metric-value", text }));
+function metricCell(td, level) {
+  const value = el("span", { className: "metric-value" });
+  if (level === "warn" || level === "crit") {
+    td.classList.add(`lvl-${level}`);
+    value.append(el("span", { className: "metric-icon", text: badgeIcon(level), attrs: { "aria-hidden": "true" } }));
+  }
+  value.append(td.textContent);
+  td.replaceChildren(value);
   return td;
 }
 
@@ -86,7 +91,7 @@ export function renderTargets(table, view, onOpen, onSort) {
   // The table is as wide as its wrapper; widths come from the CSS contract,
   // which already reflects the current breakpoint and pane layout.
   const available = table.parentElement.clientWidth;
-  const columns = selectColumns(targetColumns(meta.features, snapshot.targets), (c) => columnWidthPx(table, c.key), available);
+  const columns = selectColumns(targetColumns(meta.features, snapshot.targets, view.sparks?.max), (c) => columnWidthPx(table, c.key), available);
   const active = document.activeElement;
   const focusedSort = table.contains(active) ? active?.dataset?.sort : null;
   setColumns(table, columns, "host");
@@ -110,8 +115,14 @@ export function renderTargets(table, view, onOpen, onSort) {
   const rows = [];
   for (const section of buildSections(visible, sortedFlat ? [] : meta.groups)) {
     if (section.name != null) {
-      rows.push(el("tr", { className: "group-row" },
-        el("td", { text: `${section.name} (${section.targets.length})`, attrs: { colspan: String(columns.length) } })));
+      const heading = el("td", { text: `${section.name} (${section.targets.length})`, attrs: { colspan: String(columns.length) } });
+      for (const { level, label } of groupSummary(section.targets)) {
+        const chip = statusChip(level, label);
+        chip.setAttribute("role", "img");
+        chip.setAttribute("aria-label", level === "ok" ? label : `${statusLabel(level)}: ${label}`);
+        heading.append(" · ", chip);
+      }
+      rows.push(el("tr", { className: "group-row" }, heading));
     }
     for (const t of section.targets) {
       const cells = cellLevels(t);

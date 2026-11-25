@@ -99,7 +99,7 @@ func TestRenderTracerouteTable(t *testing.T) {
 		setRouteHops(target, "10.0.0.1")
 		target.MTR().CheckFlap([]string{"10.0.0.9"}, time.Date(2026, 1, 2, 3, 4, 5, 0, time.Local))
 		got := renderTracerouteTable([]*stats.TargetStats{target}, 120)
-		if !strings.Contains(got, "[FLAP ×1 03:04:05]") {
+		if !strings.Contains(got, "[FLAP 1 times 03:04:05]") {
 			t.Fatalf("expected a flap badge, got: %s", got)
 		}
 	})
@@ -187,4 +187,49 @@ func TestRenderPortMonitorTable(t *testing.T) {
 			t.Fatalf("expected log to mention Open, got: %s", errorLogs[0])
 		}
 	})
+}
+
+func TestPortMonitorLatency(t *testing.T) {
+	for _, tt := range []struct {
+		status string
+		rtt    time.Duration
+		last   string
+	}{
+		{"Open", 5 * time.Millisecond, "5ms"},
+		{"Filtered", time.Second, "timeout"},
+		{"Open|Filtered", time.Second, "timeout"},
+		{"Closed", time.Millisecond, "–"},
+		{"Error", 0, "–"},
+		{"Checking...", 0, "–"},
+	} {
+		t.Run(tt.status, func(t *testing.T) {
+			target := stats.NewTargetStats("example.com")
+			port := stats.NewPortCheckResult(443, "tcp")
+			port.SetResult("Open", 3*time.Millisecond)
+			port.SetResult(tt.status, tt.rtt)
+			target.SetPortResults([]*stats.PortCheckResult{port})
+			table := renderPortMonitorTable([]*stats.TargetStats{target}, 140, map[string]string{}, nil)
+			for line := range strings.SplitSeq(table, "\n") {
+				if !strings.Contains(line, "example.com") {
+					continue
+				}
+				cells := strings.Split(line, "│")
+				if got := strings.TrimSpace(tview.NewTextView().SetDynamicColors(true).SetText(cells[5]).GetText(true)); got != tt.last {
+					t.Errorf("Last = %q, want %q in %s", got, tt.last, line)
+				}
+				if tt.last == "timeout" && !strings.HasPrefix(cells[5], "[gray]") {
+					t.Errorf("timeout is missing muted colour: %s", cells[5])
+				}
+				if tt.status != "Open" {
+					for _, cell := range cells[6:9] {
+						if strings.TrimSpace(tview.NewTextView().SetDynamicColors(true).SetText(cell).GetText(true)) != "–" {
+							t.Errorf("historical latency cell = %q, want dash", cell)
+						}
+					}
+				}
+				return
+			}
+			t.Fatalf("missing port row:\n%s", table)
+		})
+	}
 }

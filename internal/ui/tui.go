@@ -11,7 +11,7 @@ import (
 )
 
 func init() {
-	// Keep ambiguous-width box-drawing, block and marker glyphs (▁..█, ×, ▲, ·, ▸)
+	// Keep ambiguous-width box-drawing, block and marker glyphs (▁..█, ○, △, ×, ▲, ·, ▸)
 	// at width 1 even under East Asian locales (e.g. ja_JP.UTF-8), matching
 	// sparkWidth and strip column calculations.
 	runewidth.DefaultCondition.EastAsianWidth = false
@@ -42,9 +42,8 @@ const (
 // TargetSet is a live snapshot of targets, groups and display configuration
 // returned by RunOptions.TargetSource on refresh.
 type TargetSet struct {
-	Targets    []*stats.TargetStats
-	Groups     []TargetGroup
-	Thresholds *stats.Thresholds
+	Targets []*stats.TargetStats
+	Groups  []TargetGroup
 	// Route switches the route pane between RoutePath and RouteMonitor
 	// after a reload. RouteOff keeps the current mode: whether the pane
 	// exists is fixed for the run.
@@ -84,10 +83,6 @@ type RunOptions struct {
 	// reflects a checker swapped in by OnResetHTTP after Run has started.
 	// Nil when HTTPEnabled is false.
 	HTTPResults func() []*stats.HTTPCheckResult
-	// Thresholds colour the HTTP checks, which belong to no target; targets
-	// are coloured by the thresholds in their own TargetView. Nil keeps the
-	// built-in defaults.
-	Thresholds *stats.Thresholds
 	// ExternalCloseCh, when closed, causes the TUI to display a reload message
 	// and stop. Nil is safe: a nil receive channel blocks forever in select,
 	// effectively disabling the case (normal mode).

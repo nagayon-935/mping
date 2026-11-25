@@ -139,7 +139,7 @@ func TestRestartSuccessShowsTheRunningKeyHints(t *testing.T) {
 	if h.state != monitorRunning {
 		t.Fatalf("state = %d, want running", h.state)
 	}
-	if !strings.HasPrefix(h.footer.GetText(false), "Enter Detail") {
+	if h.footer.GetText(false) != footerHelpText {
 		t.Fatalf("footer = %q, want the running key hints", h.footer.GetText(false))
 	}
 }

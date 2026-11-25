@@ -318,7 +318,6 @@ func buildRunOptions(p runOptionsParams) ui.RunOptions {
 		DNSExplicit:      p.cfg.dnsServer != "",
 		SourceExplicit:   p.cfg.sourceAddr != "" || p.cfg.ifaceName != "",
 		SizeExplicit:     p.packetSize != defaultPacketSize,
-		Thresholds:       &p.cfg.thresholds,
 		MeasurementState: p.sup.measurementState,
 		ExternalCloseCh:  p.sig.ch,
 		ExternalLogCh:    p.logCh,

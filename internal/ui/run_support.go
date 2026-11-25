@@ -136,7 +136,7 @@ func startRefreshLoop(
 				}
 				// Pinger finished (count limit reached)
 				session.Post(func() {
-					footer.SetText("Finished. Press 'q' to quit, 'R' to reset stats")
+					footer.SetText("Finished. Press 'q' to quit, 'R' to reset stats | ? Help")
 					footer.SetTextColor(tcell.ColorGreen)
 					tr.update()
 				})

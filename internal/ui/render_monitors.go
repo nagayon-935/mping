@@ -91,7 +91,7 @@ func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
 			routeLines[j] = tview.Escape(routeLines[j])
 		}
 		if view.MTRFlapCount > 0 {
-			routeLines = append(routeLines, fmt.Sprintf("[FLAP ×%d %s]", view.MTRFlapCount, view.MTRLastFlapAt.Format(logTimeLayout)))
+			routeLines = append(routeLines, fmt.Sprintf("[FLAP %d times %s]", view.MTRFlapCount, view.MTRLastFlapAt.Format(logTimeLayout)))
 		}
 		// Host, hop count and initial TTL go on the first line only.
 		first := []string{tview.Escape(view.Host)}
@@ -168,7 +168,12 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 		return col(header, maxPortColumnWidth(header, views, text), text, full)
 	}
 	rtt := func(get func(stats.PortCheckView) time.Duration) func(stats.PortCheckView) string {
-		return func(pr stats.PortCheckView) string { return formatRTT(get(pr)) }
+		return func(pr stats.PortCheckView) string {
+			if pr.Status != "Open" {
+				return "–"
+			}
+			return formatRTT(get(pr))
+		}
 	}
 	fixed := func(header, widest string, text func(stats.PortCheckView) string, full bool) monitorColumn[portRow] {
 		return col(header, runewidth.StringWidth(widest)+2, text, full)
@@ -185,7 +190,25 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 	service := sized("Service", func(pr stats.PortCheckView) string { return portServiceName(pr.Port, pr.Protocol) }, true)
 	status := monitorColumn[portRow]{boxColumn{header: "Status", width: runewidth.StringWidth("Open|Filtered") + 2},
 		func(r portRow) boxCell { return boxCell{text: r.pr.Status, tag: statusColorTag(r.pr.Status)} }, false}
-	last := sized("Last", rtt(func(pr stats.PortCheckView) time.Duration { return pr.RTT }), false)
+	lastText := func(pr stats.PortCheckView) string {
+		switch pr.Status {
+		case "Open":
+			return formatRTT(pr.RTT)
+		case "Filtered", "Open|Filtered":
+			if pr.RTT > 0 {
+				return "timeout"
+			}
+		}
+		return "–"
+	}
+	last := sized("Last", lastText, false)
+	last.cell = func(r portRow) boxCell {
+		text := lastText(r.pr)
+		if text == "timeout" {
+			return boxCell{text: text, tag: "[gray]"}
+		}
+		return boxCell{text: text}
+	}
 	minC := sized("Min", rtt(func(pr stats.PortCheckView) time.Duration { return pr.MinRTT }), true)
 	avg := sized("Avg", rtt(func(pr stats.PortCheckView) time.Duration { return pr.AvgRTT }), true)
 	maxC := sized("Max", rtt(func(pr stats.PortCheckView) time.Duration { return pr.MaxRTT }), true)

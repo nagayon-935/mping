@@ -13,8 +13,9 @@
   --series-ink: #2069bd; /* series as small text: 4.5:1 on surface-2 */
   --good: #087a2c;
   --warning: #936000;
+  --warning-ink: #755000;
   --critical: #d03b3b;
-  --critical-ink: #b83030; /* critical as text: 4.5:1 on surface-2 */
+  --critical-ink: #a82b2b;
   --warn-tint: rgba(250, 178, 25, 0.18);
   --crit-tint: rgba(208, 59, 59, 0.14);
   --focus: #2a78d6;
@@ -43,7 +44,8 @@
     --series-ink: #4a93ea;
     --good: #40ba65;
     --warning: #fab219;
-    --critical-ink: #e86d6d;
+    --warning-ink: #ffd166;
+    --critical-ink: #f28484;
     --warn-tint: rgba(250, 178, 25, 0.16);
     --crit-tint: rgba(208, 59, 59, 0.24);
     --focus: #3987e5;
@@ -56,10 +58,7 @@ html { scrollbar-gutter: stable; }
 /* Component display rules must not resurrect elements marked hidden. */
 [hidden] { display: none !important; }
 
-/* Phone widths are not supported: a narrower window scrolls the page
-   horizontally instead of compressing the layout. */
 body {
-  min-width: 720px;
   margin: 0;
   background: var(--page);
   color: var(--ink);
@@ -106,18 +105,14 @@ body {
 .fleet-pill[aria-pressed=true] { border-color: var(--series); box-shadow: inset 0 0 0 1px var(--series); }
 .fleet-pill:disabled { cursor: default; opacity: .7; }
 
-/* Connection indicator: dot + one label + latest probe time. */
+/* Connection indicator: symbol, label and latest probe time. */
 .conn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
   color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.conn-icon { font-size: 13px; flex: none; }
 .conn-label { color: var(--ink-2); font-weight: 600; }
-.conn.lvl-ok .conn-dot { background: var(--good); }
-.conn.lvl-warn .conn-dot { background: var(--warning); }
-.conn.lvl-warn .conn-label { color: var(--ink); }
-/* Stopped/ended: a hollow square, so the state does not rely on colour. */
-.conn.lvl-stopped .conn-dot { border-radius: 1px; background: transparent; box-shadow: inset 0 0 0 2px var(--ink-2); }
+.conn.lvl-ok .conn-icon { color: var(--good); }
+.conn.lvl-warn .conn-icon, .conn.lvl-warn .conn-label { color: var(--warning-ink); }
 .conn.lvl-stopped .conn-label { color: var(--ink); font-weight: 700; }
-.conn.lvl-pending .conn-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); }
 .btn-icon { min-width: 32px; padding: 6px 8px; }
 
 .filter {
@@ -191,17 +186,20 @@ body {
 #mtr { border-collapse: separate; border-spacing: 0; }
 #mtr thead th { z-index: 3; height: 36px; }
 #mtr .mtr-target-row th {
-  position: sticky; top: 36px; z-index: 2; padding: 10px;
+  position: static; padding: 10px;
   background: var(--surface-2); border-top: 2px solid var(--border);
   box-shadow: inset 3px 0 var(--series);
   color: var(--ink); font-size: 13px; text-transform: none; letter-spacing: normal;
 }
 .mtr-target-label {
   position: sticky; left: 10px; width: min(520px, calc(100vw - 70px));
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  display: grid; grid-template-columns: auto minmax(0, 1fr);
   align-items: baseline; gap: 2px 10px;
 }
 .mtr-target-kind { color: var(--series-ink); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+.mtr-target-summary { grid-column: 2 / -1; display: flex; align-items: baseline; gap: 10px; }
+.mtr-target-loss { color: var(--ink-2); font-size: 12px; }
+.grid td.muted { color: var(--muted); }
 .mtr-target-count { color: var(--muted); font-size: 11px; font-weight: 400; }
 .mtr-target-address { grid-column: 2 / -1; color: var(--ink-2); font: 500 12px/1.4 var(--mono); }
 #mtr .mtr-waiting { color: var(--muted); font-size: 12px; }
@@ -231,7 +229,8 @@ body {
 /* Tables */
 .grid {
   /* Widths include 20px cell padding. RTT <=10 chars, count <=8 chars,
-     loss <=5 chars, TTL <=3 chars; identity fields may be arbitrarily long. */
+     loss <=5 chars, TTL <=3 chars; identity fields may be arbitrarily long. A metric's
+     alert symbol sits in the cell padding, so it needs no extra width. */
   --col-status: 168px; --col-host: 200px; --col-ip: 196px; --col-asn: 200px;
   --col-loss: 68px; --col-hop-loss: 96px; --col-rtt: 100px; --col-count: 88px;
   --col-ttl: 60px; --col-spark: 144px;
@@ -290,9 +289,11 @@ td.lvl-warn { background: var(--warn-tint); }
 td.lvl-crit { background: var(--crit-tint); font-weight: 600; }
 /* Overview alerts accent the value, leaving the rest of the row calm. */
 #targets td.lvl-warn, #targets td.lvl-crit { background: transparent; }
-#targets td.lvl-warn .metric-value { background: var(--warn-tint); }
-#targets td.lvl-crit .metric-value { background: var(--crit-tint); font-weight: 600; }
-.metric-value { display: inline-block; padding: 3px 5px; margin: -3px -5px; border-radius: 4px; }
+#targets td.lvl-warn .metric-value { background: var(--warn-tint); color: var(--warning-ink); }
+#targets td.lvl-crit .metric-value { background: var(--crit-tint); color: var(--critical-ink); font-weight: 600; }
+.metric-value { position: relative; display: inline-block; padding: 3px 5px; margin: -3px -5px; border-radius: 4px; }
+/* Left of the tinted value, in the cell's left padding and the gap beside it. */
+.metric-icon { position: absolute; right: 100%; margin-right: 2px; font: 600 13px var(--font); }
 #targets tr.target-row:hover td, #targets tr.target-row[aria-current="true"] td { background: var(--surface-2); }
 
 /* Status: shape + label, never colour alone */
@@ -303,10 +304,10 @@ td.lvl-crit { background: var(--crit-tint); font-weight: 600; }
 #targets .col-status .status { display: flex; line-height: 18px; }
 /* OK rows have no reason; centre the status like the other cells. */
 #targets .status-reason:empty { display: none; }
-.status-icon { font-size: 11px; width: 12px; text-align: center; }
+.status-icon { font-size: 13px; width: 14px; text-align: center; }
 .status.lvl-ok .status-icon { color: var(--good); }
-.status.lvl-warn .status-icon { color: var(--warning); }
-.status.lvl-crit .status-icon { color: var(--critical); }
+.status.lvl-warn { color: var(--warning-ink); }
+.status.lvl-crit { color: var(--critical-ink); }
 .status.lvl-pending .status-icon, .status.lvl-none .status-icon { color: var(--muted); }
 
 
@@ -352,8 +353,8 @@ td.lvl-crit { background: var(--crit-tint); font-weight: 600; }
 .kpi.lvl-warn .kpi-sub, .kpi.lvl-crit .kpi-sub { color: var(--ink-2); }
 .kpi.lvl-crit { background: var(--crit-tint); border-color: var(--critical); }
 .kpi.lvl-crit .kpi-value { color: var(--critical-ink); }
-.kpi.lvl-warn .kpi-label::after { content: " ▲"; color: var(--warning); }
-.kpi.lvl-crit .kpi-label::after { content: " ■"; color: var(--critical); }
+.kpi.lvl-warn .kpi-label::after { content: " △" / ""; color: var(--warning-ink); }
+.kpi.lvl-crit .kpi-label::after { content: " ×" / ""; color: var(--critical-ink); }
 .chart-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; }
 .chart-head h3 { margin: 0; }
 .chart-scale { color: var(--muted); font-size: 12px; }
@@ -391,6 +392,9 @@ canvas.summary-canvas { display: block; width: 100%; height: clamp(180px, 26dvh,
 .trace-message { padding: 20px 0; font-size: 13px; color: var(--ink-2); }
 .trace-message p { margin: 8px 0 0; overflow-wrap: anywhere; }
 .grid.log td { height: 36px; }
+.grid.log tr.lvl-warn td { background: var(--warn-tint); }
+.grid.log tr.lvl-crit td { background: var(--crit-tint); }
+.log-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
 /* All desktop panes occupy stable grid cells and scroll internally. */
 @media (min-width: 1100px) {
@@ -431,7 +435,7 @@ canvas.summary-canvas { display: block; width: 100%; height: clamp(180px, 26dvh,
 }
 
 @media (forced-colors: active) {
-  .status-icon, .fleet-icon { forced-color-adjust: none; }
+  .fleet-icon { forced-color-adjust: none; }
 }
 
 /* Reserve scrollbar space so arrival of rows never changes column budgets. */
@@ -450,8 +454,6 @@ canvas.summary-canvas { display: block; width: 100%; height: clamp(180px, 26dvh,
 #shown-count { flex: none; min-width: 10ch; font-size: 12px; text-align: right; }
 .sort-heading { border: 0; padding: 0; width: 100%; text-align: inherit; font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; background: transparent; cursor: pointer; white-space: nowrap; }
 .grid th[aria-sort=ascending], .grid th[aria-sort=descending] { color: var(--ink); }
-.target-row.health-crit .status { color: var(--critical-ink); }
-.target-row.health-warn .status { color: var(--ink); }
 .target-row.health-crit:not([aria-current=true]) td:first-child { box-shadow: inset 3px 0 var(--critical); }
 #mtr .mtr-target-row.is-selected th, .trace-target.is-selected .trace-target-head { box-shadow: inset 4px 0 var(--series), inset 0 1px var(--series), inset 0 -1px var(--series); background: var(--page); }
 .trace-target.is-selected .trace-target-head strong::before { content: "SELECTED · "; color: var(--series-ink); font-size: 11px; }
@@ -473,6 +475,19 @@ canvas.summary-canvas { display: block; width: 100%; height: clamp(180px, 26dvh,
 .notice.is-error { border-left: 4px solid var(--critical); color: var(--ink); }
 @media (max-width: 1360px) { .topbar { column-gap: 8px; } }
 @media (max-width: 1200px) { #updated { display: none; } }
+@media (width < 720px) {
+  .topbar { padding-inline: 8px; }
+  .page-nav, .fleet, #measurement-controls { flex-wrap: wrap; }
+  .page-nav a { padding-inline: 8px; }
+  .fleet { border-radius: 8px; }
+  .fleet-pill { padding-inline: 6px; }
+  .workspace, .page-view { padding: 8px; }
+  .monitor-filters, .chart-head { flex-wrap: wrap; }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Keep the sticky heading and both table scrollbars in the same container. */
+  #pane-monitor .pane-scroll { display: flex; flex-direction: column; scrollbar-gutter: auto; }
+  #pane-monitor .pane-scroll > .table-wrap { min-height: 0; overflow: auto; }
+}
 .target-row:focus-within { outline: 2px dashed var(--focus); outline-offset: -2px; }
 .target-row:focus-within td { outline: none; }
 #targets .host-open:focus-visible { outline: none; }
@@ -486,6 +501,7 @@ canvas.summary-canvas { display: block; width: 100%; height: clamp(180px, 26dvh,
 .common-cause a { color: var(--series-ink); }
 
 /* Sparkline cell: the SVG keeps a fixed size so rows never change height. */
+.grid th.col-spark { white-space: normal; text-transform: none; letter-spacing: normal; }
 .grid td.spark-cell { padding-top: 4px; padding-bottom: 4px; }
 .spark { display: block; overflow: visible; }
 .spark-base { stroke: var(--grid); stroke-width: 1; }
@@ -500,8 +516,6 @@ canvas.summary-canvas { display: block; width: 100%; height: clamp(180px, 26dvh,
 .activity-states { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
 .activity-item { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; }
 .activity-item .status { font-size: 13px; }
-.activity-item.lvl-crit .status { color: var(--critical-ink); }
-.activity-item.lvl-warn .status { color: var(--ink); }
 .activity-host { min-width: 0; overflow-wrap: anywhere; }
 .activity-reason { color: var(--ink-2); }
 .activity-duration { color: var(--muted); font: 12px var(--mono); white-space: nowrap; }

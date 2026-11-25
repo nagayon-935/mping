@@ -16,6 +16,11 @@ export function rowLevel(t) {
   return Object.hasOwn(STATUS_LABELS, t.health?.status) ? t.health.status : "pending";
 }
 
+/** Status shown in live tables, including when measurement ends. */
+export function targetStatus(t) {
+  return t.measurement_state === "stopped" || t.measurement_state === "finished" ? "stopped" : rowLevel(t);
+}
+
 /** Why the target has its rowLevel, as the server explained it. */
 export function statusReason(t) {
   return t.health?.reason || "Waiting for a completed probe";
@@ -91,6 +96,15 @@ export function buildSections(targets, groups) {
   const rest = targets.filter((t) => !placed.has(t.id));
   if (rest.length > 0) sections.push({ name: "Ungrouped", targets: rest });
   return sections;
+}
+
+/** Non-OK counts in display order, with the worst active status first. */
+export function groupSummary(targets) {
+  const counts = { crit: 0, warn: 0, pending: 0, stopped: 0, ok: 0 };
+  for (const target of targets) counts[targetStatus(target)]++;
+  if (targets.length > 0 && counts.ok === targets.length) return [{ level: "ok", label: "all OK" }];
+  return ["crit", "warn", "pending", "stopped"].filter(level => counts[level] > 0)
+    .map(level => ({ level, label: String(counts[level]) }));
 }
 
 export function summarize(targets) {

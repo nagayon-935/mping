@@ -95,15 +95,47 @@ func buildGroupRows(
 	return rows
 }
 
+func groupStatusSummary(group TargetGroup, rows []columnRowContext) (int, []boxCell) {
+	counts := make(map[stats.Level]int)
+	total := 0
+	for _, i := range group.Indices {
+		if i < 0 || i >= len(rows) {
+			continue
+		}
+		level := targetStatusLevel(rows[i].view)
+		if level == stats.LevelNone || level == "" {
+			level = stats.LevelPending
+		}
+		counts[level]++
+		total++
+	}
+	if total > 0 && counts[stats.LevelOK] == total {
+		tag := targetStatusTags.of(stats.LevelOK)
+		return total, []boxCell{
+			{text: " · " + statusSymbol(stats.LevelOK), tag: tag},
+			{text: " all OK", tag: tag},
+		}
+	}
+	var summary []boxCell
+	for _, level := range []stats.Level{stats.LevelCrit, stats.LevelWarn, stats.LevelPending, levelStopped} {
+		if count := counts[level]; count > 0 {
+			summary = append(summary, boxCell{text: fmt.Sprintf(" · %s %d", statusSymbol(level), count), tag: targetStatusTags.of(level)})
+		}
+	}
+	return total, summary
+}
+
 // setGroupHeaderRow fills a table row with a group banner: a colored band
 // spanning every column so the group boundary is visually strong even
 // though the table keeps a single set of borders/rules. The label (group
-// name + member count) lives in column 0 when it fits; the last column
-// carries the expansion so the band fills any remaining width.
+// name + member count) lives in column 0 when it fits. Status counts
+// flow into following cells as needed. The last column expands to fill
+// any remaining width.
 func setGroupHeaderRow(table *tview.Table, tableRow int, widths []int,
-	groupName string, memberCount int,
+	group TargetGroup, rows []columnRowContext,
 ) {
-	label := fmt.Sprintf(" ▸ %s  (%d hosts)", groupName, memberCount)
+	total, summary := groupStatusSummary(group, rows)
+	label := fmt.Sprintf(" ▸ %s  (%d hosts)", group.Name, total)
 	// The banner must not widen a column (that pushes the last columns off
 	// the table), so the label goes in the first column when it fits there,
 	// else in the widest one, cut to that column's width.
@@ -116,9 +148,22 @@ func setGroupHeaderRow(table *tview.Table, tableRow int, widths []int,
 		}
 	}
 	for c, w := range widths {
-		text := ""
-		if c == labelCol {
-			text = truncateToDisplayWidth(label, w)
+		var text string
+		if c >= labelCol {
+			if c == labelCol {
+				text = tview.Escape(truncateToDisplayWidth(label, w))
+			}
+			remaining := w - tview.TaggedStringWidth(text)
+			for len(summary) > 0 {
+				part := summary[0]
+				width := runewidth.StringWidth(part.text)
+				if width > remaining {
+					break
+				}
+				text += part.tag + part.text + "[-]"
+				remaining -= width
+				summary = summary[1:]
+			}
 		}
 		cell := tview.NewTableCell(text).
 			SetTextColor(groupBannerFg).

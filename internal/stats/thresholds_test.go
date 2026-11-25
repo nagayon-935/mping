@@ -2,6 +2,7 @@ package stats
 
 import (
 	"math"
+	"slices"
 	"testing"
 	"time"
 )
@@ -57,8 +58,10 @@ func TestThresholds_Levels(t *testing.T) {
 		{"loss above warn", th.Loss(20.1), LevelWarn},
 		{"loss above crit", th.Loss(80.1), LevelCrit},
 		{"hop no loss", th.HopLoss(0), LevelOK},
-		{"hop any loss warns", th.HopLoss(0.1), LevelWarn},
-		{"hop crit is inclusive", th.HopLoss(80), LevelCrit},
+		{"hop at warn is ok", th.HopLoss(20), LevelOK},
+		{"hop above warn", th.HopLoss(20.1), LevelWarn},
+		{"hop at crit is warn", th.HopLoss(80), LevelWarn},
+		{"hop above crit", th.HopLoss(80.1), LevelCrit},
 		{"port open", PortStatusLevel("Open"), LevelOK},
 		{"port closed", PortStatusLevel("Closed"), LevelCrit},
 		{"port filtered", PortStatusLevel("Filtered"), LevelWarn},
@@ -106,5 +109,30 @@ func TestViewLevelsFollowTheTargetsThresholds(t *testing.T) {
 	}
 	if v.Levels.LastRTT != LevelCrit || v.Levels.Loss != LevelOK {
 		t.Fatalf("levels under custom thresholds = %+v, want last_rtt crit and loss ok", v.Levels)
+	}
+}
+
+func TestEffectiveHopLosses(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  []float64
+		want []float64
+	}{
+		{"trailing no reply", []float64{0, 100}, []float64{0, 100}},
+		{"middle no reply", []float64{0, 100, 0}, []float64{0, 0, 0}},
+		{"nonpersistent partial loss", []float64{20, 10, 0}, []float64{0, 0, 0}},
+		{"persistent loss", []float64{0, 90, 25, 50}, []float64{0, 25, 25, 50}},
+		{"empty", nil, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hops := make([]HopView, len(tt.raw))
+			for i, loss := range tt.raw {
+				hops[i].LossPct = loss
+			}
+			if got := EffectiveHopLosses(hops); !slices.Equal(got, tt.want) {
+				t.Errorf("EffectiveHopLosses(%v) = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
 	}
 }

@@ -177,11 +177,11 @@ func (h *inputHandler) showState() {
 	case monitorRunning:
 		h.footer.SetText(footerHelpText)
 	case monitorStopping:
-		h.footer.SetText("Stopping... Press 'S' to restart after stop, 'q' to quit")
+		h.footer.SetText("Stopping... Press 'S' to restart after stop, 'q' to quit | ? Help")
 	case monitorStopped:
-		h.footer.SetText("Stopped. Press 'S' to restart, 'q' to quit, 'R' to reset stats")
+		h.footer.SetText("Stopped. Press 'S' to restart, 'q' to quit, 'R' to reset stats | ? Help")
 	case monitorRestarting:
-		h.footer.SetText("Restarting... Press 'q' to quit")
+		h.footer.SetText("Restarting... Press 'q' to quit | ? Help")
 	}
 	h.footer.SetTextColor(tcell.ColorYellow)
 }

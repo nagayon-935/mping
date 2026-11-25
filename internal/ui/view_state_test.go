@@ -20,7 +20,7 @@ func TestAppendLog_GroupsSameCauseInOneSecond(t *testing.T) {
 				"[12:09:03] 8.8.8.8: crit: RTT 679.9ms > 200.0ms · Jitter 43.4ms > 10.0ms",
 				"[12:09:03] 9.9.9.9: crit: RTT 679.9ms > 200.0ms · Jitter 43.1ms > 10.0ms",
 			},
-			want: []string{"[12:09:03] crit: RTT > 200.0ms · Jitter > 10.0ms ×3 — 1.1.1.1, 8.8.8.8, 9.9.9.9"},
+			want: []string{"[12:09:03] crit: RTT > 200.0ms · Jitter > 10.0ms (3 hosts) — 1.1.1.1, 8.8.8.8, 9.9.9.9"},
 		},
 		{
 			name: "a single host keeps its measured values",
@@ -72,7 +72,7 @@ func TestAppendLog_GroupsSameCauseInOneSecond(t *testing.T) {
 				"[12:00:00] h3: ok: Within thresholds", "[12:00:00] h4: ok: Within thresholds",
 				"[12:00:00] h5: ok: Within thresholds", "[12:00:00] h6: ok: Within thresholds",
 			},
-			want: []string{"[12:00:00] ok: Within thresholds ×6 — h1, h2, h3, h4 +2"},
+			want: []string{"[12:00:00] ok: Within thresholds (6 hosts) — h1, h2, h3, h4 +2"},
 		},
 	}
 	for _, tt := range tests {
