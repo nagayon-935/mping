@@ -18,6 +18,19 @@ func formatRTT(d time.Duration) string {
 	return fmt.Sprintf("%v", d.Round(time.Microsecond))
 }
 
+// fixedMsColW fits a fixedMs value such as " 123.45ms " with its padding,
+// so monitor latency columns keep one width as values change.
+const fixedMsColW = 10
+
+// formatFixedMs formats a duration as milliseconds with 2 decimal places
+// (e.g. "123.45ms"), or "-" when there is no value.
+func formatFixedMs(d time.Duration) string {
+	if d == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.2fms", float64(d.Microseconds())/1000.0)
+}
+
 func calcLossRate(view stats.TargetView) float64 {
 	return stats.LossRatio(view.Recv, view.Loss)
 }

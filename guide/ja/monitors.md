@@ -67,7 +67,7 @@
   * **Port**: ポート番号とプロトコル (例: `443/tcp`)
   * **Service**: ポート番号から推定されるサービス名 (不明な場合は `Unknown`)
   * **Status**: 疎通結果 — 緑 `Open` / 赤 `Closed` / 黄 `Filtered` または `Open|Filtered`
-  * **Last / Min / Avg / Max**: `Open` のポートの直近・最小・平均・最大 RTT。応答がタイムアウトすると **Last** に灰色で `timeout` を表示します。計測値を表示できない他の欄は `–` です。
+  * **Last / Min / Avg / Max**: `Open` のポートの直近・最小・平均・最大 RTT。ミリ秒の小数点第二位まで (例 `12.34ms`) を固定幅の列で表示します。応答がタイムアウトすると **Last** に灰色で `timeout` を表示します。計測値を表示できない他の欄は `–` です。
   * **Open/Closed**: Open 判定回数 / Closed・Filtered・Open|Filtered 判定回数の累計
   * **Last Change**: ステータスが最後に変化してからの経過時間
 

@@ -139,7 +139,7 @@ func TestRenderPortMonitorTable(t *testing.T) {
 		lastStatuses := make(map[string]string)
 		errorLogs := []string{}
 		errorView := tview.NewTextView()
-		got := renderPortMonitorTable([]*stats.TargetStats{target}, 120, lastStatuses, func(msg string) { appendErrorLog(&errorLogs, errorView, msg) })
+		got := renderPortMonitorTable([]*stats.TargetStats{target}, 140, lastStatuses, func(msg string) { appendErrorLog(&errorLogs, errorView, msg) })
 		if !strings.Contains(got, "example.com") {
 			t.Fatalf("expected hostname, got: %s", got)
 		}
@@ -201,10 +201,10 @@ func TestPortMonitorColumnWidths(t *testing.T) {
 		avail int
 		want  []int
 	}{
-		{"full gives spare width to Target", 140, []int{49, 9, 9, 15, 6, 5, 5, 5, 13, 13}},
-		{"compact shrinks Target", 55, []int{20, 9, 15, 6}},
-		{"too narrow for full: long host keeps its room", 100, []int{65, 9, 15, 6}},
-		{"narrower than compact: Target shrinks, no overflow", 40, []int{8, 9, 15, 6}},
+		{"full gives spare width to Target", 140, []int{30, 9, 9, 15, 10, 10, 10, 10, 13, 13}},
+		{"compact shrinks Target", 55, []int{16, 9, 15, 10}},
+		{"too narrow for full: long host keeps its room", 100, []int{61, 9, 15, 10}},
+		{"narrower than compact: Target shrinks, no overflow", 40, []int{8, 9, 15, 10}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			table := renderPortMonitorTable([]*stats.TargetStats{target}, tt.avail, map[string]string{}, nil)
@@ -226,7 +226,7 @@ func TestPortMonitorLatency(t *testing.T) {
 		rtt    time.Duration
 		last   string
 	}{
-		{"Open", 5 * time.Millisecond, "5ms"},
+		{"Open", 5 * time.Millisecond, "5.00ms"},
 		{"Filtered", time.Second, "timeout"},
 		{"Open|Filtered", time.Second, "timeout"},
 		{"Closed", time.Millisecond, "–"},
@@ -262,5 +262,21 @@ func TestPortMonitorLatency(t *testing.T) {
 			}
 			t.Fatalf("missing port row:\n%s", table)
 		})
+	}
+}
+
+func TestPortMonitorWidthsStayPutAsValuesChange(t *testing.T) {
+	widths := func(rtt time.Duration, opens int) string {
+		target := stats.NewTargetStats("example.com")
+		port := stats.NewPortCheckResult(443, "tcp")
+		for range opens {
+			port.SetResult("Open", rtt)
+		}
+		target.SetPortResults([]*stats.PortCheckResult{port})
+		top, _, _ := strings.Cut(renderPortMonitorTable([]*stats.TargetStats{target}, 140, map[string]string{}, nil), "\n")
+		return top
+	}
+	if a, b := widths(5*time.Millisecond, 1), widths(987654*time.Microsecond, 12345); a != b {
+		t.Errorf("column borders moved when values changed:\n%s\n%s", a, b)
 	}
 }

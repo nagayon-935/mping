@@ -167,12 +167,17 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 	sized := func(header string, text func(stats.PortCheckView) string, full bool) monitorColumn[portRow] {
 		return col(header, maxPortColumnWidth(header, views, text), text, full)
 	}
+	// Latency and count columns have fixed widths so the table does not
+	// shift as values change, like the other monitors.
+	latency := func(header string, text func(stats.PortCheckView) string, full bool) monitorColumn[portRow] {
+		return col(header, fixedMsColW, text, full)
+	}
 	rtt := func(get func(stats.PortCheckView) time.Duration) func(stats.PortCheckView) string {
 		return func(pr stats.PortCheckView) string {
 			if pr.Status != "Open" {
 				return "–"
 			}
-			return formatRTT(get(pr))
+			return formatFixedMs(get(pr))
 		}
 	}
 	// The target name is shown on the target's first port only.
@@ -192,7 +197,7 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 	lastText := func(pr stats.PortCheckView) string {
 		switch pr.Status {
 		case "Open":
-			return formatRTT(pr.RTT)
+			return formatFixedMs(pr.RTT)
 		case "Filtered", "Open|Filtered":
 			if pr.RTT > 0 {
 				return "timeout"
@@ -200,7 +205,7 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 		}
 		return "–"
 	}
-	last := sized("Last", lastText, false)
+	last := latency("Last", lastText, false)
 	last.cell = func(r portRow) boxCell {
 		text := lastText(r.pr)
 		if text == "timeout" {
@@ -208,10 +213,10 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 		}
 		return boxCell{text: text}
 	}
-	minC := sized("Min", rtt(func(pr stats.PortCheckView) time.Duration { return pr.MinRTT }), true)
-	avg := sized("Avg", rtt(func(pr stats.PortCheckView) time.Duration { return pr.AvgRTT }), true)
-	maxC := sized("Max", rtt(func(pr stats.PortCheckView) time.Duration { return pr.MaxRTT }), true)
-	count := sized("Open/Closed", func(pr stats.PortCheckView) string {
+	minC := latency("Min", rtt(func(pr stats.PortCheckView) time.Duration { return pr.MinRTT }), true)
+	avg := latency("Avg", rtt(func(pr stats.PortCheckView) time.Duration { return pr.AvgRTT }), true)
+	maxC := latency("Max", rtt(func(pr stats.PortCheckView) time.Duration { return pr.MaxRTT }), true)
+	count := col("Open/Closed", runewidth.StringWidth("Open/Closed")+2, func(pr stats.PortCheckView) string {
 		return fmt.Sprintf("%d/%d", pr.OpenCount, pr.ClosedCount)
 	}, true)
 	change := col("Last Change", runewidth.StringWidth("Last Change")+2, func(pr stats.PortCheckView) string {

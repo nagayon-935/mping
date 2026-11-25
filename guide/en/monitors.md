@@ -67,7 +67,7 @@
   * **Port** — Port number and protocol (e.g. `443/tcp`)
   * **Service** — Estimated service name (`Unknown` if not recognized)
   * **Status** — Green `Open` / Red `Closed` / Yellow `Filtered` or `Open|Filtered`
-  * **Last / Min / Avg / Max** — Latest, minimum, average and maximum RTT for open ports. On a timeout, **Last** shows muted `timeout`. Other unavailable latency values show `–`.
+  * **Last / Min / Avg / Max** — Latest, minimum, average and maximum RTT for open ports, in milliseconds to two decimal places (e.g. `12.34ms`) in fixed-width columns. On a timeout, **Last** shows muted `timeout`. Other unavailable latency values show `–`.
   * **Open/Closed** — Cumulative Open count / Closed+Filtered+Open|Filtered count
   * **Last Change** — Time elapsed since the last status change
 
