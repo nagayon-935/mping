@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,7 +60,7 @@ func TestTableRendererUpdate_LayoutByWidth(t *testing.T) {
 			if got := len(tr.hidden) > 0; got != tt.wantHidden {
 				t.Errorf("hidden = %v, want hidden: %v", tr.hidden, tt.wantHidden)
 			}
-			for _, core := range []string{"ST", "DST", "LOSS%", "RTT", "JIT"} {
+			for _, core := range []string{"DST", "LOSS%", "RTT", "JIT"} {
 				if !slices.Contains(tr.activeHeaders, core) {
 					t.Errorf("core column %s missing from %v", core, tr.activeHeaders)
 				}
@@ -68,6 +69,34 @@ func TestTableRendererUpdate_LayoutByWidth(t *testing.T) {
 				t.Errorf("rowCount = %d, want %d", tr.rowCount, len(targets)+1)
 			}
 		})
+	}
+}
+
+func TestTableRendererShortensErrorsOnlyInTheTable(t *testing.T) {
+	const reason = "Destination Host Unreachable"
+	target := replyingTarget("10.0.0.1", time.Millisecond)
+	tr := newTestTableRenderer([]*stats.TargetStats{target}, 140)
+	tr.update()
+	before := slices.Clone(tr.widths)
+
+	target.IncSent()
+	target.OnFailure(reason)
+	tr.update()
+
+	if !slices.Equal(tr.widths, before) {
+		t.Errorf("live widths changed from %v to %v", before, tr.widths)
+	}
+	if log := tr.vs.errorView.GetText(true); !strings.Contains(log, reason) {
+		t.Errorf("Log missing full reason: %q", log)
+	}
+	if details := renderHostDetails(target, RunOptions{}); !strings.Contains(details, "Error: "+reason) {
+		t.Errorf("host details missing full reason: %q", details)
+	}
+	events, _ := target.Events()
+	if !slices.ContainsFunc(events, func(event stats.Event) bool {
+		return event.Kind == "ping" && event.Message == reason
+	}) {
+		t.Errorf("ping events missing full reason: %+v", events)
 	}
 }
 
@@ -188,12 +217,8 @@ func TestTableRendererUpdate_TallPaneRendersAllVisibleRows(t *testing.T) {
 }
 
 // TestColumnWidthsFollowLateArrivingASN verifies the ASN column widens once
-// the Cymru lookup lands. Widths feed formatCellText's truncation
-// (internal/ui/format.go), so a width frozen at startup would clip
-// "AS15169 Google LLC" down to the header's 4 columns until the user resized
-// the terminal. The renderer is not attached to a running tview app, so
-// GetInnerRect reports width 0 on both calls — the "terminal width
-// unchanged" condition under which a width cache would serve stale widths.
+// the Cymru lookup lands. Both lookups use the same unsized pane, so this
+// exercises identity widths without a terminal resize.
 func TestColumnWidthsFollowLateArrivingASN(t *testing.T) {
 	tr := newBenchTableRenderer(t, 1)
 
@@ -208,13 +233,13 @@ func TestColumnWidthsFollowLateArrivingASN(t *testing.T) {
 		t.Fatal("ASN column not present; construct the renderer with asnEnabled=true")
 	}
 
-	// calcColumnWidths returns a fresh slice per call; copying here is just
-	// defensive.
 	before := []stats.TargetView{{Host: "example.com", IP: "192.0.2.1"}}
-	widthsBefore := append([]int(nil), tr.calcColumnWidths(before)...)
+	_, beforeTexts := tr.renderTexts(before)
+	widthsBefore := tr.calcColumnWidths(beforeTexts)
 
 	after := []stats.TargetView{{Host: "example.com", IP: "192.0.2.1", ASN: "AS15169", Org: "Google LLC"}}
-	widthsAfter := append([]int(nil), tr.calcColumnWidths(after)...)
+	_, afterTexts := tr.renderTexts(after)
+	widthsAfter := tr.calcColumnWidths(afterTexts)
 
 	if widthsAfter[asnIdx] <= widthsBefore[asnIdx] {
 		t.Errorf("expected the ASN column to widen once ASN data arrived, got before=%d after=%d",

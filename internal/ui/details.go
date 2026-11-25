@@ -55,7 +55,7 @@ func renderHostDetails(t *stats.TargetStats, opts RunOptions) string {
 	fmt.Fprintf(&b, "Interval: %s | Timeout: %s | Payload: %d bytes", opts.Interval, opts.Timeout, opts.PacketSize)
 	fmt.Fprint(&b, "\n\n")
 	fmt.Fprintf(&b, "[yellow]Ping[-]\nSent: %d | Received: %d | Loss: %d | Cancelled: %d\nLoss ratio (completed attempts): %.1f%% | DUP: %d | Late: %d\n", v.Sent, v.Recv, v.Loss, v.Cancelled, calcLossRate(v), v.Duplicates, v.LateReplies)
-	fmt.Fprintf(&b, "RTT last/min/avg/max: %s / %s / %s / %s\nJitter: %s | TTL: %s | Last loss: %s\nError: %s\n", formatRTT(v.LastRTT), formatRTT(v.MinRTT), formatRTT(v.AvgRTT), formatRTT(v.MaxRTT), formatRTT(v.Jitter), intOrDash(v.LastTTL), formatLossAgo(v.LastLossTime), tview.Escape(v.LastError))
+	fmt.Fprintf(&b, "RTT last/min/avg/max: %s / %s / %s / %s\nJitter: %s | TTL: %s | Last loss: %s\nError: %s\n", formatFixedMs(v.LastRTT), formatFixedMs(v.MinRTT), formatFixedMs(v.AvgRTT), formatFixedMs(v.MaxRTT), formatFixedMs(v.Jitter), intOrDash(v.LastTTL), formatLossAgo(v.LastLossTime), tview.Escape(v.LastError))
 	var annotations []string
 	if opts.ASNEnabled {
 		annotations = append(annotations, fmt.Sprintf("ASN: %s %s", tview.Escape(v.ASN), tview.Escape(v.Org)))
@@ -95,7 +95,7 @@ func renderHostDetails(t *stats.TargetStats, opts RunOptions) string {
 	case opts.Route == RouteMonitor:
 		fmt.Fprintln(&b, "\n[yellow]MTR[-]")
 		for _, hop := range v.MTRHops {
-			fmt.Fprintf(&b, "%2d  %-20s Loss %.1f%%  Sent %d  Last %s  Avg %s\n", hop.TTL, tview.Escape(hop.IP), hop.LossPct, hop.Sent, formatRTT(hop.LastRTT), formatRTT(hop.AvgRTT))
+			fmt.Fprintf(&b, "%2d  %-20s Loss %.1f%%  Sent %d  Last %s  Avg %s\n", hop.TTL, tview.Escape(hop.IP), hop.LossPct, hop.Sent, formatFixedMs(hop.LastRTT), formatFixedMs(hop.AvgRTT))
 		}
 	}
 	if opts.PortEnabled {
@@ -104,7 +104,7 @@ func renderHostDetails(t *stats.TargetStats, opts RunOptions) string {
 			fmt.Fprintln(&b, "Port checks not enabled.")
 		}
 		for _, port := range v.PortResults {
-			fmt.Fprintf(&b, "%d/%s  %s  RTT %s  Open %d  Closed/Filtered %d\n", port.Port, port.Protocol, tview.Escape(port.Status), formatRTT(port.RTT), port.OpenCount, port.ClosedCount)
+			fmt.Fprintf(&b, "%d/%s  %s  RTT %s  Open %d  Closed/Filtered %d\n", port.Port, port.Protocol, tview.Escape(port.Status), formatFixedMs(port.RTT), port.OpenCount, port.ClosedCount)
 		}
 	}
 	fmt.Fprintln(&b, "\n[yellow]Target Events[-]")
@@ -123,7 +123,7 @@ func renderHostDetails(t *stats.TargetStats, opts RunOptions) string {
 
 func detailTimestamp(at time.Time) string {
 	if at.IsZero() {
-		return "–"
+		return "-"
 	}
 	return at.Local().Format("2006-01-02 15:04:05")
 }

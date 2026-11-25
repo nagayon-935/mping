@@ -172,13 +172,13 @@ func TestTableRendererUpdate_GroupHeaderRendersEvenWhenMembersOffWindow(t *testi
 	tr.update()
 
 	headerTableRow := 24 // rowIdx 23 -> table row rowIdx+1
-	// The banner label sits in the first column that can hold it.
+	// Look for the label across the banner cells.
 	var got string
 	for c := range tr.table.GetColumnCount() {
 		got += tr.table.GetCell(headerTableRow, c).Text
 	}
-	if got == "" {
-		t.Fatalf("G1 header row (table row %d) expected populated cell, got empty", headerTableRow)
+	if !strings.Contains(got, "▸ Group1  (20 hosts)") {
+		t.Fatalf("group header row %d = %q, want the Group1 label", headerTableRow, got)
 	}
 
 	// G1's last member is rowIdx 44 -> table row 45, well past the window

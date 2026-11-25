@@ -14,13 +14,17 @@ func TestLevelColor(t *testing.T) {
 		level stats.Level
 		want  tcell.Color
 	}{
-		{stats.LevelNone, tcell.ColorWhite},
-		{stats.LevelPending, tcell.ColorWhite},
+		{stats.LevelNone, tcell.ColorGray},
+		{stats.LevelPending, tcell.ColorGray},
 		{stats.LevelOK, tcell.ColorGreen},
 		{stats.LevelWarn, tcell.ColorOrange},
-		{stats.LevelCrit, vividRed},
+		{stats.LevelCrit, tcell.ColorRed},
 	}
 	for _, tt := range tests {
+		tag := rttColorTag(tt.level)
+		if got := tcell.GetColor(tag[1 : len(tag)-1]); got != tt.want {
+			t.Errorf("rttColorTag(%q) = %q, want color %v", tt.level, tag, tt.want)
+		}
 		if got := levelColor(tt.level); got != tt.want {
 			t.Errorf("levelColor(%q) = %v, want %v", tt.level, got, tt.want)
 		}
@@ -34,10 +38,10 @@ func TestStatusColorTag(t *testing.T) {
 	}{
 		{"Open", "[green]"},
 		{"Closed", "[red]"},
-		{"Filtered", "[yellow]"},
-		{"Open|Filtered", "[yellow]"},
-		{"Unknown", "[white]"},
-		{"", "[white]"},
+		{"Filtered", "[orange]"},
+		{"Open|Filtered", "[orange]"},
+		{"Unknown", "[gray]"},
+		{"", "[gray]"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.status, func(t *testing.T) {
@@ -45,6 +49,21 @@ func TestStatusColorTag(t *testing.T) {
 				t.Fatalf("statusColorTag(%q) = %q, want %q", tt.status, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHTTPStatusColorTag(t *testing.T) {
+	for _, tt := range []struct {
+		status, want string
+	}{
+		{"Up", "[green]"},
+		{"Down", "[red]"},
+		{"Error", "[red]"},
+		{"Checking...", "[gray]"},
+	} {
+		if got := httpStatusColorTag(tt.status); got != tt.want {
+			t.Errorf("httpStatusColorTag(%q) = %q, want %q", tt.status, got, tt.want)
+		}
 	}
 }
 

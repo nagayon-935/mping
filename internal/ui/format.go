@@ -11,16 +11,29 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
-func formatRTT(d time.Duration) string {
+// fixedMsWidth fits "99999.99ms". Larger values are ellipsized in
+// fixed-width table cells. Box columns also reserve two padding cells.
+const (
+	fixedMsWidth = len("99999.99ms")
+	fixedMsColW  = fixedMsWidth + boxCellPadding
+)
+
+// formatFixedMs formats a duration as milliseconds with 2 decimal places
+// (e.g. "123.45ms"), or "-" when there is no value.
+func formatFixedMs(d time.Duration) string {
 	if d == 0 {
 		return "-"
 	}
-	return fmt.Sprintf("%v", d.Round(time.Microsecond))
+	return fmt.Sprintf("%.2fms", float64(d.Microseconds())/1000.0)
 }
 
 func calcLossRate(view stats.TargetView) float64 {
 	return stats.LossRatio(view.Recv, view.Loss)
 }
+
+// timeAgoColW fits elapsed times up to "99h59m59s ago" with box padding;
+// anything longer is ellipsized rather than widening the column for every row.
+const timeAgoColW = len(" 99h59m59s ago ")
 
 func formatLossAgo(lastLossTime time.Time) string {
 	if lastLossTime.IsZero() {
@@ -138,12 +151,31 @@ func formatCellText(text string, width int, align int) string {
 	return text + pad
 }
 
-// paddedCell returns text with a leading space, right-padded to fill colW.
+// boxCellPadding reserves a space at either edge of a table cell.
+const boxCellPadding = 2
+
+// paddedCell left-aligns text between one space of padding on either side.
 func paddedCell(text string, colW int) string {
-	return formatCellText(" "+text, colW, tview.AlignLeft)
+	return padBoxCell(text, colW, tview.AlignLeft)
 }
 
-// rightPaddedCell returns text with a trailing space, left-padded to fill colW.
+// rightPaddedCell right-aligns text between one space of padding on either side.
 func rightPaddedCell(text string, colW int) string {
-	return formatCellText(text+" ", colW, tview.AlignRight)
+	return padBoxCell(text, colW, tview.AlignRight)
+}
+
+func padBoxCell(text string, colW, align int) string {
+	return " " + formatCellText(text, colW-boxCellPadding, align) + " "
+}
+
+// formatTableError shortens the latest error for the Ping Monitor cell.
+func formatTableError(err string) string {
+	if idx := strings.LastIndex(err, ": "); idx >= 0 {
+		err = err[idx+2:]
+	}
+	err = strings.TrimPrefix(err, "Destination ")
+	if err == "" {
+		return "-"
+	}
+	return err
 }

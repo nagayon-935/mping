@@ -44,6 +44,8 @@ func projectDurationsToGraph(data []time.Duration, windowPoints, graphWidth int)
 		}
 		return min(max(int(float64(windowIdx)*float64(graphWidth-1)/float64(windowPoints-1)+0.5), 0), graphWidth-1)
 	}
+	// The newest sample sits at the right edge; until the window is full,
+	// older history grows leftwards from there.
 	offset := windowPoints - len(data)
 	prevX, prevV := -1, time.Duration(0)
 	for i, v := range data {

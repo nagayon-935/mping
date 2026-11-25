@@ -1,12 +1,12 @@
 package ui
 
 import (
+	"github.com/mattn/go-runewidth"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
-	"github.com/mattn/go-runewidth"
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/rivo/tview"
 )
@@ -74,25 +74,25 @@ func TestRenderRowTexts(t *testing.T) {
 		wantCell      map[int]string // column index -> rendered text
 	}{
 		{
-			name: "asn only", asn: true, view: columnTestView(), wantLen: 15,
+			name: "asn only", asn: true, view: columnTestView(), wantLen: 14,
 			// Dst IP includes the hostname when host != IP.
-			wantCell: map[int]string{0: "–", 1: "10.0.0.2", 2: "example.com (1.1.1.1)", 3: "AS15169"},
+			wantCell: map[int]string{0: "10.0.0.2", 1: "example.com (1.1.1.1)", 2: "AS15169"},
 		},
 		{
-			name: "dns and asn", dns: true, asn: true, view: columnTestView(), wantLen: 16,
-			wantCell: map[int]string{2: "example.com (1.1.1.1)", 3: "8.8.8.8", 4: "AS15169"},
+			name: "dns and asn", dns: true, asn: true, view: columnTestView(), wantLen: 15,
+			wantCell: map[int]string{1: "example.com (1.1.1.1)", 2: "8.8.8.8", 3: "AS15169"},
 		},
 		{
-			name: "dns, asn and ptr", dns: true, asn: true, ptr: true, view: columnTestView(), wantLen: 17,
-			wantCell: map[int]string{5: "one.one.one.one"},
+			name: "dns, asn and ptr", dns: true, asn: true, ptr: true, view: columnTestView(), wantLen: 16,
+			wantCell: map[int]string{4: "one.one.one.one"},
 		},
 		{
 			// The PTR column falls back to blank (not a placeholder) when the
 			// target's PTR field is unset, e.g. the lookup failed or hasn't
 			// completed yet — the plain IP is still visible via the
 			// always-present Dst IP column.
-			name: "ptr falls back to blank", dns: true, asn: true, ptr: true, view: noPTR, wantLen: 17,
-			wantCell: map[int]string{5: ""},
+			name: "ptr falls back to blank", dns: true, asn: true, ptr: true, view: noPTR, wantLen: 16,
+			wantCell: map[int]string{4: ""},
 		},
 	}
 	for _, tt := range tests {
@@ -149,10 +149,10 @@ func TestRenderRowCells(t *testing.T) {
 			// Columns that own a color override the row color; the others
 			// keep it.
 			wantColor := map[string]tcell.Color{
-				"ERR":   vividRed,
-				"LOSS%": vividRed,
-				"RTT":   vividRed,
-				"JIT":   vividRed,
+				"ERR":   tcell.ColorRed,
+				"LOSS%": tcell.ColorRed,
+				"RTT":   tcell.ColorRed,
+				"JIT":   tcell.ColorRed,
 				"SIZE":  tcell.ColorWhite,
 			}
 			for name, want := range wantColor {
@@ -177,71 +177,41 @@ func TestDSTBeforeTheNameResolves(t *testing.T) {
 	}
 }
 
-func TestFormatTableError(t *testing.T) {
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{
-			name: "extract tail message",
-			in:   "write ip 10.70.71.68->8.8.8.8: sendmsg: no route to host",
-			want: "no route to host",
-		},
-		{
-			name: "no separator keeps original",
-			in:   "Timeout",
-			want: "Timeout",
-		},
-		{
-			name: "empty",
-			in:   "",
-			want: "",
-		},
+func TestRenderErrorCell(t *testing.T) {
+	cols := mainTableColumns(columnOptions{})
+	errCol := cols[columnIndex(cols, "ERR")]
+	if errCol.base != 20 || !errCol.fixed || errCol.hideWhenEmpty {
+		t.Fatalf("ERR must have a fixed 20-cell reference width and show empty values: %+v", errCol)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := formatTableError(tt.in); got != tt.want {
-				t.Fatalf("formatTableError(%q): got %q, want %q", tt.in, got, tt.want)
-			}
-		})
+	for _, tt := range []struct {
+		reason string
+		text   string
+		color  tcell.Color
+	}{
+		{"Destination Host Unreachable", " Host Unreachable     ", tcell.ColorRed},
+		{"Communication Administratively Prohibited", " Communication Adm... ", tcell.ColorRed},
+		{"", " -                    ", tcell.ColorWhite},
+	} {
+		ctx := columnRowContext{view: stats.TargetView{LastError: tt.reason}}
+		cell := renderRowCells([]column{errCol}, []string{errCol.render(ctx)}, []int{22}, []int{tview.AlignLeft}, ctx, tcell.ColorWhite)[0]
+		if cell.Text != tt.text || cellForeground(cell) != tt.color {
+			t.Errorf("reason %q: got %q in %v, want %q in %v", tt.reason, cell.Text, cellForeground(cell), tt.text, tt.color)
+		}
 	}
 }
 
-func TestCalcInitialTableErrorWidth(t *testing.T) {
-	failed := stats.TargetView{LastError: "This is a very long error message that exceeds normal width expectations!!"}
-	tests := []struct {
-		name        string
-		views       []stats.TargetView
-		minWidth    int
-		wantAtLeast int
-	}{
-		{
-			name: "includes the known error candidates", minWidth: 10,
-			wantAtLeast: len("Communication Administratively Prohibited"),
-		},
-		{
-			name: "includes a target's current error", views: []stats.TargetView{failed}, minWidth: 5,
-			wantAtLeast: len("This is a very long error message"),
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := calcInitialTableErrorWidth(tt.views, "Error", tt.minWidth); got < tt.wantAtLeast {
-				t.Errorf("calcInitialTableErrorWidth = %d, want at least %d", got, tt.wantAtLeast)
-			}
-		})
-	}
-}
-
-func TestRowSparklineIsComputedOncePerRow(t *testing.T) {
+func TestRowSparklineIsComputedOncePerRowAndWidth(t *testing.T) {
 	ctx := columnRowContext{view: stats.TargetView{History: []time.Duration{10 * time.Millisecond, 0}}, spark: new(sparkMemo)}
 	wantPlain, wantStyled := sparklines(ctx.view.History, 8, sparkWidth)
 
-	plain, styled := ctx.sparkline(8)
+	plain, styled := ctx.sparkline(8, sparkWidth)
+	history := ctx.view.History
 	ctx.view.History = nil // a recompute would now draw an empty sparkline
-	cachedPlain, cachedStyled := ctx.sparkline(8)
+	cachedPlain, cachedStyled := ctx.sparkline(8, sparkWidth)
+	ctx.view.History = history
+	if wide, _ := ctx.sparkline(8, 30); runewidth.StringWidth(wide) != 30 {
+		t.Errorf("a different width must redraw: got %d cells, want 30", runewidth.StringWidth(wide))
+	}
 
 	if plain != wantPlain || styled != wantStyled {
 		t.Fatalf("sparkline() = %q, %q, want %q, %q", plain, styled, wantPlain, wantStyled)
@@ -276,7 +246,7 @@ func TestTableColorsFollowTheTargetsThresholds(t *testing.T) {
 	tr := newTestTableRenderer([]*stats.TargetStats{target}, 200)
 	tr.update()
 
-	want := map[string]tcell.Color{"LOSS%": vividRed, "RTT": vividRed, "JIT": tcell.ColorGreen}
+	want := map[string]tcell.Color{"LOSS%": tcell.ColorRed, "RTT": tcell.ColorRed, "JIT": tcell.ColorGreen}
 	for name, color := range want {
 		idx := columnIndex(tr.cols, name)
 		if idx < 0 {
@@ -285,45 +255,5 @@ func TestTableColorsFollowTheTargetsThresholds(t *testing.T) {
 		if got := cellForeground(tr.table.GetCell(1, idx)); got != color {
 			t.Errorf("%s cell color = %v, want %v", name, got, color)
 		}
-	}
-}
-
-func TestStatusColumnAtNarrowWidth(t *testing.T) {
-	tests := []struct {
-		name   string
-		rtt    time.Duration
-		state  string
-		symbol string
-		tag    string
-	}{
-		{"pending", 0, "running", "–", "[gray]"},
-		{"ok", time.Millisecond, "running", "○", "[green]"},
-		{"warn", 100 * time.Millisecond, "running", "△", "[orange]"},
-		{"crit", 500 * time.Millisecond, "running", "×", "[red]"},
-		{"stopped", time.Millisecond, "stopped", "◼", "[gray]"},
-		{"finished", time.Millisecond, "finished", "◼", "[gray]"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			target := stats.NewTargetStats("example.com")
-			if tt.rtt > 0 {
-				target.IncSent()
-				target.OnSuccess(tt.rtt, 64)
-			}
-			target.SetMeasurementState(tt.state)
-
-			tr := newTestTableRenderer([]*stats.TargetStats{target}, 36)
-			tr.update()
-			if tr.activeHeaders[0] != "ST" || tr.widths[0] != 2 {
-				t.Fatalf("first column = %q at width %d, want ST at width 2", tr.activeHeaders[0], tr.widths[0])
-			}
-			want := tt.tag + tt.symbol + "[-] "
-			if got := tr.table.GetCell(1, 0).Text; got != want {
-				t.Errorf("ST cell = %q, want %q", got, want)
-			}
-			if runewidth.StringWidth(tt.symbol) != 1 || tview.TaggedStringWidth(want) != 2 {
-				t.Errorf("runewidth and tview must both allocate one cell for %q", tt.symbol)
-			}
-		})
 	}
 }

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -123,5 +124,41 @@ func TestHTTPLatenciesUseNeutralColour(t *testing.T) {
 		if tt.wantCells != 0 || !strings.Contains(out, "[green] Up") {
 			t.Errorf("width %d: expected uncoloured latency cells and a green Up status:\n%s", tt.width, out)
 		}
+	}
+}
+
+func TestHTTPMonitorTable_FitsURLAndAlignsNumericCells(t *testing.T) {
+	const url = "http://[2001:db8::1]/health"
+	r := makeHTTPResult(url, "Up", 200, 99999990*time.Microsecond)
+	codeAndLatency := regexp.MustCompile(`│ +200 │ +99999\.99ms │`)
+
+	for _, tt := range []struct {
+		name    string
+		width   int
+		full    bool
+		wantURL bool
+	}{
+		{"full spans pane and fits URL", 220, true, true},
+		{"medium drops optional columns, URL stays whole", 100, false, true},
+		{"narrow keeps the URL whole", 85, false, true},
+		{"too narrow shrinks the URL below its minimum", 55, false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			out := renderHTTPMonitorTable([]*stats.HTTPCheckResult{r}, tt.width, nil, nil)
+			plain := tview.NewTextView().SetDynamicColors(true).SetText(out).GetText(true)
+			assertBoxTableWidth(t, out, tt.width)
+			if visible := strings.Contains(plain, url); visible != tt.wantURL {
+				t.Errorf("URL visibility = %v, want %v:\n%s", visible, tt.wantURL, plain)
+			}
+			if !tt.wantURL && !strings.Contains(plain, ". │ Up ") {
+				t.Errorf("expected an ellipsis in the URL cell:\n%s", plain)
+			}
+			if !codeAndLatency.MatchString(plain) {
+				t.Errorf("code and latency should be right-aligned with padding:\n%s", plain)
+			}
+			if strings.Contains(plain, "s ago") != tt.full {
+				t.Errorf("elapsed time should appear only in the full layout:\n%s", plain)
+			}
+		})
 	}
 }

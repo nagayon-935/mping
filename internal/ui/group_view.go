@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
@@ -110,7 +111,7 @@ func groupStatusSummary(group TargetGroup, rows []columnRowContext) (int, []boxC
 		total++
 	}
 	if total > 0 && counts[stats.LevelOK] == total {
-		tag := targetStatusTags.of(stats.LevelOK)
+		tag := levelTag(stats.LevelOK)
 		return total, []boxCell{
 			{text: " · " + statusSymbol(stats.LevelOK), tag: tag},
 			{text: " all OK", tag: tag},
@@ -119,7 +120,7 @@ func groupStatusSummary(group TargetGroup, rows []columnRowContext) (int, []boxC
 	var summary []boxCell
 	for _, level := range []stats.Level{stats.LevelCrit, stats.LevelWarn, stats.LevelPending, levelStopped} {
 		if count := counts[level]; count > 0 {
-			summary = append(summary, boxCell{text: fmt.Sprintf(" · %s %d", statusSymbol(level), count), tag: targetStatusTags.of(level)})
+			summary = append(summary, boxCell{text: fmt.Sprintf(" · %s %d", statusSymbol(level), count), tag: levelTag(level)})
 		}
 	}
 	return total, summary
@@ -129,18 +130,17 @@ func groupStatusSummary(group TargetGroup, rows []columnRowContext) (int, []boxC
 // spanning every column so the group boundary is visually strong even
 // though the table keeps a single set of borders/rules. The label (group
 // name + member count) lives in column 0 when it fits. Status counts
-// flow into following cells as needed. The last column expands to fill
-// any remaining width.
+// flow into following cells as needed.
 func setGroupHeaderRow(table *tview.Table, tableRow int, widths []int,
 	group TargetGroup, rows []columnRowContext,
 ) {
 	total, summary := groupStatusSummary(group, rows)
-	label := fmt.Sprintf(" ▸ %s  (%d hosts)", group.Name, total)
+	label := fmt.Sprintf("▸ %s  (%d hosts)", group.Name, total)
 	// The banner must not widen a column (that pushes the last columns off
 	// the table), so the label goes in the first column when it fits there,
 	// else in the widest one, cut to that column's width.
 	labelCol := 0
-	if runewidth.StringWidth(label) > widths[0] {
+	if runewidth.StringWidth(label) > widths[0]-boxCellPadding {
 		for c, w := range widths {
 			if w > widths[labelCol] {
 				labelCol = c
@@ -148,12 +148,13 @@ func setGroupHeaderRow(table *tview.Table, tableRow int, widths []int,
 		}
 	}
 	for c, w := range widths {
+		innerWidth := w - boxCellPadding
 		var text string
 		if c >= labelCol {
 			if c == labelCol {
-				text = tview.Escape(truncateToDisplayWidth(label, w))
+				text = tview.Escape(truncateToDisplayWidth(label, innerWidth))
 			}
-			remaining := w - tview.TaggedStringWidth(text)
+			remaining := innerWidth - tview.TaggedStringWidth(text)
 			for len(summary) > 0 {
 				part := summary[0]
 				width := runewidth.StringWidth(part.text)
@@ -165,15 +166,13 @@ func setGroupHeaderRow(table *tview.Table, tableRow int, widths []int,
 				summary = summary[1:]
 			}
 		}
+		text = " " + text + strings.Repeat(" ", max(innerWidth-tview.TaggedStringWidth(text), 0)+1)
 		cell := tview.NewTableCell(text).
 			SetTextColor(groupBannerFg).
 			SetBackgroundColor(groupBannerBg).
 			SetAttributes(tcell.AttrBold).
 			SetSelectable(false).
 			SetMaxWidth(w)
-		if c == len(widths)-1 {
-			cell.SetExpansion(1)
-		}
 		table.SetCell(tableRow, c, cell)
 	}
 }
@@ -181,14 +180,11 @@ func setGroupHeaderRow(table *tview.Table, tableRow int, widths []int,
 // setGroupSpacerRow fills a table row with blank, non-selectable cells —
 // the visual gap between the ungrouped section / previous group and the
 // next group's banner.
-func setGroupSpacerRow(table *tview.Table, tableRow int, colCount int) {
-	for c := range colCount {
-		cell := tview.NewTableCell("").
+func setGroupSpacerRow(table *tview.Table, tableRow int, widths []int) {
+	for c, w := range widths {
+		cell := tview.NewTableCell(strings.Repeat(" ", w)).
 			SetBackgroundColor(tcell.ColorBlack).
 			SetSelectable(false)
-		if c == colCount-1 {
-			cell.SetExpansion(1)
-		}
 		table.SetCell(tableRow, c, cell)
 	}
 }
@@ -199,16 +195,13 @@ func setGroupSpacerRow(table *tview.Table, tableRow int, colCount int) {
 // width calculation for this tick.
 func setHeaderRow(table *tview.Table, tableRow int, headers []string, widths []int, aligns []int, color tcell.Color) {
 	for i, h := range headers {
-		text := formatCellText(h, widths[i], aligns[i])
+		text := padBoxCell(h, widths[i], aligns[i])
 		cell := tview.NewTableCell(text).
 			SetBackgroundColor(tcell.ColorBlack).
 			SetTextColor(color).
 			SetAttributes(tcell.AttrBold | tcell.AttrUnderline).
 			SetSelectable(false).
 			SetAlign(aligns[i])
-		if i == len(headers)-1 {
-			cell.SetExpansion(1)
-		}
 		table.SetCell(tableRow, i, cell)
 	}
 }

@@ -12,7 +12,7 @@ import (
 
 const (
 	graphMaxVisibleRows = 3
-	graphLabelWidth     = 7 // e.g. "1000ms"
+	graphLabelWidth     = fixedMsWidth
 	graphMinWidth       = 10
 	graphWindowSeconds  = 30
 	graphScaleFloorMs   = 100.0 // minimum Y-axis upper bound in ms
@@ -207,18 +207,24 @@ type graphCell struct {
 
 // drawCell draws one series header, scaled plot, grid labels and separator.
 func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell, windowPoints int, yMax time.Duration) {
-	// Header: label + last RTT
-	headerStr := fmt.Sprintf("% -20s %s", s.label, formatRTT(s.lastRTT))
-	headerStr = truncateToDisplayWidth(headerStr, cell.width-2)
-	tview.Print(screen, headerStr, cell.x, cell.y, cell.width-2, tview.AlignLeft, tcell.ColorYellow)
+	headerWidth := max(cell.width-2, 0)
+	label := truncateToDisplayWidth(s.label, headerWidth)
+	rtt := formatFixedMs(s.lastRTT)
+	labelWidth := min(max(runewidth.StringWidth(label), 20), headerWidth-runewidth.StringWidth(rtt)-1)
+	header := label
+	if labelWidth >= runewidth.StringWidth(label) {
+		header = formatCellText(label, labelWidth, tview.AlignLeft) + " " + rtt
+	}
+	tview.Print(screen, tview.Escape(header), cell.x, cell.y, headerWidth, tview.AlignLeft, tcell.ColorYellow)
 	if loss, color := windowLoss(s.history, windowPoints, s.thresholds); loss != "" {
-		lossX := cell.x + runewidth.StringWidth(headerStr) + 2
-		tview.Print(screen, loss, lossX, cell.y, max(cell.x+cell.width-2-lossX, 0), tview.AlignLeft, color)
+		offset := runewidth.StringWidth(header) + 2
+		tview.Print(screen, loss, cell.x+offset, cell.y, max(headerWidth-offset, 0), tview.AlignLeft, color)
 	}
 
 	graphX := cell.x
 	graphY := cell.y + 1
-	graphWidth := max(cell.width-graphLabelWidth-2, graphMinWidth)
+	axisWidth := min(graphLabelWidth, max(cell.width-graphMinWidth-2, 0))
+	graphWidth := max(cell.width-axisWidth-2, 0)
 
 	columns := projectDurationsToGraph(s.history, windowPoints, graphWidth)
 	plotY, plotHeight := adjustPlotArea(graphY, cell.graphHeight)
@@ -233,18 +239,18 @@ func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell,
 			for gx := range graphWidth {
 				screen.SetContent(graphX+gx, py, '·', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
 			}
-			tview.Print(screen, fmt.Sprintf("%dms", val), graphX+graphWidth+1, py, graphLabelWidth, tview.AlignLeft, tcell.ColorGray)
+			tview.Print(screen, formatFixedMs(time.Duration(val)*time.Millisecond), graphX+graphWidth+1, py, axisWidth, tview.AlignLeft, tcell.ColorGray)
 		}
 	}
-	// 0ms label at bottom
-	tview.Print(screen, "0ms", graphX+graphWidth+1, plotY+plotHeight-1, graphLabelWidth, tview.AlignLeft, tcell.ColorGray)
+	// The axis origin is zero, independent of whether a sample is missing.
+	tview.Print(screen, "0.00ms", graphX+graphWidth+1, plotY+plotHeight-1, axisWidth, tview.AlignLeft, tcell.ColorGray)
 
 	for i, col := range columns {
 		switch {
 		case col.lost:
 			// Every probe here was lost: a red × on the zero line, the same
 			// mark as the Ping Monitor's sparkline.
-			screen.SetContent(graphX+i, plotY+plotHeight-1, '×', nil, tcell.StyleDefault.Foreground(vividRed))
+			screen.SetContent(graphX+i, plotY+plotHeight-1, '×', nil, tcell.StyleDefault.Foreground(tcell.ColorRed))
 		case col.has:
 			color := vividCyan
 			if col.someLost {
@@ -264,7 +270,7 @@ func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell,
 }
 
 // windowLoss reports the lost probes among the trailing windowPoints
-// samples ("loss 13% (4/30)"), or "" when none were lost.
+// samples ("loss 13%"), or "" when none were lost.
 func windowLoss(history []time.Duration, windowPoints int, thresholds stats.Thresholds) (string, tcell.Color) {
 	if len(history) > windowPoints {
 		history = history[len(history)-windowPoints:]
@@ -283,7 +289,7 @@ func windowLoss(history []time.Duration, windowPoints int, thresholds stats.Thre
 	if level := thresholds.Loss(pct); level != stats.LevelOK {
 		color = levelColor(level)
 	}
-	return fmt.Sprintf("loss %.0f%% (%d/%d)", pct, lost, len(history)), color
+	return fmt.Sprintf("loss %.0f%%", pct), color
 }
 
 // barRunes are the eighth-height blocks a bar's top cell is drawn with.

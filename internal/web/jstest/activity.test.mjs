@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  activityItems, formatDuration, healthTransition, lastHourSummary, reasonWithThreshold, recentAcrossHosts,
+  activityItems, formatDuration, healthTransition, lastHourSummary, recentAcrossHosts,
   PER_TARGET_EVENT_CAP,
 } from "../static/js/activity_model.js";
 import { chooseLayout } from "../static/js/workspace.js";
@@ -22,20 +22,13 @@ test("formatDuration is short and readable at every scale", () => {
   assert.equal(formatDuration(-1), "–");
 });
 
-test("reasons keep the value and add the threshold", () => {
-  assert.equal(reasonWithThreshold("Jitter 12.3ms > 10.0ms"), "Jitter 12.3 ms (threshold 10.0 ms)");
-  assert.equal(reasonWithThreshold("Recent loss 30.9% > 5.0%"), "Loss 30.9% (threshold 5.0%)");
-  assert.equal(reasonWithThreshold("55 consecutive failures"), "55 consecutive failures");
-});
-
 test("few hosts: everyone is listed, problems first, then longest-lasting", () => {
   const targets = [host("ok-old", "ok", 1000), host("warn-new", "warn", 20, "Jitter 11.0ms > 10.0ms"),
     host("crit", "crit", 55, "55 consecutive failures"), host("warn-old", "warn", 700, "RTT 61.7ms > 50.0ms")];
   const { items, okCount } = activityItems(targets, { mode: "all", now: NOW });
   assert.deepEqual(items.map((i) => i.target.host), ["crit", "warn-old", "warn-new", "ok-old"]);
   assert.equal(items[0].durationMs, 55_000);
-  assert.equal(items[1].reason, "RTT 61.7 ms (threshold 50.0 ms)");
-  assert.equal(items[3].reason, "", "OK needs no reason");
+  assert.ok(items.every((i) => !("reason" in i)), "values stay in the events list");
   assert.equal(okCount, 1);
 });
 

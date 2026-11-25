@@ -43,7 +43,7 @@ func newLogView() *tview.TextView {
 		SetDynamicColors(true).
 		SetScrollable(true).
 		SetWordWrap(true) // long messages wrap rather than run off the pane
-	view.SetBorder(true).SetTitle(" Log ").SetTitleColor(vividRed).SetBorderColor(vividRed)
+	view.SetBorder(true).SetTitle(" Log ").SetTitleColor(tcell.ColorRed).SetBorderColor(tcell.ColorRed)
 	view.SetBackgroundColor(tcell.ColorBlack)
 	return view
 }

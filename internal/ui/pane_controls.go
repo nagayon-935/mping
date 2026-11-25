@@ -98,7 +98,7 @@ func newPaneControls(app *tview.Application, layout *tview.Flex, header *tview.T
 	}
 	c.graph = add("RTT Graphs", graph, graph, 3, vividCyan, func(color tcell.Color) { graph.SetBorderColor(color) },
 		func(width int) int { return graph.preferredHeight(width - 2) })
-	c.log = add("Log", log, log, 2, vividRed, func(color tcell.Color) { log.SetBorderColor(color) },
+	c.log = add("Log", log, log, 2, tcell.ColorRed, func(color tcell.Color) { log.SetBorderColor(color) },
 		func(int) int { return max(logContentLines(log), logLines) + 2 })
 	return c
 }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { badgeIcon } from "../static/js/dom.js";
 import { groupSummary, targetStatus } from "../static/js/model.js";
 import { renderMTR } from "../static/js/mtr.js";
+import { tracePath } from "../static/js/traceroute.js";
 
 test("status symbols distinguish health, waiting and stopped measurements", () => {
   const symbols = { ok: "○", warn: "△", crit: "×", pending: "–", none: "–", stopped: "◼" };
@@ -31,13 +32,16 @@ function createElement() {
   return node;
 }
 
-test("MTR displays raw loss but only marks abnormal effective loss", (t) => {
+function mockDocument(t) {
   globalThis.document = { createElement };
   globalThis.getComputedStyle = () => ({ getPropertyValue: () => "100" });
   t.after(() => {
     delete globalThis.document;
     delete globalThis.getComputedStyle;
   });
+}
+
+function renderTargetMTR(target) {
   const table = Object.assign(createElement(), {
     parentElement: { clientWidth: 400, scrollLeft: 0, scrollTop: 0 },
     tBodies: [],
@@ -45,6 +49,14 @@ test("MTR displays raw loss but only marks abnormal effective loss", (t) => {
     querySelector: () => null,
     insertBefore: () => {},
   });
+  renderMTR(table, [target], { features: {} });
+  const [head, ...rows] = table.children[0].children;
+  const summary = head.children[0].children[0].children.find((node) => node.className === "mtr-target-summary");
+  return { summary, rows };
+}
+
+test("MTR displays raw loss but only marks abnormal effective loss", (t) => {
+  mockDocument(t);
   const tests = [
     { ip: "", loss_pct: 100, effective_loss_pct: 0, effective_loss_level: "ok", muted: true },
     { ip: "192.0.2.1", loss_pct: 20, effective_loss_pct: 10, effective_loss_level: "ok", muted: true },
@@ -54,13 +66,10 @@ test("MTR displays raw loss but only marks abnormal effective loss", (t) => {
     { ip: "", loss_pct: 100, effective_loss_pct: 100, effective_loss_level: "crit", symbol: "×" },
   ];
   const hops = tests.map((hop, i) => ({ ...hop, ttl: i + 1 }));
-  renderMTR(table, [{ id: 1, host: "example.com", health: { status: "ok" }, mtr_hops: hops }], { features: {} });
-  const [head, ...rows] = table.children[0].children;
-  const summary = head.children[0].children[0].children.find((node) => node.className === "mtr-target-summary");
-  const [status, firstLoss, count] = summary.children;
-  assert.equal(status.children[1].textContent, "OK");
-  assert.equal(firstLoss.textContent, "loss from hop 4");
-  assert.equal(count.textContent, "6 hops");
+  const { summary, rows } = renderTargetMTR({ id: 1, host: "example.com", ip: "192.0.2.3",
+    health: { status: "warn" }, mtr_hops: hops.map(hop => ({ ...hop, recv: hop.ip ? 1 : 0 })) });
+  assert.deepEqual(summary.children.map(node => [node.className, node.textContent]),
+    [["mtr-target-count", "6 hops"]]);
 
   for (const [i, hop] of hops.entries()) {
     const cell = (key) => rows[i].children.find((node) => node.className.split(" ").includes(`col-${key}`));
@@ -84,6 +93,44 @@ test("MTR displays raw loss but only marks abnormal effective loss", (t) => {
       assert.equal(address.children[0].textContent, "No reply");
       assert.equal(address.className, hop.muted ? "mono muted col-ip" : "mono col-ip");
     }
+  }
+});
+
+test("MTR keeps its hop count and discovery messages", (t) => {
+  mockDocument(t);
+  const target = { host: "example.com", ip: "192.0.2.10", health: { status: "crit" } };
+  for (const [hops, error, count, message] of [
+    [[], "", "Waiting for hops", "Waiting for hop replies…"],
+    [[], "probe failed", "Waiting for hops", "Route discovery failed: probe failed"],
+    [[{ ttl: 1, ip: "192.0.2.1", recv: 1, loss_pct: 0 }], "", "1 hop"],
+  ]) {
+    const { summary, rows } = renderTargetMTR({ ...target, mtr_hops: hops, mtr_error: error });
+    assert.deepEqual(summary.children.map(node => [node.className, node.textContent]),
+      [["mtr-target-count", count]]);
+    if (message) assert.equal(rows[0].children[0].textContent, message);
+  }
+});
+
+test("Traceroute keeps hop counts, discovery progress and failures", (t) => {
+  mockDocument(t);
+  const target = { host: "example.com", ip: "2001:DB8::10", health: { status: "warn" } };
+  for (const ip of ["2001:db8::1", "2001:db8::10"]) {
+    const path = tracePath({ ...target, mtr_hops: [{ ttl: 1, ip }, { ttl: 2, ip: "" }] }, {});
+    const [summary] = path.children;
+    assert.equal(summary.className, "trace-summary");
+    assert.equal(summary.textContent, "2 hops · 1 no reply");
+    assert.equal(summary.children.length, 0);
+  }
+  for (const [error, level, label] of [
+    ["", "pending", "Discovering…"],
+    ["probe failed", "warn", "Route discovery failed"],
+  ]) {
+    const message = tracePath({ ...target, mtr_error: error }, {});
+    assert.equal(message.className, "trace-message");
+    const [chip, detail] = message.children;
+    assert.equal(chip.className, `status lvl-${level}`);
+    assert.equal(chip.children[1].textContent, label);
+    if (error) assert.equal(detail.textContent, error);
   }
 });
 

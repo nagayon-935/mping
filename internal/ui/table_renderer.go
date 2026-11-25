@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v2"
-	"github.com/mattn/go-runewidth"
 	"github.com/rivo/tview"
 
 	"github.com/nagayon-935/mping/internal/stats"
@@ -29,14 +28,7 @@ type tableRenderer struct {
 	sparkPoints int
 	groups      []TargetGroup
 
-	cols             []column
-	fullHeaders      []string
-	fullAligns       []int
-	baseWidths       []int
-	minWidths        []int
-	maxWidths        []int
-	shrinkPriorities []int
-	growPriorities   []int
+	cols []column
 
 	headerColor tcell.Color
 	rowColor    tcell.Color
@@ -49,15 +41,9 @@ type tableRenderer struct {
 	// into cols shown in the full layout (activeCols the columns themselves);
 	// widths, activeHeaders and activeAligns are parallel to it. hidden names
 	// the columns dropped for width, in the order they were dropped.
-	active     []int
-	activeCols []column
-	hidden     []string
-	// widthSeen is each column's widest content so far and everShown marks
-	// hideWhenEmpty columns that have had a value: planColumns uses them so
-	// a value shrinking back (9.8ms after 10.3ms) or an error clearing does
-	// not make columns appear and disappear from one tick to the next.
-	widthSeen     []int
-	everShown     []bool
+	active        []int
+	activeCols    []column
+	hidden        []string
 	widths        []int
 	activeHeaders []string
 	activeAligns  []int
@@ -74,96 +60,35 @@ type tableRenderer struct {
 	vs                *viewState
 }
 
-// newTableRenderer builds the column schema (from mainTableColumns, keyed
-// off whether any target has a DNS server set) and its derived
-// headers/aligns/widths/priorities, seeds the Error column's data-derived
-// max width, and primes the initial column widths and log lines.
+// newTableRenderer builds the column schema and primes the initial log lines.
 func newTableRenderer(
 	targets []*stats.TargetStats, sources sourceIPs, packetSize int, colOpts columnOptions, groups []TargetGroup,
 	table *tview.Table, tablePane *tview.Flex, initialLogs []string, vs *viewState,
 ) *tableRenderer {
-	views := fetchViews(targets, max(colOpts.SparkPoints, 0))
 	colOpts.DNS = false
-	for _, v := range views {
-		if v.DNSServer != "" && v.DNSServer != "-" {
+	for _, target := range targets {
+		if dns := target.GetViewWindow(0).DNSServer; dns != "" && dns != "-" {
 			colOpts.DNS = true
 			break
 		}
 	}
-
-	cols := mainTableColumns(colOpts)
 	tr := &tableRenderer{
 		targets: targets, sources: sources, packetSize: packetSize,
-		sparkPoints:      max(colOpts.SparkPoints, 0),
-		groups:           groups,
-		cols:             cols,
-		fullHeaders:      make([]string, len(cols)),
-		fullAligns:       make([]int, len(cols)),
-		baseWidths:       make([]int, len(cols)),
-		minWidths:        make([]int, len(cols)),
-		maxWidths:        make([]int, len(cols)),
-		shrinkPriorities: make([]int, len(cols)),
-		growPriorities:   make([]int, len(cols)),
-		headerColor:      tcell.ColorYellow,
-		rowColor:         tcell.ColorWhite,
-		table:            table, tablePane: tablePane,
-		vs: vs,
+		sparkPoints: max(colOpts.SparkPoints, 0),
+		groups:      groups,
+		cols:        mainTableColumns(colOpts),
+		headerColor: tcell.ColorYellow,
+		rowColor:    tcell.ColorWhite,
+		table:       table, tablePane: tablePane,
+		rowCount: len(targets) + 1,
+		vs:       vs,
 	}
-	for i, c := range cols {
-		tr.fullHeaders[i] = c.name
-		tr.fullAligns[i] = c.align
-		tr.baseWidths[i] = c.base
-		tr.minWidths[i] = c.min
-		tr.maxWidths[i] = c.max
-		tr.shrinkPriorities[i] = c.shrinkPriority
-		tr.growPriorities[i] = c.growPriority
-	}
-
-	// The Error column's max grows to fit the widest known error string
-	// rather than staying at its static base.
-	errorIdx := columnIndex(cols, "ERR")
-	tr.baseWidths[errorIdx] = calcInitialTableErrorWidth(views, tr.fullHeaders[errorIdx], tr.baseWidths[errorIdx])
-	tr.maxWidths[errorIdx] = tr.baseWidths[errorIdx]
-
-	tr.widthSeen = make([]int, len(cols))
-	tr.everShown = make([]bool, len(cols))
-	tr.widths = tr.calcColumnWidths(views)
-	tr.active = make([]int, len(cols))
-	for i := range cols {
-		tr.active[i] = i
-	}
-	tr.activeCols = append([]column(nil), cols...)
-	tr.activeHeaders = append([]string(nil), tr.fullHeaders...)
-	tr.activeAligns = append([]int(nil), tr.fullAligns...)
-	tr.rowCount = len(targets) + 1
 
 	for _, line := range initialLogs {
 		tr.vs.appendLog(line)
 	}
 
 	return tr
-}
-
-// calcColumnWidths computes the initial column widths from the dynamic
-// columns' current text (SRC/DST, DNS, ASN, PTR), before the first tick
-// plans the layout; every tick after that sizes columns in planColumns.
-// views must be the same length as tr.targets, in the same order.
-func (tr *tableRenderer) calcColumnWidths(views []stats.TargetView) []int {
-	widths := append([]int(nil), tr.baseWidths...)
-	for i, c := range tr.cols {
-		if !c.dynamic {
-			continue
-		}
-		maxWidth := runewidth.StringWidth(c.name)
-		for _, view := range views {
-			ctx := columnRowContext{view: view, sources: tr.sources, packetSize: tr.packetSize}
-			if w := runewidth.StringWidth(c.render(ctx)); w > maxWidth {
-				maxWidth = w
-			}
-		}
-		widths[i] = maxWidth
-	}
-	return widths
 }
 
 // rowRenderMargin extends the rendered row window beyond what's strictly
@@ -268,23 +193,23 @@ func (tr *tableRenderer) update() {
 	}
 }
 
-// chooseLayout fits the columns to the pane (see planColumns) and sets the
-// active columns, headers, widths and row count. When not even the core
-// columns fit, the previous tick's layout stays.
+// chooseLayout fits the columns to the pane and sets the row count. When the
+// pane is narrower than the core columns' minimum, tview clips the core layout
+// to the viewport.
 func (tr *tableRenderer) chooseLayout(texts [][]string) {
 	_, _, availableTableWidth, _ := tr.tablePane.GetInnerRect()
-	if plan := tr.planColumns(texts, availableTableWidth); plan.ok {
-		tr.active = plan.active
-		tr.hidden = plan.hidden
-		tr.widths = plan.widths
-		tr.activeCols = make([]column, len(plan.active))
-		tr.activeHeaders = make([]string, len(plan.active))
-		tr.activeAligns = make([]int, len(plan.active))
-		for j, i := range plan.active {
-			tr.activeCols[j] = tr.cols[i]
-			tr.activeHeaders[j] = tr.fullHeaders[i]
-			tr.activeAligns[j] = tr.fullAligns[i]
-		}
+	plan := tr.planColumns(texts, availableTableWidth)
+	tr.active = plan.active
+	tr.hidden = plan.hidden
+	tr.widths = plan.widths
+	tr.activeCols = make([]column, len(plan.active))
+	tr.activeHeaders = make([]string, len(plan.active))
+	tr.activeAligns = make([]int, len(plan.active))
+	for j, i := range plan.active {
+		c := tr.cols[i]
+		tr.activeCols[j] = c
+		tr.activeHeaders[j] = c.name
+		tr.activeAligns[j] = c.align
 	}
 	tr.rowCount = len(tr.targets) + 1
 	if len(tr.groups) > 0 {
@@ -320,7 +245,7 @@ func (tr *tableRenderer) scanTargets(views []stats.TargetView, rowCtx []columnRo
 			lastTime, exists := tr.vs.lastLossTimes[key]
 			if !exists || view.LastLossTime.After(lastTime) {
 				tr.vs.lastLossTimes[key] = view.LastLossTime
-				tr.vs.appendLog(buildErrorLogMessage(view, rowSourceIP, view.LastError, view.LastLossTime))
+				tr.vs.appendLog(buildErrorLogMessage(view, rowSourceIP, view.LastFailureReason, view.LastLossTime))
 			}
 		}
 		state, msgs := updateAlertState(view, rowSourceIP, rowCtx[i].lossRate, now, tr.vs.alertState[key])
@@ -358,7 +283,7 @@ func (tr *tableRenderer) renderRows(rowCtx []columnRowContext, texts [][]string,
 		tableRow := rowIdx + 1
 		switch row.kind {
 		case groupRowSpacer:
-			setGroupSpacerRow(tr.table, tableRow, len(tr.activeHeaders))
+			setGroupSpacerRow(tr.table, tableRow, tr.widths)
 		case groupRowHeader:
 			setGroupHeaderRow(tr.table, tableRow, tr.widths, tr.groups[row.groupIdx], rowCtx)
 		case groupRowSubHeader:

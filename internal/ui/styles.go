@@ -10,51 +10,46 @@ import (
 const (
 	errorLogMaxSize      = 1000 // maximum number of lines kept in the error log pane
 	minRouteContentWidth = 20
-	minPortContentWidth  = 20
+	maxPortTargetW       = 24 // widest minimum the port table's Target column asks for
 )
 
-var (
-	vividRed  = tcell.NewRGBColor(255, 0, 0)
-	vividCyan = tcell.NewRGBColor(0, 255, 255)
-)
+var vividCyan = tcell.NewRGBColor(0, 255, 255)
 
-// levelColor is the TUI colour of a stats.Level: red when critical, orange
-// for a warning, green when fine and white while there is nothing to judge.
-func levelColor(l stats.Level) tcell.Color {
-	switch l {
-	case stats.LevelCrit:
-		return vividRed
-	case stats.LevelWarn:
-		return tcell.ColorOrange
-	case stats.LevelOK:
-		return tcell.ColorGreen
-	default:
-		return tcell.ColorWhite
-	}
+// levelPalette holds the tcell color and tview tag name for each level.
+var levelPalette = map[stats.Level]string{
+	stats.LevelOK:   "green",
+	stats.LevelWarn: "orange",
+	stats.LevelCrit: "red",
 }
 
-// levelTags is one kind of cell's tview color tag per stats.Level; other
-// covers the levels with nothing to judge yet (none, pending).
-type levelTags struct {
-	crit, warn, ok, other string
+func levelColorName(level stats.Level) string {
+	if name, ok := levelPalette[level]; ok {
+		return name
+	}
+	return "gray"
 }
 
-func (t levelTags) of(l stats.Level) string {
-	switch l {
-	case stats.LevelCrit:
-		return t.crit
-	case stats.LevelWarn:
-		return t.warn
-	case stats.LevelOK:
-		return t.ok
-	default:
-		return t.other
-	}
+func levelColor(level stats.Level) tcell.Color {
+	return tcell.GetColor(levelColorName(level))
+}
+
+func levelTag(level stats.Level) string {
+	return "[" + levelColorName(level) + "]"
 }
 
 const levelStopped stats.Level = "stopped"
 
-var targetStatusTags = levelTags{crit: "[red]", warn: "[orange]", ok: "[green]", other: "[gray]"}
+func rttColorTag(level stats.Level) string {
+	return levelTag(level)
+}
+
+func statusColorTag(status string) string {
+	return levelTag(stats.PortStatusLevel(status))
+}
+
+func httpStatusColorTag(status string) string {
+	return levelTag(stats.HTTPStatusLevel(status))
+}
 
 func targetStatusLevel(v stats.TargetView) stats.Level {
 	switch v.MeasurementState {
@@ -77,26 +72,6 @@ func statusSymbol(level stats.Level) string {
 	default:
 		return "–"
 	}
-}
-
-func statusLabel(level stats.Level) string {
-	switch level {
-	case stats.LevelOK:
-		return "OK"
-	case stats.LevelWarn:
-		return "Warning"
-	case stats.LevelCrit:
-		return "Critical"
-	case levelStopped:
-		return "Stopped"
-	default:
-		return "Waiting"
-	}
-}
-
-// statusColorTag returns a tview color tag for the given port status.
-func statusColorTag(status string) string {
-	return levelTags{crit: "[red]", warn: "[yellow]", ok: "[green]", other: "[white]"}.of(stats.PortStatusLevel(status))
 }
 
 // makeDoubleBorderDrawFunc creates a SetDrawFunc callback that draws a

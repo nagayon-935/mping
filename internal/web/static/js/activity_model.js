@@ -2,8 +2,8 @@
 // long each host has been in its state, which hosts to list and in what
 // order, a summary of the last hour of health events, and the recent events
 // across all hosts.
-import { LEVEL_SEVERITY, rowLevel, statusReason } from "./model.js";
-import { healthTransition, parseBreaches, shortReason, withUnit } from "./health_text.js";
+import { LEVEL_SEVERITY, rowLevel } from "./model.js";
+import { healthTransition, parseBreaches, shortReason } from "./health_text.js";
 
 export { healthTransition };
 
@@ -28,19 +28,13 @@ export function formatDuration(ms) {
   return h % 24 ? `${d}d ${h % 24}h` : `${d}d`;
 }
 
-/** "Jitter 12.3 ms (threshold 10.0 ms)"; other reasons as the server wrote them. */
-export function reasonWithThreshold(reason) {
-  const breaches = parseBreaches(reason);
-  if (breaches.length === 0) return reason ?? "";
-  return breaches.map((b) => `${b.metric} ${withUnit(b.value, b.unit)} (threshold ${withUnit(b.threshold, b.unit)})`).join(" · ");
-}
-
 /**
  * Hosts to list with their current state and how long it has lasted.
  * mode "all" lists every host, problems first (severity, then longest).
  * mode "attention" lists only non-OK hosts, longest-lasting first, and
  * counts the OK ones.
- * @returns {{items: {target: object, level: string, reason: string, durationMs: number|null}[], okCount: number}}
+ * The values behind a state are left to the events list.
+ * @returns {{items: {target: object, level: string, durationMs: number|null}[], okCount: number}}
  */
 export function activityItems(targets, { mode = "all", now = Date.now() } = {}) {
   const rows = (targets ?? []).map((target, index) => {
@@ -48,7 +42,6 @@ export function activityItems(targets, { mode = "all", now = Date.now() } = {}) 
     const since = Date.parse(target.health?.since ?? "");
     return {
       target, index, level,
-      reason: level === "ok" ? "" : reasonWithThreshold(statusReason(target)),
       durationMs: Number.isFinite(since) ? Math.max(0, now - since) : null,
     };
   });

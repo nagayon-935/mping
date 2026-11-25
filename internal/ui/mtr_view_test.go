@@ -1,9 +1,13 @@
 package ui
 
 import (
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rivo/tview"
 
 	"github.com/nagayon-935/mping/internal/stats"
 )
@@ -115,7 +119,7 @@ func TestRenderMTRTable_NoHops_ShowsDiscovering(t *testing.T) {
 	target.SetIP("1.1.1.1")
 
 	out := renderMTRTable([]*stats.TargetStats{target}, 120, sourceIPs{v4: "192.168.1.1"})
-	if !strings.Contains(out, "Discovering") {
+	if !strings.Contains(out, "[gray] Discovering...") {
 		t.Error("expected 'Discovering...' when no hops available")
 	}
 }
@@ -185,37 +189,105 @@ func TestRenderMTRTable_HopNumberNeverTruncated(t *testing.T) {
 }
 
 func TestRenderMTRTable_EffectiveLoss(t *testing.T) {
+	lossCell := regexp.MustCompile(`│(\[[a-z]+\]) +([^│\[]+%) +(?:\[-\])?\[white\]│`)
 	tests := []struct {
-		name     string
-		destRecv int
-		want     []string
-		absent   []string
+		name          string
+		destRecv      int
+		destIP        string
+		wantLoss      []string
+		wantMutedHost bool
 	}{
-		{"intermediate loss muted", 10, []string{"○ OK", "[gray] *", "[gray] 100.0%"}, []string{"loss from hop", "× 100.0%"}},
-		{"low loss persists", 9, []string{"[gray] 100.0%", " 10.0%"}, []string{"loss from hop", "[gray] 10.0%", "△ 10.0%"}},
-		{"warning loss persists", 5, []string{"○ OK · loss from hop 2", "[orange] △ 100.0%", "[orange] △ 50.0%"}, nil},
-		{"destination silent", 0, []string{"○ OK · loss from hop 2", "[red] × 100.0%"}, nil},
+		{"intermediate loss muted", 10, "8.8.8.8", []string{"[white]0.0%", "[gray]100.0%", "[white]0.0%"}, true},
+		{"low loss persists", 9, "8.8.8.8", []string{"[white]0.0%", "[gray]100.0%", "[white]10.0%"}, true},
+		{"warning loss persists", 5, "8.8.8.8", []string{"[white]0.0%", "[orange]△ 100.0%", "[orange]△ 50.0%"}, false},
+		{"destination missing", 0, "", []string{"[white]0.0%", "[red]× 100.0%", "[red]× 100.0%"}, false},
+		{"known destination silent", 0, "8.8.8.8", []string{"[white]0.0%", "[red]× 100.0%", "[red]× 100.0%"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			target := buildMTRTarget("8.8.8.8", "8.8.8.8", []stats.HopView{
 				{TTL: 1, IP: "10.0.0.1", Sent: 10, Recv: 10, AvgRTT: time.Millisecond},
 				{TTL: 2, Sent: 10},
-				{TTL: 3, IP: "8.8.8.8", Sent: 10, Recv: tt.destRecv, AvgRTT: 10 * time.Millisecond},
+				{TTL: 3, IP: tt.destIP, Sent: 10, Recv: tt.destRecv, AvgRTT: 10 * time.Millisecond},
 			})
 			target.IncSent()
-			target.OnSuccess(10*time.Millisecond, 64)
-			got := renderMTRTable([]*stats.TargetStats{target}, 75, "10.0.0.1", "")
-			for _, want := range tt.want {
-				if !strings.Contains(got, want) {
-					t.Errorf("MTR table missing %q in:\n%s", want, got)
-				}
+			target.OnSuccess(time.Second, 64)
+			got := renderMTRTable([]*stats.TargetStats{target}, 75, sourceIPs{v4: "10.0.0.1"})
+			plain := tview.NewTextView().SetDynamicColors(true).SetText(got).GetText(true)
+			header := strings.Trim(strings.SplitN(plain, "\n", 3)[1], "│ ")
+			if header != "10.0.0.1 -> 8.8.8.8" {
+				t.Errorf("MTR target header = %q, want only the route label", header)
 			}
-			for _, absent := range tt.absent {
-				if strings.Contains(got, absent) {
-					t.Errorf("MTR table unexpectedly contains %q in:\n%s", absent, got)
-				}
+			var losses []string
+			for _, match := range lossCell.FindAllStringSubmatch(got, -1) {
+				losses = append(losses, match[1]+match[2])
+			}
+			if !slices.Equal(losses, tt.wantLoss) {
+				t.Errorf("MTR loss cells = %q, want %q:\n%s", losses, tt.wantLoss, got)
+			}
+			if muted := strings.Contains(got, "│[gray] * "); muted != tt.wantMutedHost {
+				t.Errorf("muted host marker = %v, want %v:\n%s", muted, tt.wantMutedHost, got)
 			}
 		})
+	}
+}
+
+func TestRenderMTRTable_LongLatenciesAndHostWidth(t *testing.T) {
+	const ip = "fe80::1"
+	const latency = 99999990 * time.Microsecond
+	target := buildMTRTarget("router.example", "FE80::1%en0", []stats.HopView{
+		{TTL: 1, IP: ip, Sent: 2, Recv: 2, AvgRTT: latency},
+	})
+	target.MTR().SetPTR(1, ip, "router.example")
+
+	for _, tt := range []struct {
+		name      string
+		width     int
+		wantCells int
+		wantHost  string
+	}{
+		{"full retains hop identity and latency", 220, 4, ip + " router.example"},
+		{"narrow ellipsizes host and retains latency", 85, 2, ip + " router.e..."},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			out := renderMTRTable([]*stats.TargetStats{target}, tt.width, sourceIPs{})
+			assertBoxTableWidth(t, out, tt.width)
+			if !strings.Contains(out, tt.wantHost) {
+				t.Errorf("missing hop identity %q:\n%s", tt.wantHost, out)
+			}
+			plain := tview.NewTextView().SetDynamicColors(true).SetText(out).GetText(true)
+			var paddedLatencies int
+			for cell := range strings.SplitSeq(plain, "│") {
+				if strings.HasPrefix(cell, " ") && strings.TrimLeft(cell, " ") == "99999.99ms " {
+					paddedLatencies++
+				}
+			}
+			if paddedLatencies != tt.wantCells {
+				t.Errorf("found %d right-aligned latency cells with padding, want %d:\n%s", paddedLatencies, tt.wantCells, plain)
+			}
+		})
+	}
+}
+
+func TestRenderMTRTable_NumericWidthsStayPutAsHopNameChanges(t *testing.T) {
+	const ip = "192.0.2.1"
+	target := buildMTRTarget("example.com", "192.0.2.2", []stats.HopView{
+		{TTL: 1, IP: ip, Sent: 2, Recv: 2, AvgRTT: 5 * time.Millisecond},
+	})
+	for _, width := range []int{85, 220} {
+		render := func(ptr string) (string, string) {
+			target.MTR().SetPTR(1, ip, ptr)
+			out := renderMTRTable([]*stats.TargetStats{target}, width, sourceIPs{})
+			assertBoxTableWidth(t, out, width)
+			return strings.Split(out, "\n")[2], out
+		}
+		before, _ := render("r1")
+		after, out := render(strings.Repeat("long-label.", 20) + "example.com")
+		if before != after {
+			t.Errorf("width %d: column borders moved when the hop name changed:\n%s\n%s", width, before, after)
+		}
+		if !strings.Contains(out, ip+" long-l") || !strings.Contains(out, "... ") {
+			t.Errorf("width %d: expected an ellipsized hop name:\n%s", width, out)
+		}
 	}
 }

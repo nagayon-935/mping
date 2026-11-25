@@ -3,16 +3,11 @@ package ui
 import (
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/mattn/go-runewidth"
 	"github.com/rivo/tview"
 )
-
-// textColumnSlack is how far a text column other than the fill column may
-// grow past its widest value when the terminal has width to spare.
-const textColumnSlack = 2
 
 // columnPlan is the full layout chosen for one tick: which columns are shown
 // (indices into the schema, in display order), their widths, and which
@@ -25,75 +20,43 @@ type columnPlan struct {
 	ok     bool
 }
 
-// planColumns fits the Ping Monitor's columns into availableTableWidth (the
-// table's inner width, column separators included).
-//
-// Cells are never cut while a column can still be hidden instead: every shown
-// column first gets at least its full content width, and columns are hidden
-// in hideRank order until the rest fit. Only when every hideable column is
-// hidden may text columns shrink below their content (an ellipsis); numeric
-// columns never shrink below their widest value. Columns marked
-// hideWhenEmpty are left out whenever no row has a value for them.
-func (tr *tableRenderer) planColumns(texts [][]string, availableTableWidth int) columnPlan {
-	n := len(tr.cols)
-	content := make([]int, n)
-	desired := make([]int, n)
-	maxW := make([]int, n)
-	fullMin := make([]int, n)
-	hardMin := make([]int, n)
-	var active []int
+// calcColumnWidths returns the reference content widths. Only identity
+// columns measure row text, so changes to probe results cannot resize the table.
+func (tr *tableRenderer) calcColumnWidths(texts [][]string) []int {
+	widths := make([]int, len(tr.cols))
 	for i, c := range tr.cols {
-		content[i] = runewidth.StringWidth(c.name)
-		empty := true
-		for _, row := range texts {
-			content[i] = max(content[i], runewidth.StringWidth(row[i]))
-			if row[i] != "" && row[i] != "-" {
-				empty = false
+		widths[i] = c.base
+		if c.dynamic && !c.fixed {
+			widths[i] = runewidth.StringWidth(c.name)
+			for _, row := range texts {
+				widths[i] = max(widths[i], runewidth.StringWidth(row[i]))
 			}
 		}
-		if !empty {
-			tr.everShown[i] = true
-		}
-		if c.hideWhenEmpty && !tr.everShown[i] {
+	}
+	return widths
+}
+
+// planColumns fits padded cells and separators into the Ping pane's inner
+// width, hiding columns in rank order until their reference widths fit.
+func (tr *tableRenderer) planColumns(texts [][]string, availableTableWidth int) columnPlan {
+	references := tr.calcColumnWidths(texts)
+	var active, hideOrder []int
+	for i, c := range tr.cols {
+		if c.hideWhenEmpty && !slices.ContainsFunc(texts, func(row []string) bool {
+			return row[i] != "" && row[i] != "-"
+		}) {
 			continue
 		}
 		active = append(active, i)
-		text := c.dynamic || c.align == tview.AlignLeft
-		if !c.dynamic {
-			// Measured values change width from tick to tick; planning from
-			// the widest seen keeps a column from flickering in and out.
-			tr.widthSeen[i] = max(tr.widthSeen[i], content[i])
-			content[i] = tr.widthSeen[i]
-		}
-		desired[i] = tr.baseWidths[i]
-		if c.dynamic {
-			desired[i] = content[i]
-		}
-		maxW[i] = max(tr.maxWidths[i], content[i])
-		fullMin[i] = content[i]
-		hardMin[i] = max(tr.minWidths[i], content[i])
-		if text {
-			// Text may be cut with an ellipsis as a last resort; its heading
-			// may not. Only the fill column takes spare width.
-			hardMin[i] = max(tr.minWidths[i], runewidth.StringWidth(c.name))
-			if !c.fill {
-				maxW[i] = content[i] + textColumnSlack
-			}
-		}
-		if !c.dynamic && c.align == tview.AlignLeft {
-			// A free-text column (ERR) claims at most its usual maximum
-			// before other columns are hidden for it.
-			fullMin[i] = min(content[i], max(tr.maxWidths[i], runewidth.StringWidth(c.name)))
+		if c.hideRank > 0 {
+			hideOrder = append(hideOrder, i)
 		}
 	}
-
-	hideOrder := slices.Clone(active)
-	hideOrder = slices.DeleteFunc(hideOrder, func(i int) bool { return tr.cols[i].hideRank == 0 })
 	slices.SortStableFunc(hideOrder, func(a, b int) int { return tr.cols[a].hideRank - tr.cols[b].hideRank })
 
 	var hidden []string
 	for next := 0; ; next++ {
-		if widths, ok := tr.fitColumns(active, desired, fullMin, maxW, availableTableWidth); ok {
+		if widths, ok := tr.fitColumns(active, references, availableTableWidth, false); ok {
 			return columnPlan{active: active, widths: widths, hidden: hidden, ok: true}
 		}
 		if next == len(hideOrder) {
@@ -103,65 +66,77 @@ func (tr *tableRenderer) planColumns(texts [][]string, availableTableWidth int) 
 		active = slices.DeleteFunc(active, func(i int) bool { return i == drop })
 		hidden = append(hidden, tr.cols[drop].name)
 	}
-	// Every hideable column is gone and text still has to be cut. Spare width
-	// may remain (one long host name forced the cut), so bring back the
-	// hidden columns that fit without cutting the shown text any further,
-	// most important first.
-	widths, ok := tr.fitColumns(active, desired, hardMin, maxW, availableTableWidth)
-	if !ok {
-		return columnPlan{active: active, widths: widths, hidden: hidden, ok: false}
-	}
-	for k := len(hidden) - 1; k >= 0; k-- {
-		keep := slices.Clone(hardMin)
-		for j, i := range active {
-			keep[i] = min(widths[j], fullMin[i])
-		}
-		back := columnIndex(tr.cols, hidden[k])
-		trial := append(slices.Clone(active), back)
-		slices.Sort(trial)
-		if w, fits := tr.fitColumns(trial, desired, keep, maxW, availableTableWidth); fits {
-			active, widths = trial, w
-			hidden = slices.Delete(hidden, k, k+1)
-		}
-	}
-	return columnPlan{active: active, widths: widths, hidden: hidden, ok: true}
+
+	// All optional columns are gone. Give the core identity text whatever
+	// room remains after reserving the numeric widths and padding.
+	widths, ok := tr.fitColumns(active, references, availableTableWidth, true)
+	return columnPlan{active: active, widths: widths, hidden: hidden, ok: ok}
 }
 
-// fitColumns fits the active columns' widths to the table width left after
-// the separators between them.
-func (tr *tableRenderer) fitColumns(active, desired, minW, maxW []int, availableTableWidth int) ([]int, bool) {
-	pick := func(all []int) []int {
-		out := make([]int, len(active))
+func (tr *tableRenderer) fitColumns(active, references []int, availableTableWidth int, allowTruncation bool) ([]int, bool) {
+	spare := availableTableWidth - max(len(active)-1, 0) - boxCellPadding*len(active)
+	for _, i := range active {
+		spare -= references[i]
+	}
+	if spare < 0 && !allowTruncation {
+		return nil, false
+	}
+
+	widths := make([]int, len(active))
+	for j, i := range active {
+		widths[j] = references[i] + boxCellPadding
+	}
+	if spare >= 0 {
+		// Only text columns and the sparkline grow; numeric columns keep
+		// their fixed widths so the numbers stay next to their headings.
+		weights := make([]int, len(active))
 		for j, i := range active {
-			out[j] = all[i]
+			if c := tr.cols[i]; c.align == tview.AlignLeft || c.fit != nil {
+				weights[j] = references[i]
+			}
 		}
-		return out
+		spreadProportionally(widths, weights, spare)
+		return widths, true
 	}
-	available := max(availableTableWidth-max(len(active)-1, 0), 0)
-	widths, ok := fitWidthsToAvailable(pick(desired), pick(minW), pick(maxW), pick(tr.shrinkPriorities), pick(tr.growPriorities), available)
-	if ok {
-		stretchToWidth(widths, available)
+	for j, i := range active {
+		if c := tr.cols[i]; c.dynamic {
+			minimum := max(c.min, runewidth.StringWidth(c.name))
+			cut := min(-spare, max(references[i]-minimum, 0))
+			widths[j] -= cut
+			spare += cut
+		}
 	}
-	return widths, ok
+	return widths, spare == 0
 }
 
-// stretchToWidth spreads the width left once every column reached its
-// maximum evenly over all columns, so the table always spans the pane as
-// the terminal widens instead of leaving a gap before the right border.
-func stretchToWidth(widths []int, available int) {
-	sum := 0
-	for _, w := range widths {
-		sum += w
-	}
-	if len(widths) == 0 || sum >= available {
+// spreadProportionally adds positive extra width in proportion to the
+// weights. Zero-weight columns are skipped, and the first eligible columns
+// get one cell each from rounding.
+func spreadProportionally(widths, weights []int, extra int) {
+	if extra <= 0 {
 		return
 	}
-	extra := available - sum
-	for j := range widths {
-		widths[j] += extra / len(widths)
+	total := 0
+	for _, w := range weights {
+		total += w
 	}
-	for j := range extra % len(widths) {
-		widths[j]++
+	if total == 0 {
+		return
+	}
+	remaining := extra
+	for i, w := range weights {
+		share := extra * w / total
+		widths[i] += share
+		remaining -= share
+	}
+	for i, w := range weights {
+		if remaining == 0 {
+			break
+		}
+		if w > 0 {
+			widths[i]++
+			remaining--
+		}
 	}
 }
 
@@ -224,86 +199,4 @@ func sharedValue(texts [][]string, i int) (string, bool) {
 		}
 	}
 	return v, true
-}
-
-// fitWidthsToAvailable clamps desired widths to [minWidths, maxWidths], then
-// shrinks or grows them to sum to exactly availableColumnsWidth (when
-// possible), visiting columns in ascending shrinkPriority/growPriority order
-// — lower values are shrunk/grown first. Every priority slice must be the
-// same length as desired; ties are broken by original index order (stable).
-func fitWidthsToAvailable(desired, minWidths, maxWidths, shrinkPriority, growPriority []int, availableColumnsWidth int) ([]int, bool) {
-	n := len(desired)
-	if n != len(minWidths) || n != len(maxWidths) || n != len(shrinkPriority) || n != len(growPriority) {
-		return nil, false
-	}
-	widths := make([]int, n)
-	sumMin := 0
-	for i := range desired {
-		if minWidths[i] > maxWidths[i] {
-			maxWidths[i] = minWidths[i]
-		}
-		w := max(desired[i], minWidths[i])
-		if w > maxWidths[i] {
-			w = maxWidths[i]
-		}
-		widths[i] = w
-		sumMin += minWidths[i]
-	}
-	if availableColumnsWidth < sumMin {
-		return nil, false
-	}
-
-	sum := 0
-	for _, w := range widths {
-		sum += w
-	}
-
-	shrinkOrder := indicesByPriority(shrinkPriority)
-	for sum > availableColumnsWidth {
-		changed := false
-		for _, idx := range shrinkOrder {
-			if widths[idx] > minWidths[idx] {
-				widths[idx]--
-				sum--
-				changed = true
-				if sum <= availableColumnsWidth {
-					break
-				}
-			}
-		}
-		if !changed {
-			break
-		}
-	}
-
-	growOrder := indicesByPriority(growPriority)
-	for sum < availableColumnsWidth {
-		changed := false
-		for _, idx := range growOrder {
-			if widths[idx] < maxWidths[idx] {
-				widths[idx]++
-				sum++
-				changed = true
-				if sum >= availableColumnsWidth {
-					break
-				}
-			}
-		}
-		if !changed {
-			break
-		}
-	}
-
-	return widths, true
-}
-
-// indicesByPriority returns 0..len(priority)-1 sorted by ascending priority
-// value (stable, so equal priorities keep their original relative order).
-func indicesByPriority(priority []int) []int {
-	idx := make([]int, len(priority))
-	for i := range idx {
-		idx[i] = i
-	}
-	sort.SliceStable(idx, func(a, b int) bool { return priority[idx[a]] < priority[idx[b]] })
-	return idx
 }

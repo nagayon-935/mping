@@ -2,7 +2,7 @@
 // live measurements never reset the user's position in a long route.
 import { el, statusChip } from "./dom.js";
 import { columnWidthPx, countCell, numCell, rttCell, setColumns, textCell } from "./columns.js";
-import { formatPct, selectColumns, targetAddress, targetStatus } from "./model.js";
+import { formatPct, selectColumns, targetAddress } from "./model.js";
 
 /** Hop, address, loss and latest/average RTT always show; the rest appear as
  * the pane widens, in priority order, like the target table. */
@@ -65,7 +65,6 @@ export function renderMTR(table, targets, meta, selectedId = null) {
   const groups = targets.map((target) => {
     const body = el("tbody", { attrs: { "data-target-id": String(target.id) } });
     const hops = target.mtr_hops ?? [];
-    const firstLoss = hops.find(abnormalHop);
     const address = targetAddress(target);
     const label = address && target.ip ? `${target.host} · ${target.ip}` : target.host;
     body.append(el("tr", { className: `mtr-target-row${target.id === selectedId ? " is-selected" : ""}` },
@@ -75,8 +74,6 @@ export function renderMTR(table, targets, meta, selectedId = null) {
           el("strong", { className: "cell-text", text: target.host }),
           address && el("span", { className: "mtr-target-address cell-text", text: address }),
           el("div", { className: "mtr-target-summary" },
-            statusChip(targetStatus(target)),
-            firstLoss && el("span", { className: "mtr-target-loss", text: `loss from hop ${firstLoss.ttl}` }),
             el("span", { className: "mtr-target-count", text: hops.length ? `${hops.length} ${hops.length === 1 ? "hop" : "hops"}` : "Waiting for hops" }))))));
     if (!hops.length) body.append(el("tr", {}, el("td", { className: "mtr-waiting",
       text: target.mtr_error ? `Route discovery failed: ${target.mtr_error}` : "Waiting for hop replies…",

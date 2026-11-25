@@ -19,51 +19,43 @@ type columnRowContext struct {
 	sources    sourceIPs
 	packetSize int
 	lossRate   float64
-	// spark, when set, caches this row's sparkline so its plain text (for
-	// layout) and its colored cell share one bucket pass. Rows built without
-	// it compute the sparkline on demand.
+	// spark, when set, caches this row's sparkline so its plain text and
+	// its colored cell share one bucket pass. Rows built without it compute
+	// the sparkline on demand.
 	spark *sparkMemo
 }
 
-// sparkMemo is one row's rendered sparkline, filled on first use.
+// sparkMemo is one row's rendered sparkline at one width, filled on first use.
 type sparkMemo struct {
-	done          bool
+	width         int
 	plain, styled string
 }
 
 // sparkline returns the row's plain and loss-colored sparkline of points
-// samples, sparkWidth cells wide.
-func (ctx columnRowContext) sparkline(points int) (plain, styled string) {
-	if m := ctx.spark; m != nil && m.done {
+// samples, width cells wide.
+func (ctx columnRowContext) sparkline(points, width int) (plain, styled string) {
+	if m := ctx.spark; m != nil && m.width == width && width > 0 {
 		return m.plain, m.styled
 	}
-	plain, styled = sparklines(ctx.view.History, points, sparkWidth)
+	plain, styled = sparklines(ctx.view.History, points, width)
 	if ctx.spark != nil {
-		*ctx.spark = sparkMemo{done: true, plain: plain, styled: styled}
+		*ctx.spark = sparkMemo{width: width, plain: plain, styled: styled}
 	}
 	return plain, styled
 }
 
-// column describes one main-table column: its display properties, how its
-// cell text and color are derived from a row, and where it sits in the
-// shrink/grow priority order when the terminal is too narrow or too wide for
-// every column's desired width. Keeping the priority on the column itself
-// (rather than in index-based arrays) means the optional DNS/ASN/PTR columns
-// shifting later columns' positions cannot point width adjustment at the
-// wrong column.
+// column describes how a Ping Monitor column is laid out and rendered.
 type column struct {
-	name           string
-	align          int
-	base, min, max int
+	name      string
+	align     int
+	base, min int
 	// dynamic marks a column whose width should track the widest rendered
 	// value across all targets (SRC/DST, DNS, ASN, PTR), rather than staying
 	// fixed at base.
 	dynamic bool
-	// shrinkPriority/growPriority order columns when fitting to available
-	// width: lower shrinks/grows first. Values need not be contiguous.
-	shrinkPriority int
-	growPriority   int
-	render         func(ctx columnRowContext) string
+	// fixed uses base as the reference width even when the value changes.
+	fixed  bool
+	render func(ctx columnRowContext) string
 	// color returns a cell color override for the given row and its already
 	// -rendered text; ok=false means "no override, keep the row's default
 	// color".
@@ -78,13 +70,13 @@ type column struct {
 	// hideWhenEmpty drops the column whenever no row has a value for it
 	// (every cell empty or "-"), however wide the terminal is.
 	hideWhenEmpty bool
-	// styled, when set, returns the cell text with tview color tags; it must
-	// have the same width on screen as render's text, which is what widths
-	// are measured from.
+	// styled, when set, returns the cell text with tview color tags, at
+	// the same display width as render's text.
 	styled func(ctx columnRowContext) string
-	// fill marks the column that takes the table's spare width; other text
-	// columns grow only a little past their content.
-	fill bool
+	// fit, when set, draws the cell at exactly width cells (the column's
+	// width less padding) instead of padding render's text, so the content
+	// fills whatever width the layout gives the column.
+	fit func(ctx columnRowContext, width int) (styled string)
 	// setting marks a column that shows configuration rather than a
 	// measurement (payload size, source address, interface MTU): hidden, its
 	// value moves to the pane title when every row shares it.
@@ -122,6 +114,8 @@ const (
 	rankSrc
 	rankDNS
 	rankLastLoss
+	// rankErr hides error summaries after LAST LOSS and before packet counts.
+	rankErr
 	rankLost
 	rankRecv
 	rankTTL
@@ -149,31 +143,20 @@ func explicitRank(asked bool, explicit, supplementary int) int {
 
 // mainTableColumns returns the Ping Monitor table's column schema in display
 // order. DNS/ASN/PTR are inserted after DST only when enabled; every column
-// carries its own shrink/grow priority and hide rank, so enabling them cannot
-// desync width adjustment.
+// carries its own hide rank.
 func mainTableColumns(o columnOptions) []column {
 	cols := []column{
 		{
-			name: "ST", align: tview.AlignLeft, base: 2, min: 2, max: 2,
-			render: func(ctx columnRowContext) string {
-				return statusSymbol(targetStatusLevel(ctx.view))
-			},
-			styled: func(ctx columnRowContext) string {
-				level := targetStatusLevel(ctx.view)
-				return targetStatusTags.of(level) + statusSymbol(level) + "[-]"
-			},
-		},
-		{
-			name: "SRC", align: tview.AlignLeft, base: 6, min: 4, max: 45,
-			dynamic: true, shrinkPriority: 20, growPriority: 10,
+			name: "SRC", align: tview.AlignLeft, base: 6,
+			dynamic:  true,
 			hideRank: explicitRank(o.SourceExplicit, rankSrcExplicit, rankSrc), setting: true,
 			render: func(ctx columnRowContext) string {
 				return ctx.sources.forDst(ctx.view.IP)
 			},
 		},
 		{
-			name: "DST", align: tview.AlignLeft, base: 6, min: 8, max: 60,
-			dynamic: true, shrinkPriority: 10, growPriority: 0, fill: true,
+			name: "DST", align: tview.AlignLeft, base: 6, min: 8,
+			dynamic: true,
 			render: func(ctx columnRowContext) string {
 				v := ctx.view
 				// Until the name resolves there is no address to append.
@@ -186,16 +169,16 @@ func mainTableColumns(o columnOptions) []column {
 	}
 	if o.DNS {
 		cols = append(cols, column{
-			name: "DNS", align: tview.AlignLeft, base: 10, min: 7, max: 15,
-			dynamic: true, shrinkPriority: 25, growPriority: 15,
+			name: "DNS", align: tview.AlignLeft, base: 10,
+			dynamic:  true,
 			hideRank: explicitRank(o.DNSExplicit, rankDNSExplicit, rankDNS), hideWhenEmpty: true,
 			render: func(ctx columnRowContext) string { return ctx.view.DNSServer },
 		})
 	}
 	if o.ASN {
 		cols = append(cols, column{
-			name: "ASN", align: tview.AlignRight, base: 4, min: 4, max: 15,
-			dynamic: true, shrinkPriority: 27, growPriority: 17, hideRank: rankASN,
+			name: "ASN", align: tview.AlignRight, base: 4,
+			dynamic: true, hideRank: rankASN,
 			render: func(ctx columnRowContext) string {
 				return stats.FormatASN(ctx.view.ASN, ctx.view.Org)
 			},
@@ -203,47 +186,41 @@ func mainTableColumns(o columnOptions) []column {
 	}
 	if o.PTR {
 		cols = append(cols, column{
-			name: "PTR", align: tview.AlignLeft, base: 12, min: 8, max: 40,
-			dynamic: true, shrinkPriority: 28, growPriority: 18, hideRank: rankPTR,
+			name: "PTR", align: tview.AlignLeft, base: 12,
+			dynamic: true, hideRank: rankPTR,
 			render: func(ctx columnRowContext) string { return ctx.view.PTR },
 		})
 	}
 	cols = append(cols,
 		column{
-			name: "RCV", align: tview.AlignRight, base: 8, min: 3, max: 10,
-			shrinkPriority: 80, growPriority: 40, hideRank: rankRecv,
+			name: "RCV", align: tview.AlignRight, base: 6, fixed: true, hideRank: rankRecv,
 			render: func(ctx columnRowContext) string { return fmt.Sprintf("%d", ctx.view.Recv) },
 		},
 		column{
-			name: "LOST", align: tview.AlignRight, base: 7, min: 4, max: 10,
-			shrinkPriority: 90, growPriority: 90, hideRank: rankLost,
+			name: "LOST", align: tview.AlignRight, base: 6, fixed: true, hideRank: rankLost,
 			render: func(ctx columnRowContext) string { return fmt.Sprintf("%d", ctx.view.Loss) },
 		},
 		column{
-			name: "LOSS%", align: tview.AlignRight, base: 10, min: 6, max: 12,
-			shrinkPriority: 70, growPriority: 80, bold: true,
+			name: "LOSS%", align: tview.AlignRight, base: 6, fixed: true, bold: true,
 			render: func(ctx columnRowContext) string { return fmt.Sprintf("%.1f%%", ctx.lossRate) },
 			color: func(ctx columnRowContext, text string) (tcell.Color, bool) {
 				return levelColor(ctx.view.Levels.Loss), true
 			},
 		},
 		column{
-			name: "RTT", align: tview.AlignRight, base: 10, min: 7, max: 12,
-			shrinkPriority: 60, growPriority: 50,
-			render: func(ctx columnRowContext) string { return formatRTT(ctx.view.LastRTT) },
+			name: "RTT", align: tview.AlignRight, base: fixedMsWidth, fixed: true,
+			render: func(ctx columnRowContext) string { return formatFixedMs(ctx.view.LastRTT) },
 			color: func(ctx columnRowContext, text string) (tcell.Color, bool) {
 				return levelColor(ctx.view.Levels.LastRTT), true
 			},
 		},
 		column{
-			name: "AVG", align: tview.AlignRight, base: 10, min: 7, max: 12,
-			shrinkPriority: 50, growPriority: 60, hideRank: rankAvg,
-			render: func(ctx columnRowContext) string { return formatRTT(ctx.view.AvgRTT) },
+			name: "AVG", align: tview.AlignRight, base: fixedMsWidth, fixed: true, hideRank: rankAvg,
+			render: func(ctx columnRowContext) string { return formatFixedMs(ctx.view.AvgRTT) },
 		},
 		column{
-			name: "JIT", align: tview.AlignRight, base: 10, min: 7, max: 12,
-			shrinkPriority: 40, growPriority: 70,
-			render: func(ctx columnRowContext) string { return formatRTT(ctx.view.Jitter) },
+			name: "JIT", align: tview.AlignRight, base: fixedMsWidth, fixed: true,
+			render: func(ctx columnRowContext) string { return formatFixedMs(ctx.view.Jitter) },
 			color: func(ctx columnRowContext, text string) (tcell.Color, bool) {
 				return levelColor(ctx.view.Levels.Jitter), true
 			},
@@ -251,14 +228,15 @@ func mainTableColumns(o columnOptions) []column {
 	)
 	if o.SparkPoints > 0 {
 		cols = append(cols, column{
-			name: sparkColumnName, align: tview.AlignLeft, base: sparkWidth, min: sparkWidth, max: sparkWidth,
-			shrinkPriority: 5, growPriority: 130, hideRank: rankSpark,
+			name: sparkColumnName, align: tview.AlignLeft, base: sparkWidth, fixed: true, hideRank: rankSpark,
+			// The layout reserves sparkWidth; the cell then draws the
+			// trend across the column's full width.
 			render: func(ctx columnRowContext) string {
-				plain, _ := ctx.sparkline(o.SparkPoints)
+				plain, _ := ctx.sparkline(o.SparkPoints, sparkWidth)
 				return plain
 			},
-			styled: func(ctx columnRowContext) string {
-				_, styled := ctx.sparkline(o.SparkPoints)
+			fit: func(ctx columnRowContext, width int) string {
+				_, styled := ctx.sparkline(o.SparkPoints, width)
 				return styled
 			},
 			color: func(columnRowContext, string) (tcell.Color, bool) { return vividCyan, true },
@@ -266,14 +244,12 @@ func mainTableColumns(o columnOptions) []column {
 	}
 	cols = append(cols,
 		column{
-			name: "SIZE", align: tview.AlignRight, base: 6, min: 4, max: 8,
-			shrinkPriority: 120, growPriority: 100,
+			name: "SIZE", align: tview.AlignRight, base: 6, fixed: true,
 			hideRank: explicitRank(o.SizeExplicit, rankSizeExplicit, rankSize), setting: true,
 			render: func(ctx columnRowContext) string { return fmt.Sprintf("%d", ctx.packetSize) },
 		},
 		column{
-			name: mtuColumnName(o.MTU), align: tview.AlignRight, base: 6, min: 4, max: 8,
-			shrinkPriority: 100, growPriority: 110,
+			name: mtuColumnName(o.MTU), align: tview.AlignRight, base: 6, fixed: true,
 			hideRank: explicitRank(o.MTU, rankMTUExplicit, rankMTU), setting: !o.MTU,
 			render: func(ctx columnRowContext) string {
 				if o.MTU {
@@ -283,24 +259,21 @@ func mainTableColumns(o columnOptions) []column {
 			},
 		},
 		column{
-			name: "TTL", align: tview.AlignRight, base: 5, min: 3, max: 6,
-			shrinkPriority: 110, growPriority: 120, hideRank: rankTTL,
+			name: "TTL", align: tview.AlignRight, base: 3, fixed: true, hideRank: rankTTL,
 			render: func(ctx columnRowContext) string { return intOrDash(ctx.view.LastTTL) },
 		},
 		column{
-			name: "ERR", align: tview.AlignLeft, base: 30, min: 8, max: 30,
-			shrinkPriority: 0, growPriority: 20, hideWhenEmpty: true,
+			name: "ERR", align: tview.AlignLeft, base: 20, fixed: true, hideRank: rankErr,
 			render: func(ctx columnRowContext) string { return formatTableError(ctx.view.LastError) },
 			color: func(ctx columnRowContext, text string) (tcell.Color, bool) {
-				if text == "" {
+				if text == "-" {
 					return 0, false
 				}
-				return vividRed, true
+				return levelColor(stats.LevelCrit), true
 			},
 		},
 		column{
-			name: "LAST LOSS", align: tview.AlignLeft, base: 15, min: 9, max: 18,
-			shrinkPriority: 30, growPriority: 30, hideRank: rankLastLoss,
+			name: "LAST LOSS", align: tview.AlignLeft, base: 15, hideRank: rankLastLoss,
 			render: func(ctx columnRowContext) string { return formatLossAgo(ctx.view.LastLossTime) },
 		},
 	)
@@ -337,14 +310,24 @@ func renderRowTexts(cols []column, ctx columnRowContext) []string {
 func renderRowCells(cols []column, texts []string, widths, aligns []int, ctx columnRowContext, rowColor tcell.Color) []*tview.TableCell {
 	cells := make([]*tview.TableCell, len(cols))
 	for i, c := range cols {
-		text := formatCellText(texts[i], widths[i], aligns[i])
-		if c.styled != nil && aligns[i] == tview.AlignLeft && widths[i] >= runewidth.StringWidth(texts[i]) {
-			// The styled text fits. Pad it to the same width as the plain cell.
-			text = c.styled(ctx) + strings.Repeat(" ", widths[i]-runewidth.StringWidth(texts[i]))
+		text := tview.Escape(padBoxCell(texts[i], widths[i], aligns[i]))
+		if c.fit != nil && widths[i] > boxCellPadding {
+			text = " " + c.fit(ctx, widths[i]-boxCellPadding) + " "
+		} else if c.styled != nil {
+			// The styled text has the plain text's width; pad it the same
+			// way, on the side its alignment leaves open.
+			if spare := widths[i] - boxCellPadding - runewidth.StringWidth(texts[i]); spare >= 0 {
+				if aligns[i] == tview.AlignRight {
+					text = strings.Repeat(" ", spare+1) + c.styled(ctx) + " "
+				} else {
+					text = " " + c.styled(ctx) + strings.Repeat(" ", spare+1)
+				}
+			}
 		}
 		cell := tview.NewTableCell(text).
 			SetBackgroundColor(tcell.ColorBlack).
 			SetTextColor(rowColor).
+			SetMaxWidth(widths[i]).
 			SetAlign(aligns[i])
 		if c.color != nil {
 			if col, ok := c.color(ctx, texts[i]); ok {
@@ -357,57 +340,4 @@ func renderRowCells(cols []column, texts []string, widths, aligns []int, ctx col
 		cells[i] = cell
 	}
 	return cells
-}
-
-var tableErrorCandidates = []string{
-	"DNS Error",
-	"No Conn",
-	"No IPv4 Conn",
-	"No IPv6 Conn",
-	"Timeout",
-	"ICMP Error",
-	"Destination Network Unreachable",
-	"Destination Host Unreachable",
-	"Destination Protocol Unreachable",
-	"Destination Port Unreachable",
-	"Fragmentation Needed",
-	"Source Route Failed",
-	"Destination Network Unknown",
-	"Destination Host Unknown",
-	"Source Host Isolated",
-	"Network Administratively Prohibited",
-	"Host Administratively Prohibited",
-	"Network Unreachable for ToS",
-	"Host Unreachable for ToS",
-	"Communication Administratively Prohibited",
-	"Host Precedence Violation",
-	"Precedence Cutoff in Effect",
-	"Destination Unreachable",
-	"Time Exceeded",
-	"Fragment Reassembly Time Exceeded",
-	"Parameter Problem",
-	"Missing Required Option",
-	"Bad Length",
-}
-
-func formatTableError(err string) string {
-	if idx := strings.LastIndex(err, ": "); idx >= 0 {
-		return err[idx+2:]
-	}
-	return err
-}
-
-func calcInitialTableErrorWidth(views []stats.TargetView, header string, minWidth int) int {
-	maxWidth := max(minWidth, runewidth.StringWidth(header))
-	for _, s := range tableErrorCandidates {
-		if w := runewidth.StringWidth(s); w > maxWidth {
-			maxWidth = w
-		}
-	}
-	for _, v := range views {
-		if w := runewidth.StringWidth(formatTableError(v.LastError)); w > maxWidth {
-			maxWidth = w
-		}
-	}
-	return maxWidth
 }

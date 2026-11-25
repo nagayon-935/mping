@@ -99,8 +99,8 @@ func TestPaneControlsTabRestoresUnfocusedBorderColors(t *testing.T) {
 	if got := graph.GetBorderColor(); got != vividCyan {
 		t.Errorf("graph unfocused border color = %v, want %v (vividCyan)", got, vividCyan)
 	}
-	if got := c.log.content.(*tview.TextView).GetBorderColor(); got != vividRed {
-		t.Errorf("log unfocused border color = %v, want %v (vividRed)", got, vividRed)
+	if got := c.log.content.(*tview.TextView).GetBorderColor(); got != tcell.ColorRed {
+		t.Errorf("log unfocused border color = %v, want %v (red)", got, tcell.ColorRed)
 	}
 }
 

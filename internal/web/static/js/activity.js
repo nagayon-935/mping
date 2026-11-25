@@ -3,7 +3,7 @@
 // newest events across all hosts. No chart: rows carry sparklines and the
 // selected host's Summary has the large chart.
 import { badgeIcon, el, fetchJSON, statusChip } from "./dom.js";
-import { STATUS_LABELS } from "./model.js";
+import { STATUS_LABELS, targetAddress } from "./model.js";
 import { formatTime } from "./time.js";
 import { activityItems, formatDuration, lastHourSummary, recentAcrossHosts } from "./activity_model.js";
 
@@ -22,9 +22,11 @@ function heading(text) {
   return el("h3", { text });
 }
 
-/** Status, host (selects it), reason and duration for one host. */
+/** Status, host (selects it), its address and how long the state has lasted.
+ * Measured values stay in the events list. */
 function stateItem(item, onSelect) {
-  const { target, level, reason, durationMs } = item;
+  const { target, level, durationMs } = item;
+  const address = targetAddress(target);
   const select = el("button", {
     className: "link-button", text: target.host,
     attrs: { type: "button", "data-target-id": String(target.id), "aria-label": `Show Summary for ${target.host}` },
@@ -33,7 +35,7 @@ function stateItem(item, onSelect) {
   const duration = formatDuration(durationMs);
   return el("li", { className: `activity-item lvl-${level}` },
     statusChip(level),
-    el("span", { className: "activity-host" }, select, reason ? el("span", { className: "activity-reason", text: ` — ${reason}` }) : null),
+    el("span", { className: "activity-host" }, select, address ? el("span", { className: "activity-reason", text: ` ${address}` }) : null),
     el("span", { className: "activity-duration", text: duration === "–" ? "" : `for ${duration}`,
       attrs: { title: target.health?.since ? `Since ${formatTime(target.health.since)}` : "" } }));
 }

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +64,34 @@ func TestRenderTracerouteTable(t *testing.T) {
 		}
 	})
 
+	t.Run("route rows show counts and hops", func(t *testing.T) {
+		for _, tt := range []struct {
+			name, hop, count, route string
+		}{
+			{"destination replied", "192.0.2.10", "1", "192.0.2.10"},
+			{"only router replied", "192.0.2.1", "1", "192.0.2.1"},
+			{"pending", "", "-", "Discovering..."},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				target := stats.NewTargetStats("example.com")
+				target.SetIP("192.0.2.10")
+				if tt.hop != "" {
+					setRouteHops(target, tt.hop)
+				}
+				got := renderTracerouteTable([]*stats.TargetStats{target}, 100)
+				plain := tview.NewTextView().SetDynamicColors(true).SetText(got).GetText(true)
+				row := strings.SplitN(plain, "\n", 5)[3]
+				cells := strings.Split(strings.Trim(row, "│"), "│")
+				for i := range cells {
+					cells[i] = strings.TrimSpace(cells[i])
+				}
+				if want := []string{"example.com", tt.count, "-", tt.route}; !slices.Equal(cells, want) {
+					t.Errorf("route row = %q, want %q", cells, want)
+				}
+			})
+		}
+	})
+
 	t.Run("compact mode narrow width", func(t *testing.T) {
 		target := stats.NewTargetStats("example.com")
 		setRouteHops(target, "1.1.1.1")
@@ -99,7 +128,7 @@ func TestRenderTracerouteTable(t *testing.T) {
 		setRouteHops(target, "10.0.0.1")
 		target.MTR().CheckFlap([]string{"10.0.0.9"}, time.Date(2026, 1, 2, 3, 4, 5, 0, time.Local))
 		got := renderTracerouteTable([]*stats.TargetStats{target}, 120)
-		if !strings.Contains(got, "[FLAP 1 times 03:04:05]") {
+		if !strings.Contains(tview.NewTextView().SetDynamicColors(true).SetText(got).GetText(true), "[FLAP 1 times 03:04:05]") {
 			t.Fatalf("expected a flap badge, got: %s", got)
 		}
 	})
@@ -138,7 +167,7 @@ func TestRenderPortMonitorTable(t *testing.T) {
 		lastStatuses := make(map[string]string)
 		errorLogs := []string{}
 		errorView := tview.NewTextView()
-		got := renderPortMonitorTable([]*stats.TargetStats{target}, 120, lastStatuses, func(msg string) { appendErrorLog(&errorLogs, errorView, msg) })
+		got := renderPortMonitorTable([]*stats.TargetStats{target}, 140, lastStatuses, func(msg string) { appendErrorLog(&errorLogs, errorView, msg) })
 		if !strings.Contains(got, "example.com") {
 			t.Fatalf("expected hostname, got: %s", got)
 		}
@@ -157,7 +186,7 @@ func TestRenderPortMonitorTable(t *testing.T) {
 		lastStatuses := make(map[string]string)
 		errorLogs := []string{}
 		errorView := tview.NewTextView()
-		got := renderPortMonitorTable([]*stats.TargetStats{target}, 30, lastStatuses, func(msg string) { appendErrorLog(&errorLogs, errorView, msg) })
+		got := renderPortMonitorTable([]*stats.TargetStats{target}, 53, lastStatuses, func(msg string) { appendErrorLog(&errorLogs, errorView, msg) })
 		if !strings.Contains(got, "example.com") {
 			t.Fatalf("expected hostname, got: %s", got)
 		}
@@ -189,18 +218,49 @@ func TestRenderPortMonitorTable(t *testing.T) {
 	})
 }
 
+func TestPortMonitorColumnWidths(t *testing.T) {
+	target := stats.NewTargetStats("edge-router-with-a-long-name.example.com")
+	port := stats.NewPortCheckResult(443, "tcp")
+	port.SetResult("Open", 5*time.Millisecond)
+	target.SetPortResults([]*stats.PortCheckResult{port})
+
+	for _, tt := range []struct {
+		name  string
+		avail int
+		want  []int
+	}{
+		{"full gives spare only to text columns", 200, []int{44, 16, 16, 26, 12, 12, 12, 12, 13, 26}},
+		{"compact shrinks Target", 55, []int{14, 9, 15, 12}},
+		{"medium keeps the optional columns that fit", 100, []int{31, 10, 10, 18, 12, 12}},
+		{"compact shrinks Target below its minimum", 46, []int{5, 9, 15, 12}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			table := renderPortMonitorTable([]*stats.TargetStats{target}, tt.avail, map[string]string{}, nil)
+			assertBoxTableWidth(t, table, tt.avail)
+			top, _, _ := strings.Cut(table, "\n")
+			var widths []int
+			for col := range strings.SplitSeq(strings.TrimSuffix(strings.TrimPrefix(top, "[white]┌"), "┐[-]"), "┬") {
+				widths = append(widths, tview.TaggedStringWidth(col))
+			}
+			if !slices.Equal(widths, tt.want) {
+				t.Errorf("column widths = %v, want %v", widths, tt.want)
+			}
+		})
+	}
+}
+
 func TestPortMonitorLatency(t *testing.T) {
 	for _, tt := range []struct {
 		status string
 		rtt    time.Duration
 		last   string
 	}{
-		{"Open", 5 * time.Millisecond, "5ms"},
+		{"Open", 5 * time.Millisecond, "5.00ms"},
 		{"Filtered", time.Second, "timeout"},
 		{"Open|Filtered", time.Second, "timeout"},
-		{"Closed", time.Millisecond, "–"},
-		{"Error", 0, "–"},
-		{"Checking...", 0, "–"},
+		{"Closed", time.Millisecond, "-"},
+		{"Error", 0, "-"},
+		{"Checking...", 0, "-"},
 	} {
 		t.Run(tt.status, func(t *testing.T) {
 			target := stats.NewTargetStats("example.com")
@@ -208,21 +268,22 @@ func TestPortMonitorLatency(t *testing.T) {
 			port.SetResult("Open", 3*time.Millisecond)
 			port.SetResult(tt.status, tt.rtt)
 			target.SetPortResults([]*stats.PortCheckResult{port})
-			table := renderPortMonitorTable([]*stats.TargetStats{target}, 140, map[string]string{}, nil)
+			table := renderPortMonitorTable([]*stats.TargetStats{target}, 200, map[string]string{}, nil)
 			for line := range strings.SplitSeq(table, "\n") {
 				if !strings.Contains(line, "example.com") {
 					continue
 				}
 				cells := strings.Split(line, "│")
-				if got := strings.TrimSpace(tview.NewTextView().SetDynamicColors(true).SetText(cells[5]).GetText(true)); got != tt.last {
-					t.Errorf("Last = %q, want %q in %s", got, tt.last, line)
+				got := tview.NewTextView().SetDynamicColors(true).SetText(cells[5]).GetText(true)
+				if !strings.HasPrefix(got, " ") || strings.TrimLeft(got, " ") != tt.last+" " {
+					t.Errorf("Last = %q, want %q right-aligned with padding in %s", got, tt.last, line)
 				}
 				if tt.last == "timeout" && !strings.HasPrefix(cells[5], "[gray]") {
 					t.Errorf("timeout is missing muted colour: %s", cells[5])
 				}
 				if tt.status != "Open" {
 					for _, cell := range cells[6:9] {
-						if strings.TrimSpace(tview.NewTextView().SetDynamicColors(true).SetText(cell).GetText(true)) != "–" {
+						if strings.TrimSpace(tview.NewTextView().SetDynamicColors(true).SetText(cell).GetText(true)) != "-" {
 							t.Errorf("historical latency cell = %q, want dash", cell)
 						}
 					}
@@ -231,5 +292,21 @@ func TestPortMonitorLatency(t *testing.T) {
 			}
 			t.Fatalf("missing port row:\n%s", table)
 		})
+	}
+}
+
+func TestPortMonitorWidthsStayPutAsValuesChange(t *testing.T) {
+	widths := func(rtt time.Duration, opens int) string {
+		target := stats.NewTargetStats("example.com")
+		port := stats.NewPortCheckResult(443, "tcp")
+		for range opens {
+			port.SetResult("Open", rtt)
+		}
+		target.SetPortResults([]*stats.PortCheckResult{port})
+		top, _, _ := strings.Cut(renderPortMonitorTable([]*stats.TargetStats{target}, 140, map[string]string{}, nil), "\n")
+		return top
+	}
+	if a, b := widths(5*time.Millisecond, 1), widths(987654*time.Microsecond, 12345); a != b {
+		t.Errorf("column borders moved when values changed:\n%s\n%s", a, b)
 	}
 }

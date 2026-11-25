@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -277,18 +278,35 @@ type helpDialog struct {
 	open    bool
 }
 
+type helpBox struct {
+	*tview.TextView
+	width, height int
+}
+
+// SetRect centres the help within the available page on every draw.
+func (b *helpBox) SetRect(x, y, width, height int) {
+	w, h := min(width, b.width), min(height, b.height)
+	padding := 0
+	if w >= 5 {
+		padding = 1
+	}
+	b.SetBorder(w >= 3 && h >= 3).SetBorderPadding(0, 0, padding, padding)
+	b.TextView.SetRect(x+(width-w)/2, y+(height-h)/2, w, h)
+}
+
 func (d *helpDialog) show() {
 	d.focus = d.app.GetFocus()
 	d.open = true
 	help := tview.NewTextView().SetText(keyHelpText).SetWordWrap(true)
 	help.SetBackgroundColor(tcell.ColorBlack)
-	help.SetBorder(true).SetTitle(" Keyboard help ").SetBorderPadding(0, 0, 1, 1)
+	help.SetTitle(" Keyboard help ")
+	box := &helpBox{TextView: help, height: 2}
+	for line := range strings.SplitSeq(keyHelpText, "\n") {
+		box.width = max(box.width, tview.TaggedStringWidth(line)+4)
+		box.height++
+	}
 	// Leave the previous page visible around the scrollable help.
-	column := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(nil, 1, 0, false).AddItem(help, 0, 1, true).AddItem(nil, 1, 0, false)
-	overlay := tview.NewFlex().
-		AddItem(nil, 0, 1, false).AddItem(column, 0, 8, true).AddItem(nil, 0, 1, false)
-	d.root.AddPage("keyHelp", overlay, true, true)
+	d.root.AddPage("keyHelp", box, true, true)
 	d.app.SetFocus(help)
 }
 

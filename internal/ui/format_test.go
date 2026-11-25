@@ -105,17 +105,20 @@ func TestIntOrDash(t *testing.T) {
 	}
 }
 
-func TestFormatRTT(t *testing.T) {
+func TestFormatFixedMs(t *testing.T) {
 	tests := []struct {
 		in   time.Duration
 		want string
 	}{
 		{0, "-"},
-		{10 * time.Millisecond, "10ms"},
+		{394 * time.Microsecond, "0.39ms"},
+		{631123 * time.Microsecond, "631.12ms"},
+		{10 * time.Second, "10000.00ms"},
+		{99999990 * time.Microsecond, "99999.99ms"},
 	}
 	for _, tt := range tests {
-		if got := formatRTT(tt.in); got != tt.want {
-			t.Errorf("formatRTT(%v) = %q, want %q", tt.in, got, tt.want)
+		if got := formatFixedMs(tt.in); got != tt.want {
+			t.Errorf("formatFixedMs(%v) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }
@@ -131,6 +134,8 @@ func TestPaddedCells(t *testing.T) {
 		{"paddedCell adds a leading space and pads to the width", paddedCell, "abc", 10, " abc      "},
 		{"paddedCell of empty text is blank", paddedCell, "", 5, "     "},
 		{"rightPaddedCell adds a trailing space and pads on the left", rightPaddedCell, "abc", 5, " abc "},
+		{"left truncation keeps both spaces", paddedCell, "abcdef", 6, " a... "},
+		{"right truncation keeps both spaces", rightPaddedCell, "abcdef", 6, " a... "},
 		{"rightPaddedCell of empty text is blank", rightPaddedCell, "", 3, "   "},
 	}
 	for _, tt := range tests {
@@ -139,5 +144,22 @@ func TestPaddedCells(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFormatTableError(t *testing.T) {
+	for _, tt := range []struct {
+		reason string
+		want   string
+	}{
+		{"write ip 10.70.71.68->8.8.8.8: sendmsg: no route to host", "no route to host"},
+		{"Destination Host Unreachable", "Host Unreachable"},
+		{"ICMP Error: Destination Port Unreachable", "Port Unreachable"},
+		{"Timeout", "Timeout"},
+		{"", "-"},
+	} {
+		if got := formatTableError(tt.reason); got != tt.want {
+			t.Errorf("formatTableError(%q) = %q, want %q", tt.reason, got, tt.want)
+		}
 	}
 }

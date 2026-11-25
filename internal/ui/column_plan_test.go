@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattn/go-runewidth"
 	"github.com/rivo/tview"
 
 	"github.com/nagayon-935/mping/internal/stats"
@@ -45,15 +46,15 @@ func TestPlanColumns_HidesSupplementaryBeforeRequestedColumns(t *testing.T) {
 		wantHidden []string
 	}{
 		{
-			name:       "no options: supplementary columns only",
-			opts:       columnOptions{},
-			wantHidden: []string{"SIZE", "MTU", "SRC", "LAST LOSS", "LOST", "RCV", "TTL", "AVG"},
+			name:       "supplementary columns including automatic DNS",
+			opts:       columnOptions{DNS: true},
+			wantHidden: []string{"SIZE", "MTU", "SRC", "DNS", "LAST LOSS", "ERR", "LOST", "RCV", "TTL", "AVG"},
 		},
 		{
 			name: "requested columns outlive every supplementary one",
 			opts: columnOptions{ASN: true, PTR: true, MTU: true, SizeExplicit: true, SourceExplicit: true},
 			wantHidden: []string{
-				"LAST LOSS", "LOST", "RCV", "TTL", "AVG",
+				"LAST LOSS", "ERR", "LOST", "RCV", "TTL", "AVG",
 				"SIZE", "SRC", "ASN", "PTR", "PMTU",
 			},
 		},
@@ -61,13 +62,24 @@ func TestPlanColumns_HidesSupplementaryBeforeRequestedColumns(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Arrange
-			tr, texts := newPlanRenderer(t, []*stats.TargetStats{replyingTarget("10.0.0.1", 12*time.Millisecond)}, tt.opts)
+			target := replyingTarget("10.0.0.1", 12*time.Millisecond)
+			if tt.opts.DNS {
+				target.SetDNSServer("8.8.8.8")
+			}
+			tr, texts := newPlanRenderer(t, []*stats.TargetStats{target}, tt.opts)
 
 			// Act: the narrowest table that still fits, where only the core
 			// columns can stay.
 			var plan columnPlan
-			for width := 20; width <= 200 && !plan.ok; width++ {
-				plan = tr.planColumns(texts, width)
+			for width := 200; width >= 20; width-- {
+				next := tr.planColumns(texts, width)
+				if !next.ok {
+					break
+				}
+				if !slices.Equal(next.hidden, tt.wantHidden[:min(len(next.hidden), len(tt.wantHidden))]) {
+					t.Fatalf("width %d: hidden = %v, want a prefix of %v", width, next.hidden, tt.wantHidden)
+				}
+				plan = next
 			}
 
 			// Assert
@@ -77,7 +89,7 @@ func TestPlanColumns_HidesSupplementaryBeforeRequestedColumns(t *testing.T) {
 			if !slices.Equal(plan.hidden, tt.wantHidden) {
 				t.Errorf("hidden = %v, want %v", plan.hidden, tt.wantHidden)
 			}
-			if got, want := shownNames(tr, plan), []string{"ST", "DST", "LOSS%", "RTT", "JIT"}; !slices.Equal(got, want) {
+			if got, want := shownNames(tr, plan), []string{"DST", "LOSS%", "RTT", "JIT"}; !slices.Equal(got, want) {
 				t.Errorf("shown = %v, want %v", got, want)
 			}
 		})
@@ -113,43 +125,29 @@ func TestPlanColumns_NeverCutsNumbers(t *testing.T) {
 			if tr.cols[i].align != tview.AlignRight || tr.cols[i].dynamic {
 				continue
 			}
-			if text := texts[0][i]; plan.widths[j] < len(text) {
+			if text := texts[0][i]; plan.widths[j]-boxCellPadding < len(text) {
 				t.Errorf("width %d: %s is %d wide, value %q cut", width, tr.cols[i].name, plan.widths[j], text)
 			}
-			if name := tr.cols[i].name; plan.widths[j] < len(name) {
+			if name := tr.cols[i].name; plan.widths[j]-boxCellPadding < len(name) {
 				t.Errorf("width %d: heading %s cut to %d", width, name, plan.widths[j])
 			}
 		}
 	}
 }
 
-func TestPlanColumns_ErrorColumnOnlyWithErrors(t *testing.T) {
-	tests := []struct {
-		name    string
-		failing bool
-		wantERR bool
-	}{
-		{"no errors: no ERR column", false, false},
-		{"an error: ERR column shown", true, true},
+func TestPlanColumns_DNSRequiresAConfiguredServer(t *testing.T) {
+	target := replyingTarget("10.0.0.1", time.Millisecond)
+	target.SetDNSServer("8.8.8.8")
+	tr, texts := newPlanRenderer(t, []*stats.TargetStats{target}, columnOptions{})
+	if plan := tr.planColumns(texts, 200); !slices.Contains(shownNames(tr, plan), "DNS") {
+		t.Fatal("DNS column missing with a configured server")
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Arrange
-			target := replyingTarget("10.0.0.1", 12*time.Millisecond)
-			if tt.failing {
-				target.IncSent()
-				target.OnFailure("Timeout")
-			}
-			tr, texts := newPlanRenderer(t, []*stats.TargetStats{target}, columnOptions{})
 
-			// Act
-			plan := tr.planColumns(texts, 200)
-
-			// Assert
-			if got := slices.Contains(shownNames(tr, plan), "ERR"); got != tt.wantERR {
-				t.Errorf("ERR shown = %v, want %v (texts %q)", got, tt.wantERR, texts[0])
-			}
-		})
+	target.SetDNSServer("")
+	_, texts = tr.renderTexts(fetchViews(tr.targets, tr.sparkPoints))
+	plan := tr.planColumns(texts, 200)
+	if slices.Contains(shownNames(tr, plan), "DNS") || slices.Contains(plan.hidden, "DNS") {
+		t.Errorf("DNS should be omitted without a server, got shown %v and hidden %v", shownNames(tr, plan), plan.hidden)
 	}
 }
 
@@ -203,64 +201,47 @@ func TestPaneTitle_ShortensToFit(t *testing.T) {
 	}
 }
 
-func TestPlanColumns_ErrorColumnStaysAfterRecovery(t *testing.T) {
-	// Arrange: a target fails once, then answers again.
-	target := replyingTarget("10.0.0.1", 12*time.Millisecond)
-	target.IncSent()
-	target.OnFailure("Timeout")
-	tr, texts := newPlanRenderer(t, []*stats.TargetStats{target}, columnOptions{})
-	tr.planColumns(texts, 200)
-	target.IncSent()
-	target.OnSuccess(12*time.Millisecond, 64)
-	_, recovered := tr.renderTexts(fetchViews(tr.targets, tr.sparkPoints))
+func TestPlanColumns_StableWhenMeasurementsChange(t *testing.T) {
+	tr, texts := newPlanRenderer(t, []*stats.TargetStats{replyingTarget("10.0.0.1", time.Millisecond)}, columnOptions{SparkPoints: 60})
+	changed := slices.Clone(texts[0])
+	for name, value := range map[string]string{
+		"RCV": "999999", "LOST": "999999", "LOSS%": "100.0%", "RTT": "99999.99ms",
+		"AVG": "10000.00ms", "JIT": "999.99ms", "SIZE": "65535", "MTU": "65535", "TTL": "255",
+		"ERR": strings.Repeat("network unreachable ", 9), "LAST LOSS": "87600h59m59s ago",
+		sparkColumnName: strings.Repeat("×", sparkWidth),
+	} {
+		changed[columnIndex(tr.cols, name)] = value
+	}
 
-	// Act
-	plan := tr.planColumns(recovered, 200)
-
-	// Assert
-	if !slices.Contains(shownNames(tr, plan), "ERR") {
-		t.Errorf("ERR column vanished after recovery: %v", shownNames(tr, plan))
+	for _, width := range []int{60, 105, 140, 200, 300} {
+		before := tr.planColumns(texts, width)
+		after := tr.planColumns([][]string{changed}, width)
+		assertPingPlanWidth(t, before, width)
+		assertPingPlanWidth(t, after, width)
+		if !slices.Equal(before.active, after.active) || !slices.Equal(before.hidden, after.hidden) ||
+			!slices.Equal(before.widths, after.widths) {
+			t.Errorf("width %d: layout changed from %+v to %+v", width, before, after)
+		}
 	}
 }
 
-func TestPlanColumns_StableWhenValuesShrink(t *testing.T) {
-	// Arrange: a width where the long RTT value forces columns to hide.
-	target := replyingTarget("10.0.0.1", 679842*time.Microsecond)
-	tr, texts := newPlanRenderer(t, []*stats.TargetStats{target}, columnOptions{})
-	width := 60
-	longPlan := tr.planColumns(texts, width)
-	if len(longPlan.hidden) == 0 {
-		t.Fatal("fixture hides nothing")
-	}
-	short := replyingTarget("10.0.0.1", 9*time.Millisecond)
-	_, shortTexts := tr.renderTexts(fetchViews([]*stats.TargetStats{short}, tr.sparkPoints))
-
-	// Act: the next tick's values are narrower.
-	shortPlan := tr.planColumns(shortTexts, width)
-
-	// Assert: hidden columns do not come back for one tick.
-	if !slices.Equal(shortPlan.hidden, longPlan.hidden) {
-		t.Errorf("hidden changed: %v -> %v", longPlan.hidden, shortPlan.hidden)
-	}
-}
-
-func TestPlanColumns_LongHostKeepsColumnsThatStillFit(t *testing.T) {
-	// Arrange: one very long host name in a 120-column terminal.
-	long := stats.NewTargetStats(strings.Repeat("very-long-label.", 8) + "example.com")
+func TestPlanColumns_LongHostKeepsCoreColumnsVisible(t *testing.T) {
+	long := replyingTarget(strings.Repeat("very-long-label.", 8)+"example.com", 12*time.Millisecond)
 	long.SetIP("10.0.0.9")
-	long.IncSent()
-	long.OnSuccess(12*time.Millisecond, 64)
 	tr, texts := newPlanRenderer(t, []*stats.TargetStats{long}, columnOptions{})
 
-	// Act
 	plan := tr.planColumns(texts, 120)
-
-	// Assert: the host is cut, but AVG (the last column to go) is back.
 	if !plan.ok {
 		t.Fatal("plan did not fit")
 	}
-	if !slices.Contains(shownNames(tr, plan), "AVG") {
-		t.Errorf("AVG hidden although it fits: shown %v hidden %v", shownNames(tr, plan), plan.hidden)
+	for _, name := range []string{"DST", "LOSS%", "RTT", "JIT"} {
+		if !slices.Contains(shownNames(tr, plan), name) {
+			t.Errorf("core column %s is hidden", name)
+		}
+	}
+	assertPingPlanWidth(t, plan, 120)
+	if plan.widths[0]-boxCellPadding >= len(texts[0][columnIndex(tr.cols, "DST")]) {
+		t.Error("long DST should shrink to fit alongside the core columns")
 	}
 }
 
@@ -278,7 +259,7 @@ func TestSparklineWidth_SingleCellGlyphs(t *testing.T) {
 	if got := tr.planColumns(texts, 200); !got.ok {
 		t.Fatal("plan did not fit")
 	}
-	if got := tr.widthSeen[sparkCol]; got != sparkWidth {
+	if got := runewidth.StringWidth(texts[0][sparkCol]); got != sparkWidth {
 		t.Errorf("RTT 60s content width = %d, want %d", got, sparkWidth)
 	}
 }
@@ -302,7 +283,7 @@ func TestPlanColumns_SparklineOutlivesSupplementaryColumns(t *testing.T) {
 
 	// Assert: when the sparkline first appears, every supplementary column
 	// is still hidden; it is the last of them to go.
-	for _, name := range []string{"SIZE", "MTU", "SRC", "LAST LOSS", "LOST", "RCV", "TTL", "AVG"} {
+	for _, name := range []string{"SIZE", "MTU", "SRC", "LAST LOSS", "ERR", "LOST", "RCV", "TTL", "AVG"} {
 		if !slices.Contains(withSpark.hidden, name) {
 			t.Errorf("%s shown before the sparkline: hidden %v", name, withSpark.hidden)
 		}
@@ -312,110 +293,81 @@ func TestPlanColumns_SparklineOutlivesSupplementaryColumns(t *testing.T) {
 	}
 }
 
-func TestPlanColumns_TableSpansWideTerminals(t *testing.T) {
-	// Arrange
-	tr, texts := newPlanRenderer(t, []*stats.TargetStats{replyingTarget("10.0.0.1", 12*time.Millisecond)}, columnOptions{})
-
-	for _, width := range []int{120, 200, 300} {
-		// Act
-		plan := tr.planColumns(texts, width)
-
-		// Assert: columns plus separators fill the width exactly.
-		sum := len(plan.widths) - 1
-		for _, w := range plan.widths {
-			sum += w
+func TestPlanColumns_SharesSpareWidthOnlyAcrossTextColumns(t *testing.T) {
+	tr, texts := newPlanRenderer(t, []*stats.TargetStats{replyingTarget("10.0.0.1", time.Millisecond)}, columnOptions{SparkPoints: 60})
+	// Source, destination, counters, timings, sparkline, settings, TTL,
+	// error and last loss. Padding and separators are accounted for below.
+	references := []int{8, 8, 6, 6, 6, 10, 10, 10, 16, 6, 6, 3, 20, 15}
+	// SRC, DST, the sparkline, ERR and LAST LOSS share the spare width;
+	// numeric columns stay at their fixed widths.
+	grows := map[int]bool{0: true, 1: true, 8: true, 12: true, 13: true}
+	total, textTotal := 0, 0
+	for j, ref := range references {
+		total += ref
+		if grows[j] {
+			textTotal += ref
 		}
-		if !plan.ok || sum != width {
-			t.Errorf("width %d: columns span %d (ok %v)", width, sum, plan.ok)
+	}
+	minimum := total + boxCellPadding*len(references) + len(references) - 1
+
+	for _, spare := range []int{0, 20, total} {
+		plan := tr.planColumns(texts, minimum+spare)
+		assertPingPlanWidth(t, plan, minimum+spare)
+		if len(plan.hidden) != 0 || len(plan.widths) != len(references) {
+			t.Fatalf("spare %d: expected all columns, got %v", spare, shownNames(tr, plan))
+		}
+		for j, ref := range references {
+			got := plan.widths[j] - boxCellPadding - ref
+			lower, upper := 0, 0
+			if grows[j] {
+				lower = spare * ref / textTotal
+				upper = lower
+				if spare > 0 {
+					upper++ // A remainder cell can go to this column.
+				}
+			}
+			if got < lower || got > upper {
+				t.Errorf("spare %d: %s gained %d cells, want %d to %d", spare, tr.cols[plan.active[j]].name, got, lower, upper)
+			}
 		}
 	}
 }
 
-func TestStretchToWidth(t *testing.T) {
-	widths := []int{4, 6, 8}
-	stretchToWidth(widths, 25)
-	if want := []int{7, 8, 10}; !slices.Equal(widths, want) {
-		t.Errorf("widths = %v, want %v", widths, want)
+func assertPingPlanWidth(t *testing.T, plan columnPlan, want int) {
+	t.Helper()
+	if !plan.ok {
+		t.Fatal("plan did not fit")
 	}
-	unchanged := []int{4, 6}
-	stretchToWidth(unchanged, 5)
-	if want := []int{4, 6}; !slices.Equal(unchanged, want) {
-		t.Errorf("already full: widths = %v, want %v", unchanged, want)
+	total := len(plan.widths) - 1
+	for _, w := range plan.widths {
+		total += w
+	}
+	if total != want {
+		t.Errorf("table spans %d cells, want %d", total, want)
 	}
 }
 
-func TestFitWidthsToAvailable(t *testing.T) {
-	tests := []struct {
-		name      string
-		desired   []int
-		minW      []int
-		maxW      []int
-		priority  []int
-		available int
-		wantFits  bool
-		wantTotal int   // checked when wantFits
-		wantExact []int // checked when non-nil
+func TestSpreadProportionally(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		weights []int
+		extra   int
+		want    []int
 	}{
-		{
-			name:    "shrinks desired widths to the available width",
-			desired: []int{10, 20, 30}, minW: []int{5, 5, 5}, maxW: []int{50, 50, 50},
-			priority: []int{0, 1, 2}, available: 30, wantFits: true, wantTotal: 30,
-		},
-		{
-			name:    "fails when available is below the sum of the minimums",
-			desired: []int{10, 20, 30}, minW: []int{5, 5, 5}, maxW: []int{50, 50, 50},
-			priority: []int{0, 1, 2}, available: 10, wantFits: false,
-		},
-		{
-			name:    "grows widths into surplus space",
-			desired: []int{10, 20, 30}, minW: []int{5, 5, 5}, maxW: []int{50, 50, 50},
-			priority: []int{0, 1, 2}, available: 80, wantFits: true, wantTotal: 80,
-		},
-		{
-			name:    "grows small desired widths up to the available width",
-			desired: []int{3, 3, 3}, minW: []int{2, 2, 2}, maxW: []int{10, 10, 10},
-			priority: []int{0, 1, 2}, available: 15, wantFits: true, wantTotal: 15,
-		},
-		{
-			name:    "stops growing once every column is at its maximum",
-			desired: []int{5}, minW: []int{1}, maxW: []int{5},
-			priority: []int{0}, available: 20, wantFits: true, wantExact: []int{5},
-		},
-		{
-			name:    "a minimum above the maximum wins",
-			desired: []int{8}, minW: []int{10}, maxW: []int{5},
-			priority: []int{0}, available: 10, wantFits: true, wantExact: []int{10},
-		},
-		{
-			name:    "mismatched slice lengths do not fit",
-			desired: []int{10, 20}, minW: []int{5}, maxW: []int{50, 50},
-			priority: []int{0, 1}, available: 30, wantFits: false,
-		},
-	}
-	for _, tt := range tests {
+		{"wider gets more", []int{2, 3, 5}, 20, []int{8, 13, 19}},
+		{"rounding goes to first columns", []int{2, 3, 5}, 9, []int{6, 10, 13}},
+		{"small extra skips zero weight", []int{0, 1, 3}, 1, []int{4, 8, 9}},
+		{"single eligible column", []int{0, 1, 0}, 8, []int{4, 15, 9}},
+		{"zero weights", []int{0, 0, 0}, 8, []int{4, 7, 9}},
+		{"zero extra", []int{2, 3, 5}, 0, []int{4, 7, 9}},
+		{"negative extra", []int{2, 3, 5}, -2, []int{4, 7, 9}},
+		{"no columns", nil, 8, nil},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
-			widths, ok := fitWidthsToAvailable(tt.desired, tt.minW, tt.maxW, tt.priority, tt.priority, tt.available)
-			if ok != tt.wantFits {
-				t.Fatalf("fits = %v, want %v", ok, tt.wantFits)
-			}
-			if !ok {
-				return
-			}
-			total := 0
-			for i, w := range widths {
-				total += w
-				if hi := max(tt.maxW[i], tt.minW[i]); w < tt.minW[i] || w > hi {
-					t.Errorf("width[%d] = %d outside [%d, %d]", i, w, tt.minW[i], hi)
-				}
-			}
-			if tt.wantExact != nil {
-				if !slices.Equal(widths, tt.wantExact) {
-					t.Errorf("widths = %v, want %v", widths, tt.wantExact)
-				}
-				return
-			}
-			if total != tt.wantTotal {
-				t.Errorf("total width = %d, want %d", total, tt.wantTotal)
+			widths := []int{4, 7, 9}[:len(tt.weights)]
+			spreadProportionally(widths, tt.weights, tt.extra)
+			if !slices.Equal(widths, tt.want) {
+				t.Errorf("widths = %v, want %v", widths, tt.want)
 			}
 		})
 	}

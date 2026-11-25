@@ -10,7 +10,54 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/nagayon-935/mping/internal/stats"
+	"github.com/rivo/tview"
 )
+
+func TestKeyboardHelpFitsContentAndScreen(t *testing.T) {
+	lines := strings.Split(keyHelpText, "\n")
+	contentWidth := 0
+	for _, line := range lines {
+		contentWidth = max(contentWidth, tview.TaggedStringWidth(line))
+	}
+	for _, tt := range []struct {
+		name          string
+		width, height int
+		scroll        bool
+	}{
+		{"large screen", 180, 60, false},
+		{"small screen", 30, 8, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			screen := tcell.NewSimulationScreen("UTF-8")
+			if err := screen.Init(); err != nil {
+				t.Fatal(err)
+			}
+			defer screen.Fini()
+			screen.SetSize(tt.width, tt.height)
+			app := tview.NewApplication()
+			root := tview.NewPages()
+			dialog := helpDialog{app: app, root: root}
+			dialog.show()
+			root.SetRect(0, 0, tt.width, tt.height)
+			root.Draw(screen)
+
+			help := app.GetFocus()
+			x, y, w, h := help.GetRect()
+			wantW, wantH := min(tt.width, contentWidth+4), min(tt.height, len(lines)+2)
+			wantX, wantY := (tt.width-wantW)/2, (tt.height-wantH)/2
+			if x != wantX || y != wantY || w != wantW || h != wantH {
+				t.Errorf("help rect = (%d,%d,%d,%d), want (%d,%d,%d,%d)", x, y, w, h, wantX, wantY, wantW, wantH)
+			}
+			if tt.scroll {
+				help.InputHandler()(tcell.NewEventKey(tcell.KeyEnd, 0, 0), nil)
+				root.Draw(screen)
+			}
+			if got := screenText(screen); !strings.Contains(got, lines[len(lines)-1]) {
+				t.Errorf("last help line missing from screen:\n%s", got)
+			}
+		})
+	}
+}
 
 func TestHelpIncludesInputHandlerKeys(t *testing.T) {
 	file, err := parser.ParseFile(token.NewFileSet(), "input_handler.go", nil, 0)
