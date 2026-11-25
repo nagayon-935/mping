@@ -264,7 +264,7 @@ func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell,
 }
 
 // windowLoss reports the lost probes among the trailing windowPoints
-// samples ("loss 13% (4/30)"), or "" when none were lost.
+// samples ("loss 13%"), or "" when none were lost.
 func windowLoss(history []time.Duration, windowPoints int, thresholds stats.Thresholds) (string, tcell.Color) {
 	if len(history) > windowPoints {
 		history = history[len(history)-windowPoints:]
@@ -283,7 +283,7 @@ func windowLoss(history []time.Duration, windowPoints int, thresholds stats.Thre
 	if level := thresholds.Loss(pct); level != stats.LevelOK {
 		color = levelColor(level)
 	}
-	return fmt.Sprintf("loss %.0f%% (%d/%d)", pct, lost, len(history)), color
+	return fmt.Sprintf("loss %.0f%%", pct), color
 }
 
 // barRunes are the eighth-height blocks a bar's top cell is drawn with.

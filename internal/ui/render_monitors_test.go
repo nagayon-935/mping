@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -157,7 +158,7 @@ func TestRenderPortMonitorTable(t *testing.T) {
 		lastStatuses := make(map[string]string)
 		errorLogs := []string{}
 		errorView := tview.NewTextView()
-		got := renderPortMonitorTable([]*stats.TargetStats{target}, 30, lastStatuses, func(msg string) { appendErrorLog(&errorLogs, errorView, msg) })
+		got := renderPortMonitorTable([]*stats.TargetStats{target}, 50, lastStatuses, func(msg string) { appendErrorLog(&errorLogs, errorView, msg) })
 		if !strings.Contains(got, "example.com") {
 			t.Fatalf("expected hostname, got: %s", got)
 		}
@@ -187,6 +188,36 @@ func TestRenderPortMonitorTable(t *testing.T) {
 			t.Fatalf("expected log to mention Open, got: %s", errorLogs[0])
 		}
 	})
+}
+
+func TestPortMonitorColumnWidths(t *testing.T) {
+	target := stats.NewTargetStats("edge-router-with-a-long-name.example.com")
+	port := stats.NewPortCheckResult(443, "tcp")
+	port.SetResult("Open", 5*time.Millisecond)
+	target.SetPortResults([]*stats.PortCheckResult{port})
+
+	for _, tt := range []struct {
+		name  string
+		avail int
+		want  []int
+	}{
+		{"full gives spare width to Target", 140, []int{49, 9, 9, 15, 6, 5, 5, 5, 13, 13}},
+		{"compact shrinks Target", 55, []int{20, 9, 15, 6}},
+		{"too narrow for full: long host keeps its room", 100, []int{65, 9, 15, 6}},
+		{"narrower than compact: Target shrinks, no overflow", 40, []int{8, 9, 15, 6}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			table := renderPortMonitorTable([]*stats.TargetStats{target}, tt.avail, map[string]string{}, nil)
+			top, _, _ := strings.Cut(table, "\n")
+			var widths []int
+			for col := range strings.SplitSeq(strings.TrimSuffix(strings.TrimPrefix(top, "[white]┌"), "┐[-]"), "┬") {
+				widths = append(widths, tview.TaggedStringWidth(col))
+			}
+			if !slices.Equal(widths, tt.want) {
+				t.Errorf("column widths = %v, want %v", widths, tt.want)
+			}
+		})
+	}
 }
 
 func TestPortMonitorLatency(t *testing.T) {

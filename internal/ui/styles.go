@@ -10,7 +10,7 @@ import (
 const (
 	errorLogMaxSize      = 1000 // maximum number of lines kept in the error log pane
 	minRouteContentWidth = 20
-	minPortContentWidth  = 20
+	maxPortTargetW       = 24 // widest minimum the port table's Target column asks for
 )
 
 var (

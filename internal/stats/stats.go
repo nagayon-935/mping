@@ -67,11 +67,12 @@ type TargetStats struct {
 	// apart from one that's truly dropping packets -- mirrors ping.c's
 	// -W/nrcvtimeout. The loss already recorded for that probe is left
 	// standing; a late reply never decrements it.
-	lateReplies  int
-	lastRTT      time.Duration
-	lastTTL      int
-	lastLossTime time.Time
-	lastError    string
+	lateReplies       int
+	lastRTT           time.Duration
+	lastTTL           int
+	lastLossTime      time.Time
+	lastError         string
+	lastFailureReason string
 
 	// RTT statistics and history (ring buffer for Sparkline).
 	rtt rttAccumulator
@@ -225,6 +226,7 @@ func (t *TargetStats) onSuccessLocked(rtt time.Duration, ttl int) {
 	t.recordOutcomeLocked(now, true)
 
 	t.lastError = ""
+	t.lastFailureReason = ""
 }
 
 // OnDuplicate records a reply that repeats a seq already resolved. See the
@@ -246,6 +248,9 @@ func (t *TargetStats) OnLateReply() {
 	t.lateReplies++
 }
 
+// PingTimeoutReason identifies a probe that expired without a reply.
+const PingTimeoutReason = "Timeout"
+
 // OnFailure records a lost ping probe, its reason and the loss time.
 func (t *TargetStats) OnFailure(reason string) {
 	defer bumpGeneration()
@@ -257,7 +262,12 @@ func (t *TargetStats) OnFailure(reason string) {
 func (t *TargetStats) onFailureLocked(reason string) {
 	t.loss++
 	t.lastLossTime = time.Now()
-	t.lastError = reason
+	t.lastFailureReason = reason
+	// Keep a more specific failure, including a DNS error, until a reply
+	// succeeds or another specific failure replaces it.
+	if reason != PingTimeoutReason || t.lastError == "" {
+		t.lastError = reason
+	}
 	t.recordEventLocked("ping", reason)
 	t.appendHistoryLocked(0, t.lastLossTime)
 	t.recordOutcomeLocked(t.lastLossTime, false)
@@ -282,6 +292,7 @@ func (t *TargetStats) Reset() {
 	t.lastTTL = 0
 	t.lastLossTime = time.Time{}
 	t.lastError = ""
+	t.lastFailureReason = ""
 	t.rtt = rttAccumulator{}
 	t.historyTimes = nil
 	policy, configured := t.health.policy, t.health.configured

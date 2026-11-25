@@ -124,9 +124,9 @@ func TestWindowLoss(t *testing.T) {
 		color      tcell.Color
 	}{
 		{"no loss in latest sample", 1, 20, 80, "", tcell.ColorDefault},
-		{"at warning", 4, 50, 80, "loss 50% (2/4)", tcell.ColorDefault},
-		{"at critical", 4, 20, 50, "loss 50% (2/4)", tcell.ColorOrange},
-		{"above critical", 4, 20, 49, "loss 50% (2/4)", vividRed},
+		{"at warning", 4, 50, 80, "loss 50%", tcell.ColorDefault},
+		{"at critical", 4, 20, 50, "loss 50%", tcell.ColorOrange},
+		{"above critical", 4, 20, 49, "loss 50%", vividRed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

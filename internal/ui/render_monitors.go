@@ -175,11 +175,10 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 			return formatRTT(get(pr))
 		}
 	}
-	fixed := func(header, widest string, text func(stats.PortCheckView) string, full bool) monitorColumn[portRow] {
-		return col(header, runewidth.StringWidth(widest)+2, text, full)
-	}
 	// The target name is shown on the target's first port only.
-	target := monitorColumn[portRow]{boxColumn: boxColumn{header: "Target", width: maxHostWidth("Target", targets)},
+	// Its minimum fits host names up to maxPortTargetW, so the full layout is
+	// not picked at the cost of cutting short names that compact would show.
+	target := monitorColumn[portRow]{boxColumn: boxColumn{header: "Target", width: min(maxHostWidth("Target", targets), maxPortTargetW)},
 		cell: func(r portRow) boxCell {
 			if r.first {
 				return boxCell{text: tview.Escape(r.host)}
@@ -212,26 +211,18 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 	minC := sized("Min", rtt(func(pr stats.PortCheckView) time.Duration { return pr.MinRTT }), true)
 	avg := sized("Avg", rtt(func(pr stats.PortCheckView) time.Duration { return pr.AvgRTT }), true)
 	maxC := sized("Max", rtt(func(pr stats.PortCheckView) time.Duration { return pr.MaxRTT }), true)
-	count := fixed("Open/Closed", "Open/Closed", func(pr stats.PortCheckView) string {
+	count := sized("Open/Closed", func(pr stats.PortCheckView) string {
 		return fmt.Sprintf("%d/%d", pr.OpenCount, pr.ClosedCount)
 	}, true)
-	change := fixed("Last Change", "Last Change", func(pr stats.PortCheckView) string {
+	change := col("Last Change", runewidth.StringWidth("Last Change")+2, func(pr stats.PortCheckView) string {
 		if pr.LastChange.IsZero() {
 			return "-"
 		}
 		return formatLossAgo(pr.LastChange)
 	}, true)
 
-	// The extra columns need room beyond the four that always show.
-	compact := availW-target.width-port.width-status.width-last.width-5 < minPortContentWidth
 	all := []monitorColumn[portRow]{target, port, service, status, last, minC, avg, maxC, count, change}
-	cols, boxCols := layoutColumns(all, compact)
-	if !compact {
-		// The last column takes any spare width.
-		if spare := availW - (boxInnerWidth(boxCols) + 2); spare > 0 {
-			boxCols[len(boxCols)-1].width += spare
-		}
-	}
+	cols, boxCols := fitMonitorColumns(all, "Target", availW)
 
 	groups := make([][][]boxCell, len(views))
 	for ti, view := range views {

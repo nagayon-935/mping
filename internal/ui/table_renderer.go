@@ -320,7 +320,7 @@ func (tr *tableRenderer) scanTargets(views []stats.TargetView, rowCtx []columnRo
 			lastTime, exists := tr.vs.lastLossTimes[key]
 			if !exists || view.LastLossTime.After(lastTime) {
 				tr.vs.lastLossTimes[key] = view.LastLossTime
-				tr.vs.appendLog(buildErrorLogMessage(view, rowSourceIP, view.LastError, view.LastLossTime))
+				tr.vs.appendLog(buildErrorLogMessage(view, rowSourceIP, view.LastFailureReason, view.LastLossTime))
 			}
 		}
 		state, msgs := updateAlertState(view, rowSourceIP, rowCtx[i].lossRate, now, tr.vs.alertState[key])

@@ -6,9 +6,7 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v2"
-	"github.com/mattn/go-runewidth"
 	"github.com/nagayon-935/mping/internal/stats"
-	"github.com/rivo/tview"
 )
 
 // TestMainTableColumns_DynamicFlags checks which columns are marked dynamic (width tracks rendered content) rather than returning a
@@ -74,25 +72,25 @@ func TestRenderRowTexts(t *testing.T) {
 		wantCell      map[int]string // column index -> rendered text
 	}{
 		{
-			name: "asn only", asn: true, view: columnTestView(), wantLen: 15,
+			name: "asn only", asn: true, view: columnTestView(), wantLen: 14,
 			// Dst IP includes the hostname when host != IP.
-			wantCell: map[int]string{0: "–", 1: "10.0.0.2", 2: "example.com (1.1.1.1)", 3: "AS15169"},
+			wantCell: map[int]string{0: "10.0.0.2", 1: "example.com (1.1.1.1)", 2: "AS15169"},
 		},
 		{
-			name: "dns and asn", dns: true, asn: true, view: columnTestView(), wantLen: 16,
-			wantCell: map[int]string{2: "example.com (1.1.1.1)", 3: "8.8.8.8", 4: "AS15169"},
+			name: "dns and asn", dns: true, asn: true, view: columnTestView(), wantLen: 15,
+			wantCell: map[int]string{1: "example.com (1.1.1.1)", 2: "8.8.8.8", 3: "AS15169"},
 		},
 		{
-			name: "dns, asn and ptr", dns: true, asn: true, ptr: true, view: columnTestView(), wantLen: 17,
-			wantCell: map[int]string{5: "one.one.one.one"},
+			name: "dns, asn and ptr", dns: true, asn: true, ptr: true, view: columnTestView(), wantLen: 16,
+			wantCell: map[int]string{4: "one.one.one.one"},
 		},
 		{
 			// The PTR column falls back to blank (not a placeholder) when the
 			// target's PTR field is unset, e.g. the lookup failed or hasn't
 			// completed yet — the plain IP is still visible via the
 			// always-present Dst IP column.
-			name: "ptr falls back to blank", dns: true, asn: true, ptr: true, view: noPTR, wantLen: 17,
-			wantCell: map[int]string{5: ""},
+			name: "ptr falls back to blank", dns: true, asn: true, ptr: true, view: noPTR, wantLen: 16,
+			wantCell: map[int]string{4: ""},
 		},
 	}
 	for _, tt := range tests {
@@ -285,45 +283,5 @@ func TestTableColorsFollowTheTargetsThresholds(t *testing.T) {
 		if got := cellForeground(tr.table.GetCell(1, idx)); got != color {
 			t.Errorf("%s cell color = %v, want %v", name, got, color)
 		}
-	}
-}
-
-func TestStatusColumnAtNarrowWidth(t *testing.T) {
-	tests := []struct {
-		name   string
-		rtt    time.Duration
-		state  string
-		symbol string
-		tag    string
-	}{
-		{"pending", 0, "running", "–", "[gray]"},
-		{"ok", time.Millisecond, "running", "○", "[green]"},
-		{"warn", 100 * time.Millisecond, "running", "△", "[orange]"},
-		{"crit", 500 * time.Millisecond, "running", "×", "[red]"},
-		{"stopped", time.Millisecond, "stopped", "◼", "[gray]"},
-		{"finished", time.Millisecond, "finished", "◼", "[gray]"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			target := stats.NewTargetStats("example.com")
-			if tt.rtt > 0 {
-				target.IncSent()
-				target.OnSuccess(tt.rtt, 64)
-			}
-			target.SetMeasurementState(tt.state)
-
-			tr := newTestTableRenderer([]*stats.TargetStats{target}, 36)
-			tr.update()
-			if tr.activeHeaders[0] != "ST" || tr.widths[0] != 2 {
-				t.Fatalf("first column = %q at width %d, want ST at width 2", tr.activeHeaders[0], tr.widths[0])
-			}
-			want := tt.tag + tt.symbol + "[-] "
-			if got := tr.table.GetCell(1, 0).Text; got != want {
-				t.Errorf("ST cell = %q, want %q", got, want)
-			}
-			if runewidth.StringWidth(tt.symbol) != 1 || tview.TaggedStringWidth(want) != 2 {
-				t.Errorf("runewidth and tview must both allocate one cell for %q", tt.symbol)
-			}
-		})
 	}
 }

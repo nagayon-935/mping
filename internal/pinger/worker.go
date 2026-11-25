@@ -316,8 +316,7 @@ func (p *Pinger) sweepTimeouts(unacked map[int]pendingProbe, hist *recentSeqHist
 	for wireSeq, pend := range unacked {
 		if now.Sub(pend.start) >= timeout {
 			delete(unacked, wireSeq)
-			errMsg := p.applyLastErrSource("Timeout")
-			pend.stats.OnFailure(errMsg)
+			pend.stats.OnFailure(stats.PingTimeoutReason)
 			// Remember this seq timed out so a reply that shows up
 			// later is classified as a late arrival by settleReply,
 			// instead of silently discarded.

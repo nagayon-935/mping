@@ -53,7 +53,9 @@ type TargetView struct {
 	History          []time.Duration
 	LastTTL          int
 	LastLossTime     time.Time
-	LastError        string
+	LastError        string // latest non-timeout reason, or Timeout if no specific reason was recorded in the streak
+
+	LastFailureReason string // latest reason in the current failure streak
 }
 
 // viewLocked captures the target and its monitors with up to n RTT samples
@@ -124,6 +126,8 @@ func (t *TargetStats) viewLocked(n int) TargetView {
 		LastTTL:          t.lastTTL,
 		LastLossTime:     t.lastLossTime,
 		LastError:        t.lastError,
+
+		LastFailureReason: t.lastFailureReason,
 	}
 }
 

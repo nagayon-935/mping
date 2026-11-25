@@ -77,7 +77,7 @@ func TestPlanColumns_HidesSupplementaryBeforeRequestedColumns(t *testing.T) {
 			if !slices.Equal(plan.hidden, tt.wantHidden) {
 				t.Errorf("hidden = %v, want %v", plan.hidden, tt.wantHidden)
 			}
-			if got, want := shownNames(tr, plan), []string{"ST", "DST", "LOSS%", "RTT", "JIT"}; !slices.Equal(got, want) {
+			if got, want := shownNames(tr, plan), []string{"DST", "LOSS%", "RTT", "JIT"}; !slices.Equal(got, want) {
 				t.Errorf("shown = %v, want %v", got, want)
 			}
 		})

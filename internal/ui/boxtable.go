@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattn/go-runewidth"
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/rivo/tview"
 )
@@ -196,6 +197,27 @@ func layoutColumns[V any](all []monitorColumn[V], compact bool) ([]monitorColumn
 		if !c.full || !compact {
 			cols = append(cols, c)
 			boxCols = append(boxCols, c.boxColumn)
+		}
+	}
+	return cols, boxCols
+}
+
+// fitMonitorColumns uses the declared widths to choose the layout, including
+// both outer borders. The flexible column is present in both layouts and its
+// declared width is its minimum.
+func fitMonitorColumns[V any](all []monitorColumn[V], flexibleHeader string, availW int) ([]monitorColumn[V], []boxColumn) {
+	cols, boxCols := layoutColumns(all, false)
+	if boxInnerWidth(boxCols)+2 > availW {
+		cols, boxCols = layoutColumns(all, true)
+	}
+	// Spare width goes to the flexible column; when even the compact layout
+	// is too wide, it gives up width down to its header rather than overflow.
+	spare := availW - boxInnerWidth(boxCols) - 2
+	for i := range boxCols {
+		if boxCols[i].header == flexibleHeader {
+			boxCols[i].width = max(boxCols[i].width+spare, min(boxCols[i].width, runewidth.StringWidth(flexibleHeader)+2))
+			cols[i].width = boxCols[i].width
+			break
 		}
 	}
 	return cols, boxCols

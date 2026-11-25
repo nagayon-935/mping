@@ -154,16 +154,6 @@ func explicitRank(asked bool, explicit, supplementary int) int {
 func mainTableColumns(o columnOptions) []column {
 	cols := []column{
 		{
-			name: "ST", align: tview.AlignLeft, base: 2, min: 2, max: 2,
-			render: func(ctx columnRowContext) string {
-				return statusSymbol(targetStatusLevel(ctx.view))
-			},
-			styled: func(ctx columnRowContext) string {
-				level := targetStatusLevel(ctx.view)
-				return targetStatusTags.of(level) + statusSymbol(level) + "[-]"
-			},
-		},
-		{
 			name: "SRC", align: tview.AlignLeft, base: 6, min: 4, max: 45,
 			dynamic: true, shrinkPriority: 20, growPriority: 10,
 			hideRank: explicitRank(o.SourceExplicit, rankSrcExplicit, rankSrc), setting: true,

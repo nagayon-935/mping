@@ -59,7 +59,7 @@ func TestTableRendererUpdate_LayoutByWidth(t *testing.T) {
 			if got := len(tr.hidden) > 0; got != tt.wantHidden {
 				t.Errorf("hidden = %v, want hidden: %v", tr.hidden, tt.wantHidden)
 			}
-			for _, core := range []string{"ST", "DST", "LOSS%", "RTT", "JIT"} {
+			for _, core := range []string{"DST", "LOSS%", "RTT", "JIT"} {
 				if !slices.Contains(tr.activeHeaders, core) {
 					t.Errorf("core column %s missing from %v", core, tr.activeHeaders)
 				}

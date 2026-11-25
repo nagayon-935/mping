@@ -205,7 +205,7 @@ func TestRenderMTRTable_EffectiveLoss(t *testing.T) {
 			})
 			target.IncSent()
 			target.OnSuccess(10*time.Millisecond, 64)
-			got := renderMTRTable([]*stats.TargetStats{target}, 75, "10.0.0.1", "")
+			got := renderMTRTable([]*stats.TargetStats{target}, 75, sourceIPs{v4: "10.0.0.1"})
 			for _, want := range tt.want {
 				if !strings.Contains(got, want) {
 					t.Errorf("MTR table missing %q in:\n%s", want, got)

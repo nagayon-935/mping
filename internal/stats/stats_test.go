@@ -3,9 +3,59 @@ package stats
 import (
 	"math"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 )
+
+func TestLastErrorDuringFailureStreak(t *testing.T) {
+	const unreachable = "Destination Host Unreachable"
+	for _, tt := range []struct {
+		name     string
+		outcomes []string // empty means a successful reply
+		want     string
+	}{
+		{"unreachable then timeouts", []string{unreachable, PingTimeoutReason, PingTimeoutReason}, unreachable},
+		{"timeout then unreachable", []string{PingTimeoutReason, unreachable}, unreachable},
+		{"success starts a new streak", []string{unreachable, "", PingTimeoutReason}, PingTimeoutReason},
+		{"DNS error then timeout", []string{"DNS Error", PingTimeoutReason}, "DNS Error"},
+		{"a newer specific error replaces the old one", []string{"DNS Error", PingTimeoutReason, unreachable}, unreachable},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			target := NewTargetStats("example.com")
+			var wantEvents []string
+			for _, reason := range tt.outcomes {
+				target.IncSent()
+				if reason == "" {
+					target.OnSuccess(time.Millisecond, 64)
+				} else {
+					target.OnFailure(reason)
+					wantEvents = append(wantEvents, reason)
+				}
+			}
+			view := target.GetView()
+			if view.LastError != tt.want {
+				t.Errorf("LastError = %q, want %q", view.LastError, tt.want)
+			}
+			if summary := TargetSummaryFromView(view); summary.LastError != tt.want {
+				t.Errorf("summary last_error = %q, want %q", summary.LastError, tt.want)
+			}
+			if want := tt.outcomes[len(tt.outcomes)-1]; view.LastFailureReason != want {
+				t.Errorf("LastFailureReason = %q, want %q", view.LastFailureReason, want)
+			}
+			var gotEvents []string
+			events, _ := target.Events()
+			for _, e := range events {
+				if e.Kind == "ping" {
+					gotEvents = append(gotEvents, e.Message)
+				}
+			}
+			if !slices.Equal(gotEvents, wantEvents) {
+				t.Errorf("ping events = %q, want %q", gotEvents, wantEvents)
+			}
+		})
+	}
+}
 
 // TestTargetStats_GetViewWindow_MatchesGetViewExceptHistory checks that
 // GetViewWindow produces the exact same TargetView as GetView for every

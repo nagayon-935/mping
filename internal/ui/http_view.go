@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mattn/go-runewidth"
 	"github.com/rivo/tview"
 
 	"github.com/nagayon-935/mping/internal/stats"
@@ -19,38 +18,6 @@ const (
 	httpSinceColW  = 12 // " 1h23m45s   "
 	minHTTPURLW    = 20
 )
-
-// httpFixedW is the width taken by every HTTP column but URL, in the compact
-// or full layout, including the separators between columns.
-func httpFixedW(compact bool) int {
-	if compact {
-		// Status + Code + Last + Up + Down + 5 inner separators
-		return httpStatusColW + httpCodeColW + httpLatColW + httpCountColW*2 + 5
-	}
-	// Status + Code + Last + Min + Avg + Max + Up + Down + Since + 9 inner separators
-	return httpStatusColW + httpCodeColW + httpLatColW*4 + httpCountColW*2 + httpSinceColW + 9
-}
-
-// httpBorderW is the width of the outer left/right border chars (┌─┐ / └─┘).
-const httpBorderW = 2
-
-// httpURLColW returns the URL column width given the check views, available
-// terminal width, and whether compact mode is active. It sizes the column to
-// the longest URL (with 2 chars of padding) so it does not waste space,
-// capped at what fits.
-func httpURLColW(views []stats.HTTPCheckView, availW int, compact bool) int {
-	capW := max(availW-httpFixedW(compact)-httpBorderW, minHTTPURLW)
-
-	// Fit to the longest URL (+ 2 padding spaces) to avoid wasting space.
-	contentW := minHTTPURLW
-	for _, v := range views {
-		if w := runewidth.StringWidth(v.URL) + 2; w > contentW {
-			contentW = w
-		}
-	}
-
-	return min(contentW, capW)
-}
 
 // httpStatusColorTag returns a tview color tag for an HTTP check status.
 func httpStatusColorTag(status string) string {
@@ -91,14 +58,10 @@ func httpSinceStr(t time.Time) string {
 // renderHTTPMonitorTable builds the HTTP Monitor pane string.
 // It also detects status changes and appends log messages when log is non-nil.
 func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastStatuses map[string]string, log func(string)) string {
-	// Compact: drop Min/Avg/Max/Since when screen is narrow.
-	compact := availW < minHTTPURLW+httpFixedW(false)+httpBorderW
-
 	views := make([]stats.HTTPCheckView, len(results))
 	for i, r := range results {
 		views[i] = r.GetView()
 	}
-	urlW := httpURLColW(views, availW, compact)
 
 	// Detect status changes and log them.
 	if lastStatuses != nil && log != nil {
@@ -114,7 +77,7 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 		return plainCell(func(v stats.HTTPCheckView) string { return formatHTTPRTT(get(v)) })
 	}
 	all := []monitorColumn[stats.HTTPCheckView]{
-		{boxColumn{header: "URL", width: urlW}, plainCell(func(v stats.HTTPCheckView) string { return tview.Escape(v.URL) }), false},
+		{boxColumn{header: "URL", width: minHTTPURLW}, plainCell(func(v stats.HTTPCheckView) string { return tview.Escape(v.URL) }), false},
 		{boxColumn{header: "Status", width: httpStatusColW}, func(v stats.HTTPCheckView) boxCell {
 			return boxCell{text: v.Status, tag: httpStatusColorTag(v.Status)}
 		}, false},
@@ -129,7 +92,7 @@ func renderHTTPMonitorTable(results []*stats.HTTPCheckResult, availW int, lastSt
 		{boxColumn{header: "Down", width: httpCountColW}, plainCell(func(v stats.HTTPCheckView) string { return fmt.Sprintf("%d", v.DownCount) }), false},
 		{boxColumn{header: "Since", width: httpSinceColW}, plainCell(func(v stats.HTTPCheckView) string { return httpSinceStr(v.LastChange) }), true},
 	}
-	cols, boxCols := layoutColumns(all, compact)
+	cols, boxCols := fitMonitorColumns(all, "URL", availW)
 
 	var groups [][][]boxCell
 	for _, v := range views {
