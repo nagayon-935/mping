@@ -81,21 +81,26 @@ func renderHostDetails(t *stats.TargetStats, opts RunOptions) string {
 	for _, change := range v.IPHistory {
 		fmt.Fprintf(&b, "  %s  IP %s\n", change.At.Local().Format(logTimeLayout), tview.Escape(change.IP))
 	}
-	switch {
-	case opts.Route != RouteOff && len(v.MTRHops) == 0:
-		fmt.Fprintln(&b, "\n[yellow]Route[-]")
+	if opts.Route != RouteOff {
+		title := "Route"
+		if opts.Route == RouteMonitor {
+			title = "MTR"
+		}
+		fmt.Fprintf(&b, "\n[yellow]%s[-]\n", title)
 		if v.MTRError != "" {
-			fmt.Fprintln(&b, "Route discovery failed: "+tview.Escape(v.MTRError))
-		} else {
+			fmt.Fprintln(&b, routeDiscoveryFailed+tview.Escape(v.MTRError))
+		} else if len(v.MTRHops) == 0 {
 			fmt.Fprintln(&b, "Route not discovered yet.")
 		}
-	case opts.Route == RoutePath:
-		fmt.Fprintln(&b, "\n[yellow]Route[-]")
-		fmt.Fprintln(&b, tview.Escape(strings.Join(hopLabels(v.MTRHops), " → ")))
-	case opts.Route == RouteMonitor:
-		fmt.Fprintln(&b, "\n[yellow]MTR[-]")
-		for _, hop := range v.MTRHops {
-			fmt.Fprintf(&b, "%2d  %-20s Loss %.1f%%  Sent %d  Last %s  Avg %s\n", hop.TTL, tview.Escape(hop.IP), hop.LossPct, hop.Sent, formatFixedMs(hop.LastRTT), formatFixedMs(hop.AvgRTT))
+		switch opts.Route {
+		case RoutePath:
+			if len(v.MTRHops) > 0 {
+				fmt.Fprintln(&b, tview.Escape(strings.Join(hopLabels(v.MTRHops), " → ")))
+			}
+		case RouteMonitor:
+			for _, hop := range v.MTRHops {
+				fmt.Fprintf(&b, "%2d  %-20s Loss %.1f%%  Sent %d  Last %s  Avg %s\n", hop.TTL, tview.Escape(hop.IP), hop.LossPct, hop.Sent, formatFixedMs(hop.LastRTT), formatFixedMs(hop.AvgRTT))
+			}
 		}
 	}
 	if opts.PortEnabled {

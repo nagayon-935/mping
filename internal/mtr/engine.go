@@ -12,7 +12,8 @@ import (
 )
 
 const (
-	defaultMaxHops         = 30
+	defaultMTRHops         = 30
+	defaultTracerouteHops  = 20
 	defaultProbeInterval   = 1 * time.Second
 	defaultHopTimeout      = 1 * time.Second
 	defaultRediscoverEvery = 10 * time.Minute
@@ -48,7 +49,8 @@ type HopProber interface {
 type Config struct {
 	// PathOnly limits the engine to discovering the route, at start and every
 	// RediscoverEvery, without probing each hop every ProbeInterval.
-	PathOnly        bool
+	PathOnly bool
+	// MaxHops defaults to 20 in path-only mode and 30 in MTR mode.
 	MaxHops         int
 	ProbeInterval   time.Duration
 	HopTimeout      time.Duration
@@ -70,7 +72,10 @@ type Config struct {
 func (c *Config) withDefaults() Config {
 	out := *c
 	if out.MaxHops <= 0 {
-		out.MaxHops = defaultMaxHops
+		out.MaxHops = defaultMTRHops
+		if out.PathOnly {
+			out.MaxHops = defaultTracerouteHops
+		}
 	}
 	if out.ProbeInterval <= 0 {
 		out.ProbeInterval = defaultProbeInterval
@@ -144,7 +149,8 @@ func (e *Engine) Stop() {
 // runTarget is the per-target goroutine: discover the route, rediscover it
 // every RediscoverEvery and, unless PathOnly, probe every hop each
 // ProbeInterval. A failed socket open is recorded on the target's MTRStats
-// and retried at the next rediscovery.
+// and retried at the next rediscovery. Explicit unreachable replies pause
+// per-hop monitoring until discovery succeeds again.
 func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg Config, sem chan struct{}) {
 	mtr := ts.MTR()
 	ann := newHopAnnotator(ctx, prober, mtr, cfg.AnnotationRetry)
@@ -157,6 +163,7 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 		}
 	}()
 	hopCount := 0
+	waitingForRoute := false
 
 	rediscover := func() {
 		// Reopen the socket when the target's address changed after DNS
@@ -175,13 +182,16 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 			sock, dest = next, current
 		}
 		prevIPs := mtr.RouteSnapshot()
-		newHopCount := discover(ctx, prober, sock, mtr, dest, cfg, sem, ann)
-		if newHopCount == 0 || ctx.Err() != nil {
-			// Round was cancelled mid-flight (e.g. Stop() racing this
-			// tick); discover() registered nothing this round, so
-			// comparing against prevIPs would report a bogus flap.
+		newHopCount, err := discover(ctx, prober, sock, mtr, dest, cfg, sem, ann)
+		if ctx.Err() != nil {
 			return
 		}
+		if err != nil {
+			waitingForRoute = true
+			mtr.SetError(err.Error())
+			return
+		}
+		waitingForRoute = false
 		mtr.SetError("")
 		first := hopCount == 0
 		hopCount = newHopCount
@@ -210,141 +220,14 @@ func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg
 		case <-rediscoverTicker.C:
 			rediscover()
 		case <-probeC:
-			if hopCount > 0 {
-				probe(ctx, prober, sock, mtr, dest, hopCount, cfg, sem, ann)
+			if hopCount > 0 && !waitingForRoute {
+				if err := probe(ctx, prober, sock, mtr, dest, hopCount, cfg, sem, ann); err != nil && ctx.Err() == nil {
+					waitingForRoute = true
+					mtr.SetError(err.Error())
+				}
 			}
 		}
 	}
-}
-
-// fanOut sends one TTL-limited probe per TTL in 1..n concurrently and waits
-// for all of them. For each probe that completes without error (and without
-// ctx being cancelled), record is called from the probing goroutine while its
-// sem slot is still held, so any slow work in record stays bounded by sem (ASN/PTR
-// lookups do not run here; see hopAnnotator). record may be called concurrently
-// and must do its own locking. sem bounds concurrent ProbeHop calls across the
-// whole Engine; a nil sem (only in tests bypassing NewEngine) disables the
-// bound.
-func fanOut(ctx context.Context, prober HopProber, sock HopSocket, dest string, timeout time.Duration, sem chan struct{}, n int, record func(ttl int, reply pinger.HopReply)) {
-	var wg sync.WaitGroup
-	for ttl := 1; ttl <= n; ttl++ {
-		wg.Go(func() {
-			if !acquire(ctx, sem) {
-				return
-			}
-			defer release(sem)
-
-			traceID := prober.NextTraceID()
-			reply, err := prober.ProbeHop(ctx, sock, dest, ttl, traceID, timeout)
-			if err != nil || ctx.Err() != nil {
-				return
-			}
-			record(ttl, reply)
-		})
-	}
-	wg.Wait()
-}
-
-// discover sends TTL-limited probes from TTL=1 up to maxHops concurrently to find hop IPs.
-// It updates mtr hop IPs and returns the final hop count (TTL at which dest was reached,
-// or maxHops if not reached). sem bounds concurrent ProbeHop calls across the
-// whole Engine; see fanOut.
-func discover(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTRStats, dest string, cfg Config, sem chan struct{}, ann *hopAnnotator) int {
-	var mu sync.Mutex
-	firstReachedTTL := cfg.MaxHops + 1
-
-	type result struct {
-		ttl   int
-		reply pinger.HopReply
-	}
-	results := make([]result, 0, cfg.MaxHops)
-
-	fanOut(ctx, prober, sock, dest, cfg.HopTimeout, sem, cfg.MaxHops, func(ttl int, reply pinger.HopReply) {
-		mu.Lock()
-		defer mu.Unlock()
-		results = append(results, result{ttl: ttl, reply: reply})
-		if reply.ReachedDest && ttl < firstReachedTTL {
-			firstReachedTTL = ttl
-		}
-	})
-
-	// If cancellation happened mid-round, per-TTL goroutines may have
-	// observed ctx.Err() at different times: some appended their result
-	// before cancellation, others bailed out after. Registering that torn
-	// result set would corrupt mtr's hop count / route (e.g. a hop that
-	// actually reached the destination missing because its goroutine ran
-	// after cancellation, while unresponsive higher-TTL hops still got in).
-	// Discard the whole round instead; 0 is never returned otherwise since
-	// hopCount is always >= 1 below.
-	if ctx.Err() != nil {
-		return 0
-	}
-
-	// firstReachedTTL stays MaxHops+1 when dest was never reached, so min
-	// caps it at MaxHops in that case.
-	hopCount := min(firstReachedTTL, cfg.MaxHops)
-
-	// Drop any trailing hops from a previously longer path so the UI doesn't
-	// keep rendering frozen IP/RTT data for hops that no longer exist.
-	mtr.TruncateLen(hopCount)
-	// Keep every TTL probeable, including slots whose discovery send failed.
-	mtr.EnsureLen(hopCount)
-
-	// Register hops only up to the discovered hopCount to avoid leaking outer hops
-	for _, res := range results {
-		if res.ttl <= hopCount {
-			if ip := res.reply.SrcIP; res.reply.Responded && ip != "" {
-				// Register the IP now, with whatever is already known about
-				// it; missing ASN/PTR follow from the annotator.
-				mtr.SetIPAnnotated(res.ttl, ip, ann.cached(ip))
-				ann.note(ip)
-			}
-		}
-	}
-
-	return hopCount
-}
-
-// probe sends one probe per hop concurrently for a single round and records
-// results, including for TTLs that did not respond during discovery. A missed
-// initial response must not hide a hop until the next rediscovery. sem bounds
-// concurrent ProbeHop calls across the whole Engine; see fanOut.
-func probe(ctx context.Context, prober HopProber, sock HopSocket, mtr *stats.MTRStats, dest string, hopCount int, cfg Config, sem chan struct{}, ann *hopAnnotator) {
-	fanOut(ctx, prober, sock, dest, cfg.HopTimeout, sem, hopCount, func(ttl int, reply pinger.HopReply) {
-		if reply.Responded {
-			mtr.RecordReplyAnnotated(ttl, reply.SrcIP, ann.cached(reply.SrcIP), reply.RTT)
-			ann.note(reply.SrcIP)
-		} else {
-			mtr.RecordLoss(ttl)
-		}
-	})
-}
-
-// acquire blocks until it obtains a slot in sem or ctx is cancelled,
-// whichever comes first, returning false in the latter case (the caller
-// should then return without calling release). A nil sem disables the
-// bound entirely (acquire always succeeds immediately) — used only by
-// tests that construct discover/probe calls without going through
-// NewEngine/Start.
-func acquire(ctx context.Context, sem chan struct{}) bool {
-	if sem == nil {
-		return true
-	}
-	select {
-	case sem <- struct{}{}:
-		return true
-	case <-ctx.Done():
-		return false
-	}
-}
-
-// release returns the slot acquire took. No-op when sem is nil, mirroring
-// acquire's bypass.
-func release(sem chan struct{}) {
-	if sem == nil {
-		return
-	}
-	<-sem
 }
 
 // Each target has its own lifetime, while all share the engine's probe limit.

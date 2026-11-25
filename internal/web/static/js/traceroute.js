@@ -5,10 +5,10 @@ import { targetAddress } from "./model.js";
  * follow the current feature flags. */
 export function tracePath(target, features) {
   const hops = target.mtr_hops ?? [];
+  const failure = target.mtr_error && el("div", { className: "trace-message" },
+    statusChip("warn", "Route discovery failed"), el("p", { text: target.mtr_error }));
   if (!hops.length) {
-    if (target.mtr_error) return el("div", { className: "trace-message" },
-      statusChip("warn", "Route discovery failed"), el("p", { text: target.mtr_error }));
-    return el("div", { className: "trace-message" }, statusChip("pending", "Discovering…"));
+    return failure || el("div", { className: "trace-message" }, statusChip("pending", "Discovering…"));
   }
   const noReply = hops.filter((hop) => !hop.ip).length;
   const summary = `${hops.length} ${hops.length === 1 ? "hop" : "hops"} · ${noReply} no reply`;
@@ -32,7 +32,8 @@ export function tracePath(target, features) {
       el("span", { className: "trace-number", text: String(hop.ttl), attrs: { "aria-label": `Hop ${hop.ttl}` } }), identity,
       destination && el("span", { className: "trace-tag", text: "Destination" })));
   }
-  return el("div", { className: "trace-result" }, el("p", { className: "trace-summary", text: summary }), list);
+  return el("div", { className: "trace-result" }, failure,
+    el("p", { className: "trace-summary", text: summary }), list);
 }
 
 /** Runs of SILENT_RUN or more consecutive unanswered hops become one

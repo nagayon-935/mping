@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattn/go-runewidth"
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/rivo/tview"
 )
@@ -131,13 +132,17 @@ func boxSpanRow(text string, innerW int, colorTag string) string {
 	return "[white]│" + colorTag + tview.Escape(paddedCell(text, innerW)) + "[white::-]│[-]"
 }
 
-// writeLabelledBoxTable writes a table with a spanning target label above
-// the column headings.
-func writeLabelledBoxTable(sb *strings.Builder, cols []boxColumn, label string, groups [][][]boxCell, empty string) {
+// writeLabelledBoxTable puts the target label and any notice above the column headings.
+func writeLabelledBoxTable(sb *strings.Builder, cols []boxColumn, label string, notice boxCell, groups [][][]boxCell, empty string) {
 	widths := boxWidths(cols)
 	innerW := boxInnerWidth(cols)
 	fmt.Fprintln(sb, boxBorder([]int{innerW}, borderTop))
 	fmt.Fprintln(sb, boxSpanRow(label, innerW, "[yellow::b]"))
+	if notice.text != "" {
+		for _, line := range strings.Split(runewidth.Wrap(notice.text, innerW-2), "\n") {
+			fmt.Fprintln(sb, boxSpanRow(line, innerW, notice.tag))
+		}
+	}
 	fmt.Fprintln(sb, boxBorder(widths, borderIntro))
 	writeBoxBody(sb, cols, groups, empty)
 }

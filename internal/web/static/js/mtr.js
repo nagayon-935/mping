@@ -67,6 +67,7 @@ export function renderMTR(table, targets, meta, selectedId = null) {
     const hops = target.mtr_hops ?? [];
     const address = targetAddress(target);
     const label = address && target.ip ? `${target.host} · ${target.ip}` : target.host;
+    const count = hops.length || target.mtr_error ? `${hops.length} ${hops.length === 1 ? "hop" : "hops"}` : "Waiting for hops";
     body.append(el("tr", { className: `mtr-target-row${target.id === selectedId ? " is-selected" : ""}` },
       el("th", { attrs: { colspan: String(columns.length), scope: "rowgroup", title: label } },
         el("div", { className: "mtr-target-label" },
@@ -74,8 +75,9 @@ export function renderMTR(table, targets, meta, selectedId = null) {
           el("strong", { className: "cell-text", text: target.host }),
           address && el("span", { className: "mtr-target-address cell-text", text: address }),
           el("div", { className: "mtr-target-summary" },
-            el("span", { className: "mtr-target-count", text: hops.length ? `${hops.length} ${hops.length === 1 ? "hop" : "hops"}` : "Waiting for hops" }))))));
-    if (!hops.length) body.append(el("tr", {}, el("td", { className: "mtr-waiting",
+            el("span", { className: "mtr-target-count", text: count }))))));
+    if (target.mtr_error || !hops.length) body.append(el("tr", {}, el("td", {
+      className: target.mtr_error ? "mtr-error" : "mtr-waiting",
       text: target.mtr_error ? `Route discovery failed: ${target.mtr_error}` : "Waiting for hop replies…",
       attrs: { colspan: String(columns.length) } })));
     for (const hop of hops) {

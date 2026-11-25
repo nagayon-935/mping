@@ -15,10 +15,11 @@ import (
 
 // HopReply is the result of a single TTL-limited probe.
 type HopReply struct {
-	SrcIP       string
-	RTT         time.Duration
-	ReachedDest bool // true when the destination itself replied
-	Responded   bool // false on timeout
+	SrcIP             string
+	RTT               time.Duration
+	ReachedDest       bool   // true on an echo reply
+	Responded         bool   // false on timeout
+	UnreachableReason string // diagnostic from a matching ICMP Destination Unreachable
 }
 
 // hopSendConnV4 is the subset of *ipv4.PacketConn methods used by ProbeHop.
@@ -266,16 +267,20 @@ func acceptHopPacket(msg *icmp.Message, src net.Addr, traceID, ttl int) (HopRepl
 		if echo, ok := msg.Body.(*icmp.Echo); ok && echo.ID == traceID && echo.Seq == ttl {
 			return HopReply{SrcIP: srcIP, Responded: true, ReachedDest: true}, true
 		}
-	case ipv4.ICMPTypeTimeExceeded, ipv6.ICMPTypeTimeExceeded:
+	case ipv4.ICMPTypeTimeExceeded, ipv6.ICMPTypeTimeExceeded,
+		ipv4.ICMPTypeDestinationUnreachable, ipv6.ICMPTypeDestinationUnreachable:
 		id, seq, ok := extractEchoIDSeq(msg)
-		if ok && id == traceID && seq == ttl {
-			return HopReply{SrcIP: srcIP, Responded: true}, true
+		if !ok || id != traceID || seq != ttl {
+			return HopReply{}, false
 		}
-	case ipv4.ICMPTypeDestinationUnreachable, ipv6.ICMPTypeDestinationUnreachable:
-		id, seq, ok := extractEchoIDSeq(msg)
-		if ok && id == traceID && seq == ttl {
-			return HopReply{SrcIP: srcIP, Responded: true, ReachedDest: true}, true
+		reply := HopReply{SrcIP: srcIP, Responded: true}
+		switch msg.Type {
+		case ipv4.ICMPTypeDestinationUnreachable:
+			reply.UnreachableReason = icmpErrorString(msg.Type, msg.Code)
+		case ipv6.ICMPTypeDestinationUnreachable:
+			reply.UnreachableReason = icmpV6ErrorString(msg.Type, msg.Code)
 		}
+		return reply, true
 	}
 	return HopReply{}, false
 }

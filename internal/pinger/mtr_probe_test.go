@@ -116,31 +116,34 @@ func TestAcceptHopPacket(t *testing.T) {
 	src := &net.IPAddr{IP: net.IPv4(10, 0, 0, 1)}
 
 	tests := []struct {
-		name      string
-		raw       []byte
-		id, ttl   int
-		wantMatch bool
-		wantDest  bool
+		name            string
+		raw             []byte
+		proto           int
+		wantMatch       bool
+		wantDest        bool
+		wantUnreachable string
 	}{
-		{"time exceeded from an intermediate hop", hopErrorMsg(t, ipv4.ICMPTypeTimeExceeded, traceID, ttl), traceID, ttl, true, false},
-		{"echo reply means the destination answered", echoReplyMsg(t, ipv4.ICMPTypeEchoReply, traceID, ttl), traceID, ttl, true, true},
-		{"destination unreachable also ends the trace", hopErrorMsg(t, ipv4.ICMPTypeDestinationUnreachable, traceID, ttl), traceID, ttl, true, true},
-		{"reply for another trace ID", echoReplyMsg(t, ipv4.ICMPTypeEchoReply, 0x1111, ttl), traceID, ttl, false, false},
-		{"reply for another hop", echoReplyMsg(t, ipv4.ICMPTypeEchoReply, traceID, ttl+1), traceID, ttl, false, false},
-		{"time exceeded for another hop", hopErrorMsg(t, ipv4.ICMPTypeTimeExceeded, traceID, ttl+1), traceID, ttl, false, false},
-		{"an echo request is not a hop reply", echoBytes(t, false, traceID, ttl), traceID, ttl, false, false},
+		{"intermediate hop", hopErrorMsg(t, ipv4.ICMPTypeTimeExceeded, traceID, ttl), protoICMP, true, false, ""},
+		{"destination echo reply", echoReplyMsg(t, ipv4.ICMPTypeEchoReply, traceID, ttl), protoICMP, true, true, ""},
+		{"IPv4 destination unreachable", hopErrorMsg(t, ipv4.ICMPTypeDestinationUnreachable, traceID, ttl), protoICMP, true, false, "Destination Network Unreachable"},
+		{"IPv6 destination unreachable", hopErrorMsg(t, ipv6.ICMPTypeDestinationUnreachable, traceID, ttl), protoICMPv6, true, false, "No Route to Destination"},
+		{"unreachable for another probe", hopErrorMsg(t, ipv4.ICMPTypeDestinationUnreachable, traceID, ttl+1), protoICMP, false, false, ""},
+		{"reply for another trace ID", echoReplyMsg(t, ipv4.ICMPTypeEchoReply, 0x1111, ttl), protoICMP, false, false, ""},
+		{"reply for another hop", echoReplyMsg(t, ipv4.ICMPTypeEchoReply, traceID, ttl+1), protoICMP, false, false, ""},
+		{"time exceeded for another hop", hopErrorMsg(t, ipv4.ICMPTypeTimeExceeded, traceID, ttl+1), protoICMP, false, false, ""},
+		{"echo request", echoBytes(t, false, traceID, ttl), protoICMP, false, false, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reply, matched := acceptHopPacket(parseHopMsg(t, 1, tt.raw), src, tt.id, tt.ttl)
+			reply, matched := acceptHopPacket(parseHopMsg(t, tt.proto, tt.raw), src, traceID, ttl)
 			if matched != tt.wantMatch {
 				t.Fatalf("matched = %v, want %v", matched, tt.wantMatch)
 			}
 			if !matched {
 				return
 			}
-			if !reply.Responded || reply.ReachedDest != tt.wantDest || reply.SrcIP != "10.0.0.1" {
-				t.Fatalf("reply = %+v, want Responded, ReachedDest=%v, SrcIP=10.0.0.1", reply, tt.wantDest)
+			if !reply.Responded || reply.ReachedDest != tt.wantDest || reply.SrcIP != "10.0.0.1" || reply.UnreachableReason != tt.wantUnreachable {
+				t.Fatalf("reply = %+v, want Responded, ReachedDest=%v, SrcIP=10.0.0.1, UnreachableReason=%q", reply, tt.wantDest, tt.wantUnreachable)
 			}
 		})
 	}

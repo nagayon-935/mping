@@ -6,17 +6,17 @@
 
 * Shown only when `-T` / `--traceroute` is given. `-T` and `-M` cannot be combined: `-T` discovers the route only, `-M` also measures every hop.
 * Switching between `traceroute: true` and `mtr: true` in the hosts file applies on reload without restarting measurements: ping counters, graphs and history are kept and the pane switches in place. Turning route monitoring on or off restarts measurements.
-* The route (up to 30 hops) is discovered at startup and rediscovered every 10 minutes, with no per-hop probes in between — about 30 probes per target every 10 minutes.
+* The route (up to 20 hops) is discovered at startup and rediscovered every 10 minutes, with no per-hop probes in between — about 20 probes per target every 10 minutes.
 * Results are shown in a Host / Hops / Init TTL / Route table, one row per target. Hops carry the AS (`-a`) and PTR name (`-r`) when enabled; `*` is a hop that did not answer.
 * **Route change detection** works as in the MTR pane: a changed path adds a `[FLAP ×N HH:MM:SS]` line under the route and a yellow alert in the Log pane.
-* When the route cannot be discovered (for example, the target does not resolve), the pane shows why and retries at the next rediscovery.
+* The pane shows an error when discovery fails, for example if DNS fails or a router returns ICMP Destination Unreachable. It retries at the next scheduled rediscovery. If the destination simply does not reply, the pane shows the available hops.
 
 ## MTR Monitor pane
 
 * Shown only when `-M` / `--mtr` is given.
 * Performs continuous TTL-limited ICMP probing to every hop on the path to each target.
-* The hop path is discovered at startup and re-discovered every 10 minutes to track route changes. Hops that miss discovery are still probed each round and appear as soon as they respond. Route discovery probes the monitored IP, avoiding an independent DNS choice when comparing paths.
-* Each hop is probed once per second. Unresponsive hops (`*`) accumulate 100% loss.
+* The hop path (up to 30 hops) is discovered at startup and re-discovered every 10 minutes to track route changes. Hops that miss discovery are still probed each round and appear as soon as they respond. Route discovery probes the monitored IP, avoiding an independent DNS choice when comparing paths.
+* Each hop is probed once per second. Unresponsive hops (`*`) accumulate 100% loss. An ICMP Destination Unreachable response pauses per-hop probes until the next successful rediscovery if no probe in that round gets an echo reply from the destination.
 * The header row shows `SrcIP -> DstIP` (or `hostname (SrcIP -> DstIP)` for hostname targets).
 * Columns:
   * **Hop** — TTL hop number

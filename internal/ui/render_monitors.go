@@ -10,6 +10,8 @@ import (
 	"github.com/rivo/tview"
 )
 
+const routeDiscoveryFailed = "Route discovery failed: "
+
 // maxHostWidth returns the widest target display name or header, plus padding.
 func maxHostWidth(header string, targets []*stats.TargetStats) int {
 	w := runewidth.StringWidth(header)
@@ -75,13 +77,15 @@ func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
 		route, hopCount := hopLabels(view.MTRHops), fmt.Sprint(len(view.MTRHops))
 		if len(route) == 0 {
 			hopCount = "-"
-			if view.MTRError != "" {
-				route = []string{"Route discovery failed: " + view.MTRError}
-			} else {
+			if view.MTRError == "" {
 				route = []string{"Discovering..."}
 			}
 		}
-		routeLines := wrapHops(route, routeContentW)
+		var routeLines []string
+		if view.MTRError != "" {
+			routeLines = strings.Split(runewidth.Wrap(routeDiscoveryFailed+view.MTRError, routeContentW), "\n")
+		}
+		routeLines = append(routeLines, wrapHops(route, routeContentW)...)
 		if view.MTRFlapCount > 0 {
 			routeLines = append(routeLines, fmt.Sprintf("[FLAP %d times %s]", view.MTRFlapCount, view.MTRLastFlapAt.Format(logTimeLayout)))
 		}

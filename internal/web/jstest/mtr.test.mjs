@@ -99,15 +99,22 @@ test("MTR displays raw loss but only marks abnormal effective loss", (t) => {
 test("MTR keeps its hop count and discovery messages", (t) => {
   mockDocument(t);
   const target = { host: "example.com", ip: "192.0.2.10", health: { status: "crit" } };
+  const partial = [{ ttl: 1, ip: "192.0.2.1", recv: 1, loss_pct: 0 }];
   for (const [hops, error, count, message] of [
     [[], "", "Waiting for hops", "Waiting for hop replies…"],
-    [[], "probe failed", "Waiting for hops", "Route discovery failed: probe failed"],
-    [[{ ttl: 1, ip: "192.0.2.1", recv: 1, loss_pct: 0 }], "", "1 hop"],
+    [[], "probe failed", "0 hops", "Route discovery failed: probe failed"],
+    [partial, "", "1 hop"],
+    [partial, "destination unreachable", "1 hop", "Route discovery failed: destination unreachable"],
   ]) {
     const { summary, rows } = renderTargetMTR({ ...target, mtr_hops: hops, mtr_error: error });
     assert.deepEqual(summary.children.map(node => [node.className, node.textContent]),
       [["mtr-target-count", count]]);
     if (message) assert.equal(rows[0].children[0].textContent, message);
+    assert.equal(rows.length, hops.length + Number(Boolean(message)));
+    if (hops.length) {
+      const address = rows.at(-1).children.find(node => node.className.split(" ").includes("col-ip"));
+      assert.equal(address.children[0].textContent, hops[0].ip);
+    }
   }
 });
 
@@ -132,6 +139,11 @@ test("Traceroute keeps hop counts, discovery progress and failures", (t) => {
     assert.equal(chip.children[1].textContent, label);
     if (error) assert.equal(detail.textContent, error);
   }
+  const partial = tracePath({ ...target, mtr_error: "destination unreachable", mtr_hops: [{ ttl: 1, ip: "2001:db8::1" }] }, {});
+  const [warning, summary, hops] = partial.children;
+  assert.equal(warning.children[1].textContent, "destination unreachable");
+  assert.equal(summary.textContent, "1 hop · 0 no reply");
+  assert.equal(hops.children.length, 1);
 });
 
 test("group summary text leads with the worst state and omits zero counts", () => {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/pinger"
@@ -199,7 +200,10 @@ func TestProbe_UnknownHopRecoversWithoutRediscovery(t *testing.T) {
 	cfg := (&Config{MaxHops: 5}).withDefaults()
 	ctx := context.Background()
 	sock := &fakeHopSocket{}
-	n := discover(ctx, prober, sock, m, "8.8.8.8", cfg, nil, nil)
+	n, err := discover(ctx, prober, sock, m, "8.8.8.8", cfg, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	probe(ctx, prober, sock, m, "8.8.8.8", n, cfg, nil, nil)
 	prober.replies[2] = pinger.HopReply{SrcIP: "10.0.0.2", Responded: true, RTT: 5 * time.Millisecond}
 	probe(ctx, prober, sock, m, "8.8.8.8", n, cfg, nil, nil)
@@ -223,9 +227,9 @@ func TestDiscover_SendErrorsLeaveProbeableSlots(t *testing.T) {
 	cfg := (&Config{MaxHops: 3}).withDefaults()
 	ctx := context.Background()
 	sock := &fakeHopSocket{}
-	n := discover(ctx, failedDiscoveryProber{prober}, sock, m, "8.8.8.8", cfg, nil, nil)
-	if n != 3 || len(m.View()) != 3 {
-		t.Fatalf("failed discovery must retain all TTL slots: count=%d, hops=%+v", n, m.View())
+	n, err := discover(ctx, failedDiscoveryProber{prober}, sock, m, "8.8.8.8", cfg, nil, nil)
+	if err != nil || n != 3 || len(m.View()) != 3 {
+		t.Fatalf("failed discovery must retain all TTL slots: count=%d, hops=%+v, err=%v", n, m.View(), err)
 	}
 	probe(ctx, prober, sock, m, "8.8.8.8", n, cfg, nil, nil)
 	if h := m.View()[2]; h.IP != "8.8.8.8" || h.Recv != 1 {
@@ -448,4 +452,54 @@ func TestEngineTargetEditsKeepSurvivingRunAndSharedLimit(t *testing.T) {
 	if current != original || cap(e.sem) != 2 || a.MTR().View()[0].Sent < before {
 		t.Fatal("surviving run or shared limit changed")
 	}
+}
+
+func TestEngine_MTRUnreachableProbePausesUntilRediscovery(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const destination = "8.8.8.8"
+		target := newTestTarget(destination)
+		echo := pinger.HopReply{SrcIP: destination, Responded: true, ReachedDest: true}
+		unreachable := pinger.HopReply{SrcIP: "10.0.0.1", Responded: true, UnreachableReason: "Destination Host Unreachable"}
+		prober := newFakeProber(map[int]pinger.HopReply{2: echo})
+		engine := NewEngine(prober, []*stats.TargetStats{target}, Config{
+			ProbeInterval: time.Second, RediscoverEvery: 10 * time.Second, MaxHops: 3,
+		})
+		engine.Start()
+		defer engine.Stop()
+		synctest.Wait()
+
+		prober.setReplies(map[int]pinger.HopReply{1: unreachable, 2: echo})
+		time.Sleep(time.Second)
+		synctest.Wait()
+		if err := target.MTR().Error(); err != "" {
+			t.Fatalf("conflicting unreachable reply paused a successful round: %q", err)
+		}
+		if hop := target.MTR().View()[0]; hop.Sent != 1 || hop.Recv != 0 || hop.IP != "" {
+			t.Fatalf("unreachable was not recorded as loss: %+v", hop)
+		}
+
+		prober.setReplies(map[int]pinger.HopReply{2: unreachable})
+		time.Sleep(time.Second)
+		synctest.Wait()
+		if err := target.MTR().Error(); err == "" {
+			t.Fatal("unreachable round did not record a route error")
+		}
+		if hop := target.MTR().View()[1]; hop.Sent != 2 || hop.Recv != 1 || hop.IP != destination {
+			t.Fatalf("unreachable replaced the last good destination sample: %+v", hop)
+		}
+		calls := prober.probeCalls()
+
+		prober.setReplies(map[int]pinger.HopReply{2: echo})
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+		if got := prober.probeCalls(); got != calls {
+			t.Fatalf("MTR sent %d probes while paused", got-calls)
+		}
+
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+		if err := target.MTR().Error(); err != "" || target.MTR().View()[1].Recv <= 1 {
+			t.Fatalf("MTR did not resume after rediscovery: hops=%+v, error=%q", target.MTR().View(), err)
+		}
+	})
 }
