@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sparkGeometry, sparkLabel, SPARK_MAX_POINTS } from "../static/js/spark.js";
 
+import { prepareSparks } from "../static/js/spark_view.js";
+
 const box = { width: 100, height: 22, max: 40 };
 const points = (run) => run.split(" ").map((p) => p.split(",").map(Number));
 
@@ -67,4 +69,26 @@ test("dense series are reduced for drawing but keep full-window statistics", () 
 test("labels include min, average, peak and losses for the given window", () => {
   assert.equal(sparkLabel({ min: 1.25, avg: 2, max: 3, lostCount: 2, seconds: 30 }),
     "RTT last 30 s: min 1.3 ms, avg 2.0 ms, max 3.0 ms; 2 lost");
+});
+
+test("prepared sparklines are reused until their aligned samples or shared scale change", () => {
+  const targets = [{ id: 1 }, { id: 2 }];
+  const now = Date.parse("2026-11-25T01:00:00Z");
+  const history = new Map([
+    [1, [{ at: new Date(now).toISOString(), rtt_ms: 15 }]],
+    [2, [12, null, 40]],
+  ]);
+  const first = prepareSparks(targets, history, 1000, now);
+  const same = prepareSparks([...targets].reverse(), structuredClone(history), 1000, now, first);
+  assert.equal(same, first);
+
+  const advanced = prepareSparks(targets, history, 1000, now + 1000, first);
+  assert.notEqual(advanced.series.get(1), first.series.get(1));
+  assert.deepEqual(advanced.series.get(1).slice(-2), [15, undefined]);
+  assert.equal(advanced.series.get(2), first.series.get(2));
+
+  const filtered = prepareSparks([targets[0]], history, 1000, now, first);
+  assert.equal(filtered.series.size, 1);
+  assert.equal(filtered.series.get(1), first.series.get(1));
+  assert.ok(filtered.max < first.max);
 });

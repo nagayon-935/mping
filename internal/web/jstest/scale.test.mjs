@@ -34,6 +34,15 @@ test("a single spike does not raise the robust top; it is clipped instead", () =
   assert.equal(axis.clipped, true);
 });
 
+test("a shared axis handles more samples than the argument limit of a function call", () => {
+  const series = new Array(200_000).fill(20);
+  series[77] = 500;
+  const axis = robustAxis(series);
+  assert.equal(axis.p95, 20);
+  assert.equal(axis.peak, 500);
+  assert.equal(axis.clipped, true);
+});
+
 test("a steady series is not clipped", () => {
   const axis = robustAxis([10, 11, 12, 13, null, 12]);
   assert.equal(axis.clipped, false);

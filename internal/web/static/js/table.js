@@ -1,7 +1,7 @@
-// Ping monitor table. Rebuilt from the snapshot on every update; row focus
-// and selection are restored by target ID.
+// Ping monitor table. Keep live rows keyed by target ID.
 import { badgeIcon, el, statusChip, statusLabel } from "./dom.js";
 import { columnWidthPx, countCell, numCell, rttCell, setColumns, textCell } from "./columns.js";
+import { sameValues, syncChildren, updateCells } from "./live_rows.js";
 import { SORTS } from "./workspace.js";
 import { shortReason } from "./health_text.js";
 import { sparkline } from "./spark_view.js";
@@ -31,40 +31,50 @@ export function targetColumns(features, targets = [], sparkMax) {
   ].filter(Boolean);
 }
 
-function hostCell(t, features, group, focused) {
+function hostCell(host, id, group, ptr) {
   const td = el("td", { className: "host-cell" },
-    el("button", { className: "host-open", attrs: { type: "button", tabindex: focused ? "0" : "-1", "data-target-id": String(t.id), title: t.host, "aria-label": `Inspect ${t.host}` } },
-      el("span", { className: "host", text: t.host }),
+    el("button", { className: "host-open", attrs: { type: "button", tabindex: "-1", "data-target-id": String(id), title: host, "aria-label": `Inspect ${host}` } },
+      el("span", { className: "host", text: host }),
       el("span", { className: "host-arrow", text: "›", attrs: { "aria-hidden": "true" } })));
   if (group) td.append(el("span", { className: "sub", text: group, attrs: { title: `Group: ${group}` } }));
-  else if (features.ptr && t.ptr && t.ptr !== t.host) td.append(el("span", { className: "sub", text: t.ptr, attrs: { title: t.ptr } }));
+  else if (ptr) td.append(el("span", { className: "sub", text: ptr, attrs: { title: ptr } }));
   return td;
 }
 
-function targetCell(col, t, cells, features, group, focused, sparks) {
-  switch (col.key) {
+function targetCellValues(key, t, levels, features, group, sparks) {
+  switch (key) {
     case "status": {
-      // An OK row needs no explanation; leaving it blank makes the rows that
-      // do need attention stand out. The row names what breached and its
-      // value; the thresholds are in the title and in Summary.
       const level = targetStatus(t);
-      const reasons = level === "stopped" ? "" : statusReason(t);
-      return el("td", { attrs: { title: reasons } }, statusChip(level),
-        el("span", { className: "status-reason", text: level === "ok" ? "" : shortReason(reasons) }));
+      return [level, level === "stopped" ? "" : statusReason(t)];
     }
-    case "spark": {
-      const series = sparks?.series.get(t.id);
-      return el("td", { className: "spark-cell" }, series ? sparkline(series, sparks.max) : null);
-    }
-    case "host": return hostCell(t, features, group, focused);
-    case "ip": return textCell(t.ip || "–", "mono");
-    case "asn": return textCell([t.asn, t.org].filter(Boolean).join(" ") || "–");
-    case "loss": return metricCell(numCell(t.recv + t.loss === 0 ? "–" : formatPct(lossRate(t))), cells.loss);
-    case "sent": return countCell(t.sent);
-    case "recv": return countCell(t.recv);
-    case "last": return metricCell(rttCell(t.last_rtt_ms), cells.last);
-    case "jitter": return metricCell(rttCell(t.jitter_ms), cells.jitter);
-    case "ttl": return numCell(t.last_ttl > 0 ? String(t.last_ttl) : "–");
+    case "spark": return [sparks?.series.get(t.id), sparks?.max];
+    case "host": return [t.host, t.id, group, features.ptr && t.ptr !== t.host ? t.ptr : null];
+    case "ip": return [t.ip];
+    case "asn": return [t.asn, t.org];
+    case "loss": return [t.recv + t.loss ? lossRate(t) : null, levels.loss];
+    case "sent": return [t.sent];
+    case "recv": return [t.recv];
+    case "last": return [t.last_rtt_ms, levels.last];
+    case "jitter": return [t.jitter_ms, levels.jitter];
+    case "ttl": return [t.last_ttl];
+    default: return [];
+  }
+}
+
+function targetCell(key, value, detail, ...hostDetails) {
+  switch (key) {
+    case "status": return el("td", { attrs: { title: detail } }, statusChip(value),
+      el("span", { className: "status-reason", text: value === "ok" ? "" : shortReason(detail) }));
+    case "spark": return el("td", { className: "spark-cell" }, value ? sparkline(value, detail) : null);
+    case "host": return hostCell(value, detail, ...hostDetails);
+    case "ip": return textCell(value || "–", "mono");
+    case "asn": return textCell([value, detail].filter(Boolean).join(" ") || "–");
+    case "loss": return metricCell(numCell(value == null ? "–" : formatPct(value)), detail);
+    case "sent":
+    case "recv": return countCell(value);
+    case "last":
+    case "jitter": return metricCell(rttCell(value), detail);
+    case "ttl": return numCell(value > 0 ? String(value) : "–");
     default: return el("td");
   }
 }
@@ -80,81 +90,111 @@ function metricCell(td, level) {
   return td;
 }
 
-/**
- * @param {HTMLTableElement} table
- * @param {object} view {snapshot, meta, filter, selectedId}
- * @param {(id: number) => void} onOpen
- * @returns {number} rows rendered (after filtering)
- */
+const renderedTables = new WeakMap();
+
+function renderHead(table, columns, sort, onSort) {
+  setColumns(table, columns, "host");
+  [...table.tHead.rows[0].cells].forEach((th, i) => {
+    const key = columns[i].key;
+    if (!onSort || !SORTS[key]) return;
+    const current = sort?.key === key;
+    th.setAttribute("aria-sort", current ? sort.direction === "asc" ? "ascending" : "descending" : "none");
+    const button = el("button", { className: "sort-heading", text: `${th.textContent}${current ? sort.direction === "asc" ? " ↑" : " ↓" : ""}`,
+      attrs: { type: "button", "data-sort": key, "aria-label": `Sort by ${SORTS[key]}` } });
+    button.addEventListener("click", () => onSort(key));
+    th.replaceChildren(button);
+  });
+}
+
+function groupRow(name, count, summary, colspan) {
+  const heading = el("td", { text: `${name} (${count})`, attrs: { colspan: String(colspan) } });
+  for (const { level, label } of summary) {
+    const chip = statusChip(level, label);
+    chip.setAttribute("role", "img");
+    chip.setAttribute("aria-label", level === "ok" ? label : `${statusLabel(level)}: ${label}`);
+    heading.append(" · ", chip);
+  }
+  return el("tr", { className: "group-row" }, heading);
+}
+
+function makeTargetRow(id, onOpen) {
+  const node = el("tr", { attrs: { tabindex: "-1", "data-target-id": String(id) } });
+  node.addEventListener("click", () => onOpen(id));
+  node.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      e.stopPropagation();
+      onOpen(id);
+    }
+  });
+  return { node };
+}
+
 export function renderTargets(table, view, onOpen, onSort) {
-  const { snapshot, meta, filter, selectedId } = view;
-  // The table is as wide as its wrapper; widths come from the CSS contract,
-  // which already reflects the current breakpoint and pane layout.
+  const { snapshot, meta, filter, selectedId, sort, sparks } = view;
   const available = table.parentElement.clientWidth;
-  const columns = selectColumns(targetColumns(meta.features, snapshot.targets, view.sparks?.max), (c) => columnWidthPx(table, c.key), available);
+  const columns = selectColumns(targetColumns(meta.features, snapshot.targets, sparks?.max), (c) => columnWidthPx(table, c.key), available);
+  const keys = columns.map(({ key }) => key);
+  const head = [sort?.key, sort?.direction, onSort, ...columns.map(({ label }) => label)];
+  const previous = renderedTables.get(table);
+  const sameColumns = sameValues(previous?.keys, keys);
   const active = document.activeElement;
   const focusedSort = table.contains(active) ? active?.dataset?.sort : null;
-  setColumns(table, columns, "host");
   const focusedId = table.contains(active) ? active?.dataset?.targetId : null;
+  if (!sameColumns || !sameValues(previous?.head, head)) renderHead(table, columns, sort, onSort);
+
   const visible = view.visibleTargets ?? snapshot.targets.filter((t) => matchesFilter(t, filter, meta.features));
   const focusId = visible.some(t => String(t.id) === focusedId) ? Number(focusedId)
     : visible.some(t => t.id === view.focusedId) ? view.focusedId
     : visible.some(t => t.id === selectedId) ? selectedId : visible[0]?.id;
-  for (const th of table.tHead.querySelectorAll("th")) {
-    const key = columns[[...th.parentElement.children].indexOf(th)].key;
-    if (!onSort || !SORTS[key]) continue;
-    const current = view.sort?.key === key;
-    th.setAttribute("aria-sort", current ? view.sort.direction === "asc" ? "ascending" : "descending" : "none");
-    const button = el("button", { className: "sort-heading", text: `${th.textContent}${current ? view.sort.direction === "asc" ? " ↑" : " ↓" : ""}`,
-      attrs: { type: "button", "data-sort": key, "aria-label": `Sort by ${SORTS[key]}` } });
-    button.addEventListener("click", () => onSort(key));
-    th.replaceChildren(button);
-  }
-  const groupsById = new Map(meta.groups?.flatMap(g => (g.target_ids ?? []).map(id => [id, g.name])) ?? []);
-  const sortedFlat = view.sort?.key && view.sort.key !== "config";
+  const sortedFlat = sort?.key && sort.key !== "config";
+  const groupsById = sortedFlat && new Map(meta.groups?.flatMap(g => (g.target_ids ?? []).map(id => [id, g.name])) ?? []);
+  const hostIndex = keys.indexOf("host");
   const rows = [];
+  const targets = new Map();
+  const groups = new Map();
   for (const section of buildSections(visible, sortedFlat ? [] : meta.groups)) {
     if (section.name != null) {
-      const heading = el("td", { text: `${section.name} (${section.targets.length})`, attrs: { colspan: String(columns.length) } });
-      for (const { level, label } of groupSummary(section.targets)) {
-        const chip = statusChip(level, label);
-        chip.setAttribute("role", "img");
-        chip.setAttribute("aria-label", level === "ok" ? label : `${statusLabel(level)}: ${label}`);
-        heading.append(" · ", chip);
-      }
-      rows.push(el("tr", { className: "group-row" }, heading));
+      const summary = groupSummary(section.targets);
+      const values = [section.targets.length, columns.length, ...summary.flatMap(({ level, label }) => [level, label])];
+      // A section's first member identifies it even if group names coincide.
+      const id = section.targets[0].id;
+      const old = previous?.groups.get(id);
+      const node = old?.name === section.name && sameValues(old.values, values)
+        ? old.node : groupRow(section.name, section.targets.length, summary, columns.length);
+      groups.set(id, { node, name: section.name, values });
+      rows.push(node);
     }
     for (const t of section.targets) {
-      const cells = cellLevels(t);
-      const tr = el("tr", {
-        className: `target-row health-${rowLevel(t)}`,
-        attrs: {
-          tabindex: "-1",
-          ...(t.id === selectedId ? { "aria-current": "true" } : {}),
-          "aria-label": `${t.host}, select to inspect`,
-          "data-target-id": String(t.id),
-        },
-      });
-      for (const c of columns) {
-        const cell = targetCell(c, t, cells, meta.features, sortedFlat ? groupsById.get(t.id) : null, t.id === focusId, view.sparks);
-        cell.classList.add(`col-${c.key}`);
-        tr.append(cell);
+      const old = previous?.onOpen === onOpen ? previous?.targets.get(t.id) : null;
+      const entry = old ?? makeTargetRow(t.id, onOpen);
+      const row = entry.node;
+      const level = rowLevel(t);
+      const selected = t.id === selectedId;
+      if (entry.level !== level) row.className = `target-row health-${level}`;
+      if (entry.host !== t.host) row.setAttribute("aria-label", `${t.host}, select to inspect`);
+      if (entry.selected !== selected) {
+        if (selected) row.setAttribute("aria-current", "true");
+        else row.removeAttribute("aria-current");
       }
-      tr.addEventListener("click", () => onOpen(t.id));
-      tr.addEventListener("keydown", (e) => {
-        if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          e.stopPropagation();
-          onOpen(t.id);
-        }
-      });
-      rows.push(tr);
+      const levels = cellLevels(t);
+      const group = groupsById ? groupsById.get(t.id) : null;
+      const cellValues = updateCells(row, columns,
+        (key) => targetCellValues(key, t, levels, meta.features, group, sparks),
+        targetCell, sameColumns ? entry.cellValues : undefined);
+      while (row.cells.length > columns.length) row.deleteCell(-1);
+      const button = row.cells[hostIndex].firstElementChild;
+      const tabIndex = t.id === focusId ? 0 : -1;
+      if (button.tabIndex !== tabIndex) button.tabIndex = tabIndex;
+      targets.set(t.id, { node: row, host: t.host, level, selected, cellValues });
+      rows.push(row);
     }
   }
-  table.tBodies[0].replaceChildren(...rows);
+  syncChildren(table.tBodies[0], rows);
+  renderedTables.set(table, { keys, head, targets, groups, onOpen });
 
-  if (focusedId && table.contains(active) === false) table.querySelector(`.host-open[data-target-id="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
-  if (focusedSort) table.querySelector(`[data-sort="${CSS.escape(focusedSort)}"]`)?.focus({ preventScroll: true });
+  if (focusedId && !table.contains(active)) table.querySelector(`.host-open[data-target-id="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
+  if (focusedSort && !table.contains(active)) table.querySelector(`[data-sort="${CSS.escape(focusedSort)}"]`)?.focus({ preventScroll: true });
   return visible.length;
 }
