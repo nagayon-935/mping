@@ -85,7 +85,7 @@ func buildErrorLogMessage(view stats.TargetView, sourceIP string, errMsg string,
 
 // alertLogMessage formats a critical metric or socket error for one target.
 func alertLogMessage(host, sourceIP, msg string, ts time.Time) string {
-	return fmt.Sprintf("[red][%s] %s (%s): %s[-]", ts.Format(logTimeLayout), host, sourceIP, msg)
+	return fmt.Sprintf("%s[%s] %s (%s): %s[-]", levelTag(stats.LevelCrit), ts.Format(logTimeLayout), host, sourceIP, msg)
 }
 
 // updateAlertState logs only new critical threshold crossings for targets
@@ -105,8 +105,8 @@ func updateAlertState(view stats.TargetView, sourceIP string, lossRate float64, 
 		*red = over
 	}
 	edge(&state.lossRed, view.Levels.Loss == stats.LevelCrit, func() string { return fmt.Sprintf("Loss Ratio %.1f%%", lossRate) })
-	edge(&state.rttRed, view.Levels.LastRTT == stats.LevelCrit, func() string { return fmt.Sprintf("RTT %v", view.LastRTT.Round(time.Microsecond)) })
-	edge(&state.jitterRed, view.Levels.Jitter == stats.LevelCrit, func() string { return fmt.Sprintf("Jitter %v", view.Jitter.Round(time.Microsecond)) })
+	edge(&state.rttRed, view.Levels.LastRTT == stats.LevelCrit, func() string { return "RTT " + formatFixedMs(view.LastRTT) })
+	edge(&state.jitterRed, view.Levels.Jitter == stats.LevelCrit, func() string { return "Jitter " + formatFixedMs(view.Jitter) })
 
 	return state, msgs
 }

@@ -12,17 +12,20 @@ func TestFitMonitorColumns(t *testing.T) {
 		{boxColumn: boxColumn{header: "Last", width: 6}},
 	}
 	for _, tt := range []struct {
-		name  string
-		avail int
-		want  []int
+		name    string
+		avail   int
+		content int
+		want    []int
 	}{
-		{"full with spare width", 32, []int{7, 15, 6}},
-		{"full exact fit", 27, []int{7, 10, 6}},
-		{"compact with spare width", 26, []int{17, 6}},
-		{"compact retains minimum", 15, []int{10, 6}},
+		{"full leaves spare width", 32, 12, []int{7, 12, 6}},
+		{"full exact fit", 27, 20, []int{7, 10, 6}},
+		{"compact with spare width", 26, 14, []int{14, 6}},
+		{"compact shrinks below minimum", 15, 14, []int{6, 6}},
+		{"compact uses minimum for short content", 26, 5, []int{10, 6}},
+		{"compact cannot fit its fixed columns", 10, 14, nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			cols, boxCols := fitMonitorColumns(all, "Flexible", tt.avail)
+			cols, boxCols := fitMonitorColumns(all, "Flexible", tt.content, tt.avail)
 			if got := boxWidths(boxCols); !slices.Equal(got, tt.want) {
 				t.Errorf("box widths = %v, want %v", got, tt.want)
 			}
@@ -60,7 +63,7 @@ func TestBoxBorder(t *testing.T) {
 func TestBoxHeaderRow(t *testing.T) {
 	// paddedCell adds a leading space then right-pads to colW.
 	got := boxHeaderRow([]boxColumn{{header: "A", width: 4}, {header: "BB", width: 5}})
-	want := "[white]│[yellow::b]" + paddedCell("A", 4) + "[white]│[yellow::b]" + paddedCell("BB", 5) + "[white]│[-]"
+	want := "[white]│[yellow::b]" + paddedCell("A", 4) + "[white::-]│[yellow::b]" + paddedCell("BB", 5) + "[white::-]│[-]"
 	if got != want {
 		t.Errorf("boxHeaderRow = %q, want %q", got, want)
 	}
@@ -76,15 +79,9 @@ func TestBoxRowColoursOnlyTaggedCells(t *testing.T) {
 }
 
 func TestBoxSpanRow(t *testing.T) {
-	got := boxSpanRow(" Waiting...", 20, "[darkgray]")
-	want := "[white]│[darkgray]" + formatCellTextLeft(" Waiting...", 20) + "[white]│[-]"
+	got := boxSpanRow("Discovering...", 17, "[gray]")
+	want := "[white]│[gray] Discovering...  [white::-]│[-]"
 	if got != want {
 		t.Errorf("boxSpanRow = %q, want %q", got, want)
 	}
-}
-
-// formatCellTextLeft mirrors how boxSpanRow left-aligns text, kept local to the
-// test so the expectation tracks formatCellText's left-alignment behavior.
-func formatCellTextLeft(text string, width int) string {
-	return formatCellText(text, width, 0) // tview.AlignLeft == 0
 }

@@ -5,22 +5,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rivo/tview"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
 const (
-	mtrHopColW  = 5  // " Hop " — "   1." fits exactly
+	mtrHopColW  = 6  // " 255. "
 	mtrLossColW = 10 // " × 100.0% "
-	mtrSntColW  = 6  // " Snt  "
-	mtrRecvColW = 6  // " Recv "
-	mtrLatColW  = 9  // " 12.1ms  "
+	mtrSntColW  = 8  // " 999999 "
+	mtrRecvColW = 8  // " 999999 "
 	minMTRHostW = 16
 )
 
 type mtrRow struct {
 	stats.HopView
+	host          string
 	lossLevel     stats.Level
 	nonPersistent bool
 }
@@ -30,18 +30,13 @@ func mtrLossCell(h mtrRow) boxCell {
 	text := fmt.Sprintf("%.1f%%", h.LossPct)
 	switch h.lossLevel {
 	case stats.LevelWarn, stats.LevelCrit:
-		return boxCell{text: statusSymbol(h.lossLevel) + " " + text, tag: targetStatusTags.of(h.lossLevel)}
+		return boxCell{text: statusSymbol(h.lossLevel) + " " + text, tag: levelTag(h.lossLevel)}
 	default:
 		if h.nonPersistent {
-			return boxCell{text: text, tag: "[gray]"}
+			return boxCell{text: text, tag: levelTag(stats.LevelNone)}
 		}
 		return boxCell{text: text}
 	}
-}
-
-// rttColorTag returns the tview color tag for an RTT level.
-func rttColorTag(l stats.Level) string {
-	return levelTags{crit: "[red]", warn: "[orange]", ok: "[green]", other: "[white]"}.of(l)
 }
 
 // renderMTRTable builds the MTR monitor pane string.
@@ -64,16 +59,12 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, availW int,
 	hops := view.MTRHops
 	effective := stats.EffectiveHopLosses(hops)
 	hopRows := make([]mtrRow, len(hops))
-	level := targetStatusLevel(view)
-	summary := statusSymbol(level) + " " + statusLabel(level)
-	firstLoss := true
+	hostWidth := minMTRHostW
 	for i, h := range hops {
 		lossLevel := view.Thresholds.HopLoss(effective[i])
-		hopRows[i] = mtrRow{HopView: h, lossLevel: lossLevel, nonPersistent: h.LossPct > effective[i]}
-		if firstLoss && lossLevel != stats.LevelOK {
-			summary += fmt.Sprintf(" · loss from hop %d", h.TTL)
-			firstLoss = false
-		}
+		host := mtrIPStr(h)
+		hostWidth = max(hostWidth, runewidth.StringWidth(host)+2)
+		hopRows[i] = mtrRow{HopView: h, host: host, lossLevel: lossLevel, nonPersistent: h.LossPct > effective[i]}
 	}
 
 	// Target label: "SrcIP -> DstIP" (with hostname prefix when applicable)
@@ -93,28 +84,32 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, availW int,
 	// Compact: Hop | Host | Loss% | Snt | Last | Avg
 	// Full:    Hop | Host | Loss% | Snt | Recv | Last | Avg | Min | Max | Jitter
 	rtt := func(get func(stats.HopView) time.Duration) func(mtrRow) boxCell {
-		cell := rttCell(get, formatRTT, view.Thresholds.RTT)
+		cell := rttCell(get, view.Thresholds.RTT)
 		return func(h mtrRow) boxCell { return cell(h.HopView) }
 	}
 	all := []monitorColumn[mtrRow]{
-		{boxColumn{header: "Hop", width: mtrHopColW}, plainCell(func(h mtrRow) string { return fmt.Sprintf("%3d.", h.TTL) }), false},
+		{boxColumn{header: "Hop", width: mtrHopColW, rightAlign: true}, plainCell(func(h mtrRow) string { return fmt.Sprintf("%d.", h.TTL) }), false},
 		{boxColumn{header: "Host", width: minMTRHostW}, func(h mtrRow) boxCell {
-			cell := boxCell{text: mtrIPStr(h.HopView)}
+			cell := boxCell{text: h.host}
 			if h.IP == "" && h.lossLevel == stats.LevelOK {
-				cell.tag = "[gray]"
+				cell.tag = levelTag(stats.LevelNone)
 			}
 			return cell
 		}, false},
-		{boxColumn{header: "Loss%", width: mtrLossColW}, mtrLossCell, false},
-		{boxColumn{header: "Snt", width: mtrSntColW}, plainCell(func(h mtrRow) string { return fmt.Sprintf("%d", h.Sent) }), false},
-		{boxColumn{header: "Recv", width: mtrRecvColW}, plainCell(func(h mtrRow) string { return fmt.Sprintf("%d", h.Recv) }), true},
-		{boxColumn{header: "Last", width: mtrLatColW}, rtt(func(h stats.HopView) time.Duration { return h.LastRTT }), false},
-		{boxColumn{header: "Avg", width: mtrLatColW}, rtt(func(h stats.HopView) time.Duration { return h.AvgRTT }), false},
-		{boxColumn{header: "Min", width: mtrLatColW}, rtt(func(h stats.HopView) time.Duration { return h.MinRTT }), true},
-		{boxColumn{header: "Max", width: mtrLatColW}, rtt(func(h stats.HopView) time.Duration { return h.MaxRTT }), true},
-		{boxColumn{header: "Jitter", width: mtrLatColW}, rtt(func(h stats.HopView) time.Duration { return h.Jitter }), true},
+		{boxColumn{header: "Loss%", width: mtrLossColW, rightAlign: true}, mtrLossCell, false},
+		{boxColumn{header: "Snt", width: mtrSntColW, rightAlign: true}, plainCell(func(h mtrRow) string { return fmt.Sprintf("%d", h.Sent) }), false},
+		{boxColumn{header: "Recv", width: mtrRecvColW, rightAlign: true}, plainCell(func(h mtrRow) string { return fmt.Sprintf("%d", h.Recv) }), true},
+		{boxColumn{header: "Last", width: fixedMsColW, rightAlign: true}, rtt(func(h stats.HopView) time.Duration { return h.LastRTT }), false},
+		{boxColumn{header: "Avg", width: fixedMsColW, rightAlign: true}, rtt(func(h stats.HopView) time.Duration { return h.AvgRTT }), false},
+		{boxColumn{header: "Min", width: fixedMsColW, rightAlign: true}, rtt(func(h stats.HopView) time.Duration { return h.MinRTT }), true},
+		{boxColumn{header: "Max", width: fixedMsColW, rightAlign: true}, rtt(func(h stats.HopView) time.Duration { return h.MaxRTT }), true},
+		{boxColumn{header: "Jitter", width: fixedMsColW, rightAlign: true}, rtt(func(h stats.HopView) time.Duration { return h.Jitter }), true},
 	}
-	cols, boxCols := fitMonitorColumns(all, "Host", availW)
+	cols, boxCols := fitMonitorColumns(all, "Host", hostWidth, availW)
+	if len(cols) == 0 {
+		fmt.Fprintln(sb, truncateToDisplayWidth(monitorTooNarrow, availW))
+		return
+	}
 
 	// One row per hop, with no rule between hops.
 	var groups [][][]boxCell
@@ -125,7 +120,7 @@ func renderMTRTargetTable(sb *strings.Builder, t *stats.TargetStats, availW int,
 		}
 		groups = [][][]boxCell{rows}
 	}
-	writeLabelledBoxTable(sb, boxCols, summary+" — "+label, groups, " Discovering...")
+	writeLabelledBoxTable(sb, boxCols, label, groups, "Discovering...")
 }
 
 // mtrIPStr returns the display string for a hop's IP, PTR name and AS.
@@ -140,5 +135,5 @@ func mtrIPStr(h stats.HopView) string {
 	if annotation := stats.FormatASN(h.ASN, h.Org); annotation != "" {
 		out += " (" + annotation + ")"
 	}
-	return tview.Escape(out)
+	return out
 }

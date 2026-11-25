@@ -244,23 +244,20 @@ func TestPlanColumns_StableWhenValuesShrink(t *testing.T) {
 	}
 }
 
-func TestPlanColumns_LongHostKeepsColumnsThatStillFit(t *testing.T) {
-	// Arrange: one very long host name in a 120-column terminal.
-	long := stats.NewTargetStats(strings.Repeat("very-long-label.", 8) + "example.com")
+func TestPlanColumns_LongHostKeepsCoreColumnsAtFixedWidths(t *testing.T) {
+	long := replyingTarget(strings.Repeat("very-long-label.", 8)+"example.com", 12*time.Millisecond)
 	long.SetIP("10.0.0.9")
-	long.IncSent()
-	long.OnSuccess(12*time.Millisecond, 64)
 	tr, texts := newPlanRenderer(t, []*stats.TargetStats{long}, columnOptions{})
 
-	// Act
 	plan := tr.planColumns(texts, 120)
-
-	// Assert: the host is cut, but AVG (the last column to go) is back.
 	if !plan.ok {
 		t.Fatal("plan did not fit")
 	}
-	if !slices.Contains(shownNames(tr, plan), "AVG") {
-		t.Errorf("AVG hidden although it fits: shown %v hidden %v", shownNames(tr, plan), plan.hidden)
+	if got, want := shownNames(tr, plan), []string{"DST", "LOSS%", "RTT", "JIT"}; !slices.Equal(got, want) {
+		t.Errorf("columns = %v, want %v", got, want)
+	}
+	if plan.widths[0] >= len(texts[0][columnIndex(tr.cols, "DST")]) {
+		t.Error("long DST should shrink to fit alongside the core columns")
 	}
 }
 
@@ -312,35 +309,37 @@ func TestPlanColumns_SparklineOutlivesSupplementaryColumns(t *testing.T) {
 	}
 }
 
-func TestPlanColumns_TableSpansWideTerminals(t *testing.T) {
-	// Arrange
+func TestPlanColumns_FixedNumbersAndSpareWidth(t *testing.T) {
 	tr, texts := newPlanRenderer(t, []*stats.TargetStats{replyingTarget("10.0.0.1", 12*time.Millisecond)}, columnOptions{})
+	wantWidths := map[string]int{"RCV": 6, "LOST": 6, "LOSS%": 6, "RTT": 10, "AVG": 10, "JIT": 10, "SIZE": 6, "MTU": 6, "TTL": 3}
+	before := tr.planColumns(texts, 120)
 
+	for name, value := range map[string]string{
+		"RCV": "999999", "LOST": "999999", "LOSS%": "100.0%", "RTT": "99999.99ms",
+		"AVG": "10000.00ms", "JIT": "999.99ms", "SIZE": "65535", "MTU": "65535", "TTL": "255",
+	} {
+		texts[0][columnIndex(tr.cols, name)] = value
+	}
 	for _, width := range []int{120, 200, 300} {
-		// Act
 		plan := tr.planColumns(texts, width)
-
-		// Assert: columns plus separators fill the width exactly.
-		sum := len(plan.widths) - 1
-		for _, w := range plan.widths {
-			sum += w
+		if !plan.ok || !slices.Equal(plan.widths, before.widths) {
+			t.Fatalf("width %d: plan = %+v, want widths %v", width, plan, before.widths)
 		}
-		if !plan.ok || sum != width {
-			t.Errorf("width %d: columns span %d (ok %v)", width, sum, plan.ok)
+		total := len(plan.widths) - 1
+		for j, i := range plan.active {
+			w := plan.widths[j]
+			total += w
+			name := tr.cols[i].name
+			if want, numeric := wantWidths[name]; numeric && w != want {
+				t.Errorf("%s width = %d, want %d", name, w, want)
+			}
+			if name == "DST" && w > len(texts[0][i])+textColumnSlack {
+				t.Errorf("DST width %d exceeds content plus slack", w)
+			}
 		}
-	}
-}
-
-func TestStretchToWidth(t *testing.T) {
-	widths := []int{4, 6, 8}
-	stretchToWidth(widths, 25)
-	if want := []int{7, 8, 10}; !slices.Equal(widths, want) {
-		t.Errorf("widths = %v, want %v", widths, want)
-	}
-	unchanged := []int{4, 6}
-	stretchToWidth(unchanged, 5)
-	if want := []int{4, 6}; !slices.Equal(unchanged, want) {
-		t.Errorf("already full: widths = %v, want %v", unchanged, want)
+		if total >= width {
+			t.Errorf("width %d: expected spare width, table spans %d", width, total)
+		}
 	}
 }
 

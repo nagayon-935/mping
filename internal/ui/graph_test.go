@@ -126,7 +126,7 @@ func TestWindowLoss(t *testing.T) {
 		{"no loss in latest sample", 1, 20, 80, "", tcell.ColorDefault},
 		{"at warning", 4, 50, 80, "loss 50%", tcell.ColorDefault},
 		{"at critical", 4, 20, 50, "loss 50%", tcell.ColorOrange},
-		{"above critical", 4, 20, 49, "loss 50%", vividRed},
+		{"above critical", 4, 20, 49, "loss 50%", tcell.ColorRed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -341,7 +341,7 @@ func TestGraphViewDraw(t *testing.T) {
 		}},
 		{"single target shows its latest RTT and axis", 120, 30, 200 * ms,
 			[]*stats.TargetStats{withRTTs("example.com", 10*ms, 20*ms, 30*ms)},
-			func(t *testing.T, text string) { requireText(t, text, "example.com", "30ms", "100ms", "0ms") }},
+			func(t *testing.T, text string) { requireText(t, text, "example.com", "30.00ms", "100.00ms", "0.00ms") }},
 		{"several targets fill two columns", 80, 12, 500 * ms,
 			func() []*stats.TargetStats {
 				targets := graphTargets(4, "a")
@@ -349,8 +349,8 @@ func TestGraphViewDraw(t *testing.T) {
 				return targets
 			}(),
 			func(t *testing.T, text string) {
-				requireText(t, text, "10ms")
-				if n := strings.Count(text, "100ms"); n != 2 {
+				requireText(t, text, "10.00ms")
+				if n := strings.Count(text, "100.00ms"); n != 2 {
 					t.Errorf("axis labels = %d, want one per column (2)", n)
 				}
 			}},
@@ -360,12 +360,12 @@ func TestGraphViewDraw(t *testing.T) {
 		// An RTT above the 100ms floor rescales the axis instead of overflowing it.
 		{"high RTT rescales the axis", 120, 20, 200 * ms,
 			[]*stats.TargetStats{withRTTs("example.com", 200*ms, 200*ms, 200*ms, 200*ms, 200*ms, 500*ms)},
-			func(t *testing.T, text string) { requireText(t, text, "example.com", "500ms", "1000ms") }},
+			func(t *testing.T, text string) { requireText(t, text, "example.com", "500.00ms", "1000.00ms") }},
 		// ratio 0.01 is floored to 0.05 so the bar stays visible.
 		{"very small RTT still draws a bar", 120, 20, 200 * ms,
 			[]*stats.TargetStats{withRTTs("example.com", ms, ms, ms, ms, ms)},
 			func(t *testing.T, text string) {
-				requireText(t, text, "example.com", "1ms")
+				requireText(t, text, "example.com", "1.00ms")
 				if !strings.ContainsAny(text, bars) {
 					t.Errorf("no bar drawn:\n%s", text)
 				}
@@ -374,7 +374,7 @@ func TestGraphViewDraw(t *testing.T) {
 		{"very small RTT on a short graph still draws a bar", 120, 4, 200 * ms,
 			[]*stats.TargetStats{withRTTs("example.com", ms, ms, ms, ms, ms)},
 			func(t *testing.T, text string) {
-				requireText(t, text, "example.com", "1ms")
+				requireText(t, text, "example.com", "1.00ms")
 				if !strings.ContainsAny(text, bars) {
 					t.Errorf("no bar drawn:\n%s", text)
 				}
@@ -421,14 +421,14 @@ func TestGraphViewDrawsPortSeries(t *testing.T) {
 
 	// Five series in two columns: three rows, two of them visible at 18 lines.
 	g.Draw(screen)
-	requireText(t, screenText(screen), "example.com ", "10ms", "8000/tcp", "20ms", "8001/tcp", "8002/tcp")
+	requireText(t, screenText(screen), "example.com ", "10.00ms", "8000/tcp", "20.00ms", "8001/tcp", "8002/tcp")
 
 	g.InputHandler()(tcell.NewEventKey(tcell.KeyDown, 0, 0), func(tview.Primitive) {})
 	if g.scrollRow != 1 {
 		t.Fatalf("scrollRow = %d, want 1 (the third row of port series)", g.scrollRow)
 	}
 	g.Draw(screen)
-	requireText(t, screenText(screen), "8003/tcp", "23ms")
+	requireText(t, screenText(screen), "8003/tcp", "23.00ms")
 
 	// The main graph counts targets only.
 	g.includePorts = false

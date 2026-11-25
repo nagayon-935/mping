@@ -81,7 +81,7 @@ func stripCell(b stripBucket, scaleMs float64) (rune, tcell.Color) {
 		return ' ', tcell.ColorDefault
 	}
 	if b.max == 0 {
-		return '×', vividRed
+		return '×', tcell.ColorRed
 	}
 	color := vividCyan
 	if b.lost {
@@ -105,8 +105,7 @@ func prepareSparkBuckets(history []time.Duration, windowPoints, width int) ([]st
 }
 
 // colorTag is the tview tag selecting exactly color, so a sparkline cell
-// uses the same red as Critical values (vividRed, an RGB color) rather than
-// the terminal's own palette "red".
+// uses the same colors as the other level indicators.
 func colorTag(color tcell.Color) string {
 	return fmt.Sprintf("[#%06x]", color.Hex())
 }
@@ -126,7 +125,7 @@ func sparklines(history []time.Duration, windowPoints, width int) (plain, styled
 		r, color := stripCell(bucket, scaleMs)
 		runes = append(runes, r)
 		switch color {
-		case vividRed, lossPartialColor:
+		case tcell.ColorRed, lossPartialColor:
 			fmt.Fprintf(&b, "%s%c[-]", colorTag(color), r)
 		default:
 			b.WriteRune(r)

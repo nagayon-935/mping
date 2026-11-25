@@ -21,32 +21,20 @@ func maxHostWidth(header string, targets []*stats.TargetStats) int {
 	return w + 2
 }
 
-// statusChangeMessage formats a "prev -> new" status-change log line. subject
-// is the pre-formatted, already color-tagged text identifying what changed
-// (e.g. "[white]host[-] [white]443/tcp:[white]"). newStatus is colored green
-// when it equals healthyStatus, yellow otherwise.
-func statusChangeMessage(subject, prevStatus, newStatus, healthyStatus string) string {
-	color := "[yellow]"
-	if newStatus == healthyStatus {
-		color = "[green]"
-	}
-	return fmt.Sprintf("[darkgray]%s[-] %s %s → %s%s[-]",
-		time.Now().Format(logTimeLayout), subject, prevStatus, color, newStatus)
-}
-
 // logStatusChangeIfNeeded checks lastStatuses[key] against newStatus and, if
-// it changed, appends a log line built by statusChangeMessage. It always
+// it changed, appends a log line. It always
 // records newStatus under key afterward (a no-op for the initial ""/
 // "Checking..." placeholder status). subject builds the line's subject and
 // runs only when a change is logged, keeping formatting off the per-tick
 // path. Shared by the port and HTTP monitor panes.
-func logStatusChangeIfNeeded(lastStatuses map[string]string, key, newStatus, healthyStatus string,
+func logStatusChangeIfNeeded(lastStatuses map[string]string, key, newStatus string, colorTag func(string) string,
 	subject func() string, log func(string)) {
-	if newStatus == "" || newStatus == "Checking..." {
+	if lastStatuses == nil || newStatus == "" || newStatus == "Checking..." {
 		return
 	}
 	if prev, seen := lastStatuses[key]; seen && prev != newStatus && log != nil {
-		log(statusChangeMessage(subject(), prev, newStatus, healthyStatus))
+		log(fmt.Sprintf("[darkgray]%s[-] %s %s → %s%s[-]",
+			time.Now().Format(logTimeLayout), subject(), prev, colorTag(newStatus), newStatus))
 	}
 	lastStatuses[key] = newStatus
 }
@@ -56,59 +44,64 @@ func logStatusChangeIfNeeded(lastStatuses map[string]string, key, newStatus, hea
 // columns.
 func renderTracerouteTable(targets []*stats.TargetStats, availW int) string {
 	hostColW := maxHostWidth("Host", targets)
-	hopsColW := runewidth.StringWidth("Hops") + 2
-	initTTLColW := runewidth.StringWidth("Init TTL") + 2
-	fullRouteContentW := availW - hostColW - hopsColW - initTTLColW - 5
-	compact := fullRouteContentW < minRouteContentWidth
+	hopsColW := len("Hops") + 2
+	initTTLColW := len("Init TTL") + 2
+	fullRouteW := availW - hostColW - hopsColW - initTTLColW - 5
+	compact := fullRouteW < minRouteContentWidth+2
 
-	cols := []boxColumn{{header: "Host", width: hostColW, rightAlign: true}}
+	cols := []boxColumn{{header: "Host", width: hostColW}}
+	routeW := fullRouteW
 	if compact {
-		cols = append(cols, boxColumn{header: "Route", width: max(availW-hostColW-3, minRouteContentWidth)})
+		const minRouteW = len("Route") + 2
+		hostColW = min(hostColW, availW-3-minRouteW)
+		if hostColW < 2 {
+			return truncateToDisplayWidth(monitorTooNarrow, availW)
+		}
+		cols[0].width = hostColW
+		routeW = availW - hostColW - 3
 	} else {
 		cols = append(cols,
 			boxColumn{header: "Hops", width: hopsColW, rightAlign: true},
-			boxColumn{header: "Init TTL", width: initTTLColW, rightAlign: true},
-			boxColumn{header: "Route", width: fullRouteContentW})
+			boxColumn{header: "Init TTL", width: initTTLColW, rightAlign: true})
 	}
-	routeContentW := cols[len(cols)-1].width - 1
+	routeContentW := routeW - 2
+	widestRoute := len("Route")
 
 	var groups [][][]boxCell
 	for _, t := range targets {
 		view := t.GetViewWindow(0)
 		route, hopCount := hopLabels(view.MTRHops), fmt.Sprint(len(view.MTRHops))
-		switch {
-		case len(route) > 0:
-		case view.MTRError != "":
-			route, hopCount = []string{"Route discovery failed: " + view.MTRError}, "-"
-		default:
-			route, hopCount = []string{"Discovering..."}, "-"
+		if len(route) == 0 {
+			hopCount = "-"
+			if view.MTRError != "" {
+				route = []string{"Route discovery failed: " + view.MTRError}
+			} else {
+				route = []string{"Discovering..."}
+			}
 		}
 		routeLines := wrapHops(route, routeContentW)
-		if len(routeLines) == 0 {
-			routeLines = []string{""}
-		}
-		for j := range routeLines {
-			routeLines[j] = tview.Escape(routeLines[j])
-		}
 		if view.MTRFlapCount > 0 {
 			routeLines = append(routeLines, fmt.Sprintf("[FLAP %d times %s]", view.MTRFlapCount, view.MTRLastFlapAt.Format(logTimeLayout)))
 		}
 		// Host, hop count and initial TTL go on the first line only.
-		first := []string{tview.Escape(view.Host)}
+		first := []string{view.Host}
 		if !compact {
 			first = append(first, hopCount, inferInitialTTL(view.LastTTL))
 		}
 		rows := make([][]boxCell, len(routeLines))
-		for j, line := range routeLines {
-			texts := make([]string, len(cols)-1, len(cols))
-			if j == 0 {
-				copy(texts, first)
+		for i, line := range routeLines {
+			widestRoute = max(widestRoute, runewidth.StringWidth(line))
+			row := make([]boxCell, len(cols)+1)
+			if i == 0 {
+				copy(row, plainCells(first...))
 			}
-			rows[j] = plainCells(append(texts, line)...)
+			row[len(cols)] = boxCell{text: line}
+			rows[i] = row
 		}
 		groups = append(groups, rows)
 	}
 
+	cols = append(cols, boxColumn{header: "Route", width: min(widestRoute, routeContentW) + 2})
 	var sb strings.Builder
 	writeBoxTable(&sb, cols, groups, "")
 	return sb.String()
@@ -154,7 +147,7 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 			subject := func() string {
 				return fmt.Sprintf("[white]%s[-] [white]%d/%s:[white]", tview.Escape(view.Host), pr.Port, pr.Protocol)
 			}
-			logStatusChangeIfNeeded(lastPortStatuses, key, pr.Status, "Open", subject, log)
+			logStatusChangeIfNeeded(lastPortStatuses, key, pr.Status, statusColorTag, subject, log)
 		}
 	}
 
@@ -170,23 +163,29 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 	// Latency and count columns have fixed widths so the table does not
 	// shift as values change, like the other monitors.
 	latency := func(header string, text func(stats.PortCheckView) string, full bool) monitorColumn[portRow] {
-		return col(header, fixedMsColW, text, full)
+		c := col(header, fixedMsColW, text, full)
+		c.rightAlign = true
+		return c
 	}
 	rtt := func(get func(stats.PortCheckView) time.Duration) func(stats.PortCheckView) string {
 		return func(pr stats.PortCheckView) string {
 			if pr.Status != "Open" {
-				return "–"
+				return "-"
 			}
 			return formatFixedMs(get(pr))
 		}
 	}
+	targetWidth := len("Target") + 2
+	for _, v := range views {
+		targetWidth = max(targetWidth, runewidth.StringWidth(v.Host)+2)
+	}
 	// The target name is shown on the target's first port only.
 	// Its minimum fits host names up to maxPortTargetW, so the full layout is
 	// not picked at the cost of cutting short names that compact would show.
-	target := monitorColumn[portRow]{boxColumn: boxColumn{header: "Target", width: min(maxHostWidth("Target", targets), maxPortTargetW)},
+	target := monitorColumn[portRow]{boxColumn: boxColumn{header: "Target", width: min(targetWidth, maxPortTargetW)},
 		cell: func(r portRow) boxCell {
 			if r.first {
-				return boxCell{text: tview.Escape(r.host)}
+				return boxCell{text: r.host}
 			}
 			return boxCell{}
 		}}
@@ -203,13 +202,13 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 				return "timeout"
 			}
 		}
-		return "–"
+		return "-"
 	}
 	last := latency("Last", lastText, false)
 	last.cell = func(r portRow) boxCell {
 		text := lastText(r.pr)
 		if text == "timeout" {
-			return boxCell{text: text, tag: "[gray]"}
+			return boxCell{text: text, tag: levelTag(stats.LevelNone)}
 		}
 		return boxCell{text: text}
 	}
@@ -219,15 +218,16 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 	count := col("Open/Closed", runewidth.StringWidth("Open/Closed")+2, func(pr stats.PortCheckView) string {
 		return fmt.Sprintf("%d/%d", pr.OpenCount, pr.ClosedCount)
 	}, true)
-	change := col("Last Change", runewidth.StringWidth("Last Change")+2, func(pr stats.PortCheckView) string {
-		if pr.LastChange.IsZero() {
-			return "-"
-		}
+	count.rightAlign = true
+	change := col("Last Change", timeAgoColW, func(pr stats.PortCheckView) string {
 		return formatLossAgo(pr.LastChange)
 	}, true)
 
 	all := []monitorColumn[portRow]{target, port, service, status, last, minC, avg, maxC, count, change}
-	cols, boxCols := fitMonitorColumns(all, "Target", availW)
+	cols, boxCols := fitMonitorColumns(all, "Target", targetWidth, availW)
+	if len(cols) == 0 {
+		return truncateToDisplayWidth(monitorTooNarrow, availW)
+	}
 
 	groups := make([][][]boxCell, len(views))
 	for ti, view := range views {
@@ -237,7 +237,7 @@ func renderPortMonitorTable(targets []*stats.TargetStats, availW int, lastPortSt
 	}
 
 	var sb strings.Builder
-	writeBoxTable(&sb, boxCols, groups, " Waiting for results...")
+	writeBoxTable(&sb, boxCols, groups, "Waiting for results...")
 	return sb.String()
 }
 

@@ -159,7 +159,7 @@ func TestDetailsOptionalSectionsFollowOptionsEvenWithCachedData(t *testing.T) {
 	if perHop := renderHostDetails(target, RunOptions{Route: RouteMonitor}); !strings.Contains(perHop, "[yellow]MTR") || strings.Contains(perHop, "[yellow]Route") {
 		t.Fatalf("per-hop mode should show the MTR section instead of the route line:\n%s", perHop)
 	}
-	if detailTimestamp(time.Time{}) != "–" {
+	if detailTimestamp(time.Time{}) != "-" {
 		t.Fatal("zero timestamp shown as a year-one date")
 	}
 }

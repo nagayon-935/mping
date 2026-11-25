@@ -110,7 +110,7 @@ func groupStatusSummary(group TargetGroup, rows []columnRowContext) (int, []boxC
 		total++
 	}
 	if total > 0 && counts[stats.LevelOK] == total {
-		tag := targetStatusTags.of(stats.LevelOK)
+		tag := levelTag(stats.LevelOK)
 		return total, []boxCell{
 			{text: " · " + statusSymbol(stats.LevelOK), tag: tag},
 			{text: " all OK", tag: tag},
@@ -119,7 +119,7 @@ func groupStatusSummary(group TargetGroup, rows []columnRowContext) (int, []boxC
 	var summary []boxCell
 	for _, level := range []stats.Level{stats.LevelCrit, stats.LevelWarn, stats.LevelPending, levelStopped} {
 		if count := counts[level]; count > 0 {
-			summary = append(summary, boxCell{text: fmt.Sprintf(" · %s %d", statusSymbol(level), count), tag: targetStatusTags.of(level)})
+			summary = append(summary, boxCell{text: fmt.Sprintf(" · %s %d", statusSymbol(level), count), tag: levelTag(level)})
 		}
 	}
 	return total, summary
@@ -171,9 +171,6 @@ func setGroupHeaderRow(table *tview.Table, tableRow int, widths []int,
 			SetAttributes(tcell.AttrBold).
 			SetSelectable(false).
 			SetMaxWidth(w)
-		if c == len(widths)-1 {
-			cell.SetExpansion(1)
-		}
 		table.SetCell(tableRow, c, cell)
 	}
 }
@@ -186,9 +183,6 @@ func setGroupSpacerRow(table *tview.Table, tableRow int, colCount int) {
 		cell := tview.NewTableCell("").
 			SetBackgroundColor(tcell.ColorBlack).
 			SetSelectable(false)
-		if c == colCount-1 {
-			cell.SetExpansion(1)
-		}
 		table.SetCell(tableRow, c, cell)
 	}
 }
@@ -206,9 +200,6 @@ func setHeaderRow(table *tview.Table, tableRow int, headers []string, widths []i
 			SetAttributes(tcell.AttrBold | tcell.AttrUnderline).
 			SetSelectable(false).
 			SetAlign(aligns[i])
-		if i == len(headers)-1 {
-			cell.SetExpansion(1)
-		}
 		table.SetCell(tableRow, i, cell)
 	}
 }

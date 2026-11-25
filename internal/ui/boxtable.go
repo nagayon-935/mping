@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mattn/go-runewidth"
 	"github.com/nagayon-935/mping/internal/stats"
 	"github.com/rivo/tview"
 )
@@ -54,8 +53,7 @@ func boxBorder(widths []int, kind borderKind) string {
 }
 
 // boxColumn is one column of a box-drawn monitor table. Cells are left-aligned
-// with a leading space (paddedCell) unless rightAlign is set, which right-aligns
-// them with a trailing space (rightPaddedCell).
+// unless rightAlign is set. Both alignments reserve a space at each edge.
 type boxColumn struct {
 	header     string
 	width      int
@@ -107,7 +105,7 @@ func boxHeaderRow(cols []boxColumn) string {
 	for _, c := range cols {
 		sb.WriteString("[yellow::b]")
 		sb.WriteString(c.pad(c.header))
-		sb.WriteString("[white]│")
+		sb.WriteString("[white::-]│")
 	}
 	sb.WriteString("[-]")
 	return sb.String()
@@ -119,33 +117,27 @@ func boxRow(cols []boxColumn, cells []boxCell) string {
 	sb.WriteString("[white]│")
 	for i, c := range cols {
 		if tag := cells[i].tag; tag != "" {
-			sb.WriteString(tag + c.pad(cells[i].text) + "[-][white]│")
+			sb.WriteString(tag + tview.Escape(c.pad(cells[i].text)) + "[-][white]│")
 		} else {
-			sb.WriteString("[white]" + c.pad(cells[i].text) + "[white]│")
+			sb.WriteString("[white]" + tview.Escape(c.pad(cells[i].text)) + "[white]│")
 		}
 	}
 	sb.WriteString("[-]")
 	return sb.String()
 }
 
-// boxSpanRow builds a single full-width row spanning innerW columns, used for
-// label/placeholder lines such as " Discovering..." or " Waiting for results...".
-// colorTag is the color applied to the text (e.g. "[darkgray]" or "[yellow::b]").
-// No trailing newline is added.
+// boxSpanRow draws a padded row spanning all columns.
 func boxSpanRow(text string, innerW int, colorTag string) string {
-	return "[white]│" + colorTag + formatCellText(text, innerW, tview.AlignLeft) + "[white]│[-]"
+	return "[white]│" + colorTag + tview.Escape(paddedCell(text, innerW)) + "[white::-]│[-]"
 }
 
-// writeLabelledBoxTable writes a table under a full-width top edge: an
-// optional bold label row, the header, rows (a rule between groups of rows)
-// and the bottom border. A table with no groups shows empty instead.
+// writeLabelledBoxTable writes a table with a spanning target label above
+// the column headings.
 func writeLabelledBoxTable(sb *strings.Builder, cols []boxColumn, label string, groups [][][]boxCell, empty string) {
 	widths := boxWidths(cols)
 	innerW := boxInnerWidth(cols)
 	fmt.Fprintln(sb, boxBorder([]int{innerW}, borderTop))
-	if label != "" {
-		fmt.Fprintln(sb, boxSpanRow(" "+label, innerW, "[yellow::b]"))
-	}
+	fmt.Fprintln(sb, boxSpanRow(label, innerW, "[yellow::b]"))
 	fmt.Fprintln(sb, boxBorder(widths, borderIntro))
 	writeBoxBody(sb, cols, groups, empty)
 }
@@ -174,7 +166,7 @@ func writeBoxBody(sb *strings.Builder, cols []boxColumn, groups [][][]boxCell, e
 		}
 	}
 	if len(groups) == 0 && empty != "" {
-		fmt.Fprintln(sb, boxSpanRow(empty, boxInnerWidth(cols), "[darkgray]"))
+		fmt.Fprintln(sb, boxSpanRow(empty, boxInnerWidth(cols), levelTag(stats.LevelPending)))
 	}
 	fmt.Fprintln(sb, boxBorder(widths, borderBottom))
 }
@@ -202,26 +194,29 @@ func layoutColumns[V any](all []monitorColumn[V], compact bool) ([]monitorColumn
 	return cols, boxCols
 }
 
-// fitMonitorColumns uses the declared widths to choose the layout, including
-// both outer borders. The flexible column is present in both layouts and its
-// declared width is its minimum.
-func fitMonitorColumns[V any](all []monitorColumn[V], flexibleHeader string, availW int) ([]monitorColumn[V], []boxColumn) {
+// fitMonitorColumns chooses the layout using the declared widths (including
+// the flexible column's minimum), then fits that column to its content.
+func fitMonitorColumns[V any](all []monitorColumn[V], flexibleHeader string, flexibleWidth, availW int) ([]monitorColumn[V], []boxColumn) {
 	cols, boxCols := layoutColumns(all, false)
 	if boxInnerWidth(boxCols)+2 > availW {
 		cols, boxCols = layoutColumns(all, true)
 	}
-	// Spare width goes to the flexible column; when even the compact layout
-	// is too wide, it gives up width down to its header rather than overflow.
 	spare := availW - boxInnerWidth(boxCols) - 2
-	for i := range boxCols {
-		if boxCols[i].header == flexibleHeader {
-			boxCols[i].width = max(boxCols[i].width+spare, min(boxCols[i].width, runewidth.StringWidth(flexibleHeader)+2))
+	for i, c := range boxCols {
+		if c.header == flexibleHeader {
+			limit := c.width + spare
+			if limit < 2 {
+				return nil, nil
+			}
+			boxCols[i].width = min(max(c.width, flexibleWidth), limit)
 			cols[i].width = boxCols[i].width
 			break
 		}
 	}
 	return cols, boxCols
 }
+
+const monitorTooNarrow = "Pane too narrow"
 
 // rowCells builds the table cells of cols for v.
 func rowCells[V any](cols []monitorColumn[V], v V) []boxCell {
@@ -237,11 +232,10 @@ func plainCell[V any](text func(V) string) func(V) boxCell {
 	return func(v V) boxCell { return boxCell{text: text(v)} }
 }
 
-// rttCell shows the duration get(v) formatted by format and coloured by the
-// level classify assigns it.
-func rttCell[V any](get func(V) time.Duration, format func(time.Duration) string, classify func(time.Duration) stats.Level) func(V) boxCell {
+// rttCell displays milliseconds in the color chosen by classify.
+func rttCell[V any](get func(V) time.Duration, classify func(time.Duration) stats.Level) func(V) boxCell {
 	return func(v V) boxCell {
 		d := get(v)
-		return boxCell{text: format(d), tag: rttColorTag(classify(d))}
+		return boxCell{text: formatFixedMs(d), tag: rttColorTag(classify(d))}
 	}
 }

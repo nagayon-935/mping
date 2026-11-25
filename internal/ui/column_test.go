@@ -147,10 +147,10 @@ func TestRenderRowCells(t *testing.T) {
 			// Columns that own a color override the row color; the others
 			// keep it.
 			wantColor := map[string]tcell.Color{
-				"ERR":   vividRed,
-				"LOSS%": vividRed,
-				"RTT":   vividRed,
-				"JIT":   vividRed,
+				"ERR":   tcell.ColorRed,
+				"LOSS%": tcell.ColorRed,
+				"RTT":   tcell.ColorRed,
+				"JIT":   tcell.ColorRed,
 				"SIZE":  tcell.ColorWhite,
 			}
 			for name, want := range wantColor {
@@ -274,7 +274,7 @@ func TestTableColorsFollowTheTargetsThresholds(t *testing.T) {
 	tr := newTestTableRenderer([]*stats.TargetStats{target}, 200)
 	tr.update()
 
-	want := map[string]tcell.Color{"LOSS%": vividRed, "RTT": vividRed, "JIT": tcell.ColorGreen}
+	want := map[string]tcell.Color{"LOSS%": tcell.ColorRed, "RTT": tcell.ColorRed, "JIT": tcell.ColorGreen}
 	for name, color := range want {
 		idx := columnIndex(tr.cols, name)
 		if idx < 0 {

@@ -80,7 +80,7 @@ func TestStripCell(t *testing.T) {
 		wantColor tcell.Color
 	}{
 		{"no samples", stripBucket{}, ' ', tcell.ColorDefault},
-		{"all lost", stripBucket{lost: true, has: true}, '×', vividRed},
+		{"all lost", stripBucket{lost: true, has: true}, '×', tcell.ColorRed},
 		{"above scale", stripBucket{max: 680 * ms, has: true}, '▲', vividCyan},
 		{"above scale with some loss", stripBucket{max: 680 * ms, lost: true, has: true}, '▲', lossPartialColor},
 		{"low reply", stripBucket{max: 1 * ms, has: true}, '▁', vividCyan},

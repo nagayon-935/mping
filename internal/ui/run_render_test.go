@@ -150,7 +150,7 @@ func TestRunLogsPingProblems(t *testing.T) {
 					target.OnSuccess(rtt, 64)
 				}
 			},
-			wants: []string{"RTT 300ms", "Jitter "},
+			wants: []string{"RTT 300.00ms", "Jitter "},
 		},
 		{
 			name: "loss ratio above the critical threshold",

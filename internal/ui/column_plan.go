@@ -10,7 +10,7 @@ import (
 	"github.com/rivo/tview"
 )
 
-// textColumnSlack is how far a text column other than the fill column may
+// textColumnSlack is how far a text column may
 // grow past its widest value when the terminal has width to spare.
 const textColumnSlack = 2
 
@@ -32,7 +32,7 @@ type columnPlan struct {
 // column first gets at least its full content width, and columns are hidden
 // in hideRank order until the rest fit. Only when every hideable column is
 // hidden may text columns shrink below their content (an ellipsis); numeric
-// columns never shrink below their widest value. Columns marked
+// columns reserve a fixed width. Columns marked
 // hideWhenEmpty are left out whenever no row has a value for them.
 func (tr *tableRenderer) planColumns(texts [][]string, availableTableWidth int) columnPlan {
 	n := len(tr.cols)
@@ -43,6 +43,11 @@ func (tr *tableRenderer) planColumns(texts [][]string, availableTableWidth int) 
 	hardMin := make([]int, n)
 	var active []int
 	for i, c := range tr.cols {
+		if c.fixed {
+			active = append(active, i)
+			desired[i], fullMin[i], hardMin[i], maxW[i] = c.base, c.base, c.base, c.base
+			continue
+		}
 		content[i] = runewidth.StringWidth(c.name)
 		empty := true
 		for _, row := range texts {
@@ -73,12 +78,10 @@ func (tr *tableRenderer) planColumns(texts [][]string, availableTableWidth int) 
 		fullMin[i] = content[i]
 		hardMin[i] = max(tr.minWidths[i], content[i])
 		if text {
-			// Text may be cut with an ellipsis as a last resort; its heading
-			// may not. Only the fill column takes spare width.
-			hardMin[i] = max(tr.minWidths[i], runewidth.StringWidth(c.name))
-			if !c.fill {
-				maxW[i] = content[i] + textColumnSlack
-			}
+			// Text may be cut with an ellipsis as a last resort, down to
+			// the width of its heading or the declared minimum.
+			maxW[i] = content[i] + textColumnSlack
+			hardMin[i] = min(maxW[i], max(tr.minWidths[i], runewidth.StringWidth(c.name)))
 		}
 		if !c.dynamic && c.align == tview.AlignLeft {
 			// A free-text column (ERR) claims at most its usual maximum
@@ -138,31 +141,7 @@ func (tr *tableRenderer) fitColumns(active, desired, minW, maxW []int, available
 		return out
 	}
 	available := max(availableTableWidth-max(len(active)-1, 0), 0)
-	widths, ok := fitWidthsToAvailable(pick(desired), pick(minW), pick(maxW), pick(tr.shrinkPriorities), pick(tr.growPriorities), available)
-	if ok {
-		stretchToWidth(widths, available)
-	}
-	return widths, ok
-}
-
-// stretchToWidth spreads the width left once every column reached its
-// maximum evenly over all columns, so the table always spans the pane as
-// the terminal widens instead of leaving a gap before the right border.
-func stretchToWidth(widths []int, available int) {
-	sum := 0
-	for _, w := range widths {
-		sum += w
-	}
-	if len(widths) == 0 || sum >= available {
-		return
-	}
-	extra := available - sum
-	for j := range widths {
-		widths[j] += extra / len(widths)
-	}
-	for j := range extra % len(widths) {
-		widths[j]++
-	}
+	return fitWidthsToAvailable(pick(desired), pick(minW), pick(maxW), pick(tr.shrinkPriorities), pick(tr.growPriorities), available)
 }
 
 // paneTitle names the Ping Monitor pane and, when columns are hidden for

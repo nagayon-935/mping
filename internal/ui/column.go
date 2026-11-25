@@ -59,6 +59,8 @@ type column struct {
 	// value across all targets (SRC/DST, DNS, ASN, PTR), rather than staying
 	// fixed at base.
 	dynamic bool
+	// fixed uses base as the content width even when the value changes.
+	fixed bool
 	// shrinkPriority/growPriority order columns when fitting to available
 	// width: lower shrinks/grows first. Values need not be contiguous.
 	shrinkPriority int
@@ -82,9 +84,6 @@ type column struct {
 	// have the same width on screen as render's text, which is what widths
 	// are measured from.
 	styled func(ctx columnRowContext) string
-	// fill marks the column that takes the table's spare width; other text
-	// columns grow only a little past their content.
-	fill bool
 	// setting marks a column that shows configuration rather than a
 	// measurement (payload size, source address, interface MTU): hidden, its
 	// value moves to the pane title when every row shares it.
@@ -163,7 +162,7 @@ func mainTableColumns(o columnOptions) []column {
 		},
 		{
 			name: "DST", align: tview.AlignLeft, base: 6, min: 8, max: 60,
-			dynamic: true, shrinkPriority: 10, growPriority: 0, fill: true,
+			dynamic: true, shrinkPriority: 10, growPriority: 0,
 			render: func(ctx columnRowContext) string {
 				v := ctx.view
 				// Until the name resolves there is no address to append.
@@ -200,40 +199,34 @@ func mainTableColumns(o columnOptions) []column {
 	}
 	cols = append(cols,
 		column{
-			name: "RCV", align: tview.AlignRight, base: 8, min: 3, max: 10,
-			shrinkPriority: 80, growPriority: 40, hideRank: rankRecv,
+			name: "RCV", align: tview.AlignRight, base: 6, fixed: true, hideRank: rankRecv,
 			render: func(ctx columnRowContext) string { return fmt.Sprintf("%d", ctx.view.Recv) },
 		},
 		column{
-			name: "LOST", align: tview.AlignRight, base: 7, min: 4, max: 10,
-			shrinkPriority: 90, growPriority: 90, hideRank: rankLost,
+			name: "LOST", align: tview.AlignRight, base: 6, fixed: true, hideRank: rankLost,
 			render: func(ctx columnRowContext) string { return fmt.Sprintf("%d", ctx.view.Loss) },
 		},
 		column{
-			name: "LOSS%", align: tview.AlignRight, base: 10, min: 6, max: 12,
-			shrinkPriority: 70, growPriority: 80, bold: true,
+			name: "LOSS%", align: tview.AlignRight, base: 6, fixed: true, bold: true,
 			render: func(ctx columnRowContext) string { return fmt.Sprintf("%.1f%%", ctx.lossRate) },
 			color: func(ctx columnRowContext, text string) (tcell.Color, bool) {
 				return levelColor(ctx.view.Levels.Loss), true
 			},
 		},
 		column{
-			name: "RTT", align: tview.AlignRight, base: 10, min: 7, max: 12,
-			shrinkPriority: 60, growPriority: 50,
-			render: func(ctx columnRowContext) string { return formatRTT(ctx.view.LastRTT) },
+			name: "RTT", align: tview.AlignRight, base: fixedMsWidth, fixed: true,
+			render: func(ctx columnRowContext) string { return formatFixedMs(ctx.view.LastRTT) },
 			color: func(ctx columnRowContext, text string) (tcell.Color, bool) {
 				return levelColor(ctx.view.Levels.LastRTT), true
 			},
 		},
 		column{
-			name: "AVG", align: tview.AlignRight, base: 10, min: 7, max: 12,
-			shrinkPriority: 50, growPriority: 60, hideRank: rankAvg,
-			render: func(ctx columnRowContext) string { return formatRTT(ctx.view.AvgRTT) },
+			name: "AVG", align: tview.AlignRight, base: fixedMsWidth, fixed: true, hideRank: rankAvg,
+			render: func(ctx columnRowContext) string { return formatFixedMs(ctx.view.AvgRTT) },
 		},
 		column{
-			name: "JIT", align: tview.AlignRight, base: 10, min: 7, max: 12,
-			shrinkPriority: 40, growPriority: 70,
-			render: func(ctx columnRowContext) string { return formatRTT(ctx.view.Jitter) },
+			name: "JIT", align: tview.AlignRight, base: fixedMsWidth, fixed: true,
+			render: func(ctx columnRowContext) string { return formatFixedMs(ctx.view.Jitter) },
 			color: func(ctx columnRowContext, text string) (tcell.Color, bool) {
 				return levelColor(ctx.view.Levels.Jitter), true
 			},
@@ -256,14 +249,12 @@ func mainTableColumns(o columnOptions) []column {
 	}
 	cols = append(cols,
 		column{
-			name: "SIZE", align: tview.AlignRight, base: 6, min: 4, max: 8,
-			shrinkPriority: 120, growPriority: 100,
+			name: "SIZE", align: tview.AlignRight, base: 6, fixed: true,
 			hideRank: explicitRank(o.SizeExplicit, rankSizeExplicit, rankSize), setting: true,
 			render: func(ctx columnRowContext) string { return fmt.Sprintf("%d", ctx.packetSize) },
 		},
 		column{
-			name: mtuColumnName(o.MTU), align: tview.AlignRight, base: 6, min: 4, max: 8,
-			shrinkPriority: 100, growPriority: 110,
+			name: mtuColumnName(o.MTU), align: tview.AlignRight, base: 6, fixed: true,
 			hideRank: explicitRank(o.MTU, rankMTUExplicit, rankMTU), setting: !o.MTU,
 			render: func(ctx columnRowContext) string {
 				if o.MTU {
@@ -273,8 +264,7 @@ func mainTableColumns(o columnOptions) []column {
 			},
 		},
 		column{
-			name: "TTL", align: tview.AlignRight, base: 5, min: 3, max: 6,
-			shrinkPriority: 110, growPriority: 120, hideRank: rankTTL,
+			name: "TTL", align: tview.AlignRight, base: 3, fixed: true, hideRank: rankTTL,
 			render: func(ctx columnRowContext) string { return intOrDash(ctx.view.LastTTL) },
 		},
 		column{
@@ -285,7 +275,7 @@ func mainTableColumns(o columnOptions) []column {
 				if text == "" {
 					return 0, false
 				}
-				return vividRed, true
+				return levelColor(stats.LevelCrit), true
 			},
 		},
 		column{
