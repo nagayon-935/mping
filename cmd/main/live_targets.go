@@ -133,18 +133,15 @@ func (s *supervisor) detachTargetMonitors(p dynamicPinger, t *stats.TargetStats,
 	s.archiveTarget(t)
 }
 
-// newLiveTargets builds and wires the targets for specs joining a running
-// session. New targets use the running session's actual interface MTU,
-// inherited from the first existing target.
-func (s *supervisor) newLiveTargets(cfg config, specs []targetSpec) []*stats.TargetStats {
-	added := buildTargetsForIteration(specs, cfg)
-	for _, t := range added {
-		s.configureTarget(t)
-		if len(s.cfg.targets) > 0 {
-			t.SetIfaceMTU(s.cfg.targets[0].GetViewWindow(0).IfaceMTU)
-		}
+// newLiveTarget inherits the current session's policy and actual interface MTU.
+// Registration may start probing before the reload applies its new policy.
+func (s *supervisor) newLiveTarget(spec targetSpec) *stats.TargetStats {
+	t := newTarget(spec, s.cfg.config)
+	s.setTargetEventSink(t)
+	if len(s.cfg.targets) > 0 {
+		t.SetIfaceMTU(s.cfg.targets[0].GetViewWindow(0).IfaceMTU)
 	}
-	return added
+	return t
 }
 
 func (s *supervisor) addHost(host string) error {
@@ -159,7 +156,10 @@ func (s *supervisor) addHost(host string) error {
 			}
 		}
 		specs, _ := expandTargets([]targetSpec{{Host: host}}, nil, s.cfg.config)
-		added := s.newLiveTargets(s.cfg.config, specs)
+		added := make([]*stats.TargetStats, len(specs))
+		for i, spec := range specs {
+			added[i] = s.newLiveTarget(spec)
+		}
 		if s.state == stateRunning {
 			p, ok := s.livePinger()
 			if !ok {

@@ -49,6 +49,10 @@ func (s *supervisor) startAll() error {
 
 func (s *supervisor) configureTarget(t *stats.TargetStats) {
 	t.ConfigureHealth(healthPolicy(s.cfg.config))
+	s.setTargetEventSink(t)
+}
+
+func (s *supervisor) setTargetEventSink(t *stats.TargetStats) {
 	host := t.DisplayName()
 	logCh := s.cfg.logCh
 	t.SetEventSink(func(e stats.Event) {
