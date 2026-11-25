@@ -71,7 +71,7 @@ try {
   // Extra-wide windows also exercise the workspace maximum width.
   // Narrower layouts are checked separately below.
   const WIDE = { width: 4200, height: 1000 };
-  // The narrowest supported window (style.css: body min-width).
+  // Compact layout with room for the required monitor columns.
   const NARROWEST = { width: 720, height: 900 };
   const page = await open({ viewport: WIDE });
 
@@ -88,10 +88,16 @@ try {
     assert.ok(await page.isVisible("#nav-http"));
     assert.equal(await page.locator('#inspect-tabs [data-tab="summary"]').count(), 0);
     assert.equal(await page.$$eval("svg.spark", (n) => n.length), 6);
+    const spark = page.locator('svg.spark[aria-label^="RTT last"]').first();
+    const label = await spark.getAttribute("aria-label");
+    assert.match(label, /^RTT last 60 s: min .+, avg .+, max .+; \d+ lost$/);
+    assert.equal(await spark.locator("title").textContent(), label);
   });
 
   await check("a wide screen shows every column; a narrow one keeps the highest-priority ones", async () => {
-    const headers = () => page.$$eval("#targets th", (h) => h.map((x) => x.textContent));
+    const headers = () => page.$$eval("#targets th", (h) => h.map((x) =>
+      x.matches(".col-spark") ? x.textContent.split(" (")[0] : x.textContent));
+    assert.match(await page.textContent("#targets th.col-spark"), /^RTT · 60s \(0–.+ ms\)$/);
     assert.deepEqual(await headers(),
       ["Status", "Host", "IP", "AS", "RTT · 60s", "Loss %", "Sent", "Recv", "RTT", "Jitter", "TTL"]);
     assert.equal(await page.$$eval("#pane-monitor input[type=checkbox]", (n) => n.length), 0, "no column toggle any more");
@@ -181,6 +187,7 @@ try {
   });
 
   await check("hovering the Summary RTT chart shows sample readouts", async () => {
+    assert.equal(await page.textContent(".chart-scale"), "Scale fits most samples; taller spikes are cut off and marked ▲");
     await page.locator("canvas.summary-canvas").scrollIntoViewIfNeeded();
     const box = await page.locator("canvas.summary-canvas").boundingBox();
     await page.mouse.move(box.x + box.width - 20, box.y + box.height / 2);

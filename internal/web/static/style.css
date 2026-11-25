@@ -58,10 +58,7 @@ html { scrollbar-gutter: stable; }
 /* Component display rules must not resurrect elements marked hidden. */
 [hidden] { display: none !important; }
 
-/* Phone widths are not supported: a narrower window scrolls the page
-   horizontally instead of compressing the layout. */
 body {
-  min-width: 720px;
   margin: 0;
   background: var(--page);
   color: var(--ink);
@@ -478,6 +475,19 @@ canvas.summary-canvas { display: block; width: 100%; height: clamp(180px, 26dvh,
 .notice.is-error { border-left: 4px solid var(--critical); color: var(--ink); }
 @media (max-width: 1360px) { .topbar { column-gap: 8px; } }
 @media (max-width: 1200px) { #updated { display: none; } }
+@media (width < 720px) {
+  .topbar { padding-inline: 8px; }
+  .page-nav, .fleet, #measurement-controls { flex-wrap: wrap; }
+  .page-nav a { padding-inline: 8px; }
+  .fleet { border-radius: 8px; }
+  .fleet-pill { padding-inline: 6px; }
+  .workspace, .page-view { padding: 8px; }
+  .monitor-filters, .chart-head { flex-wrap: wrap; }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Keep the sticky heading and both table scrollbars in the same container. */
+  #pane-monitor .pane-scroll { display: flex; flex-direction: column; scrollbar-gutter: auto; }
+  #pane-monitor .pane-scroll > .table-wrap { min-height: 0; overflow: auto; }
+}
 .target-row:focus-within { outline: 2px dashed var(--focus); outline-offset: -2px; }
 .target-row:focus-within td { outline: none; }
 #targets .host-open:focus-visible { outline: none; }
@@ -491,6 +501,7 @@ canvas.summary-canvas { display: block; width: 100%; height: clamp(180px, 26dvh,
 .common-cause a { color: var(--series-ink); }
 
 /* Sparkline cell: the SVG keeps a fixed size so rows never change height. */
+.grid th.col-spark { white-space: normal; text-transform: none; letter-spacing: normal; }
 .grid td.spark-cell { padding-top: 4px; padding-bottom: 4px; }
 .spark { display: block; overflow: visible; }
 .spark-base { stroke: var(--grid); stroke-width: 1; }

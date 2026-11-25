@@ -6,13 +6,13 @@ import { SORTS } from "./workspace.js";
 import { shortReason } from "./health_text.js";
 import { sparkline } from "./spark_view.js";
 import {
-  buildSections, cellLevels, formatPct, groupSummary, isIPLiteral, lossRate, matchesFilter, rowLevel,
+  buildSections, cellLevels, formatPct, formatRTT, groupSummary, isIPLiteral, lossRate, matchesFilter, rowLevel,
   selectColumns, statusReason, targetStatus,
 } from "./model.js";
 
 /** The overview keeps current measurements plus a one-minute RTT sparkline;
  * historical statistics and the large chart live in Summary. */
-export function targetColumns(features, targets = []) {
+export function targetColumns(features, targets = [], sparkMax) {
   // Use configured identities, not changing DNS results or filtered rows,
   // so receiving measurements and searching cannot add/remove this column.
   const showIP = !targets.length || targets.some((t) => !isIPLiteral(t.host));
@@ -21,7 +21,7 @@ export function targetColumns(features, targets = []) {
     { key: "host", label: "Host", required: true },
     showIP && { key: "ip", label: "IP", priority: 6 },
     features.asn && { key: "asn", label: "AS", priority: 8 },
-    { key: "spark", label: "RTT · 60s", priority: 2, title: "RTT over the last 60 seconds on a scale shared by all rows; red ticks are lost probes, a dashed red line means no replies" },
+    { key: "spark", label: sparkMax == null ? "RTT · 60s" : `RTT · 60s (0–${formatRTT(sparkMax)})`, priority: 2, title: "RTT over the last 60 seconds on a scale shared by all rows; red ticks are lost probes, a dashed red line means no replies" },
     { key: "loss", label: "Loss %", required: true, title: "Lifetime loss over completed probes; status uses recent loss and consecutive failures", num: true },
     { key: "sent", label: "Sent", num: true, priority: 4 },
     { key: "recv", label: "Recv", num: true, priority: 5 },
@@ -91,7 +91,7 @@ export function renderTargets(table, view, onOpen, onSort) {
   // The table is as wide as its wrapper; widths come from the CSS contract,
   // which already reflects the current breakpoint and pane layout.
   const available = table.parentElement.clientWidth;
-  const columns = selectColumns(targetColumns(meta.features, snapshot.targets), (c) => columnWidthPx(table, c.key), available);
+  const columns = selectColumns(targetColumns(meta.features, snapshot.targets, view.sparks?.max), (c) => columnWidthPx(table, c.key), available);
   const active = document.activeElement;
   const focusedSort = table.contains(active) ? active?.dataset?.sort : null;
   setColumns(table, columns, "host");

@@ -134,9 +134,11 @@ try{
  await check('controls and filters fit the narrowest supported width in both themes',async()=>{
   await p.click('#clear-filter');await settle(p);
   for(const theme of ['light','dark']){
-   await p.emulateMedia({colorScheme:theme});await p.setViewportSize({width:720,height:844});await settle(p);
+   await p.emulateMedia({colorScheme:theme});await p.setViewportSize({width:375,height:844});await settle(p);
    assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,theme);
+   assert.ok(await p.locator('.topbar').evaluate(n=>n.scrollWidth<=n.clientWidth),`${theme} top bar overflows`);
    assert.ok(await p.locator('.monitor-filters').evaluate(n=>n.scrollWidth<=n.clientWidth),`${theme} filters overflow`);
+   assert.ok(await p.locator('#targets').evaluate(n=>n.parentElement.scrollWidth>n.parentElement.clientWidth));
    assert.ok(await p.isVisible('#open-report'));
   }
  });

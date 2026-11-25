@@ -17,10 +17,10 @@ export function eventKinds(events, selected) {
   return ["", "health", ...[...kinds].sort()];
 }
 
-function kindLabel(kind) {
+export function kindLabel(kind) {
   if (!kind) return "All events";
   if (kind === "health") return "Health changes only";
-  if (["dns", "mtu", "mtr", "http", "asn", "ptr"].includes(kind)) return kind.toUpperCase();
+  if (kind === "dns") return "DNS";
   return kind[0].toUpperCase() + kind.slice(1);
 }
 
@@ -35,30 +35,25 @@ export function createLog(dom) {
   let active = false, pending = false, events = null, error = null;
   let version = 0, rendered = -1, optionsKey;
   let kind = "", host = "";
-  try {
-    kind = localStorage.getItem("mping.log.kind") ?? "";
-    host = localStorage.getItem("mping.log.host") ?? "";
-  } catch {
-    // Filters are still usable when browser storage is blocked.
-  }
   dom.host.value = host;
-  function saveFilters() {
-    try {
-      localStorage.setItem("mping.log.kind", kind);
-      localStorage.setItem("mping.log.host", host);
-    } catch {
-      // Keep the choices in memory.
-    }
+  function updateFilters() {
+    dom.clear.hidden = !kind && !host;
     version++;
     dom.requestRender();
   }
   dom.kind.addEventListener("change", () => {
     kind = dom.kind.value;
-    saveFilters();
+    updateFilters();
   });
   dom.host.addEventListener("input", () => {
     host = dom.host.value;
-    saveFilters();
+    updateFilters();
+  });
+  dom.clear.addEventListener("click", () => {
+    kind = dom.kind.value = "";
+    host = dom.host.value = "";
+    dom.host.focus();
+    updateFilters();
   });
   const refresh = async () => {
     if (!active || pending || document.hidden) return;

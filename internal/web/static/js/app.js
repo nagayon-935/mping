@@ -73,6 +73,7 @@ const log = createLog({
   status: $("log-status"),
   kind: $("log-kind"),
   host: $("log-host-filter"),
+  clear: $("clear-log-filters"),
   requestRender: scheduleRender,
   isStopped: () => view.state === "stopped",
 });

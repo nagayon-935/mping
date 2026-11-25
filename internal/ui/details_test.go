@@ -12,6 +12,32 @@ import (
 	"github.com/rivo/tview"
 )
 
+func TestDetailsFooterFitsTerminalWidth(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		message string
+	}{
+		{name: "default"},
+		{name: "long notification", message: strings.Repeat("Save failed. ", 10)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			details := newHostDetails(RunOptions{Interval: time.Second})
+			if tt.message != "" {
+				details.open = true
+				ui := tui{details: details, footer: tview.NewTextView(), vs: newViewState(tview.NewTextView())}
+				ui.notifyResult(tt.message, true)
+			}
+			footer := details.footer.GetText(true)
+			if width := tview.TaggedStringWidth(footer); tt.message == "" && width > 80 {
+				t.Errorf("details footer uses %d columns, want at most 80: %q", width, footer)
+			}
+			if !strings.HasPrefix(footer, "? Help") {
+				t.Errorf("details footer should start with ? Help: %q", footer)
+			}
+		})
+	}
+}
+
 func TestSelectionKeepsIdentityAndSkipsGroupHeadings(t *testing.T) {
 	a, b, c := stats.NewTargetStats("same"), stats.NewTargetStats("same"), stats.NewTargetStats("ungrouped")
 	table := tview.NewTable().SetBorders(true)

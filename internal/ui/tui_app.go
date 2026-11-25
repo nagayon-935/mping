@@ -172,7 +172,7 @@ func (t *tui) notifyResult(message string, failed bool) {
 	t.vs.appendLog(text)
 	t.footer.SetDynamicColors(true).SetText(text)
 	if t.details.open {
-		t.details.footer.SetDynamicColors(true).SetText(text + " | w: Save | Esc: Back | ? Help")
+		t.details.footer.SetDynamicColors(true).SetText("? Help | w: Save | Esc: Back | " + text)
 	}
 }
 

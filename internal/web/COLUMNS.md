@@ -22,7 +22,7 @@ Widths include cell padding. Numeric text uses a 13px monospace font, with
 | RTT / jitter | Positive Go durations up to roughly 9.22e12 ms | At most 10 chars including ` ms`; scientific notation from 1e6 ms | 100px |
 | Counts | Nonnegative Go integer counts, up to int64 maximum | At most 8 chars; grouped below 1M, M/B/T above, scientific from 1e15 | 88px |
 | TTL / hop | 0–255 | 3 digits | 60px |
-| RTT · 60s | Last minute of RTT samples | Fixed-size sparkline (no text); accessible label states the range and losses | 144px |
+| RTT · 60s | Last minute of RTT samples | Fixed-size sparkline with a shared scale in the heading and per-row min, avg, max and loss count in the accessible label | 144px |
 | HTTP URL | No new length restriction | One line, ellipsis; full URL remains in the DOM and title | At least 240px; flexible |
 | HTTP code | 3-digit status codes | 3 digits | 64px |
 | Port | `65535/udp` | 9 chars | 104px |
@@ -62,8 +62,8 @@ The monitor fills the workspace; after selection, Summary takes the right
 column at full height (7:5 widths). With a route option, the route pane takes
 the lower row under the monitor.
 Every desktop pane takes its grid cell's height and scrolls internally. Narrower
-windows stack the panes. Phone widths are not supported: below 720px the page
-scrolls horizontally instead of compressing the layout. AS is omitted unless
+windows stack the panes. On phones the top bar wraps and wide tables scroll
+within their panes. AS is omitted unless
 enabled, including in
 the selected target's details; PTR annotations and PMTU details follow their
 respective options as well.

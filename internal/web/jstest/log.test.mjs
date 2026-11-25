@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { healthTransition } from "../static/js/health_text.js";
-import { createLog, eventKinds, filterEvents } from "../static/js/log.js";
+import { createLog, eventKinds, filterEvents, kindLabel } from "../static/js/log.js";
 import { formatEventMessage, formatTime } from "../static/js/time.js";
 
 test("health transitions identify each level from the message prefix", () => {
@@ -33,7 +33,13 @@ test("repeated events put count and last time in one pair of parentheses", () =>
   assert.equal(formatEventMessage({ ...event, count: 28 }), `Request timeout (28 times, last ${formatTime(event.last_at)})`);
 });
 
-test("Log renders health chips and applies filters with storage blocked", async (t) => {
+test("event kind filters have readable labels", () => {
+  for (const [kind, label] of [
+    ["dns", "DNS"], ["health", "Health changes only"], ["", "All events"], ["route", "Route"],
+  ]) assert.equal(kindLabel(kind), label);
+});
+
+test("Log renders health chips and applies and clears in-memory filters", async (t) => {
   function node() {
     return {
       style: {}, children: [], attrs: {}, listeners: {},
@@ -42,20 +48,14 @@ test("Log renders health chips and applies filters with storage blocked", async 
       replaceChildren(...children) { this.children = children; },
       querySelector() { return null; },
       addEventListener(type, listener) { this.listeners[type] = listener; },
+      focus() { this.focused = true; },
     };
   }
-  const globals = {
-    document: { hidden: false, createElement: node, addEventListener() {} },
-    localStorage: {
-      getItem() { throw new Error("storage blocked"); },
-      setItem() { throw new Error("storage blocked"); },
-    },
-  };
-  for (const [name, value] of Object.entries(globals)) {
-    const original = Object.getOwnPropertyDescriptor(globalThis, name);
-    Object.defineProperty(globalThis, name, { configurable: true, value });
-    t.after(() => original ? Object.defineProperty(globalThis, name, original) : delete globalThis[name]);
-  }
+  const original = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", {
+    configurable: true, value: { hidden: false, createElement: node, addEventListener() {} },
+  });
+  t.after(() => original ? Object.defineProperty(globalThis, "document", original) : delete globalThis.document);
   t.mock.method(globalThis, "setInterval", (_, interval) => assert.equal(interval, 5000));
   t.mock.method(globalThis, "fetch", async (url) => {
     assert.equal(url, "api/v1/events?limit=200");
@@ -68,7 +68,8 @@ test("Log renders health chips and applies filters with storage blocked", async 
     };
   });
 
-  const dom = { body: node(), status: node(), kind: node(), host: node() };
+  const dom = { body: node(), status: node(), kind: node(), host: node(), clear: node() };
+  dom.clear.hidden = true;
   const drawn = new Promise(resolve => { dom.requestRender = resolve; });
   const log = createLog(dom);
   log.activate(true);
@@ -76,6 +77,7 @@ test("Log renders health chips and applies filters with storage blocked", async 
   log.render();
   const rows = () => dom.body.children[0].children[0].children[2].children;
   assert.match(dom.status.textContent, /Showing 2 of 2/);
+  assert.equal(dom.clear.hidden, true);
   const [healthRow] = rows();
   assert.equal(healthRow.className, "lvl-warn");
   const [chip] = healthRow.children[2].children;
@@ -86,10 +88,19 @@ test("Log renders health chips and applies filters with storage blocked", async 
   dom.kind.listeners.change();
   log.render();
   assert.match(dom.status.textContent, /Showing 1 of 2/);
+  assert.equal(dom.clear.hidden, false);
   assert.equal(rows().length, 1);
   dom.host.value = "router-b";
   dom.host.listeners.input();
   log.render();
   assert.match(dom.status.textContent, /Showing 0 of 2/);
   assert.equal(dom.body.children[0].textContent, "No events match these filters.");
+
+  dom.clear.listeners.click();
+  log.render();
+  assert.equal(dom.kind.value, "");
+  assert.equal(dom.host.value, "");
+  assert.equal(dom.host.focused, true);
+  assert.equal(dom.clear.hidden, true);
+  assert.match(dom.status.textContent, /Showing 2 of 2/);
 });
