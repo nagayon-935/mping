@@ -31,14 +31,16 @@ const defaultAnnotationRetry = 30 * time.Second
 // A nil *hopAnnotator is valid and annotates nothing (tests that drive
 // discover/probe directly).
 type hopAnnotator struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	prober HopProber
-	mtr    *stats.MTRStats
-	sem    chan struct{}
-	retry  time.Duration
-	now    func() time.Time
-	wg     sync.WaitGroup
+	ctx     context.Context
+	cancel  context.CancelFunc
+	prober  HopProber
+	mtr     *stats.MTRStats
+	sem     chan struct{}
+	retry   time.Duration
+	wantASN bool
+	wantPTR bool
+	now     func() time.Time
+	wg      sync.WaitGroup
 
 	mu       sync.Mutex
 	closed   bool
@@ -52,7 +54,10 @@ type hopInfo struct {
 	retryAt  time.Time
 }
 
-func newHopAnnotator(parent context.Context, prober HopProber, mtr *stats.MTRStats, retry time.Duration) *hopAnnotator {
+func newHopAnnotator(parent context.Context, prober HopProber, mtr *stats.MTRStats, retry time.Duration, wantASN, wantPTR bool) *hopAnnotator {
+	if !wantASN && !wantPTR {
+		return nil
+	}
 	ctx, cancel := context.WithCancel(parent)
 	if retry <= 0 {
 		retry = defaultAnnotationRetry
@@ -64,6 +69,8 @@ func newHopAnnotator(parent context.Context, prober HopProber, mtr *stats.MTRSta
 		mtr:      mtr,
 		sem:      make(chan struct{}, maxConcurrentHopLookups),
 		retry:    retry,
+		wantASN:  wantASN,
+		wantPTR:  wantPTR,
 		now:      time.Now,
 		known:    make(map[string]hopInfo),
 		inflight: make(map[string]bool),
@@ -115,16 +122,25 @@ func (a *hopAnnotator) lookup(ip string) {
 	if a.ctx.Err() != nil {
 		return
 	}
-	asn := a.prober.ASNInfoFor(a.ctx, ip)
-	ptr := a.prober.PTRFor(a.ctx, ip)
+	var asn pinger.ASNInfo
+	if a.wantASN {
+		asn = a.prober.ASNInfoFor(a.ctx, ip)
+	}
+	var ptr string
+	if a.wantPTR {
+		ptr = a.prober.PTRFor(a.ctx, ip)
+	}
 
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.closed || a.ctx.Err() != nil {
+		a.mu.Unlock()
 		return
 	}
 	merged := a.rememberLocked(ip, asn, ptr)
-	a.mtr.AnnotateIP(ip, merged.ASN, merged.Country, merged.Org, merged.PTR)
+	a.mu.Unlock()
+	if merged != (stats.HopAnnotation{}) {
+		a.mtr.AnnotateIP(ip, merged.ASN, merged.Country, merged.Org, merged.PTR)
+	}
 }
 
 // rememberLocked merges lookup results, retaining earlier values a retry lacks.
@@ -139,7 +155,7 @@ func (a *hopAnnotator) rememberLocked(ip string, asn pinger.ASNInfo, ptr string)
 	}
 	a.known[ip] = hopInfo{
 		ann:      merged,
-		complete: merged.ASN != "" && merged.PTR != "",
+		complete: (!a.wantASN || merged.ASN != "") && (!a.wantPTR || merged.PTR != ""),
 		retryAt:  a.now().Add(a.retry),
 	}
 	return merged

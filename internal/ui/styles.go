@@ -74,30 +74,36 @@ func statusSymbol(level stats.Level) string {
 	}
 }
 
+// drawDoubleBorder draws a double-line (╔═╗║╚═╝) border with a centered title
+// and returns the inner content rectangle.
+func drawDoubleBorder(screen tcell.Screen, x, y, width, height int, title string, borderColor tcell.Color) (int, int, int, int) {
+	if width < 2 || height < 2 {
+		return x + 1, y + 1, width - 2, height - 2
+	}
+	style := tcell.StyleDefault.Foreground(borderColor)
+	screen.SetContent(x, y, '╔', nil, style)
+	for i := x + 1; i < x+width-1; i++ {
+		screen.SetContent(i, y, '═', nil, style)
+	}
+	screen.SetContent(x+width-1, y, '╗', nil, style)
+	screen.SetContent(x, y+height-1, '╚', nil, style)
+	for i := x + 1; i < x+width-1; i++ {
+		screen.SetContent(i, y+height-1, '═', nil, style)
+	}
+	screen.SetContent(x+width-1, y+height-1, '╝', nil, style)
+	for i := y + 1; i < y+height-1; i++ {
+		screen.SetContent(x, i, '║', nil, style)
+		screen.SetContent(x+width-1, i, '║', nil, style)
+	}
+	tview.Print(screen, title, x+1, y, width-2, tview.AlignCenter, borderColor)
+	return x + 1, y + 1, width - 2, height - 2
+}
+
 // makeDoubleBorderDrawFunc creates a SetDrawFunc callback that draws a
 // double-line (╔═╗║╚═╝) border with a centered title.
 // borderColor is a pointer so the caller can change the color dynamically.
 func makeDoubleBorderDrawFunc(title string, borderColor *tcell.Color) func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
 	return func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
-		if width < 2 || height < 2 {
-			return x + 1, y + 1, width - 2, height - 2
-		}
-		style := tcell.StyleDefault.Foreground(*borderColor)
-		screen.SetContent(x, y, '╔', nil, style)
-		for i := x + 1; i < x+width-1; i++ {
-			screen.SetContent(i, y, '═', nil, style)
-		}
-		screen.SetContent(x+width-1, y, '╗', nil, style)
-		screen.SetContent(x, y+height-1, '╚', nil, style)
-		for i := x + 1; i < x+width-1; i++ {
-			screen.SetContent(i, y+height-1, '═', nil, style)
-		}
-		screen.SetContent(x+width-1, y+height-1, '╝', nil, style)
-		for i := y + 1; i < y+height-1; i++ {
-			screen.SetContent(x, i, '║', nil, style)
-			screen.SetContent(x+width-1, i, '║', nil, style)
-		}
-		tview.Print(screen, title, x+1, y, width-2, tview.AlignCenter, *borderColor)
-		return x + 1, y + 1, width - 2, height - 2
+		return drawDoubleBorder(screen, x, y, width, height, title, *borderColor)
 	}
 }

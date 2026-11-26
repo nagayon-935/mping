@@ -4,6 +4,7 @@ package mtr
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -31,8 +32,8 @@ type HopSocket interface {
 	Close()
 }
 
-// HopProber is implemented by cmd/main's pingerMTRAdapter.
-// It provides all primitives the engine needs to send probes and receive replies.
+// HopProber provides the primitives the engine needs to send TTL-limited
+// probes, receive replies, and resolve hop annotations.
 type HopProber interface {
 	OpenHopSocket(ctx context.Context, dest string) (HopSocket, error)
 	ProbeHop(ctx context.Context, sock HopSocket, dest string, ttl, traceID int, timeout time.Duration) (pinger.HopReply, error)
@@ -50,6 +51,11 @@ type Config struct {
 	// PathOnly limits the engine to discovering the route, at start and every
 	// RediscoverEvery, without probing each hop every ProbeInterval.
 	PathOnly bool
+	// DisableASN and DisablePTR skip hop ASN or reverse-DNS lookups when the
+	// corresponding feature (-a / -r) is disabled, avoiding background retry
+	// loops for annotations the prober will never populate.
+	DisableASN bool
+	DisablePTR bool
 	// MaxHops defaults to 30, or 20 when the destination does not answer Echo.
 	// An explicit limit applies regardless of destination reachability.
 	MaxHops         int
@@ -61,7 +67,7 @@ type Config struct {
 	// a per-target limit would still allow NumTargets × MaxHops goroutines
 	// at once). Defaults to defaultMaxConcurrentProbes when <= 0.
 	MaxConcurrentProbes int
-	// OnFlap is called (in the engine goroutine) when a route change is detected.
+	// OnFlap is called in the target's monitor goroutine when a route change is detected.
 	// host is the target's display name (TargetStats.DisplayName); desc
 	// summarises what changed.
 	OnFlap func(host, desc string)
@@ -106,6 +112,7 @@ type Engine struct {
 	sem chan struct{}
 
 	mu         sync.Mutex
+	started    bool
 	targetRuns map[*stats.TargetStats]*targetRun
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -115,23 +122,29 @@ type Engine struct {
 // NewEngine creates an Engine. Call Start to begin probing.
 func NewEngine(prober HopProber, targets []*stats.TargetStats, cfg Config) *Engine {
 	resolved := cfg.withDefaults()
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Engine{
-		prober:  prober,
-		targets: targets,
-		cfg:     resolved,
-		sem:     make(chan struct{}, resolved.MaxConcurrentProbes),
+		prober:     prober,
+		targets:    slices.Clone(targets),
+		cfg:        resolved,
+		sem:        make(chan struct{}, resolved.MaxConcurrentProbes),
+		targetRuns: make(map[*stats.TargetStats]*targetRun, len(targets)),
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 }
 
-// Start launches one goroutine per target. Safe to call once.
+// Start launches one goroutine per target. Calling Start more than once is a no-op.
 func (e *Engine) Start() {
-	ctx, cancel := context.WithCancel(context.Background())
 	e.mu.Lock()
-	e.cancel = cancel
-	e.ctx = ctx
-	e.targetRuns = make(map[*stats.TargetStats]*targetRun)
+	if e.started {
+		e.mu.Unlock()
+		return
+	}
+	e.started = true
+	initial := slices.Clone(e.targets)
 	e.mu.Unlock()
-	for _, t := range e.targets {
+	for _, t := range initial {
 		e.AddTarget(t)
 	}
 }
@@ -154,7 +167,7 @@ func (e *Engine) Stop() {
 // per-hop monitoring until discovery succeeds again.
 func runTarget(ctx context.Context, prober HopProber, ts *stats.TargetStats, cfg Config, sem chan struct{}) {
 	mtr := ts.MTR()
-	ann := newHopAnnotator(ctx, prober, mtr, cfg.AnnotationRetry)
+	ann := newHopAnnotator(ctx, prober, mtr, cfg.AnnotationRetry, !cfg.DisableASN, !cfg.DisablePTR)
 	defer ann.close()
 	var sock HopSocket
 	var dest string
@@ -237,12 +250,21 @@ type targetRun struct {
 	done   chan struct{}
 }
 
-// AddTarget starts monitoring t unless it is already registered.
-// It panics if called before Start initializes the engine context.
+// AddTarget registers t for monitoring unless it is already active. If called
+// before Start, t is queued and launched when Start runs.
 func (e *Engine) AddTarget(t *stats.TargetStats) {
+	if t == nil {
+		return
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if _, exists := e.targetRuns[t]; exists {
+	if !e.started {
+		if !slices.Contains(e.targets, t) {
+			e.targets = append(e.targets, t)
+		}
+		return
+	}
+	if _, exists := e.targetRuns[t]; exists || e.ctx.Err() != nil {
 		return
 	}
 	ctx, cancel := context.WithCancel(e.ctx)
@@ -255,6 +277,11 @@ func (e *Engine) AddTarget(t *stats.TargetStats) {
 // including when called before Start.
 func (e *Engine) RemoveTarget(t *stats.TargetStats) {
 	e.mu.Lock()
+	if !e.started {
+		e.targets = slices.DeleteFunc(e.targets, func(cand *stats.TargetStats) bool { return cand == t })
+		e.mu.Unlock()
+		return
+	}
 	r := e.targetRuns[t]
 	delete(e.targetRuns, t)
 	e.mu.Unlock()

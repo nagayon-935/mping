@@ -9,9 +9,46 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nagayon-935/mping/internal/stats"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 )
+
+const (
+	icmpEchoHeaderLen    = 8
+	ipv4EchoOverhead     = ipv4.HeaderLen + icmpEchoHeaderLen
+	pmtuDiscoveryTimeout = 3 * time.Second
+	pmtuSourceProbe      = "probe"
+	pmtuStatusProbed     = "probed"
+)
+
+// PathMTUResult separates an IP packet's MTU from its ICMP payload budget.
+// An OS estimate is confirmed only by an unfragmented echo of that size.
+type PathMTUResult = stats.PathMTUInfo
+
+// DiscoverPathMTU uses kernel PMTUD for IPv6 and the DF binary search for IPv4.
+func (p *Pinger) DiscoverPathMTU(ctx context.Context, dest string, start, minPayload int, logf func(string)) (PathMTUResult, error) {
+	dst, err := p.resolveIPAddrContext(ctx, "ip", dest)
+	if err != nil {
+		return PathMTUResult{}, err
+	}
+	if dst.IP.To4() != nil {
+		payload, hop, err := p.discoverIPv4MaxPayload(ctx, dst, start, minPayload, logf)
+		if err != nil {
+			return PathMTUResult{}, err
+		}
+		return PathMTUResult{IP: dst.String(), MTU: payload + ipv4EchoOverhead, Payload: payload, Source: pmtuSourceProbe, Status: pmtuStatusProbed, BottleneckIP: hop}, nil
+	}
+	ctx, cancel := p.lookupContext(ctx, pmtuDiscoveryTimeout)
+	defer cancel()
+	c, err := openIPv6PMTUSocket(ctx, p, dst)
+	if err != nil {
+		return PathMTUResult{}, err
+	}
+	defer c.Close()
+	defer closeOnCancel(ctx, func() { _ = c.Close() })()
+	return p.discoverIPv6PathMTU(ctx, c, dst, logf)
+}
 
 // ErrPMTUNoReply means the baseline echo did not confirm a reachable path.
 var ErrPMTUNoReply = errors.New("PMTU baseline received no echo reply")
@@ -80,6 +117,9 @@ func (p *Pinger) discoverIPv4MaxPayload(ctx context.Context, dstAddr *net.IPAddr
 		mid := (low + high + 1) / 2
 		ok, hopIP, err := canSendPayloadFn(ctx, p, dstAddr, mid, id)
 		if err != nil {
+			return 0, "", err
+		}
+		if err := ctx.Err(); err != nil {
 			return 0, "", err
 		}
 		if ok {

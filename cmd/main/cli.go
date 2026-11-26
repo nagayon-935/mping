@@ -30,7 +30,7 @@ func registerFlags(fs *pflag.FlagSet, cfg *config, th *thresholdFlags) {
 	fs.StringVarP(&cfg.hostsFile, "file", "f", "", "hosts YAML file, or a NetBox IP addresses CSV export")
 	fs.BoolVarP(&cfg.mtuEnabled, "discovery-mtu", "m", false, "discover path MTU (IPv4 DF probes; IPv6 OS PMTU with echo confirmation)")
 	fs.BoolVarP(&cfg.trace, "traceroute", "T", false, "show each target's route, rediscovered every 10 minutes (not with -M)")
-	fs.BoolVarP(&cfg.asnEnabled, "asn", "a", false, "lookup and display AS numbers for target IPs")
+	fs.BoolVarP(&cfg.asnEnabled, "asn", "a", false, "lookup and display AS numbers for target and hop IPs")
 	fs.BoolVarP(&cfg.ptrEnabled, "ptr", "r", false, "lookup and display PTR (reverse DNS) records for target and hop IPs")
 	fs.StringVarP(&cfg.ifaceName, "interface", "I", "", "interface name to bind to (e.g. eth0)")
 	fs.StringVarP(&cfg.sourceAddr, "source", "S", "", "source IP address to bind to")

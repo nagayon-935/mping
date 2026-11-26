@@ -76,7 +76,11 @@ func (rc *reloadCoordinator) requestFileReload(sig *reloadSignal, hostsFile stri
 			return
 		}
 		if applied {
-			reloadNotice(logCh, "Configuration reloaded; existing target measurements retained. "+reason)
+			msg := "Configuration reloaded; existing target measurements retained."
+			if reason != "" {
+				msg += " " + reason
+			}
+			reloadNotice(logCh, msg)
 			return
 		}
 		reloadNotice(logCh, "Restarting measurements for configuration reload: "+reason)
@@ -101,6 +105,7 @@ func reloadWarnings(startup, reloaded config, activePortSpecs []string) []string
 	var warnings []string
 	for _, w := range []string{
 		checkWebReloadDrift(startup, reloaded),
+		checkDurationReloadDrift(startup, reloaded),
 		checkPortReloadDrift(activePortSpecs, reloaded.portSpecs),
 	} {
 		if w != "" {
@@ -120,13 +125,38 @@ func checkPortReloadDrift(activeRaw, reloadedRaw []string) string {
 	return logLine("yellow", "port: change detected in the reloaded config — port checks restarted with updated configuration")
 }
 
-// checkWebReloadDrift warns when a reload changes web:/web-port:. The web
-// server is started once from the startup config (active) and never moved;
-// changing it requires restarting mping.
-func checkWebReloadDrift(active, reloaded config) string {
+func webReloadDriftText(active, reloaded config) string {
 	if active.webEnabled == reloaded.webEnabled &&
 		(!active.webEnabled || active.webPort == reloaded.webPort) {
 		return ""
 	}
-	return logLine("yellow", "web: change detected in the reloaded config — the web UI requires a full restart of mping to take effect")
+	return "web: change detected in the reloaded config — the web UI requires a full restart of mping to take effect"
+}
+
+// checkWebReloadDrift warns when a reload changes web:/web-port:. The web
+// server is started once from the startup config (active) and never moved;
+// changing it requires restarting mping.
+func checkWebReloadDrift(active, reloaded config) string {
+	msg := webReloadDriftText(active, reloaded)
+	if msg == "" {
+		return ""
+	}
+	return logLine("yellow", msg)
+}
+
+func durationReloadDriftText(active, reloaded config) string {
+	if active.duration == reloaded.duration {
+		return ""
+	}
+	return "duration: change detected in the reloaded config — duration limit changes require restarting mping"
+}
+
+// checkDurationReloadDrift warns when a reload changes duration:. The session
+// deadline is armed once at startup; changing it requires restarting mping.
+func checkDurationReloadDrift(active, reloaded config) string {
+	msg := durationReloadDriftText(active, reloaded)
+	if msg == "" {
+		return ""
+	}
+	return logLine("yellow", msg)
 }

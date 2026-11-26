@@ -62,7 +62,7 @@ mping -T -p 443/tcp google.com
 # Customise colour-coding thresholds (warn = orange, crit = red)
 mping --rtt-warn 30 --rtt-crit 100 --loss-warn 10 --loss-crit 50 google.com
 
-# Display AS numbers for target IPs
+# Display AS numbers for target and hop IPs
 mping -a google.com 1.1.1.1
 ```
 
@@ -93,7 +93,7 @@ mping -a google.com 1.1.1.1
 | `--port` | `-p` | Ports to check (e.g. `443/tcp`, `53/udp`, `443`). Comma-separated for multiple. | `""` |
 | `--web` | | Serve the web UI on `http://127.0.0.1:<web-port>/` (this machine only; see [Web UI](web-ui.md)) | `false` |
 | `--web-port` | | Port for `--web` (1–65535) | `8080` |
-| `--asn` | `-a` | Look up and display AS numbers for target IPs | `false` |
+| `--asn` | `-a` | Look up and display AS numbers for target and hop IPs | `false` |
 | `--ptr` | `-r` | Look up and display reverse DNS names for target and hop IPs | `false` |
 | `--http` | `-H` | URL(s) to health-check, e.g. `https://example.com/health`. Comma-separated or repeated for multiple. | `""` |
 | `--check-config` | | Validate and print effective configuration without starting monitoring (CLI only) | `false` |

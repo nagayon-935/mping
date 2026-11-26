@@ -4,7 +4,6 @@ import { el, badgeIcon, readSession, writeSession } from "./dom.js";
 import { STATUS_LABELS } from "./model.js";
 import { SORTS } from "./workspace.js";
 
-export { STATUS_LABELS };
 const STATUSES = ["all", ...Object.keys(STATUS_LABELS)];
 
 /**

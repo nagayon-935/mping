@@ -382,3 +382,26 @@ func TestDiscoverIPv4MaxPayload_RejectsInvalidStart(t *testing.T) {
 		}
 	}
 }
+
+func TestDiscoverIPv4MaxPayload_CancelMidProbeAbortsInsteadOfReturningLowerMTU(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	orig := canSendPayloadFn
+	t.Cleanup(func() { canSendPayloadFn = orig })
+	calls := 0
+	canSendPayloadFn = func(_ context.Context, _ *Pinger, _ *net.IPAddr, payloadLen, _ int) (bool, string, error) {
+		calls++
+		if calls == 1 {
+			return true, "", nil // baseline succeeds
+		}
+		// Simulate closeOnCancel closing the raw socket during waitIPv4PMTUReply:
+		// ReadFrom returns an error that waitIPv4PMTUReply maps to (false, "", nil).
+		cancel()
+		return false, "", nil
+	}
+	p := NewPingerWithOptions(nil, Options{ResolveIPAddr: resolveTo("1.1.1.1")})
+	got, _, err := p.discoverIPv4MaxPayload(ctx, &net.IPAddr{IP: net.ParseIP("1.1.1.1")}, 57, 56, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got (%d, err=%v), want context.Canceled instead of false-positive smaller MTU", got, err)
+	}
+}

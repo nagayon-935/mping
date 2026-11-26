@@ -24,22 +24,17 @@ func runPeriodic(ctx context.Context, interval time.Duration, check func()) {
 
 // closeOnCancel runs fn (typically closing a socket to unblock a pending
 // read) once ctx is cancelled. The returned stop must be called exactly once:
-// it ends the watcher and waits for its goroutine to exit, so callers can
-// defer it after the resource's own deferred Close and know no watcher
-// outlives the call.
+// it unregisters the callback or, if cancellation already triggered fn, waits
+// for fn to finish so no callback outlives the call.
 func closeOnCancel(ctx context.Context, fn func()) (stop func()) {
 	done := make(chan struct{})
-	exited := make(chan struct{})
-	go func() {
-		defer close(exited)
-		select {
-		case <-ctx.Done():
-			fn()
-		case <-done:
-		}
-	}()
+	stopAfter := context.AfterFunc(ctx, func() {
+		defer close(done)
+		fn()
+	})
 	return func() {
-		close(done)
-		<-exited
+		if !stopAfter() {
+			<-done
+		}
 	}
 }

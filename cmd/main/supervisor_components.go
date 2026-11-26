@@ -120,8 +120,10 @@ func (s *supervisor) restartRoute(resetStats bool) {
 		return
 	}
 	s.routeEngine = mtr.NewEngine(s.p.MTRProber(), s.cfg.targets, mtr.Config{
-		PathOnly: !s.cfg.config.mtr,
-		OnFlap:   s.onFlap,
+		PathOnly:   !s.cfg.config.mtr,
+		DisableASN: !s.cfg.config.asnEnabled,
+		DisablePTR: !s.cfg.config.ptrEnabled,
+		OnFlap:     s.onFlap,
 	})
 	s.routeEngine.Start()
 }

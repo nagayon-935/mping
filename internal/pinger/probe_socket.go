@@ -11,8 +11,8 @@ import (
 	"golang.org/x/net/ipv6"
 )
 
-// PacketConnV4 is the subset of *ipv4.PacketConn used for IPv4 probes.
-type PacketConnV4 interface {
+// packetConnV4 is the subset of *ipv4.PacketConn used for IPv4 probes.
+type packetConnV4 interface {
 	ReadFrom(b []byte) (int, *ipv4.ControlMessage, net.Addr, error)
 	WriteTo(b []byte, cm *ipv4.ControlMessage, dst net.Addr) (int, error)
 	SetReadDeadline(t time.Time) error
@@ -20,8 +20,8 @@ type PacketConnV4 interface {
 	SetControlMessage(cf ipv4.ControlFlags, on bool) error
 }
 
-// PacketConnV6 is the subset of *ipv6.PacketConn used for IPv6 probes.
-type PacketConnV6 interface {
+// packetConnV6 is the subset of *ipv6.PacketConn used for IPv6 probes.
+type packetConnV6 interface {
 	ReadFrom(b []byte) (int, *ipv6.ControlMessage, net.Addr, error)
 	WriteTo(b []byte, cm *ipv6.ControlMessage, dst net.Addr) (int, error)
 	SetReadDeadline(t time.Time) error

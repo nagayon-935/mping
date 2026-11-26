@@ -24,7 +24,7 @@ type BindConfig struct {
 
 // IsZero reports whether bc requests no binding at all.
 func (bc BindConfig) IsZero() bool {
-	return bc.Source == "" && bc.Interface == ""
+	return bc == (BindConfig{})
 }
 
 // localAddrFor builds the net.Dialer.LocalAddr value for network ("tcp" or

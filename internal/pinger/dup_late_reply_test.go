@@ -23,7 +23,7 @@ func TestRunWorker_DuplicateReply_NotDoubleCountedAsRecv(t *testing.T) {
 	// The first reply resolves seq 1 normally; the second, for the same seq,
 	// is a genuine duplicate delivery (routing loop / L2 duplication), not a
 	// new probe.
-	r.replyOnWrite(1, Reply{TTL: 64, Seq: 1}, Reply{TTL: 64, Seq: 1})
+	r.replyOnWrite(1, reply{TTL: 64, Seq: 1}, reply{TTL: 64, Seq: 1})
 
 	done := r.runAsync(time.Hour, 200*time.Millisecond)
 	awaitTarget(t, r.target, func(v stats.TargetView) bool { return v.Duplicates == 1 })
@@ -50,7 +50,7 @@ func TestRunWorker_LateReply_DoesNotChangeLoss(t *testing.T) {
 	// Seq 1 times out (no reply is injected before the sweep)...
 	awaitTarget(t, r.target, func(v stats.TargetView) bool { return v.Loss == 1 })
 	// ...and only then does its reply show up.
-	r.ch <- Reply{TTL: 64, Seq: 1}
+	r.ch <- reply{TTL: 64, Seq: 1}
 	awaitTarget(t, r.target, func(v stats.TargetView) bool { return v.LateReplies == 1 })
 	r.stopAndJoin(done)
 
@@ -71,7 +71,7 @@ func TestRecentSeqHistory_BoundedEviction(t *testing.T) {
 	for i := range n {
 		h.record(i%(seqMask+1), resolvedAcked, stats.Probe{})
 	}
-	if got := h.order.Len(); got > recentSeqHistoryCap {
+	if got := h.len(); got > recentSeqHistoryCap {
 		t.Fatalf("recentSeqHistory grew to %d entries, want <= %d", got, recentSeqHistoryCap)
 	}
 	if got := len(h.index); got > recentSeqHistoryCap {
@@ -122,14 +122,14 @@ func TestRecentSeqHistory_ReRecordReplacesAndRefreshesEntry(t *testing.T) {
 
 	h.record(7, resolvedTimeout, stats.Probe{})
 
-	if got := h.order.Len(); got != 2 {
+	if got := h.len(); got != 2 {
 		t.Fatalf("history has %d entries, want 2 (re-recording must not add a duplicate)", got)
 	}
 	entry, ok := h.lookup(7)
 	if !ok || entry.kind != resolvedTimeout {
 		t.Fatalf("lookup(7) = %+v, %v; want the replaced timeout entry", entry, ok)
 	}
-	if newest := h.order.Back().Value.(recentEntry); newest.wireSeq != 7 {
-		t.Fatalf("newest entry is wire seq %d, want 7 (re-recorded entry moves to the back)", newest.wireSeq)
+	if newest, ok := h.newest(); !ok || newest.wireSeq != 7 {
+		t.Fatalf("newest entry is %+v (ok=%v), want wire seq 7 (re-recorded entry moves to the back)", newest, ok)
 	}
 }

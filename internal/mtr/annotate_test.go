@@ -265,7 +265,7 @@ func TestProbe_ECMPHopKeepsAnnotationsWhenResponderAlternates(t *testing.T) {
 	m := stats.NewMTRStats()
 	m.EnsureLen(1)
 	prober := newFakeProber(map[int]pinger.HopReply{1: {SrcIP: "10.0.0.1", Responded: true}})
-	ann := newHopAnnotator(context.Background(), prober, m, time.Hour)
+	ann := newHopAnnotator(context.Background(), prober, m, time.Hour, true, true)
 	defer ann.close()
 	ann.mu.Lock()
 	ann.rememberLocked("10.0.0.1", pinger.ASNInfo{Number: "AS1"}, "a.example")
@@ -291,4 +291,44 @@ func TestProbe_ECMPHopKeepsAnnotationsWhenResponderAlternates(t *testing.T) {
 			t.Fatalf("round %d: %d generation bumps for one reply, want 1", round, bumps)
 		}
 	}
+}
+
+func TestEngine_DisabledAnnotationsDoNotQueryOrRetry(t *testing.T) {
+	t.Run("both disabled performs zero lookups", func(t *testing.T) {
+		target := newTestTarget("8.8.8.8")
+		prober := newSlowLookupProber()
+		close(prober.release)
+		cfg := annotateTestConfig(false)
+		cfg.DisableASN = true
+		cfg.DisablePTR = true
+		eng := NewEngine(prober, []*stats.TargetStats{target}, cfg)
+		eng.Start()
+		ok := waitUntil(time.Second, func() bool { return firstHopSent(target) >= 8 })
+		eng.Stop()
+		if !ok {
+			t.Fatalf("only %d probe rounds ran, want >= 8", firstHopSent(target))
+		}
+		if lookups, _, _ := prober.snapshot(); lookups != 0 {
+			t.Fatalf("lookups = %d, want 0 when both ASN and PTR are disabled", lookups)
+		}
+	})
+
+	t.Run("ASN-only completes without PTR retries", func(t *testing.T) {
+		target := newTestTarget("8.8.8.8")
+		prober := newSlowLookupProber()
+		close(prober.release)
+		cfg := annotateTestConfig(false)
+		cfg.DisablePTR = true
+		cfg.AnnotationRetry = 10 * time.Millisecond
+		eng := NewEngine(prober, []*stats.TargetStats{target}, cfg)
+		eng.Start()
+		ok := waitUntil(time.Second, func() bool { return firstHopSent(target) >= 12 })
+		eng.Stop()
+		if !ok {
+			t.Fatalf("only %d probe rounds ran, want >= 12", firstHopSent(target))
+		}
+		if lookups, _, _ := prober.snapshot(); lookups != 3 {
+			t.Fatalf("lookups = %d, want 3 (one ASN lookup per hop, zero PTR or retry lookups)", lookups)
+		}
+	})
 }

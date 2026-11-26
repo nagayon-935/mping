@@ -8,10 +8,9 @@ import (
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
-// ptrLookupTimeout bounds each PTR (reverse DNS) query, since neither
-// net.LookupAddr nor a *net.Resolver wrapped with context.Background() has a
-// timeout of its own. A var (not const) so tests can shrink it instead of
-// waiting 3s. Mirrors asnLookupTimeout.
+// ptrLookupTimeout bounds each PTR (reverse DNS) query, since net.Resolver
+// applies no per-call deadline unless its context supplies one. A var (not
+// const) so tests can shrink it instead of waiting 3s. Mirrors asnLookupTimeout.
 var ptrLookupTimeout = 3 * time.Second
 
 // lookupPTR performs a (potentially slow) reverse DNS (PTR) lookup for ipStr

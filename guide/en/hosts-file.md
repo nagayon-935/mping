@@ -32,7 +32,7 @@ thresholds:
 
 ## Host groups in YAML
 
-Use the `groups:` key to define named groups of hosts. Each group is rendered with a header row and a worst-case aggregate row. Groups can coexist with ungrouped `hosts:` entries; ungrouped hosts are displayed first.
+Use the `groups:` key to define named groups of hosts. Each group is rendered with a banner header showing the group name, host count, and health summary (`○ all OK`, or non-OK counts by severity), followed by column headings. Groups can coexist with ungrouped `hosts:` entries; ungrouped hosts are displayed first.
 
 ```yaml
 hosts:

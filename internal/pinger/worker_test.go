@@ -27,22 +27,22 @@ type workerRig struct {
 	p      *Pinger
 	conn   *fakePacketConn
 	id     int
-	ch     chan Reply
+	ch     chan reply
 
 	// scripted maps "the n-th probe written" to the replies delivered the
 	// moment it hits the wire. Only the worker goroutine touches writes/scripted.
-	scripted map[int][]Reply
+	scripted map[int][]reply
 	writes   int
 }
 
 func newWorkerRig(t *testing.T, count int) *workerRig {
 	t.Helper()
-	r := &workerRig{t: t, target: stats.NewTargetStats("example.com"), conn: &fakePacketConn{}, scripted: map[int][]Reply{}}
+	r := &workerRig{t: t, target: stats.NewTargetStats("example.com"), conn: &fakePacketConn{}, scripted: map[int][]reply{}}
 	r.p = NewPingerWithOptions([]*stats.TargetStats{r.target}, Options{ResolveIPAddr: resolveTo("1.1.1.1")})
 	r.p.connV4 = r.conn
 	r.p.Count = count
 	r.id = r.p.baseID & 0xffff
-	r.ch = make(chan Reply, 16)
+	r.ch = make(chan reply, 16)
 	r.p.targetChans[r.id] = r.ch
 	r.conn.onWrite = func([]byte, net.Addr) error {
 		r.writes++
@@ -58,7 +58,7 @@ func newWorkerRig(t *testing.T, count int) *workerRig {
 // worker is a single goroutine that records a probe as outstanding before it
 // next services its reply channel, so a reply queued from inside the write
 // can never race the bookkeeping the way a sleeping goroutine could.
-func (r *workerRig) replyOnWrite(n int, replies ...Reply) {
+func (r *workerRig) replyOnWrite(n int, replies ...reply) {
 	r.scripted[n] = append(r.scripted[n], replies...)
 }
 
@@ -101,7 +101,7 @@ func TestRunWorker_SingleProbeOutcomes(t *testing.T) {
 	}{
 		{
 			name:     "reply",
-			setup:    func(r *workerRig) { r.replyOnWrite(1, Reply{TTL: 55, Seq: 1}) },
+			setup:    func(r *workerRig) { r.replyOnWrite(1, reply{TTL: 55, Seq: 1}) },
 			timeout:  200 * time.Millisecond,
 			wantSent: 1, wantRecv: 1,
 		},
@@ -114,7 +114,7 @@ func TestRunWorker_SingleProbeOutcomes(t *testing.T) {
 		},
 		{
 			name:     "ICMP error reply",
-			setup:    func(r *workerRig) { r.replyOnWrite(1, Reply{Seq: 1, Err: "Time Exceeded"}) },
+			setup:    func(r *workerRig) { r.replyOnWrite(1, reply{Seq: 1, Err: "Time Exceeded"}) },
 			timeout:  200 * time.Millisecond,
 			wantSent: 1, wantLoss: 1,
 			wantErr: "Time Exceeded",
@@ -171,8 +171,8 @@ func TestRunWorker_SingleProbeOutcomes(t *testing.T) {
 func TestRunWorker_MismatchedReplyDiscarded(t *testing.T) {
 	r := newWorkerRig(t, 1)
 	r.replyOnWrite(1,
-		Reply{TTL: 1, Seq: 99}, // never sent, never resolved: must be discarded
-		Reply{TTL: 64, Seq: 1}, // the real match
+		reply{TTL: 1, Seq: 99}, // never sent, never resolved: must be discarded
+		reply{TTL: 64, Seq: 1}, // the real match
 	)
 
 	r.run(10*time.Millisecond, 200*time.Millisecond)
@@ -193,7 +193,7 @@ func TestRunWorker_MismatchedReplyDiscarded(t *testing.T) {
 func TestRunWorker_CountSendsThenDrains(t *testing.T) {
 	r := newWorkerRig(t, 3)
 	for n := 1; n <= 3; n++ {
-		r.replyOnWrite(n, Reply{TTL: 64, Seq: n})
+		r.replyOnWrite(n, reply{TTL: 64, Seq: n})
 	}
 
 	r.run(10*time.Millisecond, 200*time.Millisecond)
@@ -209,7 +209,7 @@ func TestRunWorker_CountSendsThenDrains(t *testing.T) {
 func TestRunWorker_ZeroResolveIntervalStillRuns(t *testing.T) {
 	r := newWorkerRig(t, 1)
 	r.p.ResolveInterval = 0
-	r.replyOnWrite(1, Reply{TTL: 64, Seq: 1})
+	r.replyOnWrite(1, reply{TTL: 64, Seq: 1})
 
 	r.run(10*time.Millisecond, 200*time.Millisecond)
 
@@ -229,8 +229,8 @@ func TestRunWorker_ReResolvesOnDNSTicker(t *testing.T) {
 		return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
 	}
 	r.p.ResolveInterval = 5 * time.Millisecond // far shorter than the send interval
-	r.replyOnWrite(1, Reply{TTL: 64, Seq: 1})
-	r.replyOnWrite(2, Reply{TTL: 64, Seq: 2})
+	r.replyOnWrite(1, reply{TTL: 64, Seq: 1})
+	r.replyOnWrite(2, reply{TTL: 64, Seq: 2})
 
 	r.run(50*time.Millisecond, 200*time.Millisecond)
 
@@ -255,7 +255,7 @@ func TestRunWorker_RetriesResolutionUntilTargetResolves(t *testing.T) {
 		}
 		return &net.IPAddr{IP: net.IPv4(1, 1, 1, 1)}, nil
 	}
-	r.replyOnWrite(1, Reply{TTL: 64, Seq: 1})
+	r.replyOnWrite(1, reply{TTL: 64, Seq: 1})
 
 	r.run(5*time.Millisecond, 200*time.Millisecond)
 
@@ -279,7 +279,7 @@ func TestRunWorker_SeqWraparound(t *testing.T) {
 	r.p.initialSeq = 65535  // seq++ makes the first logical seq 65536
 	// Simulates the real wire reply to logical seq 65536: the receiver
 	// parses Seq as a wrapped uint16, i.e. 0.
-	r.replyOnWrite(1, Reply{TTL: 64, Seq: 0})
+	r.replyOnWrite(1, reply{TTL: 64, Seq: 0})
 
 	done := r.runAsync(time.Hour, 200*time.Millisecond)
 	awaitTarget(t, r.target, func(v stats.TargetView) bool { return v.Recv == 1 })

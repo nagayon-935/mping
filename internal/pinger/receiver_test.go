@@ -83,7 +83,7 @@ func TestRunReceiver_DispatchesToTargetChannel(t *testing.T) {
 			target := stats.NewTargetStats("example.com")
 			p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{})
 			id := p.baseID & 0xffff
-			ch := make(chan Reply, 1)
+			ch := make(chan reply, 1)
 			p.targetChans[id] = ch
 
 			msg := tt.msg(id)
@@ -172,7 +172,7 @@ func TestHandleEchoReply(t *testing.T) {
 		target := stats.NewTargetStats("example.com")
 		p := NewPinger([]*stats.TargetStats{target})
 		id := p.baseID & 0xffff
-		ch := make(chan Reply, 1)
+		ch := make(chan reply, 1)
 		p.targetChans[id] = ch
 
 		p.handleEchoReply(&icmp.Message{Body: &icmp.Echo{ID: id, Seq: 5}}, 64)
@@ -190,8 +190,8 @@ func TestHandleEchoReply(t *testing.T) {
 	t.Run("full channel drops the reply without blocking", func(t *testing.T) {
 		p := NewPinger(nil)
 		id := p.baseID & 0xffff
-		ch := make(chan Reply, 1)
-		ch <- Reply{Seq: 1}
+		ch := make(chan reply, 1)
+		ch <- reply{Seq: 1}
 		p.targetChans[id] = ch
 
 		p.handleEchoReply(&icmp.Message{Body: &icmp.Echo{ID: id, Seq: 2}}, 64)
@@ -209,7 +209,7 @@ func TestHandleEchoReply(t *testing.T) {
 		t.Run(name+" is ignored", func(t *testing.T) {
 			target := stats.NewTargetStats("example.com")
 			p := NewPinger([]*stats.TargetStats{target})
-			ch := make(chan Reply, 1)
+			ch := make(chan reply, 1)
 			p.targetChans[p.baseID&0xffff] = ch
 
 			p.handleEchoReply(msg, 64)
@@ -226,7 +226,7 @@ func TestHandleICMPError(t *testing.T) {
 		name    string
 		msg     func(id int) *icmp.Message
 		errorFn func(icmp.Type, int) string
-		want    *Reply // nil means nothing may be delivered
+		want    *reply // nil means nothing may be delivered
 	}{
 		{
 			name: "v4 destination unreachable",
@@ -237,7 +237,7 @@ func TestHandleICMPError(t *testing.T) {
 				}
 			},
 			errorFn: icmpErrorString,
-			want:    &Reply{Seq: 3, Err: "Destination Host Unreachable"},
+			want:    &reply{Seq: 3, Err: "Destination Host Unreachable"},
 		},
 		{
 			// The MTU lives in the message body, not the type/code pair, so
@@ -250,7 +250,7 @@ func TestHandleICMPError(t *testing.T) {
 				}
 			},
 			errorFn: icmpV6ErrorString,
-			want:    &Reply{Seq: 8, Err: "Packet Too Big (MTU=1280)"},
+			want:    &reply{Seq: 8, Err: "Packet Too Big (MTU=1280)"},
 		},
 		{
 			name: "body without an embedded echo is ignored",
@@ -277,7 +277,7 @@ func TestHandleICMPError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			p := NewPinger([]*stats.TargetStats{stats.NewTargetStats("example.com")})
 			id := p.baseID & 0xffff
-			ch := make(chan Reply, 1)
+			ch := make(chan reply, 1)
 			p.targetChans[id] = ch
 
 			p.handleICMPError(tt.msg(id), tt.errorFn)
@@ -337,6 +337,7 @@ func TestBroadcastTrace_FullChannelDropsNewMessage(t *testing.T) {
 
 	p.traceChansMu.Lock()
 	p.traceChans[0] = ch
+	p.activeTraces.Store(1)
 	p.traceChansMu.Unlock()
 
 	// Should not block even though ch is full.

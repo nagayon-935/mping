@@ -40,7 +40,9 @@
 
 一覧からは全体と保持している削除対象・HTTP 結果、詳細からは選択対象だけを保存します。保存中も測定は継続し、既存ファイルは上書きしません。
 
-CSV は表計算ソフト向けの、1 ターゲット 1 行の表です。稼働中のターゲットのあとに、削除済みのターゲットが `removed_at` 付きで続きます。列は `captured_at`・`target_id`・`host`・`ip`・`group`・`removed_at`・`measurement_state`・`health_status`・`health_reason`・`sent`・`received`・`lost`・`loss_pct`・`recent_loss_pct`・`duplicates`・`late_replies`・`last_rtt_ms`・`min_rtt_ms`・`avg_rtt_ms`・`max_rtt_ms`・`jitter_ms`・`last_ttl`・`last_error`・`last_loss_at`・`last_reply_at`・`started_at`・`statistics_since`・`asn`・`org`・`ptr`・`route_changes`・`path_mtu`・`pmtu_payload`・`pmtu_status`・`pmtu_source` です。応答がまだないターゲットの RTT と TTL は空欄です。ポート・HTTP・ホップ・イベントは JSON にだけ含まれます。日本語の名前が文字化けしないよう BOM 付きの UTF-8 で書き出し、`=`・`+`・`-`・`@` で始まる文字列には数式として扱われないよう先頭に `'` を付けます。
+JSON レポートには、セッションおよび集計の開始時刻、取得区間、対象 ID、Ping の統計期間、有効な設定、宛先 IP の変化履歴、Ping・経路・MTR・ポート結果、保持している対象別イベントが含まれます（`schema_version: 1`、末尾 `_ms` の項目はミリ秒）。削除済みターゲットは最新 128 件、対象別イベントは各 128 件、宛先 IP 履歴は各 64 件まで保持され、上限を超えた件数も記録されます。
+
+CSV は表計算ソフト向けの、1 ターゲット 1 行の表です。稼働中のターゲットのあとに、削除済みのターゲットが `removed_at` 付きで続きます。列は `captured_at`・`target_id`・`host`・`ip`・`source_ip`・`group`・`removed_at`・`measurement_state`・`health_status`・`health_reason`・`sent`・`received`・`lost`・`loss_pct`・`recent_loss_pct`・`duplicates`・`late_replies`・`last_rtt_ms`・`min_rtt_ms`・`avg_rtt_ms`・`max_rtt_ms`・`jitter_ms`・`last_ttl`・`last_error`・`last_loss_at`・`last_reply_at`・`started_at`・`statistics_since`・`asn`・`org`・`ptr`・`route_changes`・`path_mtu`・`pmtu_payload`・`pmtu_status`・`pmtu_source` です。応答がまだないターゲットの RTT と TTL は空欄です。ポート・HTTP・ホップ・イベントは JSON にだけ含まれます。日本語の名前が文字化けしないよう BOM 付きの UTF-8 で書き出し、`=`・`+`・`-`・`@`・タブ・復帰文字で始まる文字列には数式として扱われないよう先頭に `'` を付けます。
 
 レポートの権限は所有者だけが読み書きできる `0600` です。sudo 起動でも、保存完了前に sudo を起動したユーザーの所有者・グループへ変更します。setuid 起動では起動したユーザーとしてレポートを作成します。所有者の設定に失敗した場合、保存先の完成ファイルは作りません。
 
@@ -66,9 +68,9 @@ CSV は表計算ソフト向けの、1 ターゲット 1 行の表です。稼�
   * **RTT**: 緑 (≤50ms) / オレンジ (≤200ms) / 赤 (>200ms)
   * **JIT**: 緑 (≤10ms) / オレンジ (≤50ms) / 赤 (>50ms)
   * `--rtt-warn/--rtt-crit`、`--jitter-warn/--jitter-crit`、`--loss-warn/--loss-crit`、または YAML の `thresholds:` ブロックで上書きできます。
+* **RTT 60s**: 直近 60 秒の RTT のスパークライン (`▲` は行ごとの p95 スケール超え)。ロスのないマスはシアン、一部ロスはオレンジ、全ロスは赤い `×` で表示します。
 * **SIZE**: 送信パケットのペイロードサイズ。
 * **MTU**: 明示指定した、または起動時に推定した送出インターフェイスの MTU。`-m` 指定時は **PMTU** 列になり、調べた経路 MTU を表示します。
-* **RTT 60s**: 直近 60 秒の RTT のスパークライン (`▲` は行ごとの p95 スケール超え)。ロスのないマスはシアン、一部ロスはオレンジ、全ロスは赤い `×` で表示します。
 * **TTL**: 最後の応答の IPv4 TTL または IPv6 Hop Limit。
 * **ERR**: 最新エラーの短縮メッセージ (赤色)。エラーがなければ `-` を表示します。カラムの表示はペインの幅で決まります。エラーの全文は Log ペインとホスト詳細で確認できます。
 * **LAST LOSS**: 最後にパケットロスが発生してからの経過時間。

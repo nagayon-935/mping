@@ -29,7 +29,8 @@ type HopStats struct {
 // annotate overwrites IP/ASN/Country/Org with each non-empty argument; empty
 // arguments leave the existing value untouched. A new responder IP drops the
 // previous one's PTR name. Caller must hold the owning MTRStats.mu.
-func (h *HopStats) annotate(ip string, a HopAnnotation) {
+func (h *HopStats) annotate(ip string, a HopAnnotation) bool {
+	before := *h
 	if ip != "" {
 		if ip != h.IP {
 			// A different responder: the previous router's annotations no
@@ -50,6 +51,7 @@ func (h *HopStats) annotate(ip string, a HopAnnotation) {
 	if a.PTR != "" {
 		h.PTR = a.PTR
 	}
+	return *h != before
 }
 
 // HopAnnotation is the lookup-derived description of a hop's responder.
@@ -94,12 +96,15 @@ func NewMTRStats() *MTRStats {
 // EnsureLen grows the hop slice to n entries if it is currently shorter.
 // Existing hop data is preserved; this is a no-op when len >= n.
 func (m *MTRStats) EnsureLen(n int) {
-	defer bumpGeneration()
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	grew := len(m.hops) < n
 	for len(m.hops) < n {
 		ttl := len(m.hops) + 1
 		m.hops = append(m.hops, &HopStats{TTL: ttl})
+	}
+	m.mu.Unlock()
+	if grew {
+		bumpGeneration()
 	}
 }
 
@@ -108,14 +113,17 @@ func (m *MTRStats) EnsureLen(n int) {
 // path so the UI stops rendering frozen data for hops that no longer exist.
 // This is a no-op when len <= n.
 func (m *MTRStats) TruncateLen(n int) {
-	defer bumpGeneration()
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if n < 0 {
 		n = 0
 	}
-	if len(m.hops) > n {
+	shrunk := len(m.hops) > n
+	if shrunk {
 		m.hops = m.hops[:n]
+	}
+	m.mu.Unlock()
+	if shrunk {
+		bumpGeneration()
 	}
 }
 
@@ -174,27 +182,34 @@ func (m *MTRStats) SetIP(ttl int, ip, asn, country, org string) {
 
 // SetIPAnnotated is SetIP that also sets the PTR (see RecordReplyAnnotated).
 func (m *MTRStats) SetIPAnnotated(ttl int, ip string, a HopAnnotation) {
-	defer bumpGeneration()
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	h := m.hopAt(ttl)
-	if h == nil {
-		return
+	changed := false
+	if h != nil {
+		changed = h.annotate(ip, a)
+		if ip != "" && h.routeIP != ip {
+			h.routeIP = ip // track discovery-time IP separately for flap detection
+			changed = true
+		}
 	}
-	h.annotate(ip, a)
-	if ip != "" {
-		h.routeIP = ip // track discovery-time IP separately for flap detection
+	m.mu.Unlock()
+	if changed {
+		bumpGeneration()
 	}
 }
 
 // SetPTR records the reverse DNS name of the hop at ttl, provided ip is
 // still that hop's responder. ttl is 1-based.
 func (m *MTRStats) SetPTR(ttl int, ip, name string) {
-	defer bumpGeneration()
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if h := m.hopAt(ttl); h != nil && h.IP == ip {
+	changed := false
+	if h := m.hopAt(ttl); h != nil && h.IP == ip && h.PTR != name {
 		h.PTR = name
+		changed = true
+	}
+	m.mu.Unlock()
+	if changed {
+		bumpGeneration()
 	}
 }
 
@@ -202,23 +217,31 @@ func (m *MTRStats) SetPTR(ttl int, ip, name string) {
 // Results for an IP no hop uses any more are dropped, so a late lookup can
 // never label a different router. Empty values leave fields unchanged.
 func (m *MTRStats) AnnotateIP(ip, asn, country, org, ptr string) {
-	defer bumpGeneration()
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	changed := false
 	for _, h := range m.hops {
 		if h == nil || h.IP != ip {
 			continue
 		}
-		h.annotate(ip, HopAnnotation{ASN: asn, Country: country, Org: org, PTR: ptr})
+		if h.annotate(ip, HopAnnotation{ASN: asn, Country: country, Org: org, PTR: ptr}) {
+			changed = true
+		}
+	}
+	m.mu.Unlock()
+	if changed {
+		bumpGeneration()
 	}
 }
 
 // SetError records why the route could not be discovered; "" clears it.
 func (m *MTRStats) SetError(msg string) {
-	defer bumpGeneration()
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	changed := m.lastErr != msg
 	m.lastErr = msg
+	m.mu.Unlock()
+	if changed {
+		bumpGeneration()
+	}
 }
 
 // Error returns the last route discovery error, or "".

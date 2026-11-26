@@ -8,7 +8,7 @@
 * Switching between `traceroute: true` and `mtr: true` in the hosts file applies on reload without restarting measurements: ping counters, graphs and history are kept and the pane switches in place. Turning route monitoring on or off restarts measurements.
 * The route is discovered at startup and every 10 minutes. Discovery probes up to 20 hops for destinations that do not answer ICMP Echo and up to 30 for those that do. There are no per-hop probes between discoveries.
 * Results are shown in a Host / Hops / Init TTL / Route table, one row per target. Hops carry the AS (`-a`) and PTR name (`-r`) when enabled; `*` is a hop that did not answer.
-* **Route change detection** works as in the MTR pane: a changed path adds a `[FLAP ×N HH:MM:SS]` line under the route and a yellow alert in the Log pane.
+* **Route change detection** works as in the MTR pane: a changed path adds a `[FLAP N times HH:MM:SS]` line under the route and a yellow alert in the Log pane.
 * The pane shows an error when discovery fails, for example if DNS fails or a router returns ICMP Destination Unreachable. It retries at the next scheduled rediscovery. If the destination simply does not reply, the pane shows the available hops.
 
 ## MTR Monitor pane
@@ -31,7 +31,7 @@
   * **Jitter** — Smoothed inter-packet delay variation (RFC 1889)
 * On narrow terminals, **Min**, **Max**, **Recv**, and **Jitter** columns are hidden automatically (compact mode).
 * Hops are included in statistics snapshots as `mtr_hops` per target in both modes (with `-T`, their counters stay at zero), and a route discovery failure as `mtr_error`.
-* **Route flap detection** — when re-discovery detects that the hop path has changed, a `[FLAP ×N HH:MM:SS]` badge is appended to the target's header row and a yellow alert is written to the Log pane (e.g. `[route flap google.com: hop 3: 10.0.0.2 → 10.0.0.9]`).
+* **Route flap detection** — when re-discovery detects that the hop path has changed, a `[FLAP N times HH:MM:SS]` badge is appended to the target's header row and a yellow alert is written to the Log pane (e.g. `[12:09:03] Route flap google.com: hop 3: 10.0.0.2 → 10.0.0.9`).
 
 ## HTTP Monitor pane
 
@@ -67,7 +67,7 @@
   * **Port** — Port number and protocol (e.g. `443/tcp`)
   * **Service** — Estimated service name (`Unknown` if not recognized)
   * **Status** — Green `Open` / Red `Closed` / Yellow `Filtered` or `Open|Filtered`
-  * **Last / Min / Avg / Max** — Latest, minimum, average and maximum RTT for open ports, in milliseconds to two decimal places (e.g. `12.34ms`) in fixed-width columns. On a timeout, **Last** shows muted `timeout`. Other unavailable latency values show `–`.
+  * **Last / Min / Avg / Max** — Latest, minimum, average and maximum RTT for open ports, in milliseconds to two decimal places (e.g. `12.34ms`) in fixed-width columns. On a timeout, **Last** shows muted `timeout`. Other unavailable latency values show `-`.
   * **Open/Closed** — Cumulative Open count / Closed+Filtered+Open|Filtered count
   * **Last Change** — Time elapsed since the last status change
 

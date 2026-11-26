@@ -9,53 +9,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nagayon-935/mping/internal/stats"
 	"golang.org/x/net/icmp"
-	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 )
 
 const (
-	ipv4EchoOverhead     = ipv4.HeaderLen + icmpEchoHeaderLen
-	icmpEchoHeaderLen    = 8
-	ipv6EchoOverhead     = ipv6.HeaderLen + icmpEchoHeaderLen
-	ipv6MinimumMTU       = 1280
-	pmtuMaxAttempts      = 8
-	pmtuDiscoveryTimeout = 3 * time.Second
-	pmtuSourceProbe      = "probe"
-	pmtuSourceOS         = "os"
-	pmtuStatusProbed     = "probed"
-	pmtuStatusEstimated  = "estimated"
-	pmtuStatusConfirmed  = "confirmed"
+	ipv6EchoOverhead    = ipv6.HeaderLen + icmpEchoHeaderLen
+	ipv6MinimumMTU      = 1280
+	pmtuMaxAttempts     = 8
+	pmtuSourceOS        = "os"
+	pmtuStatusEstimated = "estimated"
+	pmtuStatusConfirmed = "confirmed"
 )
-
-// PathMTUResult separates an IP packet's MTU from its ICMP payload budget.
-// An OS estimate is confirmed only by an unfragmented echo of that size.
-type PathMTUResult = stats.PathMTUInfo
-
-// DiscoverPathMTU uses kernel PMTUD for IPv6 and the existing DF search for IPv4.
-func (p *Pinger) DiscoverPathMTU(ctx context.Context, dest string, start, minPayload int, logf func(string)) (PathMTUResult, error) {
-	dst, err := p.resolveIPAddrContext(ctx, "ip", dest)
-	if err != nil {
-		return PathMTUResult{}, err
-	}
-	if dst.IP.To4() != nil {
-		payload, hop, err := p.discoverIPv4MaxPayload(ctx, dst, start, minPayload, logf)
-		if err != nil {
-			return PathMTUResult{}, err
-		}
-		return PathMTUResult{IP: dst.String(), MTU: payload + ipv4EchoOverhead, Payload: payload, Source: pmtuSourceProbe, Status: pmtuStatusProbed, BottleneckIP: hop}, nil
-	}
-	ctx, cancel := p.lookupContext(ctx, pmtuDiscoveryTimeout)
-	defer cancel()
-	c, err := openIPv6PMTUSocket(ctx, p, dst)
-	if err != nil {
-		return PathMTUResult{}, err
-	}
-	defer c.Close()
-	defer closeOnCancel(ctx, func() { _ = c.Close() })()
-	return p.discoverIPv6PathMTU(ctx, c, dst, logf)
-}
 
 type ipv6PMTUSocket interface {
 	Write([]byte) (int, error)

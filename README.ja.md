@@ -6,7 +6,9 @@
 
 **mping** は Go言語で書かれたターミナルベースのマルチターゲット Ping ツールです。複数のホストに対して同時に Ping を実行し、パケットロス率、RTT、ジッタ、TTL などの統計情報をリアルタイムで見やすい TUI (テキストユーザーインターフェース) で監視できます。`--web` でループバック限定の Web UI も使えます。
 
-![Go Version1.26](https://img.shields.io/badge/go-v1.26-blue "Go Version1.26")![MIT License](https://img.shields.io/badge/license-MIT-blue "MIT License")[![Coverage Status](https://coveralls.io/repos/github/nagayon-935/mping/badge.svg?branch=main)](https://coveralls.io/github/nagayon-935/mping?branch=main)
+![Go Version1.26](https://img.shields.io/badge/go-v1.26-blue "Go Version1.26")
+![MIT License](https://img.shields.io/badge/license-MIT-blue "MIT License")[![Coverage Status](https://coveralls.io/repos/github/nagayon-935/mping/badge.svg?branch=main)](https://coveralls.io/github/nagayon-935/mping?branch=main)
+[![Release](https://img.shields.io/github/v/release/nagayon-935/mping)](https://github.com/nagayon-935/mping/releases)
 
 [English](./README.md)
 
@@ -72,7 +74,7 @@ make install      # ビルド + sudo ./install.sh
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./assets/mping-web-dark.png">
-  <img src="./assets/mping-web-light.png" alt="mping の Web UI: ヘルス別フィルタ付きの Ping monitor、選択ホストの Summary、RTT グラフ">
+  <img src="./assets/mping-web-light.png" alt="mping の Web UI: 状態別フィルタ付きの Ping monitor とホスト別 Summary">
 </picture>
 
 詳細・操作・JSON API は [Web UI](./guide/ja/web-ui.md) を参照してください。

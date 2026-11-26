@@ -113,23 +113,27 @@ func (pc *PortChecker) Wait() {
 // when IP is still empty, leaving the status stuck at "Checking...".
 const maxDNSWait = 5 * time.Second
 
-func (pc *PortChecker) loop(ctx context.Context, t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
-
-	// Defer the first check until the target IP is resolved (or we time out),
-	// so the user sees a real Open/Closed/Filtered result on the first tick.
-	if t.CurrentIP() == "" {
-		waitTicker := time.NewTicker(100 * time.Millisecond)
-		defer waitTicker.Stop()
-		deadline := time.Now().Add(maxDNSWait)
-		for t.CurrentIP() == "" && time.Now().Before(deadline) {
-			select {
-			case <-ctx.Done():
-				return
-			case <-waitTicker.C:
-			}
+// waitForTargetIP waits up to maxDNSWait for the pinger to resolve t's IP so
+// the initial port check reports a real Open/Closed/Filtered result rather than
+// skipping the first tick. Returns false if ctx is cancelled while waiting.
+func waitForTargetIP(ctx context.Context, t *stats.TargetStats) bool {
+	if t.CurrentIP() != "" {
+		return true
+	}
+	waitTicker := time.NewTicker(100 * time.Millisecond)
+	defer waitTicker.Stop()
+	deadline := time.Now().Add(maxDNSWait)
+	for t.CurrentIP() == "" && time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-waitTicker.C:
 		}
 	}
+	return ctx.Err() == nil
+}
 
+func (pc *PortChecker) loop(ctx context.Context, t *stats.TargetStats, spec PortSpec, result *stats.PortCheckResult) {
 	runPeriodic(ctx, pc.interval, func() { pc.check(ctx, t, spec, result) })
 }
 
@@ -141,7 +145,7 @@ func (pc *PortChecker) check(ctx context.Context, t *stats.TargetStats, spec Por
 	if ip == "" {
 		return
 	}
-	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", spec.Port))
+	addr := net.JoinHostPort(ip, strconv.Itoa(spec.Port))
 
 	var status string
 	var rtt time.Duration
@@ -228,6 +232,9 @@ func (pc *PortChecker) launchTarget(t *stats.TargetStats, results []*stats.PortC
 	pc.targetMu.Unlock()
 	pc.wg.Go(func() {
 		defer close(run.done)
+		if !waitForTargetIP(ctx, t) {
+			return
+		}
 		var wg sync.WaitGroup
 		for j, spec := range pc.specs {
 			result := results[j]

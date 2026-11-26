@@ -1,10 +1,6 @@
 package pinger
 
-import (
-	"container/list"
-
-	"github.com/nagayon-935/mping/internal/stats"
-)
+import "github.com/nagayon-935/mping/internal/stats"
 
 // Keep far fewer entries than the 16-bit wire sequence space so normal
 // wraparound evicts a probe's history before its sequence is reused.
@@ -33,59 +29,106 @@ type recentEntry struct {
 	stats   stats.Probe
 }
 
+type recentNode struct {
+	entry recentEntry
+	prev  int
+	next  int
+}
+
 // recentSeqHistory is a small, size-bounded FIFO cache mapping a
 // just-resolved wire seq to how it was resolved. runTargetWorker consults it only
 // when a reply doesn't match anything in `unacked`, to tell a duplicate or a
 // late arrival apart from a genuinely unrecognized/bogus seq (which is
 // silently discarded).
 //
-// Capacity, not time, bounds it (see recentSeqHistoryCap's doc for why a
-// bounded size rather than a time window is what keeps this safe across the
-// 16-bit wire seq wraparound). It is owned exclusively by runTargetWorker's own
+// Backed by a fixed-size doubly-linked array so steady-state probes allocate
+// zero heap nodes per settlement. Owned exclusively by runTargetWorker's own
 // goroutine, exactly like `unacked`, so it needs no mutex.
 type recentSeqHistory struct {
-	order *list.List            // front = oldest, back = newest
-	index map[int]*list.Element // wireSeq -> its node in order
+	nodes [recentSeqHistoryCap]recentNode
+	head  int         // oldest slot, -1 when empty
+	tail  int         // newest slot, -1 when empty
+	free  int         // next unused slot while count < recentSeqHistoryCap
+	count int         // active entries
+	index map[int]int // wireSeq -> slot in nodes
 }
 
 func newRecentSeqHistory() *recentSeqHistory {
 	return &recentSeqHistory{
-		order: list.New(),
-		index: make(map[int]*list.Element),
+		head:  -1,
+		tail:  -1,
+		index: make(map[int]int),
 	}
 }
 
-// record notes that wireSeq was just resolved as kind, evicting the oldest
-// entry once the cache is over recentSeqHistoryCap. Re-recording an
-// already-present wireSeq (not expected in normal operation -- a given wire
-// seq is only resolved once per generation -- but handled safely) replaces
-// its entry and moves it to the back as the newest.
-func (h *recentSeqHistory) record(wireSeq int, kind resolutionKind, probe stats.Probe) {
-	if el, ok := h.index[wireSeq]; ok {
-		h.order.Remove(el)
-	}
-	el := h.order.PushBack(recentEntry{wireSeq: wireSeq, kind: kind, stats: probe})
-	h.index[wireSeq] = el
+func (h *recentSeqHistory) len() int { return h.count }
 
-	for h.order.Len() > recentSeqHistoryCap {
-		oldest := h.order.Front()
-		h.order.Remove(oldest)
-		entry := oldest.Value.(recentEntry)
-		// Only clear the index if it still points at this exact node: the
-		// replace-and-move-to-back path above can leave a wireSeq's index
-		// entry pointing at a newer node by the time an older, since
-		// re-recorded node reaches the front.
-		if h.index[entry.wireSeq] == oldest {
-			delete(h.index, entry.wireSeq)
+func (h *recentSeqHistory) newest() (recentEntry, bool) {
+	if h.tail < 0 {
+		return recentEntry{}, false
+	}
+	return h.nodes[h.tail].entry, true
+}
+
+// record notes that wireSeq was just resolved as kind, evicting the oldest
+// entry once the cache reaches recentSeqHistoryCap. Re-recording an
+// already-present wireSeq replaces its entry and moves it to the back as the
+// newest without growing the cache.
+func (h *recentSeqHistory) record(wireSeq int, kind resolutionKind, probe stats.Probe) {
+	entry := recentEntry{wireSeq: wireSeq, kind: kind, stats: probe}
+	if slot, ok := h.index[wireSeq]; ok {
+		h.nodes[slot].entry = entry
+		if slot != h.tail {
+			prev, next := h.nodes[slot].prev, h.nodes[slot].next
+			if prev >= 0 {
+				h.nodes[prev].next = next
+			} else {
+				h.head = next
+			}
+			if next >= 0 {
+				h.nodes[next].prev = prev
+			}
+			h.nodes[slot].prev = h.tail
+			h.nodes[slot].next = -1
+			h.nodes[h.tail].next = slot
+			h.tail = slot
+		}
+		return
+	}
+
+	var slot int
+	if h.count < recentSeqHistoryCap {
+		slot = h.free
+		h.free++
+		h.count++
+	} else {
+		slot = h.head
+		delete(h.index, h.nodes[slot].entry.wireSeq)
+		next := h.nodes[slot].next
+		if next >= 0 {
+			h.nodes[next].prev = -1
+			h.head = next
+		} else {
+			h.head = -1
+			h.tail = -1
 		}
 	}
+
+	h.nodes[slot] = recentNode{entry: entry, prev: h.tail, next: -1}
+	if h.tail >= 0 {
+		h.nodes[h.tail].next = slot
+	} else {
+		h.head = slot
+	}
+	h.tail = slot
+	h.index[wireSeq] = slot
 }
 
 // lookup returns the recorded entry for wireSeq, if any.
 func (h *recentSeqHistory) lookup(wireSeq int) (recentEntry, bool) {
-	el, ok := h.index[wireSeq]
+	slot, ok := h.index[wireSeq]
 	if !ok {
 		return recentEntry{}, false
 	}
-	return el.Value.(recentEntry), true
+	return h.nodes[slot].entry, true
 }

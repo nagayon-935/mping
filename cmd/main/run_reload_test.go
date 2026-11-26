@@ -245,3 +245,38 @@ func TestRunReload_PortChangeWarnsRestartRequired(t *testing.T) {
 		t.Error("expected a port-change-requires-restart warning in the second iteration's InitialLogs")
 	}
 }
+
+func TestReloadWarnings_IncludesDurationDriftAndAvoidsNestedTimestampOnLiveReload(t *testing.T) {
+	startup := config{duration: time.Minute, webEnabled: true, webPort: 8080}
+	reloaded := config{duration: 2 * time.Minute, webEnabled: true, webPort: 9090}
+
+	warnings := reloadWarnings(startup, reloaded, nil)
+	if !containsSubstring(warnings, "duration: change detected") {
+		t.Fatalf("reloadWarnings missing duration drift notice: %v", warnings)
+	}
+	if !containsSubstring(warnings, "web: change detected") {
+		t.Fatalf("reloadWarnings missing web drift notice: %v", warnings)
+	}
+
+	specs := []targetSpec{{Host: "192.0.2.1"}}
+	targets := buildTargetsForIteration(specs, startup)
+	sup := newSupervisor(supervisorConfig{
+		config:     startup,
+		specs:      specs,
+		targets:    targets,
+		makePinger: func(int) pingerController { return &fakePinger{} },
+	})
+	sup.Start()
+	defer sup.Shutdown()
+
+	applied, reason, err := sup.reloadLive(reloaded, specs, nil)
+	if err != nil || !applied {
+		t.Fatalf("reloadLive = (%v, %q, %v), want applied=true", applied, reason, err)
+	}
+	if strings.Contains(reason, "[yellow]") || strings.Contains(reason, "[-]") {
+		t.Fatalf("reloadLive reason contains embedded tview tags/timestamp: %q", reason)
+	}
+	if !strings.Contains(reason, "duration: change detected") || !strings.Contains(reason, "web: change detected") {
+		t.Fatalf("reloadLive reason missing drift warnings: %q", reason)
+	}
+}

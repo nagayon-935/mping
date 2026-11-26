@@ -3,7 +3,7 @@ package pinger
 import (
 	"context"
 	"errors"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"os"
 	"strings"
@@ -23,7 +23,7 @@ const (
 	receiverBufferSize  = 65535                  // max IPv4 packet size; large enough for any ICMP message
 	probeBufferSize     = 1500                   // typical Ethernet MTU; sufficient for PMTU probe responses
 	replyChanBuffer     = 100                    // allow burst of replies without blocking the receiver
-	traceChanBuffer     = 200                    // larger buffer for concurrent route probes
+	traceChanBuffer     = 4                      // per-probe buffer: one HopProbe awaits a single matching reply
 	receiverReadTimeout = 1 * time.Second        // poll interval for checking done channel in receiver loop
 	pmtuProbeTimeout    = 300 * time.Millisecond // generous enough for WAN RTTs, short enough for interactive use
 	payloadSignature    = "MPING"                // identifies our probes in packet captures
@@ -66,8 +66,8 @@ const (
 // record a spurious loss against the target.
 var errPingerStopped = errors.New("pinger stopped")
 
-// Reply represents a single received ICMP echo reply or error from the receiver loop.
-type Reply struct {
+// reply represents a single received ICMP echo reply or error from the receiver loop.
+type reply struct {
 	// RTT is computed in the receiver goroutine from the timestamp
 	// embedSendTimestamp wrote into the probe's own payload (see
 	// handleEchoReply/extractSendTimestamp), avoiding the scheduling delay
@@ -114,9 +114,9 @@ type Pinger struct {
 	AsnEnabled      bool          // Enable ASN lookups
 	PtrEnabled      bool          // Enable PTR (reverse DNS) lookups
 
-	connV4           PacketConnV4
-	connV6           PacketConnV6
-	targetChans      map[int]chan Reply
+	connV4           packetConnV4
+	connV6           packetConnV6
+	targetChans      map[int]chan reply
 	mapMu            sync.RWMutex
 	baseID           int
 	ids              *IDAllocator
@@ -138,14 +138,15 @@ type Pinger struct {
 	probeTimeout time.Duration
 
 	// initialSeq is the value runTargetWorker's logical seq counter starts from
-	// (before the first seq++). Always 0 in production; tests override it
-	// via Options.InitialSeq to reach the 16-bit wraparound boundary
-	// without waiting for 65535 real probes.
+	// (before the first seq++). Always 0 in production; worker tests override
+	// it to exercise the 16-bit wraparound boundary without sending 65535 probes.
 	initialSeq int
 
-	asnCache  map[string]ASNInfo
-	asnMu     sync.RWMutex
-	asnJitter func() time.Duration // returns a random delay to stagger concurrent Cymru lookups; overridden to 0 in tests
+	asnCache           map[string]ASNInfo
+	asnOrgCache        map[string]string
+	asnMu              sync.RWMutex
+	asnJitter          func() time.Duration // returns a random delay to stagger concurrent Cymru lookups; overridden to 0 in tests
+	hasCustomTXTLookup bool
 
 	ptrCache  map[string]string
 	ptrMu     sync.RWMutex
@@ -153,6 +154,7 @@ type Pinger struct {
 
 	traceChans   map[int]chan traceMsg // keyed by trace ID
 	traceChansMu sync.RWMutex
+	activeTraces atomic.Int32  // non-zero while at least one trace channel is registered
 	traceCounter atomic.Uint32 // unique traceID per concurrent call
 
 	ctx      context.Context // lifetime of all context-aware DNS operations
@@ -192,11 +194,6 @@ type Options struct {
 	LookupAddrContext    func(context.Context, string) ([]string, error)
 	AsnEnabled           bool
 	PtrEnabled           bool
-
-	// InitialSeq overrides the starting value of runTargetWorker's logical seq
-	// counter. Zero value matches production behavior (start at 0); tests
-	// set it to exercise the 16-bit ICMP seq wraparound boundary.
-	InitialSeq int
 }
 
 // NewPingerWithOptions creates a Pinger with the provided options.
@@ -232,8 +229,10 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		workerStates:       make(map[*stats.TargetStats]*targetWorker),
 		workerEvents:       make(chan struct{}, 1),
 		resolveAddresses:   make(map[*stats.TargetStats]string),
-		targetChans:        make(map[int]chan Reply),
+		targetChans:        make(map[int]chan reply),
 		asnCache:           make(map[string]ASNInfo),
+		asnOrgCache:        make(map[string]string),
+		hasCustomTXTLookup: opts.LookupTXT != nil || opts.LookupTXTContext != nil,
 		ptrCache:           make(map[string]string),
 		baseID:             os.Getpid() & 0xffff,
 		Size:               56, // Default payload size (like standard ping)
@@ -244,7 +243,6 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		ctx:                ctx,
 		cancel:             cancel,
 		done:               make(chan struct{}),
-		initialSeq:         opts.InitialSeq,
 		resolveIPAddr:      resolve,
 		resolveWithContext: resolveContext,
 		now:                now,
@@ -253,15 +251,33 @@ func NewPingerWithOptions(targets []*stats.TargetStats, opts Options) *Pinger {
 		lookupAddr:         opts.LookupAddr,
 		lookupTXTContext:   lookupContext,
 		lookupAddrContext:  lookupAddrContext,
-		asnJitter:          func() time.Duration { return time.Duration(rand.Int63n(int64(asnJitterMax))) },
-		ptrJitter:          func() time.Duration { return time.Duration(rand.Int63n(int64(ptrJitterMax))) },
+		asnJitter:          func() time.Duration { return time.Duration(rand.Int64N(int64(asnJitterMax))) },
+		ptrJitter:          func() time.Duration { return time.Duration(rand.Int64N(int64(ptrJitterMax))) },
 	}
 	if resolveContext == nil && resolve == nil {
 		p.resolveWithContext = func(ctx context.Context, network, address string) (*net.IPAddr, error) {
-			return ResolveUsableIPAddrContext(ctx, resolver, network, address, BindConfig{Source: p.Source, Interface: p.Interface, SourceV4: p.SourceV4, SourceV6: p.SourceV6})
+			return ResolveUsableIPAddrContext(ctx, resolver, network, address, p.BindConfig())
 		}
 	}
 	return p
+}
+
+// BindConfig returns the source address and interface configuration used for probes.
+func (p *Pinger) BindConfig() BindConfig {
+	return BindConfig{
+		Source:    p.Source,
+		Interface: p.Interface,
+		SourceV4:  p.SourceV4,
+		SourceV6:  p.SourceV6,
+	}
+}
+
+// SetBindConfig configures the source address and interface used for probes and DNS resolution.
+func (p *Pinger) SetBindConfig(bc BindConfig) {
+	p.Source = bc.Source
+	p.Interface = bc.Interface
+	p.SourceV4 = bc.SourceV4
+	p.SourceV6 = bc.SourceV6
 }
 
 // applyLastErrSource substitutes the bound source IP into raw-socket write
