@@ -50,13 +50,19 @@ mping -p 443/tcp,53/udp google.com 8.8.8.8
 # MTR 風の経路別ロス/レイテンシ監視
 mping -M google.com
 
+# HTTP(S) ヘルスチェック
+mping -H https://example.com/health google.com
+
+# 複数の HTTP エンドポイント
+mping -H https://api.example.com/health,https://cdn.example.com/ping google.com
+
 # Traceroute と Port Monitor を同時に表示
 mping -T -p 443/tcp google.com
 
 # 色分けの閾値をカスタマイズする (warn = オレンジ, crit = 赤)
 mping --rtt-warn 30 --rtt-crit 100 --loss-warn 10 --loss-crit 50 google.com
 
-# ターゲット IP の AS 番号を表示する
+# ターゲット・ホップ IP の AS 番号を表示する
 mping -a google.com 1.1.1.1
 ```
 
@@ -87,7 +93,7 @@ mping -a google.com 1.1.1.1
 | `--port` | `-p` | 疎通確認するポート (例: `443/tcp`, `53/udp`, `443`)。カンマ区切りで複数指定可 | `""` |
 | `--web` | | Web UI を `http://127.0.0.1:<web-port>/` で提供する (このマシンからのみ接続可。[Web UI](web-ui.md) 参照) | `false` |
 | `--web-port` | | `--web` の待ち受けポート (1–65535) | `8080` |
-| `--asn` | `-a` | ターゲット IP の AS 番号を検索して表示する | `false` |
+| `--asn` | `-a` | ターゲット・ホップ IP の AS 番号を検索して表示する | `false` |
 | `--ptr` | `-r` | ターゲット・ホップ IP の逆引き名を検索して表示する | `false` |
 | `--http` | `-H` | ヘルスチェックする URL (例: `https://example.com/health`)。カンマ区切りまたは繰り返し指定で複数可 | `""` |
 | `--check-config` | | 計測を始めずに有効な設定を検証・表示する（CLIのみ） | `false` |
