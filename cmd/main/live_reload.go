@@ -106,22 +106,24 @@ func (s *supervisor) reloadLive(cfg config, specs []targetSpec, groups []ui.Targ
 		}
 		// After the target list is final, so the new engine probes exactly
 		// the surviving and added targets.
+		var notices []string
 		if cfg.mtr != previous.mtr {
 			if s.state == stateRunning {
 				s.restartRoute(false)
 			}
-			reason += routeModeNotice(cfg)
+			notices = append(notices, strings.TrimSpace(routeModeNotice(cfg)))
 		}
 		applied = true
 		if len(added) > 0 {
 			s.clearFinished()
 		}
-		if cfg.duration != previous.duration {
-			reason += "duration limit changes require restarting mping. "
+		if warning := durationReloadDriftText(previous, cfg); warning != "" {
+			notices = append(notices, warning)
 		}
-		if warning := checkWebReloadDrift(previous, cfg); warning != "" {
-			reason += " " + warning
+		if warning := webReloadDriftText(previous, cfg); warning != "" {
+			notices = append(notices, warning)
 		}
+		reason = strings.Join(notices, " ")
 		return nil
 	})
 	return applied, reason, err

@@ -45,10 +45,10 @@ func Write(path, format string, r Report) error {
 	}
 	if err = tmp.Sync(); err != nil {
 		tmp.Close()
-		return err
+		return fmt.Errorf("sync report: %w", err)
 	}
 	if err = tmp.Close(); err != nil {
-		return err
+		return fmt.Errorf("close report: %w", err)
 	}
 	if err = os.Link(tmp.Name(), path); err != nil {
 		return fmt.Errorf("save report (choose a new path if it exists): %w", err)

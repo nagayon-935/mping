@@ -503,3 +503,29 @@ func TestEngine_MTRUnreachableProbePausesUntilRediscovery(t *testing.T) {
 		}
 	})
 }
+
+func TestEngine_AddAndRemoveTargetBeforeStart(t *testing.T) {
+	a, b := newTestTarget("8.8.8.8"), newTestTarget("1.1.1.1")
+	prober := newFakeProber(map[int]pinger.HopReply{
+		1: {SrcIP: "10.0.0.1", Responded: true, ReachedDest: true},
+	})
+	eng := NewEngine(prober, nil, Config{
+		ProbeInterval:   15 * time.Millisecond,
+		HopTimeout:      25 * time.Millisecond,
+		RediscoverEvery: time.Hour,
+		MaxHops:         2,
+		DisableASN:      true,
+		DisablePTR:      true,
+	})
+	eng.AddTarget(a)
+	eng.AddTarget(b)
+	eng.RemoveTarget(b)
+	eng.Start()
+	eng.Start() // idempotent
+	defer eng.Stop()
+
+	waitForSent(t, a, 2, 500*time.Millisecond)
+	if len(b.MTR().View()) != 0 {
+		t.Fatalf("removed pre-start target was still probed: %+v", b.MTR().View())
+	}
+}

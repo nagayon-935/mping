@@ -11,9 +11,12 @@ type IPChange struct {
 // SetMeasurementState records the measurement lifecycle state for this target.
 func (t *TargetStats) SetMeasurementState(state string) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	changed := t.measurementState != state
 	t.measurementState = state
-	bumpGeneration()
+	t.mu.Unlock()
+	if changed {
+		bumpGeneration()
+	}
 }
 
 // MeasurementState returns the measurement lifecycle state last recorded for the target.

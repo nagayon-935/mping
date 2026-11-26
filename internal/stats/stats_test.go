@@ -619,3 +619,30 @@ func TestPingWindowMaxAcrossHistoryWrap(t *testing.T) {
 		}
 	}
 }
+
+func TestTargetStats_SetIPChangeClearsStaleMetadataAndSkipsNoOpBumps(t *testing.T) {
+	tgt := NewTargetStats("example.com")
+	tgt.SetIP("1.1.1.1")
+	tgt.SetASNInfo("AS13335", "US", "Cloudflare")
+	tgt.SetPTR("one.one.one.one")
+	tgt.SetPathMTU(PathMTUInfo{IP: "1.1.1.1", MTU: 1500, Payload: 1472})
+
+	before := Generation()
+	tgt.SetIP("1.1.1.1")
+	tgt.SetASNInfo("AS13335", "US", "Cloudflare")
+	tgt.SetPTR("one.one.one.one")
+	tgt.SetPathMTU(PathMTUInfo{IP: "1.1.1.1", MTU: 1500, Payload: 1472})
+	if after := Generation(); after != before {
+		t.Fatalf("unchanged metadata bumped Generation() from %d to %d", before, after)
+	}
+
+	tgt.SetIP("8.8.8.8")
+	v := tgt.GetView()
+	if v.IP != "8.8.8.8" {
+		t.Fatalf("IP = %q, want 8.8.8.8", v.IP)
+	}
+	if v.ASN != "" || v.Country != "" || v.Org != "" || v.PTR != "" || v.PMTU != 0 {
+		t.Fatalf("stale metadata retained after IP change: ASN=%q Country=%q Org=%q PTR=%q PMTU=%d",
+			v.ASN, v.Country, v.Org, v.PTR, v.PMTU)
+	}
+}

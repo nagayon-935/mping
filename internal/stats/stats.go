@@ -123,65 +123,86 @@ func (t *TargetStats) MTR() *MTRStats {
 
 // SetIP records the resolved IP, tracking changes and clearing estimates for another IP.
 func (t *TargetStats) SetIP(ip string) {
-	defer bumpGeneration()
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	changed := false
 	if t.pathMTU.IP != "" && t.pathMTU.IP != ip {
 		t.pathMTU = PathMTUInfo{}
+		changed = true
 	}
 	if t.ip != ip {
+		changed = true
 		t.recordEventLocked("dns", "IP: "+t.ip+" → "+ip)
 		if t.ip != "" {
 			t.ipChanges++
+			t.asn, t.country, t.org, t.ptr = "", "", "", ""
 		}
 		t.ipHistory = append(t.ipHistory, IPChange{At: time.Now(), IP: ip})
 		if len(t.ipHistory) > 64 {
 			t.ipHistory = append([]IPChange(nil), t.ipHistory[len(t.ipHistory)-64:]...)
 		}
+		t.ip = ip
 	}
-	t.ip = ip
+	t.mu.Unlock()
+	if changed {
+		bumpGeneration()
+	}
 }
 
 // SetASNInfo records the resolved ASN number, country and organization.
 func (t *TargetStats) SetASNInfo(number, country, org string) {
-	defer bumpGeneration()
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	changed := t.asn != number || t.country != country || t.org != org
 	t.asn = number
 	t.country = country
 	t.org = org
+	t.mu.Unlock()
+	if changed {
+		bumpGeneration()
+	}
 }
 
 // SetPTR records the resolved PTR (reverse DNS) hostname for t's IP.
 func (t *TargetStats) SetPTR(name string) {
-	defer bumpGeneration()
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	changed := t.ptr != name
 	t.ptr = name
+	t.mu.Unlock()
+	if changed {
+		bumpGeneration()
+	}
 }
 
 // SetDNSServer records the DNS server used to resolve the target.
 func (t *TargetStats) SetDNSServer(dnsServer string) {
-	defer bumpGeneration()
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	changed := t.dnsServer != dnsServer
 	t.dnsServer = dnsServer
+	t.mu.Unlock()
+	if changed {
+		bumpGeneration()
+	}
 }
 
 // SetIfaceMTU records the outgoing interface MTU in bytes.
 func (t *TargetStats) SetIfaceMTU(mtu int) {
-	defer bumpGeneration()
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	changed := t.ifaceMTU != mtu
 	t.ifaceMTU = mtu
+	t.mu.Unlock()
+	if changed {
+		bumpGeneration()
+	}
 }
 
 // SetPathMTU replaces the path MTU estimate and its associated metadata.
 func (t *TargetStats) SetPathMTU(info PathMTUInfo) {
-	defer bumpGeneration()
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	changed := t.pathMTU != info
 	t.pathMTU = info
+	t.mu.Unlock()
+	if changed {
+		bumpGeneration()
+	}
 }
 
 // SetPortResults replaces the port check results slice atomically.
