@@ -11,28 +11,31 @@ import (
 	"golang.org/x/net/ipv6"
 )
 
-// getWriteFunc returns the appropriate ICMP message type and write function
-// for the given destination address.
-func (p *Pinger) getWriteFunc(dstAddr *net.IPAddr) (icmp.Type, func([]byte, net.Addr) (int, error), string) {
+// probeMsgType returns the ICMP echo request type and address-family flag for
+// dstAddr, or an error string when no probe socket is open for that family.
+func (p *Pinger) probeMsgType(dstAddr *net.IPAddr) (icmp.Type, bool, string) {
 	if dstAddr.IP.To4() != nil {
 		if p.connV4 != nil {
-			return ipv4.ICMPTypeEcho, func(b []byte, dst net.Addr) (int, error) {
-				return p.connV4.WriteTo(b, nil, dst)
-			}, ""
+			return ipv4.ICMPTypeEcho, true, ""
 		}
-		return nil, nil, "No IPv4 Conn"
+		return nil, true, "No IPv4 Conn"
 	}
 	if p.connV6 != nil {
-		return ipv6.ICMPTypeEchoRequest, func(b []byte, dst net.Addr) (int, error) {
-			return p.connV6.WriteTo(b, nil, dst)
-		}, ""
+		return ipv6.ICMPTypeEchoRequest, false, ""
 	}
-	return nil, nil, "No IPv6 Conn"
+	return nil, false, "No IPv6 Conn"
+}
+
+func (p *Pinger) writeProbe(isV4 bool, b []byte, dst net.Addr) (int, error) {
+	if isV4 {
+		return p.connV4.WriteTo(b, nil, dst)
+	}
+	return p.connV6.WriteTo(b, nil, dst)
 }
 
 func (p *Pinger) sendProbeWithStats(probe stats.Probe, id, seq int, payload []byte, dstAddr *net.IPAddr) (time.Time, bool) {
-	msgType, writeFunc, errStr := p.getWriteFunc(dstAddr)
-	if writeFunc == nil {
+	msgType, isV4, errStr := p.probeMsgType(dstAddr)
+	if msgType == nil {
 		probe.OnFailure(errStr)
 		return time.Time{}, false
 	}
@@ -59,7 +62,7 @@ func (p *Pinger) sendProbeWithStats(probe stats.Probe, id, seq int, payload []by
 		return time.Time{}, false
 	}
 
-	_, err = writeFunc(b, dstAddr)
+	_, err = p.writeProbe(isV4, b, dstAddr)
 	if err != nil {
 		errMsg := p.applyLastErrSource(err.Error())
 		probe.OnFailure(errMsg)
@@ -193,7 +196,7 @@ func (p *Pinger) runTargetWorker(ctx context.Context, t *stats.TargetStats, id i
 	// actually happened preserves the intuitive invariant that a reply is
 	// only ever evaluated against an `unacked` that could possibly contain
 	// it.
-	var replyCh <-chan Reply
+	var replyCh <-chan reply
 
 	for {
 		select {
@@ -226,7 +229,9 @@ func (p *Pinger) runTargetWorker(ctx context.Context, t *stats.TargetStats, id i
 			start, ok := p.sendProbeWithStats(probe, id, seq, payload, dstAddr)
 			if ok {
 				unacked[seq&seqMask] = pendingProbe{start: start, stats: probe}
-				rearmSweepTimer(sweepTimer, unacked, timeout)
+				if len(unacked) == 1 {
+					rearmSweepTimer(sweepTimer, unacked, timeout)
+				}
 				replyCh = ch
 			}
 
@@ -257,34 +262,34 @@ func (p *Pinger) runTargetWorker(ctx context.Context, t *stats.TargetStats, id i
 // may have moved); a reply for a recently settled seq is classified as a
 // duplicate or late arrival. Called only from the worker's goroutine, which
 // owns unacked and hist.
-func (p *Pinger) settleReply(reply Reply, unacked map[int]pendingProbe, hist *recentSeqHistory) bool {
-	if pend, found := unacked[reply.Seq]; found {
-		delete(unacked, reply.Seq)
-		if reply.Err != "" {
-			pend.stats.OnFailure(reply.Err)
+func (p *Pinger) settleReply(rep reply, unacked map[int]pendingProbe, hist *recentSeqHistory) bool {
+	if pend, found := unacked[rep.Seq]; found {
+		delete(unacked, rep.Seq)
+		if rep.Err != "" {
+			pend.stats.OnFailure(rep.Err)
 		} else {
 			// Prefer the RTT the receiver goroutine computed from the
 			// payload-embedded send timestamp (see handleEchoReply):
 			// it skips this goroutine hop entirely, so it isn't
 			// inflated by scheduling delay between the receiver and
-			// this select loop. reply.RTT is left at its zero value
+			// this select loop. rep.RTT is left at its zero value
 			// whenever that timestamp couldn't be trusted (payload
 			// too small for -s, signature mismatch, or a result
 			// isPlausibleRTT rejected), in which case fall back to
 			// this goroutine's own start-time bookkeeping.
-			rtt := reply.RTT
+			rtt := rep.RTT
 			if rtt <= 0 {
 				rtt = time.Since(pend.start)
 			}
-			pend.stats.OnSuccess(rtt, reply.TTL)
+			pend.stats.OnSuccess(rtt, rep.TTL)
 		}
 		// Remember how this wire seq was resolved so a further reply
 		// for it (a genuine network-level duplicate) can be
 		// classified as a DUP below instead of silently discarded.
-		hist.record(reply.Seq, resolvedAcked, pend.stats)
+		hist.record(rep.Seq, resolvedAcked, pend.stats)
 		return true
 	}
-	if entry, foundHist := hist.lookup(reply.Seq); foundHist {
+	if entry, foundHist := hist.lookup(rep.Seq); foundHist {
 		// No `unacked` entry, but this wire seq was recently
 		// resolved: classify instead of silently discarding.
 		switch entry.kind {

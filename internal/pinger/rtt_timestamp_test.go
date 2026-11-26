@@ -206,7 +206,7 @@ func TestHandleEchoReply_SetsRTTFromEmbeddedTimestamp(t *testing.T) {
 	})
 	p.probeTimeout = time.Second
 	id := p.baseID & 0xffff
-	p.targetChans[id] = make(chan Reply, 1)
+	p.targetChans[id] = make(chan reply, 1)
 
 	payload := buildPayload(56)
 	embedSendTimestamp(payload, sent)
@@ -233,7 +233,7 @@ func TestHandleEchoReply_FallsBackWhenTimestampInvalid(t *testing.T) {
 	p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{})
 	p.probeTimeout = time.Second
 	id := p.baseID & 0xffff
-	p.targetChans[id] = make(chan Reply, 1)
+	p.targetChans[id] = make(chan reply, 1)
 
 	payload := buildPayload(56)
 	embedSendTimestamp(payload, time.Now())
@@ -262,7 +262,7 @@ func TestHandleEchoReply_FallsBackWhenTimestampInvalid(t *testing.T) {
 func TestRunWorker_UsesEmbeddedRTTWhenValid(t *testing.T) {
 	r := newWorkerRig(t, 1)
 	const embeddedRTT = 3 * time.Millisecond
-	r.replyOnWrite(1, Reply{TTL: 64, Seq: 1, RTT: embeddedRTT})
+	r.replyOnWrite(1, reply{TTL: 64, Seq: 1, RTT: embeddedRTT})
 
 	r.run(10*time.Millisecond, 500*time.Millisecond)
 
@@ -281,7 +281,7 @@ func TestRunWorker_FallsBackToStartTimeWhenRTTZero(t *testing.T) {
 	// delivered 20ms into the write guarantees a fallback RTT of at least 20ms.
 	r.conn.onWrite = func([]byte, net.Addr) error {
 		time.Sleep(20 * time.Millisecond)
-		r.ch <- Reply{TTL: 64, Seq: 1} // RTT left zero
+		r.ch <- reply{TTL: 64, Seq: 1} // RTT left zero
 		return nil
 	}
 

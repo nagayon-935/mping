@@ -20,7 +20,7 @@ func TestResetRejectsOutstandingProbeResults(t *testing.T) {
 			}})
 			p.connV4 = &fakePacketConn{}
 			p.Count = 1
-			ch := make(chan Reply, 1)
+			ch := make(chan reply, 1)
 			p.targetChans[p.baseID] = ch
 			done := make(chan struct{})
 			go func() { p.runWorker(target, p.baseID, time.Second, 200*time.Millisecond); close(done) }()
@@ -29,9 +29,9 @@ func TestResetRejectsOutstandingProbeResults(t *testing.T) {
 			target.Reset()
 			switch outcome {
 			case "success":
-				ch <- Reply{Seq: 1, TTL: 64}
+				ch <- reply{Seq: 1, TTL: 64}
 			case "icmp error":
-				ch <- Reply{Seq: 1, Err: "unreachable"}
+				ch <- reply{Seq: 1, Err: "unreachable"}
 			}
 			<-done
 			v := target.GetView()
@@ -51,16 +51,16 @@ func TestResetKeepsRemainingCountBudget(t *testing.T) {
 	}})
 	p.connV4 = &fakePacketConn{}
 	p.Count = 2
-	ch := make(chan Reply, 2)
+	ch := make(chan reply, 2)
 	p.targetChans[p.baseID] = ch
 	done := make(chan struct{})
 	go func() { p.runWorker(target, p.baseID, 50*time.Millisecond, time.Second); close(done) }()
 	t.Cleanup(func() { p.Stop(); <-done })
 	awaitTarget(t, target, func(v stats.TargetView) bool { return v.Sent == 1 })
 	target.Reset()
-	ch <- Reply{Seq: 1, TTL: 64}
+	ch <- reply{Seq: 1, TTL: 64}
 	awaitTarget(t, target, func(v stats.TargetView) bool { return v.Sent == 1 })
-	ch <- Reply{Seq: 2, TTL: 64}
+	ch <- reply{Seq: 2, TTL: 64}
 	select {
 	case <-done:
 	case <-time.After(time.Second):
@@ -78,7 +78,7 @@ func TestResetRejectsPreviousDuplicateAndLateReply(t *testing.T) {
 			target := stats.NewTargetStats("127.0.0.1")
 			p := NewPingerWithOptions([]*stats.TargetStats{target}, Options{})
 			p.connV4 = &fakePacketConn{}
-			ch := make(chan Reply, 2)
+			ch := make(chan reply, 2)
 			p.targetChans[p.baseID] = ch
 			done := make(chan struct{})
 			go func() { p.runWorker(target, p.baseID, time.Hour, 30*time.Millisecond); close(done) }()
@@ -87,15 +87,15 @@ func TestResetRejectsPreviousDuplicateAndLateReply(t *testing.T) {
 			if late {
 				awaitTarget(t, target, func(v stats.TargetView) bool { return v.Loss == 1 })
 			} else {
-				ch <- Reply{Seq: 1, TTL: 64}
+				ch <- reply{Seq: 1, TTL: 64}
 				awaitTarget(t, target, func(v stats.TargetView) bool { return v.Recv == 1 })
 			}
 			target.Reset()
 			// The old reply, then a marker for a seq never sent: the worker
 			// takes replies one at a time, so once the marker has left the
 			// channel the old reply has been classified.
-			ch <- Reply{Seq: 1, TTL: 64}
-			ch <- Reply{Seq: 999, TTL: 64}
+			ch <- reply{Seq: 1, TTL: 64}
+			ch <- reply{Seq: 999, TTL: 64}
 			deadline := time.Now().Add(time.Second)
 			for len(ch) > 0 {
 				if time.Now().After(deadline) {

@@ -543,3 +543,29 @@ func TestReceiveViaTraceChan_ClosedChannelIsATimeout(t *testing.T) {
 		t.Fatalf("got %+v, %v; want a non-responded hop and no error", got, err)
 	}
 }
+
+func TestProbeHop_ReusesResolvedAddrFromOpenHopSocket(t *testing.T) {
+	var resolves int
+	p := NewPingerWithOptions(nil, Options{
+		ResolveIPAddr: func(string, string) (*net.IPAddr, error) {
+			resolves++
+			return &net.IPAddr{IP: net.IPv4(8, 8, 8, 8)}, nil
+		},
+		ListenPacket: listenWith(&fakeNetPacketConn{}),
+	})
+	sock, err := p.OpenHopSocketContext(context.Background(), "example.com")
+	if err != nil {
+		t.Fatalf("OpenHopSocketContext: %v", err)
+	}
+	sock.sendV4 = &fakeHopConn{}
+	defer sock.Close()
+
+	for ttl := 1; ttl <= 5; ttl++ {
+		if _, err := p.ProbeHop(context.Background(), sock, "example.com", ttl, p.NextTraceID(), 5*time.Millisecond); err != nil {
+			t.Fatalf("ProbeHop ttl=%d: %v", ttl, err)
+		}
+	}
+	if resolves != 1 {
+		t.Fatalf("ResolveIPAddr called %d times, want 1 (ProbeHop must reuse HopSocket's resolved address)", resolves)
+	}
+}

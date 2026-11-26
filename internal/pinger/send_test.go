@@ -58,7 +58,7 @@ func TestApplyLastErrSource(t *testing.T) {
 	}
 }
 
-func TestGetWriteFunc(t *testing.T) {
+func TestProbeMsgTypeAndWriteProbe(t *testing.T) {
 	v4Dst := &net.IPAddr{IP: net.IPv4(8, 8, 8, 8)}
 	v6Dst := &net.IPAddr{IP: net.ParseIP("2001:db8::1")}
 
@@ -66,15 +66,12 @@ func TestGetWriteFunc(t *testing.T) {
 		p := NewPinger(nil)
 		conn := &fakePacketConn{}
 		p.connV4 = conn
-		msgType, writeFunc, errStr := p.getWriteFunc(v4Dst)
-		if writeFunc == nil || errStr != "" {
-			t.Fatalf("writeFunc nil=%v errStr=%q, want a usable writer", writeFunc == nil, errStr)
+		msgType, isV4, errStr := p.probeMsgType(v4Dst)
+		if msgType != ipv4.ICMPTypeEcho || !isV4 || errStr != "" {
+			t.Fatalf("probeMsgType = (%v, %v, %q), want (ICMPTypeEcho, true, \"\")", msgType, isV4, errStr)
 		}
-		if msgType != ipv4.ICMPTypeEcho {
-			t.Fatalf("msgType = %v, want ICMPTypeEcho", msgType)
-		}
-		if n, err := writeFunc([]byte("test"), v4Dst); err != nil || n != 4 {
-			t.Fatalf("writeFunc = (%d, %v), want (4, nil)", n, err)
+		if n, err := p.writeProbe(isV4, []byte("test"), v4Dst); err != nil || n != 4 {
+			t.Fatalf("writeProbe = (%d, %v), want (4, nil)", n, err)
 		}
 		if got := conn.writes(); len(got) != 1 || string(got[0]) != "test" {
 			t.Fatalf("conn saw writes %q, want [test]", got)
@@ -82,9 +79,9 @@ func TestGetWriteFunc(t *testing.T) {
 	})
 
 	t.Run("IPv4 without conn", func(t *testing.T) {
-		_, writeFunc, errStr := NewPinger(nil).getWriteFunc(v4Dst)
-		if writeFunc != nil {
-			t.Fatal("expected nil writeFunc")
+		msgType, isV4, errStr := NewPinger(nil).probeMsgType(v4Dst)
+		if msgType != nil || !isV4 {
+			t.Fatalf("expected nil msgType and isV4=true, got (%v, %v)", msgType, isV4)
 		}
 		if errStr != "No IPv4 Conn" {
 			t.Fatalf("errStr = %q, want %q", errStr, "No IPv4 Conn")
@@ -95,15 +92,12 @@ func TestGetWriteFunc(t *testing.T) {
 		p := NewPinger(nil)
 		conn := &fakePacketConnV6{}
 		p.connV6 = conn
-		msgType, writeFunc, errStr := p.getWriteFunc(v6Dst)
-		if writeFunc == nil || errStr != "" {
-			t.Fatalf("writeFunc nil=%v errStr=%q, want a usable writer", writeFunc == nil, errStr)
+		msgType, isV4, errStr := p.probeMsgType(v6Dst)
+		if msgType != ipv6.ICMPTypeEchoRequest || isV4 || errStr != "" {
+			t.Fatalf("probeMsgType = (%v, %v, %q), want (ICMPTypeEchoRequest, false, \"\")", msgType, isV4, errStr)
 		}
-		if msgType != ipv6.ICMPTypeEchoRequest {
-			t.Fatalf("msgType = %v, want ICMPTypeEchoRequest", msgType)
-		}
-		if n, err := writeFunc([]byte("test"), v6Dst); err != nil || n != 4 {
-			t.Fatalf("writeFunc = (%d, %v), want (4, nil)", n, err)
+		if n, err := p.writeProbe(isV4, []byte("test"), v6Dst); err != nil || n != 4 {
+			t.Fatalf("writeProbe = (%d, %v), want (4, nil)", n, err)
 		}
 		if conn.writes != 1 {
 			t.Fatalf("conn saw %d writes, want 1", conn.writes)
@@ -111,9 +105,9 @@ func TestGetWriteFunc(t *testing.T) {
 	})
 
 	t.Run("IPv6 without conn", func(t *testing.T) {
-		_, writeFunc, errStr := NewPinger(nil).getWriteFunc(v6Dst)
-		if writeFunc != nil {
-			t.Fatal("expected nil writeFunc")
+		msgType, isV4, errStr := NewPinger(nil).probeMsgType(v6Dst)
+		if msgType != nil || isV4 {
+			t.Fatalf("expected nil msgType and isV4=false, got (%v, %v)", msgType, isV4)
 		}
 		if errStr != "No IPv6 Conn" {
 			t.Fatalf("errStr = %q, want %q", errStr, "No IPv6 Conn")

@@ -220,6 +220,29 @@ type graphCell struct {
 	bottom                 int // first screen row below the pane
 }
 
+// gridRowSet stores up to a handful of Y gridline positions on the stack so
+// drawCell/drawBar never allocate a map per chart per frame.
+type gridRowSet struct {
+	rows [8]int
+	n    int
+}
+
+func (s *gridRowSet) add(gy int) {
+	if s.n < len(s.rows) {
+		s.rows[s.n] = gy
+		s.n++
+	}
+}
+
+func (s gridRowSet) has(gy int) bool {
+	for i := range s.n {
+		if s.rows[i] == gy {
+			return true
+		}
+	}
+	return false
+}
+
 // drawCell draws one series header, scaled plot, grid labels and separator.
 func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell, windowPoints int, yMax time.Duration) {
 	headerWidth := max(cell.width-2, 0)
@@ -245,12 +268,12 @@ func (g *GraphView) drawCell(screen tcell.Screen, s graphSeries, cell graphCell,
 	plotY, plotHeight := adjustPlotArea(graphY, cell.graphHeight)
 
 	gridSteps := gridStepsForHeight(plotHeight)
-	gridYPos := make(map[int]bool)
+	var gridYPos gridRowSet
 	for i, val := range g.currentScale.grid {
 		gy := gridSteps[i]
 		py := plotY + (plotHeight - 1 - gy)
 		if py >= plotY && py < plotY+plotHeight {
-			gridYPos[gy] = true
+			gridYPos.add(gy)
 			for gx := range graphWidth {
 				screen.SetContent(graphX+gx, py, '·', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
 			}
@@ -313,7 +336,7 @@ var barRunes = []rune{' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 // drawBar draws one RTT sample (already capped at the scale maximum) as a
 // column of block characters at screen column px, keeping grid dots visible
 // above the bar.
-func (g *GraphView) drawBar(screen tcell.Screen, px, plotY, plotHeight int, v time.Duration, gridYPos map[int]bool, color tcell.Color) {
+func (g *GraphView) drawBar(screen tcell.Screen, px, plotY, plotHeight int, v time.Duration, gridYPos gridRowSet, color tcell.Color) {
 	ratio := float64(v) / float64(time.Millisecond) / g.currentScale.maxMs
 	if v > 0 && ratio < 0.05 {
 		ratio = 0.05
@@ -330,7 +353,7 @@ func (g *GraphView) drawBar(screen tcell.Screen, px, plotY, plotHeight int, v ti
 			screen.SetContent(px, py, '█', nil, tcell.StyleDefault.Foreground(color))
 		case level > 0:
 			screen.SetContent(px, py, barRunes[level], nil, tcell.StyleDefault.Foreground(color))
-		case gridYPos[gy]:
+		case gridYPos.has(gy):
 			screen.SetContent(px, py, '·', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
 		}
 	}

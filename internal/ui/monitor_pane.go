@@ -58,7 +58,7 @@ func newMonitorPane(enabled bool, title string, render func(availW int) string) 
 		pane.SetBorderColor(c)
 	}
 	pane.SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
-		return makeDoubleBorderDrawFunc(mp.currentTitle(), &borderColor)(screen, x, y, width, height)
+		return drawDoubleBorder(screen, x, y, width, height, mp.currentTitle(), borderColor)
 	})
 
 	mp.view = view

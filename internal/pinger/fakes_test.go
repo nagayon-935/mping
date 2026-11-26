@@ -29,7 +29,7 @@ type readResult struct {
 	err  error
 }
 
-// fakePacketConn is the IPv4 PacketConnV4 fake.
+// fakePacketConn is the IPv4 packetConnV4 fake.
 type fakePacketConn struct {
 	mu sync.Mutex
 
@@ -110,7 +110,7 @@ type readResultV6 struct {
 	err  error
 }
 
-// fakePacketConnV6 is the IPv6 PacketConnV6 fake.
+// fakePacketConnV6 is the IPv6 packetConnV6 fake.
 type fakePacketConnV6 struct {
 	readQueue []readResultV6
 	writes    int // WriteTo calls

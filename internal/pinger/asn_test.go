@@ -449,3 +449,43 @@ func TestGetASNInfo_IPv6AndJitter(t *testing.T) {
 		}
 	})
 }
+
+func TestGetASNInfo_SkipsPrivateAndCGNATByDefaultAndCachesOrgByASN(t *testing.T) {
+	t.Run("default resolver skips non-public IPs without jitter or DNS", func(t *testing.T) {
+		p := NewPingerWithOptions(nil, Options{AsnEnabled: true})
+		p.asnJitter = func() time.Duration { return time.Hour } // would hang if not skipped before jitter
+		for _, ip := range []string{"10.0.0.1", "172.16.0.1", "192.168.1.1", "127.0.0.1", "100.64.0.1", "169.254.1.1", "::1", "fe80::1", "fd00::1"} {
+			start := time.Now()
+			if got := p.getASNInfo(ip); got != (ASNInfo{}) {
+				t.Fatalf("getASNInfo(%q) = %+v, want empty ASNInfo", ip, got)
+			}
+			if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+				t.Fatalf("getASNInfo(%q) took %v; non-public IPs must return before jitter/DNS", ip, elapsed)
+			}
+		}
+	})
+
+	t.Run("org lookup is cached across distinct IPs in the same ASN", func(t *testing.T) {
+		orgQueries := 0
+		p := NewPingerWithOptions(nil, Options{
+			AsnEnabled: true,
+			LookupTXT: func(q string) ([]string, error) {
+				if strings.HasSuffix(q, ".asn.cymru.com") && !strings.Contains(q, "origin") {
+					orgQueries++
+					return []string{"15169 | GOOGLE - Google LLC, US | 1992-12-01"}, nil
+				}
+				return []string{"15169 | 8.8.0.0/16 | US | arin | 1992-12-01"}, nil
+			},
+		})
+		p.asnJitter = func() time.Duration { return 0 }
+
+		a := p.getASNInfo("8.8.8.8")
+		b := p.getASNInfo("8.8.4.4")
+		if a.Org != "Google LLC" || b.Org != "Google LLC" {
+			t.Fatalf("orgs = (%q, %q), want Google LLC for both", a.Org, b.Org)
+		}
+		if orgQueries != 1 {
+			t.Fatalf("org TXT queries = %d, want 1 (second IP in AS15169 must reuse cached org)", orgQueries)
+		}
+	})
+}

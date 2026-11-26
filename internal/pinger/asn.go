@@ -5,16 +5,38 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"strings"
 	"time"
 
 	"github.com/nagayon-935/mping/internal/stats"
 )
 
-// asnLookupTimeout bounds each Cymru DNS TXT query, since neither net.LookupTXT
-// nor a *net.Resolver wrapped with context.Background() has a timeout of its
-// own. A var (not const) so tests can shrink it instead of waiting 3s.
+// asnLookupTimeout bounds each Team Cymru DNS TXT query, since net.Resolver
+// applies no per-call deadline unless its context supplies one. A var (not
+// const) so tests can shrink it instead of waiting 3s.
 var asnLookupTimeout = 3 * time.Second
+
+// isPublicASNTarget reports whether ip belongs to globally routable unicast
+// space that can have a public Team Cymru BGP origin record. Private, loopback,
+// link-local, multicast, unspecified, and RFC 6598 CGNAT addresses never do.
+func isPublicASNTarget(ip net.IP) bool {
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	addr = addr.Unmap()
+	if !addr.IsGlobalUnicast() || addr.IsPrivate() {
+		return false
+	}
+	if addr.Is4() {
+		b := addr.As4()
+		if b[0] == 100 && b[1]&0xc0 == 64 {
+			return false
+		}
+	}
+	return true
+}
 
 // ASNInfo holds the full result of a Team Cymru ASN lookup.
 type ASNInfo struct {
@@ -53,7 +75,7 @@ func (p *Pinger) getASNInfoContext(ctx context.Context, ipStr string) ASNInfo {
 	}
 
 	ip := net.ParseIP(ipStr)
-	if ip == nil {
+	if ip == nil || (!p.hasCustomTXTLookup && !isPublicASNTarget(ip)) {
 		return ASNInfo{}
 	}
 
@@ -129,6 +151,13 @@ func (p *Pinger) lookupTXTBoundedContext(ctx context.Context, name string) ([]st
 // reported as ("", nil) so callers keep treating it as "no org found", not
 // as a reason to discard an otherwise-successful ASN/country result.
 func (p *Pinger) lookupOrgContext(ctx context.Context, asnNumber string) (string, error) {
+	p.asnMu.RLock()
+	cachedOrg, found := p.asnOrgCache[asnNumber]
+	p.asnMu.RUnlock()
+	if found {
+		return cachedOrg, nil
+	}
+
 	txts, err := p.lookupTXTBoundedContext(ctx, asnNumber+".asn.cymru.com")
 	if errors.Is(err, errPingerStopped) || ctx.Err() != nil {
 		return "", err
@@ -149,6 +178,11 @@ func (p *Pinger) lookupOrgContext(ctx context.Context, asnNumber string) (string
 	// Strip trailing ", CC" country suffix
 	if idx := strings.LastIndex(desc, ", "); idx >= 0 {
 		desc = strings.TrimSpace(desc[:idx]) // "Google LLC"
+	}
+	if desc != "" {
+		p.asnMu.Lock()
+		p.asnOrgCache[asnNumber] = desc
+		p.asnMu.Unlock()
 	}
 	return desc, nil
 }

@@ -80,7 +80,7 @@ func (p *Pinger) launchTarget(t *stats.TargetStats, id int) {
 	w := &targetWorker{id: id, cancel: cancel, done: make(chan struct{})}
 	p.mapMu.Lock()
 	p.workerStates[t] = w
-	p.targetChans[id] = make(chan Reply, replyChanBuffer)
+	p.targetChans[id] = make(chan reply, replyChanBuffer)
 	p.activeWorkers++
 	p.mapMu.Unlock()
 	p.workers.Add(1)

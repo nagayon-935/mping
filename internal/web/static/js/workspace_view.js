@@ -6,7 +6,7 @@ import { prepareSparks } from "./spark_view.js";
 import { renderTargets } from "./table.js";
 import { renderMTR } from "./mtr.js";
 import { renderTraceroutes } from "./traceroute.js";
-import { STATUS_LABELS } from "./toolbar.js";
+import { STATUS_LABELS } from "./model.js";
 import { chooseLayout } from "./workspace.js";
 
 // Desktop breakpoint in style.css: below it the panes simply stack.

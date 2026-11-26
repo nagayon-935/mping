@@ -26,6 +26,9 @@ func extractTraceID(msg *icmp.Message) (int, bool) {
 }
 
 func (p *Pinger) broadcastTrace(msg *icmp.Message, src net.Addr) {
+	if p.activeTraces.Load() <= 0 {
+		return
+	}
 	id, ok := extractTraceID(msg)
 	if !ok {
 		return
@@ -72,7 +75,7 @@ var receiverV6Config = receiverConfig{
 	errorStringFn: icmpV6ErrorString,
 }
 
-// icmpv6FilterSetter is satisfied by both PacketConnV6 (the main receiver
+// icmpv6FilterSetter is satisfied by both packetConnV6 (the main receiver
 // socket) and hopSendConnV6 (the route engine's HopSocket). Sharing it lets
 // applyICMPv6Filter serve both call sites without a second interface.
 type icmpv6FilterSetter interface {
@@ -203,12 +206,12 @@ func (p *Pinger) handleEchoReply(msg *icmp.Message, ttl int) {
 	ch, exists := p.targetChans[echo.ID]
 	p.mapMu.RUnlock()
 	if exists {
-		reply := Reply{TTL: ttl, Seq: echo.Seq}
+		rep := reply{TTL: ttl, Seq: echo.Seq}
 		if rtt, ok := extractSendTimestamp(echo.Data, p.now(), p.probeTimeout); ok {
-			reply.RTT = rtt
+			rep.RTT = rtt
 		}
 		select {
-		case ch <- reply:
+		case ch <- rep:
 		default:
 		}
 	}
@@ -231,7 +234,7 @@ func (p *Pinger) handleICMPError(msg *icmp.Message, errorStringFn func(icmp.Type
 	p.mapMu.RUnlock()
 	if exists {
 		select {
-		case ch <- Reply{Seq: seq, Err: errMsg}:
+		case ch <- reply{Seq: seq, Err: errMsg}:
 		default:
 		}
 	}

@@ -44,9 +44,11 @@ type hopSendConnV6 interface {
 // HopSocket holds the send socket for MTR probing.
 // Call Close when done to release resources.
 type HopSocket struct {
-	sendV4 hopSendConnV4
-	sendV6 hopSendConnV6
-	isV4   bool
+	sendV4  hopSendConnV4
+	sendV6  hopSendConnV6
+	isV4    bool
+	dest    string
+	dstAddr *net.IPAddr
 
 	// sendMu serializes IPv4 SetTTL+WriteTo pairs. Unlike IPv6 (which sets
 	// HopLimit per packet via an ipv6.ControlMessage), IPv4's TTL can only be
@@ -77,6 +79,9 @@ func (p *Pinger) registerTraceChan(traceID int) chan traceMsg {
 	if p.traceChans == nil {
 		p.traceChans = make(map[int]chan traceMsg)
 	}
+	if _, existed := p.traceChans[traceID]; !existed {
+		p.activeTraces.Add(1)
+	}
 	p.traceChans[traceID] = ch
 	p.traceChansMu.Unlock()
 	return ch
@@ -87,7 +92,10 @@ func (p *Pinger) registerTraceChan(traceID int) chan traceMsg {
 // releasing traceChansMu, so closing it here could panic a concurrent send.
 func (p *Pinger) unregisterTraceChan(traceID int) {
 	p.traceChansMu.Lock()
-	delete(p.traceChans, traceID)
+	if _, existed := p.traceChans[traceID]; existed {
+		delete(p.traceChans, traceID)
+		p.activeTraces.Add(-1)
+	}
 	p.traceChansMu.Unlock()
 }
 
@@ -140,13 +148,18 @@ func (p *Pinger) OpenHopSocketContext(ctx context.Context, dest string) (*HopSoc
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", dest, err)
 	}
-	return p.openHopSocketAddr(dstAddr)
+	sock, err := p.openHopSocketAddr(dstAddr)
+	if err != nil {
+		return nil, err
+	}
+	sock.dest = dest
+	return sock, nil
 }
 
 func (p *Pinger) openHopSocketAddr(dstAddr *net.IPAddr) (*HopSocket, error) {
 	isV4 := dstAddr.IP.To4() != nil
 
-	sock := &HopSocket{isV4: isV4}
+	sock := &HopSocket{isV4: isV4, dstAddr: dstAddr}
 
 	if isV4 {
 		c, err := p.listenICMP(false)
@@ -192,9 +205,15 @@ func (p *Pinger) ProbeHop(ctx context.Context, sock *HopSocket, dest string, ttl
 		return HopReply{}, fmt.Errorf("route-probe IDs exhausted")
 	}
 	defer p.releaseTraceID(traceID)
-	dstAddr, err := p.resolveIPAddrContext(ctx, "ip", dest)
-	if err != nil {
-		return HopReply{}, fmt.Errorf("resolve %s: %w", dest, err)
+	var dstAddr *net.IPAddr
+	if sock != nil && sock.dstAddr != nil && sock.dest == dest {
+		dstAddr = sock.dstAddr
+	} else {
+		var err error
+		dstAddr, err = p.resolveIPAddrContext(ctx, "ip", dest)
+		if err != nil {
+			return HopReply{}, fmt.Errorf("resolve %s: %w", dest, err)
+		}
 	}
 	return p.probeHopAddr(ctx, sock, dstAddr, ttl, traceID, timeout)
 }
